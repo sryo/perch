@@ -302,10 +302,8 @@ async function newTab(url, app = "Google Chrome") {
     let tabIndex = null; try { tabIndex = win.tabs.length - 1; } catch (e) {}
     JSON.stringify({ windowId: winId, tabIndex });
   `;
-  const raw = await jxa(src);
-  let id = {};
-  try { id = JSON.parse(raw) || {}; } catch (e) {}
-  return { ok: true, app: browser.app, url: targetUrl, windowId: id.windowId ?? null, tabIndex: id.tabIndex ?? null };
+  const { windowId = null, tabIndex = null } = JSON.parse(await jxa(src));
+  return { ok: true, app: browser.app, url: targetUrl, windowId, tabIndex };
 }
 
 async function closeTab(target) {
