@@ -32,6 +32,8 @@ JXA scripts are built as strings and passed to `osascript -l JavaScript -e <scri
 
 **Screenshot geometry order.** `position()` + `size()` (Chrome), then `bounds()` (Safari), then System Events `processes.byName(app).windows[0].position()` + `.size()` as a final accessibility-API fallback. `screencapture -R` reads pixels at the screen rect, so the target window must be on top — handled by the default `raise: true`.
 
+**Tab indices are positional, not identifiers.** `tabIndex` reflects a tab's current position in its window — opening or closing other tabs shifts every index after them. Callers that cache a `tabIndex` from one `list_tabs` call and use it minutes later will race with the user. Re-target by URL match (or by re-listing) when in doubt. `new_tab` returns the index of the tab it just created, but only as a hint; treat it as valid only for the immediate next call.
+
 ## Browser support
 
 | Browser | JS eval | Navigation | New/close/activate tab | Notes |

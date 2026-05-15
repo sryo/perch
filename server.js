@@ -267,9 +267,10 @@ async function newTab(url, app = "Google Chrome") {
     const app = Application(${JSON.stringify(browser.app)});
     if (!app.running()) app.activate();
     const kind = ${JSON.stringify(browser.kind)};
+    let win;
     if (kind === 'chrome' || kind === 'arc') {
       if (!app.windows.length) app.Window().make();
-      const win = app.windows[0];
+      win = app.windows[0];
       const t = app.Tab({ url: ${JSON.stringify(targetUrl)} });
       win.tabs.push(t);
       try { win.activeTabIndex = win.tabs.length; } catch (e) {}
@@ -280,7 +281,7 @@ async function newTab(url, app = "Google Chrome") {
       if (!app.windows.length) {
         try { app.Document().make(); } catch (e) {}
       }
-      const win = app.windows[0];
+      win = app.windows[0];
       let created = false;
       try {
         const t = app.Tab({ url: ${JSON.stringify(targetUrl)} });
@@ -297,10 +298,14 @@ async function newTab(url, app = "Google Chrome") {
         try { win.currentTab.url = ${JSON.stringify(targetUrl)}; } catch (e) {}
       }
     }
-    'ok';
+    let winId = null; try { winId = win.id(); } catch (e) {}
+    let tabIndex = null; try { tabIndex = win.tabs.length - 1; } catch (e) {}
+    JSON.stringify({ windowId: winId, tabIndex });
   `;
-  await jxa(src);
-  return { ok: true, app: browser.app, url: targetUrl };
+  const raw = await jxa(src);
+  let id = {};
+  try { id = JSON.parse(raw) || {}; } catch (e) {}
+  return { ok: true, app: browser.app, url: targetUrl, windowId: id.windowId ?? null, tabIndex: id.tabIndex ?? null };
 }
 
 async function closeTab(target) {
