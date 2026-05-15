@@ -24,7 +24,7 @@ perch exposes MCP tools for driving macOS browsers — tab management, navigatio
 MCP client (Claude Code, etc.) <--stdio--> server.js <--osascript--> Chrome / Safari / Brave / Edge / Arc / Vivaldi
 ```
 
-JXA scripts are built as strings and passed to `osascript -l JavaScript -e <script>` via `execFile`. User JS is embedded via `JSON.stringify` and wrapped in an IIFE that JSON-stringifies its return; errors come back as `{__perch_error: msg}`. Tab targeting goes through `targetClause(target)`, which walks `BROWSERS`, prefers the frontmost app, and binds `tab`, `tab_kind`, `tab_app`, `tab_window` for downstream snippets. Chrome-family tabs use `tab.execute({javascript: code})`; Safari uses `Application('Safari').doJavaScript(code, {in: tab})`. Both are synchronous.
+JXA scripts are built as strings and passed to `osascript -l JavaScript -e <script>` via `execFile`. User JS is embedded via `JSON.stringify` and wrapped in an IIFE that JSON-stringifies its return; errors come back as `{__perch_error: msg}`. Tab targeting goes through `targetClause(target)`, which walks `BROWSERS`, prefers the frontmost app, and binds `tab`, `tab_kind`, `tab_app`, `tab_window` for downstream snippets. Chrome-family tabs use `tab.execute({javascript: code})`; Safari uses `Application('Safari').doJavaScript(code, {in: tab})`. Both are synchronous on the AppleScript side. For async user code, `eval_js` with `awaitPromise: true` wraps the script in an async IIFE that stashes its result on a `window.__perch_async_*` slot, then polls from JXA until it lands.
 
 **JXA access patterns.** Collections are always read lazily — `app.windows[i]` and `win.tabs[i]`, never `app.windows()` or `win.tabs()`. The called form unwraps to a plain Array on some browsers (Chrome) but loses the bridge context on others (Arc), making subsequent property chains throw "cannot convert types." Multi-tab reads use bulk property access — `win.tabs.url()` returns all URLs in one call, ~30× faster than per-tab loops and the difference between working and timing out on Arc windows with hundreds of tabs.
 
@@ -59,7 +59,7 @@ The server returns an actionable error when either layer blocks a call.
 - **Single-file server, one dep.** Only `@modelcontextprotocol/sdk` plus Node built-ins (`child_process`, `fs/promises`). No build step.
 - **No shell concatenation of user input.** Always pass JXA as one `-e` argument to `osascript` via `execFile`. Embed user JS only through `JSON.stringify`.
 - **Tools earn their slot.** New tools should solve a real workflow, not mirror CDP for completeness.
-- **Synchronous-only JS in `eval_js`.** The AppleScript bridges return the value of the last expression; they don't await Promises. Use `wait_for` for async work.
+- **AppleScript is synchronous; async is faked via polling.** `eval_js` defaults to sync (one osascript round-trip). `awaitPromise: true` wraps the script in an async IIFE, stashes the resolved value on `window.__perch_async_*`, and polls JXA-side until it appears. Adds latency (~50ms per poll tick) but unblocks Promise-using code — Figma Plugin API, async DOM extraction, fetch chains.
 - **Background-friendly by default.** `activate_tab`, `screenshot{raise:true}`, and the `close_tab` Safari fallback are the only focus-stealers.
 
 ## Ceiling — what AppleScript can't do

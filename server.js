@@ -169,7 +169,61 @@ async function listTabs() {
   return JSON.parse(await jxa(src));
 }
 
-async function evalJs(script, target) {
+async function evalJs(script, target, options = {}) {
+  const { awaitPromise = false, timeout = 30000 } = options;
+
+  if (awaitPromise) {
+    // The AppleScript bridge is synchronous — it doesn't await Promises. To
+    // support async user code we wrap it in an async IIFE that stashes its
+    // result on window[key], then poll that slot from JXA until it appears.
+    const key = `__perch_async_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const kickoff = `(function(){
+      (async () => {
+        try {
+          var __r = await (async () => { ${script} })();
+          window[${JSON.stringify(key)}] = { ok: true, value: __r === undefined ? null : __r };
+        } catch(e) {
+          window[${JSON.stringify(key)}] = { ok: false, error: (e && e.message) ? e.message : String(e) };
+        }
+      })();
+    })()`;
+    const poll = buildEvalWrapper(`
+      if (window[${JSON.stringify(key)}] === undefined) return null;
+      var v = window[${JSON.stringify(key)}];
+      delete window[${JSON.stringify(key)}];
+      return v;
+    `);
+    const src = `
+      ${targetClause(target)}
+      if (tab_kind === 'chrome') tab.execute({javascript: ${JSON.stringify(kickoff)}});
+      else if (tab_kind === 'arc') tab.execute({javascript: ${JSON.stringify(kickoff)}});
+      else Application(tab_app).doJavaScript(${JSON.stringify(kickoff)}, { in: tab });
+      const start = Date.now();
+      const timeout = ${timeout};
+      let outcome = JSON.stringify({__perch_timeout: true});
+      while (Date.now() - start < timeout) {
+        let r = 'null';
+        try {
+          if (tab_kind === 'chrome') r = String(tab.execute({javascript: ${JSON.stringify(poll)}}) || 'null');
+          else if (tab_kind === 'arc') {
+            const a = tab.execute({javascript: ${JSON.stringify(poll)}});
+            try { r = String(JSON.parse(a) || 'null'); } catch (e) { r = String(a); }
+          }
+          else r = String(Application(tab_app).doJavaScript(${JSON.stringify(poll)}, {in: tab}) || 'null');
+        } catch (e) {}
+        if (r !== 'null') { outcome = r; break; }
+        delay(0.05);
+      }
+      outcome;
+    `;
+    const raw = await jxa(src);
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { return raw; }
+    if (parsed && parsed.__perch_timeout) throw new Error(`eval_js (awaitPromise) timed out after ${timeout}ms`);
+    if (parsed && parsed.ok === false) return { __perch_error: parsed.error };
+    return parsed && Object.prototype.hasOwnProperty.call(parsed, "value") ? parsed.value : parsed;
+  }
+
   const wrapped = buildEvalWrapper(script);
   const src = `
     ${targetClause(target)}
@@ -498,12 +552,14 @@ const TOOLS = [
   },
   {
     name: "eval_js",
-    description: "Run JavaScript in the target tab. Your code runs inside an IIFE — use `return` to send a value back. The value is JSON-stringified on the page side and parsed here. Requires the browser's 'Allow JavaScript from Apple Events' toggle.",
+    description: "Run JavaScript in the target tab. Your code runs inside an IIFE — use `return` to send a value back. The value is JSON-stringified on the page side and parsed here. Pass `awaitPromise: true` for async user code — perch wraps it in `await (async () => { ... })()`, stashes the result on the page, and polls until it lands. Requires the browser's 'Allow JavaScript from Apple Events' toggle.",
     inputSchema: {
       type: "object",
       required: ["script"],
       properties: {
-        script: { type: "string", description: "Use `return <value>` to send a value back." },
+        script: { type: "string", description: "Use `return <value>` to send a value back. With `awaitPromise: true`, you can use `await` freely." },
+        awaitPromise: { type: "boolean", description: "Treat the script as async; wait for its Promise to resolve before returning. Default false." },
+        timeout: { type: "number", description: "Async timeout in milliseconds (only with `awaitPromise`). Default 30000." },
         target: TARGET_SCHEMA,
       },
     },
@@ -583,7 +639,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "reload":        result = await reload(args.target); break;
       case "go_back":       result = await goBack(args.target); break;
       case "go_forward":    result = await goForward(args.target); break;
-      case "eval_js":       result = await evalJs(args.script, args.target); break;
+      case "eval_js":       result = await evalJs(args.script, args.target, { awaitPromise: args.awaitPromise, timeout: args.timeout }); break;
       case "wait_for":      result = await waitFor(args, args.target); break;
       case "screenshot":    result = await screenshot(args); break;
       case "get_page_info": result = await getPageInfo(args.target); break;
