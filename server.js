@@ -38,7 +38,8 @@ async function jxa(script) {
     }
     if (/Not authorized to send Apple events/i.test(msg) ||
         /errAEEventNotPermitted/i.test(msg) ||
-        /-1743/.test(msg)) {
+        /-1743/.test(msg) ||
+        (e.code === 1 && !msg.trim())) {
       throw new Error(
         "Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, " +
         "then tick the target browser under the controlling app (Claude Code / Terminal / iTerm)."
