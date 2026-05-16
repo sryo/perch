@@ -439,9 +439,9 @@ async function screenshot(args = {}) {
       } catch (e) {}
     }
     if (!geom) throw new Error('cannot get window geometry for ' + tab_app);
-    // Look up the CGWindowID so 'screencapture -l' can read pixels regardless of z-order —
-    // captures background tabs/windows without raising them. Match by owner + bounds (within
-    // 2px tolerance for off-by-one between AppleScript and CG coordinate systems).
+    // Look up the CGWindowID so 'screencapture -l' can read pixels regardless of z-order,
+    // capturing background tabs/windows without raising them. Match by owner + bounds, with
+    // a 2px tolerance for off-by-one between AppleScript and CG coordinate systems.
     let cgId = null;
     try {
       ObjC.import('CoreGraphics');
@@ -449,10 +449,10 @@ async function screenshot(args = {}) {
       const list = $.CGWindowListCopyWindowInfo(17, 0);
       const n = list.count;
       for (let i = 0; i < n; i++) {
-        const w = list.objectAtIndex(i);
-        const owner = ObjC.unwrap(w.objectForKey('kCGWindowOwnerName'));
+        const entry = list.objectAtIndex(i);
+        const owner = ObjC.unwrap(entry.objectForKey('kCGWindowOwnerName'));
         if (owner !== tab_app) continue;
-        const b = w.objectForKey('kCGWindowBounds');
+        const b = entry.objectForKey('kCGWindowBounds');
         if (!b) continue;
         const bx = ObjC.unwrap(b.objectForKey('X'));
         const by = ObjC.unwrap(b.objectForKey('Y'));
@@ -460,7 +460,7 @@ async function screenshot(args = {}) {
         const bh = ObjC.unwrap(b.objectForKey('Height'));
         if (Math.abs(bx - geom.x) <= 2 && Math.abs(by - geom.y) <= 2 &&
             Math.abs(bw - geom.w) <= 2 && Math.abs(bh - geom.h) <= 2) {
-          cgId = ObjC.unwrap(w.objectForKey('kCGWindowNumber'));
+          cgId = ObjC.unwrap(entry.objectForKey('kCGWindowNumber'));
           break;
         }
       }
@@ -473,7 +473,7 @@ async function screenshot(args = {}) {
     await exec("screencapture", ["-l", String(cgId), "-x", "-o", tmp]);
   } else {
     // No CGWindowID match (minimized, on another Space, ObjC bridge failed). Fall back to
-    // rect capture — only reliable if the window happens to be on top.
+    // rect capture, which is only reliable if the window happens to be on top.
     await exec("screencapture", ["-R", `${geom.x},${geom.y},${geom.w},${geom.h}`, "-x", "-o", tmp]);
   }
   const buf = await readFile(tmp);
@@ -648,7 +648,7 @@ const TOOLS = [
   },
   {
     name: "screenshot",
-    description: "Capture a PNG of the target browser window. By default uses CGWindowID capture, which reads the window's pixels regardless of z-order — background tabs and obscured windows work, no focus stolen. Pass `raise: true` to explicitly bring the window forward first.",
+    description: "Capture a PNG of the target browser window. Defaults to CGWindowID capture, which reads the window's pixels regardless of z-order, so background tabs and obscured windows work without stealing focus. Pass `raise: true` to bring the window forward first.",
     inputSchema: {
       type: "object",
       properties: {
