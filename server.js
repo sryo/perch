@@ -486,7 +486,6 @@ async function getHtml(selector, target) {
 
 async function notify(args = {}) {
   const { message, title = "perch", subtitle, sound = "Glass" } = args;
-  if (!message) throw new Error("message required");
   const opts = { withTitle: title };
   if (subtitle) opts.subtitle = subtitle;
   if (sound) opts.soundName = sound;
