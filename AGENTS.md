@@ -30,7 +30,7 @@ JXA scripts are built as strings and passed to `osascript -l JavaScript -e <scri
 
 **Arc-specific quirks.** Arc shares Chrome's `tab.execute` verb but auto-applies `JSON.stringify` to whatever value the executed function returns. perch's wrappers already JSON-stringify, so Arc's bridge double-encodes; the Arc dispatch path unwraps one layer before handing the value back to the caller. Arc also can't return window geometry — `position()`, `size()`, and `bounds()` all throw — so `screenshot` falls back to the System Events accessibility frame, which works for any visible window. Active-tab detection on Arc isn't implemented either; callers pass `tabIndex` explicitly or accept tab 0.
 
-**Screenshot geometry order.** `position()` + `size()` (Chrome), then `bounds()` (Safari), then System Events `processes.byName(app).windows[0].position()` + `.size()` as a final accessibility-API fallback. `screencapture -R` reads pixels at the screen rect, so the target window must be on top — handled by the default `raise: true`.
+**Screenshot capture path.** Default is `screencapture -l <CGWindowID>`, which reads a window's pixels regardless of z-order, so background windows capture without being raised. perch resolves geometry first (`position()` + `size()` for Chrome, `bounds()` for Safari, System Events accessibility frame for Arc), then walks `CGWindowListCopyWindowInfo` via the JXA ObjC bridge, matching by `kCGWindowOwnerName` + bounds (2px tolerance) to find the CGWindowID. If no match (minimized window, on another Space, bridge fails), falls back to `screencapture -R` at the screen rect, which is only reliable if the window is already on top. `raise: true` forces the legacy focus-then-rect path.
 
 **Tab indices are positional, not identifiers.** `tabIndex` reflects a tab's current position in its window — opening or closing other tabs shifts every index after them. Callers that cache a `tabIndex` from one `list_tabs` call and use it minutes later will race with the user. Re-target by URL match (or by re-listing) when in doubt. `new_tab` returns the index of the tab it just created, but only as a hint; treat it as valid only for the immediate next call.
 
@@ -60,7 +60,7 @@ The server returns an actionable error when either layer blocks a call.
 - **No shell concatenation of user input.** Always pass JXA as one `-e` argument to `osascript` via `execFile`. Embed user JS only through `JSON.stringify`.
 - **Tools earn their slot.** New tools should solve a real workflow, not mirror CDP for completeness.
 - **AppleScript is synchronous; async is faked via polling.** `eval_js` defaults to sync (one osascript round-trip). `awaitPromise: true` wraps the script in an async IIFE, stashes the resolved value on `window.__perch_async_*`, and polls JXA-side until it appears. Adds latency (~50ms per poll tick) but unblocks Promise-using code — Figma Plugin API, async DOM extraction, fetch chains.
-- **Background-friendly by default.** `activate_tab`, `screenshot{raise:true}`, `open_devtools`, and the `close_tab` Safari fallback are the only focus-stealers.
+- **Background-friendly by default.** `activate_tab`, `screenshot{raise:true}` (opt-in), `open_devtools`, and the `close_tab` Safari fallback are the only focus-stealers. `screenshot` defaults to CGWindowID capture and does not steal focus.
 
 ## Ceiling — what AppleScript can't do
 

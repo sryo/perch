@@ -20,7 +20,7 @@ Tools target the active tab of the frontmost browser by default; pass an explici
 | `reload` / `go_back` / `go_forward` | History navigation on the target tab. |
 | `eval_js` | Run JS in the target tab. Code runs inside an IIFE; use `return <value>` to send a value back. |
 | `wait_for` | Block until a `readyState` / CSS selector / JS expression condition is met. Polls inside one osascript call. |
-| `screenshot` | PNG of the target browser window. Brings the window forward unless `raise: false`. |
+| `screenshot` | PNG of the target browser window. Captures by CGWindowID so background windows work without focus steal; pass `raise: true` to bring the window forward first. |
 | `get_page_info` | URL, title, readyState, viewport, scroll, doc size, meta tags. |
 | `get_text` / `get_html` | innerText / outerHTML of an element (default `body` / `html`). |
 | `open_devtools` | Toggle DevTools / Web Inspector (Cmd+Opt+I). Optional `panel: "console" \| "elements"` on Chrome/Arc. Focus-stealer. |

@@ -420,13 +420,13 @@ async function goForward(target) {
 }
 
 async function screenshot(args = {}) {
-  const { raise = true, target } = args;
+  const { raise = false, target } = args;
   const src = `
     ${targetClause(target)}
     ${raise ? focusTabFragment() : ""}
     ${raise ? "delay(0.25);" : ""}
     // Geometry source varies by browser: Chrome has position()+size(), Safari has bounds(),
-    // Arc has neither — fall back to System Events accessibility frame.
+    // Arc has neither, so fall back to System Events accessibility frame.
     let geom = null;
     try { const p = tab_window.position(), s = tab_window.size(); geom = {x: p[0], y: p[1], w: s[0], h: s[1]}; } catch (e) {}
     if (!geom) { try { const b = tab_window.bounds(); geom = {x: b.x, y: b.y, w: b.width, h: b.height}; } catch (e) {} }
@@ -439,11 +439,43 @@ async function screenshot(args = {}) {
       } catch (e) {}
     }
     if (!geom) throw new Error('cannot get window geometry for ' + tab_app);
-    JSON.stringify(geom);
+    // Look up the CGWindowID so 'screencapture -l' can read pixels regardless of z-order —
+    // captures background tabs/windows without raising them. Match by owner + bounds (within
+    // 2px tolerance for off-by-one between AppleScript and CG coordinate systems).
+    let cgId = null;
+    try {
+      ObjC.import('CoreGraphics');
+      // kCGWindowListOptionOnScreenOnly (1) | kCGWindowListExcludeDesktopElements (16) = 17
+      const list = $.CGWindowListCopyWindowInfo(17, 0);
+      const n = list.count;
+      for (let i = 0; i < n; i++) {
+        const w = list.objectAtIndex(i);
+        const owner = ObjC.unwrap(w.objectForKey('kCGWindowOwnerName'));
+        if (owner !== tab_app) continue;
+        const b = w.objectForKey('kCGWindowBounds');
+        if (!b) continue;
+        const bx = ObjC.unwrap(b.objectForKey('X'));
+        const by = ObjC.unwrap(b.objectForKey('Y'));
+        const bw = ObjC.unwrap(b.objectForKey('Width'));
+        const bh = ObjC.unwrap(b.objectForKey('Height'));
+        if (Math.abs(bx - geom.x) <= 2 && Math.abs(by - geom.y) <= 2 &&
+            Math.abs(bw - geom.w) <= 2 && Math.abs(bh - geom.h) <= 2) {
+          cgId = ObjC.unwrap(w.objectForKey('kCGWindowNumber'));
+          break;
+        }
+      }
+    } catch (e) {}
+    JSON.stringify({ geom, cgId });
   `;
-  const { x, y, w, h } = JSON.parse(await jxa(src));
+  const { geom, cgId } = JSON.parse(await jxa(src));
   const tmp = `/tmp/perch-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
-  await exec("screencapture", ["-R", `${x},${y},${w},${h}`, "-x", "-o", tmp]);
+  if (cgId != null) {
+    await exec("screencapture", ["-l", String(cgId), "-x", "-o", tmp]);
+  } else {
+    // No CGWindowID match (minimized, on another Space, ObjC bridge failed). Fall back to
+    // rect capture — only reliable if the window happens to be on top.
+    await exec("screencapture", ["-R", `${geom.x},${geom.y},${geom.w},${geom.h}`, "-x", "-o", tmp]);
+  }
   const buf = await readFile(tmp);
   await unlink(tmp).catch(() => {});
   return { __image: true, data: buf.toString("base64"), mimeType: "image/png" };
@@ -616,11 +648,11 @@ const TOOLS = [
   },
   {
     name: "screenshot",
-    description: "Capture a PNG of the target browser window. Brings the window to the front first unless `raise: false` (which may capture whatever pixels are on top of the window).",
+    description: "Capture a PNG of the target browser window. By default uses CGWindowID capture, which reads the window's pixels regardless of z-order — background tabs and obscured windows work, no focus stolen. Pass `raise: true` to explicitly bring the window forward first.",
     inputSchema: {
       type: "object",
       properties: {
-        raise: { type: "boolean", description: "Bring window to front before capture. Default true." },
+        raise: { type: "boolean", description: "Bring window to front before capture. Default false (focus-preserving)." },
         target: TARGET_SCHEMA,
       },
     },
