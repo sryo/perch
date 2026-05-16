@@ -60,7 +60,7 @@ The server returns an actionable error when either layer blocks a call.
 - **No shell concatenation of user input.** Always pass JXA as one `-e` argument to `osascript` via `execFile`. Embed user JS only through `JSON.stringify`.
 - **Tools earn their slot.** New tools should solve a real workflow, not mirror CDP for completeness.
 - **AppleScript is synchronous; async is faked via polling.** `eval_js` defaults to sync (one osascript round-trip). `awaitPromise: true` wraps the script in an async IIFE, stashes the resolved value on `window.__perch_async_*`, and polls JXA-side until it appears. Adds latency (~50ms per poll tick) but unblocks Promise-using code — Figma Plugin API, async DOM extraction, fetch chains.
-- **Background-friendly by default.** `activate_tab`, `screenshot{raise:true}`, and the `close_tab` Safari fallback are the only focus-stealers.
+- **Background-friendly by default.** `activate_tab`, `screenshot{raise:true}`, `open_devtools`, and the `close_tab` Safari fallback are the only focus-stealers.
 
 ## Ceiling — what AppleScript can't do
 

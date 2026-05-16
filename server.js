@@ -484,6 +484,26 @@ async function getHtml(selector, target) {
   `, target);
 }
 
+async function openDevtools(args = {}) {
+  const { panel, target } = args;
+  // Cmd+Opt+I toggles DevTools / Web Inspector on Chrome family, Arc, and Safari.
+  // Cmd+Opt+J / Cmd+Opt+C jump to Console / Elements on Chrome-family (and Arc);
+  // Safari's Web Inspector uses Cmd+Shift+1..N for panels — too brittle to expose,
+  // so `panel` is silently ignored on Safari.
+  let key = "i";
+  if (panel === "console") key = "j";
+  else if (panel === "elements") key = "c";
+  const src = `
+    ${targetClause(target)}
+    ${focusTabFragment()}
+    delay(0.15);
+    Application('System Events').keystroke(${JSON.stringify(key)}, {using: ['command down', 'option down']});
+    'ok';
+  `;
+  await jxa(src);
+  return { ok: true };
+}
+
 // ---- MCP plumbing ----
 
 const TARGET_SCHEMA = {
@@ -618,6 +638,17 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "open_devtools",
+    description: "Toggle DevTools / Web Inspector for the target tab via Cmd+Opt+I. Focus-stealer: activates the app and raises the target window/tab first so the keystroke lands. Optional `panel` jumps to Console or Elements on Chrome-family/Arc; ignored on Safari.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        panel: { type: "string", enum: ["console", "elements"], description: "Chrome/Arc only. Omit to toggle the last-used panel." },
+        target: TARGET_SCHEMA,
+      },
+    },
+  },
 ];
 
 const server = new Server(
@@ -646,6 +677,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "get_page_info": result = await getPageInfo(args.target); break;
       case "get_text":      result = await getText(args.selector, args.target); break;
       case "get_html":      result = await getHtml(args.selector, args.target); break;
+      case "open_devtools": result = await openDevtools(args); break;
       default: throw new Error(`unknown tool: ${name}`);
     }
     if (result && result.__image) {
