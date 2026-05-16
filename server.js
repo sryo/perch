@@ -423,7 +423,22 @@ async function screenshot(args = {}) {
   const { raise = false, target } = args;
   const src = `
     ${targetClause(target)}
-    ${raise ? focusTabFragment() : ""}
+    ${raise ? focusTabFragment() : `
+      // When tabIndex targets a non-active tab, silently switch the window to it so the
+      // right tab renders. No app.activate(), no window raise; user's focus stays put.
+      // Arc lacks reliable active-tab detection, so the switch is skipped there.
+      let __switched = false;
+      try {
+        if (tab_kind === 'chrome') {
+          const __want = tab.index();
+          if (tab_window.activeTabIndex() !== __want) { tab_window.activeTabIndex = __want; __switched = true; }
+        } else if (tab_kind === 'safari') {
+          const __want = tab.index();
+          if (tab_window.currentTab().index() !== __want) { tab_window.currentTab = tab; __switched = true; }
+        }
+      } catch (e) {}
+      if (__switched) delay(0.15);
+    `}
     ${raise ? "delay(0.25);" : ""}
     // Geometry source varies by browser: Chrome has position()+size(), Safari has bounds(),
     // Arc has neither, so fall back to System Events accessibility frame.
@@ -650,7 +665,7 @@ const TOOLS = [
   },
   {
     name: "screenshot",
-    description: "Capture a PNG of the target browser window. Defaults to CGWindowID capture, reading the window's pixels regardless of z-order, so a window obscured by other apps captures without stealing focus. Caveat: only the active tab in a window is rendered, so `tabIndex` targeting a non-active tab still captures whatever the window is currently showing; use `activate_tab` first to switch within a window. Pass `raise: true` to bring the window forward.",
+    description: "Capture a PNG of the target browser window. Defaults to CGWindowID capture, reading the window's pixels regardless of z-order so a window obscured by other apps captures without stealing focus. If `tabIndex` targets a non-active tab, perch silently switches the window to that tab first (Chrome/Safari; Arc no-ops) so the right pixels render. No app activation, no window raise. Pass `raise: true` to bring the window forward.",
     inputSchema: {
       type: "object",
       properties: {
