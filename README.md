@@ -1,6 +1,6 @@
 # perch
 
-Drive macOS browsers (Chrome family + Safari) via the perch MCP server. Built for [avis](https://github.com/sryo/avis).
+Drive the macOS browser the user already has open. Chrome family + Safari, via AppleScript/JXA. Built for [avis](https://github.com/sryo/avis).
 
 ## Install
 
