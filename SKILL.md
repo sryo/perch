@@ -24,6 +24,7 @@ Tools target the active tab of the frontmost browser by default; pass an explici
 | `get_page_info` | URL, title, readyState, viewport, scroll, doc size, meta tags. |
 | `get_text` / `get_html` | innerText / outerHTML of an element (default `body` / `html`). |
 | `open_devtools` | Toggle DevTools / Web Inspector (Cmd+Opt+I). Optional `panel: "console" \| "elements"` on Chrome/Arc. Focus-stealer. |
+| `notify` | macOS notification — ping the user when something is ready. Title/subtitle/sound optional. Shows as "Script Editor" (osascript limitation). |
 
 ## Targeting
 

@@ -484,6 +484,21 @@ async function getHtml(selector, target) {
   `, target);
 }
 
+async function notify(args = {}) {
+  const { message, title = "perch", subtitle, sound = "Glass" } = args;
+  if (!message) throw new Error("message required");
+  const opts = { withTitle: title };
+  if (subtitle) opts.subtitle = subtitle;
+  if (sound) opts.soundName = sound;
+  await jxa(`
+    const app = Application.currentApplication();
+    app.includeStandardAdditions = true;
+    app.displayNotification(${JSON.stringify(message)}, ${JSON.stringify(opts)});
+    'ok';
+  `);
+  return { ok: true };
+}
+
 async function openDevtools(args = {}) {
   const { panel, target } = args;
   // Cmd+Opt+I toggles DevTools / Web Inspector on Chrome family, Arc, and Safari.
@@ -639,6 +654,24 @@ const TOOLS = [
     },
   },
   {
+    name: "notify",
+    description: "Display a macOS notification (appears in Notification Center). Useful for pinging the user when a long-running task finishes — agent has no other channel to interrupt. Fire-and-forget: no action buttons, no click handler, no return signal. Notification shows as coming from 'Script Editor' (osascript limitation, not fixable). Default sound 'Glass'.",
+    inputSchema: {
+      type: "object",
+      required: ["message"],
+      properties: {
+        message:  { type: "string", description: "Body text." },
+        title:    { type: "string", description: "Default 'perch'." },
+        subtitle: { type: "string", description: "Optional subtitle line." },
+        sound: {
+          type: "string",
+          enum: ["Basso","Blow","Bottle","Frog","Funk","Glass","Hero","Morse","Ping","Pop","Purr","Sosumi","Submarine","Tink"],
+          description: "System sound. Default 'Glass'.",
+        },
+      },
+    },
+  },
+  {
     name: "open_devtools",
     description: "Toggle DevTools / Web Inspector for the target tab via Cmd+Opt+I. Focus-stealer: activates the app and raises the target window/tab first so the keystroke lands. Optional `panel` jumps to Console or Elements on Chrome-family/Arc; ignored on Safari.",
     inputSchema: {
@@ -678,6 +711,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "get_text":      result = await getText(args.selector, args.target); break;
       case "get_html":      result = await getHtml(args.selector, args.target); break;
       case "open_devtools": result = await openDevtools(args); break;
+      case "notify":        result = await notify(args); break;
       default: throw new Error(`unknown tool: ${name}`);
     }
     if (result && result.__image) {
