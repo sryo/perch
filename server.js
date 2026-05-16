@@ -440,8 +440,10 @@ async function screenshot(args = {}) {
     }
     if (!geom) throw new Error('cannot get window geometry for ' + tab_app);
     // Look up the CGWindowID so 'screencapture -l' can read pixels regardless of z-order,
-    // capturing background tabs/windows without raising them. Match by owner + bounds, with
-    // a 2px tolerance for off-by-one between AppleScript and CG coordinate systems.
+    // capturing obscured windows without raising them. (Doesn't help with background tabs
+    // in the same window: only the active tab is rendered to the window's pixel buffer.)
+    // Match by owner + bounds, with a 2px tolerance for off-by-one between AppleScript and
+    // CG coordinate systems.
     let cgId = null;
     try {
       ObjC.import('CoreGraphics');
@@ -648,7 +650,7 @@ const TOOLS = [
   },
   {
     name: "screenshot",
-    description: "Capture a PNG of the target browser window. Defaults to CGWindowID capture, which reads the window's pixels regardless of z-order, so background tabs and obscured windows work without stealing focus. Pass `raise: true` to bring the window forward first.",
+    description: "Capture a PNG of the target browser window. Defaults to CGWindowID capture, reading the window's pixels regardless of z-order, so a window obscured by other apps captures without stealing focus. Caveat: only the active tab in a window is rendered, so `tabIndex` targeting a non-active tab still captures whatever the window is currently showing; use `activate_tab` first to switch within a window. Pass `raise: true` to bring the window forward.",
     inputSchema: {
       type: "object",
       properties: {
