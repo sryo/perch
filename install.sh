@@ -19,7 +19,12 @@ command -v git >/dev/null || { echo "git not found. Run: xcode-select --install"
 command -v node >/dev/null || { echo "node not found. Install Node 18+ from https://nodejs.org" >&2; exit 1; }
 node_major="$(node -p 'process.versions.node.split(".")[0]')"
 [[ "$node_major" -ge 18 ]] || { echo "node $node_major < 18. Upgrade Node." >&2; exit 1; }
-command -v claude >/dev/null || { echo "claude CLI not found. Install Claude Code first: https://claude.com/claude-code" >&2; exit 1; }
+if command -v claude >/dev/null; then
+  HAS_CLAUDE=1
+else
+  HAS_CLAUDE=0
+  echo "claude CLI not found — skipping Claude Code registration; config snippets will be printed for manual paste."
+fi
 
 if [[ -f "$PERCH_DIR/server.js" ]]; then
   if [[ -d "$PERCH_DIR/.git" ]]; then
@@ -36,9 +41,11 @@ fi
 echo "Installing dependencies..."
 (cd "$PERCH_DIR" && npm install --silent)
 
-echo "Registering perch in Claude Code ($PERCH_SCOPE scope)..."
-claude mcp remove perch --scope "$PERCH_SCOPE" 2>/dev/null || true
-claude mcp add perch --scope "$PERCH_SCOPE" -- node "$PERCH_DIR/server.js"
+if [[ "$HAS_CLAUDE" == "1" ]]; then
+  echo "Registering perch in Claude Code ($PERCH_SCOPE scope)..."
+  claude mcp remove perch --scope "$PERCH_SCOPE" 2>/dev/null || true
+  claude mcp add perch --scope "$PERCH_SCOPE" -- node "$PERCH_DIR/server.js"
+fi
 
 cat <<EOF
 
@@ -54,5 +61,22 @@ Two one-time permissions before perch can drive your browser:
    The first perch call surfaces an OS prompt — tick the target browser under
    Claude Code / Terminal / iTerm (whichever launched perch).
 
-Restart Claude Code. Verify with /mcp — you should see perch connected.
+For other MCP-capable clients, register perch by hand:
+
+  Codex CLI — append to ~/.codex/config.toml:
+    [mcp_servers.perch]
+    command = "node"
+    args = ["$PERCH_DIR/server.js"]
+
+  Cursor / generic MCP — merge into ~/.cursor/mcp.json (or equivalent):
+    {
+      "mcpServers": {
+        "perch": {
+          "command": "node",
+          "args": ["$PERCH_DIR/server.js"]
+        }
+      }
+    }
+
+Restart your MCP client. Verify with /mcp (Claude Code) or the client's MCP status — you should see perch connected.
 EOF

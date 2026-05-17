@@ -1,6 +1,6 @@
 # perch
 
-Drive the macOS browser the user already has open. Chrome family + Safari, via AppleScript/JXA. Built for [avis](https://github.com/sryo/avis).
+MCP server for driving the macOS browser the user already has open. Chrome family + Safari, via AppleScript/JXA. Built for [avis](https://github.com/sryo/avis).
 
 ## Install
 
@@ -8,4 +8,4 @@ Drive the macOS browser the user already has open. Chrome family + Safari, via A
 curl -fsSL https://raw.githubusercontent.com/sryo/perch/main/install.sh | bash
 ```
 
-Restart Claude Code; `perch` should appear under `/mcp`.
+The installer detects supported client CLIs and registers automatically; otherwise it prints paste-ready MCP config. Restart your client; `perch` should appear in its MCP listing.
