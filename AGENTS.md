@@ -12,6 +12,7 @@ perch exposes MCP tools for driving macOS browsers — tab management, navigatio
 ├── install.sh    # macOS installer — clones, npm install, registers via `claude mcp add`
 ├── package.json  # one dep: @modelcontextprotocol/sdk
 ├── README.md     # public-facing intro + install
+├── GOALS.md      # goals, non-goals, and decisions on record. Read before adding a new tool.
 ├── SKILL.md      # usage reference for skill authors and agents using perch
 ├── AGENTS.md     # this file
 ├── CLAUDE.md     # pointer to AGENTS.md

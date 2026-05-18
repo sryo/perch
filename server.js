@@ -4,6 +4,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execFile } from "node:child_process";
 import { readFile, unlink } from "node:fs/promises";
+import { homedir } from "node:os";
+import { resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
@@ -25,11 +27,27 @@ const PERMISSION_HINT =
   "Safari → Preferences > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events. " +
   "macOS may also prompt for Automation permission (System Settings > Privacy & Security > Automation) on first use.";
 
-async function jxa(script) {
+// Default 30s. Tools that intentionally poll longer (waitFor, evalJs awaitPromise)
+// pass their own timeout + JXA_OVERHEAD so the outer process doesn't kill the inner loop.
+const JXA_DEFAULT_TIMEOUT = 30000;
+const JXA_OVERHEAD = 5000;
+
+async function jxa(script, options = {}) {
+  const { timeout = JXA_DEFAULT_TIMEOUT } = options;
   try {
-    const { stdout } = await exec("osascript", ["-l", "JavaScript", "-e", script], { maxBuffer: 32 << 20 });
+    const { stdout } = await exec("osascript", ["-l", "JavaScript", "-e", script], { maxBuffer: 32 << 20, timeout });
     return stdout.replace(/\n$/, "");
   } catch (e) {
+    // execFile sets `killed: true` + `signal: 'SIGTERM'` (or whatever was sent) on timeout.
+    // We surface this as a clean error so a hung browser shows up in seconds instead of
+    // waiting the default 2-min Apple Events `-1712`.
+    if (e.killed && (e.signal === "SIGTERM" || e.code === null)) {
+      throw new Error(
+        `osascript timed out after ${timeout}ms. The target browser is most likely unresponsive ` +
+        `(check 'Allow JavaScript from Apple Events' in the browser's Developer menu, ` +
+        `or restart the browser).`
+      );
+    }
     const msg = String(e.stderr || e.message || e);
     if (/Allow JavaScript from Apple Events/i.test(msg) ||
         /Executing JavaScript through AppleScript is turned off/i.test(msg) ||
@@ -217,7 +235,7 @@ async function evalJs(script, target, options = {}) {
       }
       outcome;
     `;
-    const raw = await jxa(src);
+    const raw = await jxa(src, { timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
     let parsed;
     try { parsed = JSON.parse(raw); } catch { return raw; }
     if (parsed && parsed.__perch_timeout) throw new Error(`eval_js (awaitPromise) timed out after ${timeout}ms`);
@@ -290,7 +308,7 @@ async function waitFor(args = {}, target) {
     }
     outcome;
   `;
-  const out = JSON.parse(await jxa(src));
+  const out = JSON.parse(await jxa(src, { timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD }));
   if (!out.ok) throw new Error(`wait_for timed out after ${timeout}ms`);
   if (!expression) return { ok: true, waited: out.waited };
   return out;
@@ -567,6 +585,137 @@ async function openDevtools(args = {}) {
   return { ok: true };
 }
 
+const MIME_BY_EXT = {
+  pdf:  "application/pdf",
+  doc:  "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  txt:  "text/plain",
+  rtf:  "application/rtf",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  pages: "application/x-iwork-pages-sffpages",
+  png:  "image/png",
+  jpg:  "image/jpeg",
+  jpeg: "image/jpeg",
+};
+
+async function readUserFile(p, encoding) {
+  const abs = p.startsWith("~")
+    ? resolvePath(homedir(), p.slice(p.startsWith("~/") ? 2 : 1))
+    : resolvePath(p);
+  try { return { abs, data: await readFile(abs, encoding) }; }
+  catch (e) { throw new Error(`cannot read ${abs}: ${e.message}`); }
+}
+
+async function fileUpload(args = {}) {
+  const { selector = "input[type=file]", path, target } = args;
+  if (!path) throw new Error("file_upload requires `path`");
+
+  const { abs, data: bytes } = await readUserFile(path);
+  const b64 = bytes.toString("base64");
+  const filename = abs.split("/").pop();
+  const mime = MIME_BY_EXT[filename.split(".").pop().toLowerCase()] || "application/octet-stream";
+
+  // CSS-hidden inputs reject .files assignment, so promote to visible via inline !important then restore.
+  const script = `
+    const b64 = ${JSON.stringify(b64)};
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const file = new File([arr], ${JSON.stringify(filename)}, { type: ${JSON.stringify(mime)} });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const input = document.querySelector(${JSON.stringify(selector)});
+    if (!input) return { ok: false, error: 'no input matching ' + ${JSON.stringify(selector)} };
+    const orig = { display: input.style.display, visibility: input.style.visibility, hidden: input.hidden };
+    if (input.hidden) input.hidden = false;
+    input.style.setProperty('display', 'block', 'important');
+    input.style.setProperty('visibility', 'visible', 'important');
+    input.files = dt.files;
+    ['change', 'input', 'blur'].forEach(t => input.dispatchEvent(new Event(t, { bubbles: true })));
+    setTimeout(() => {
+      input.hidden = orig.hidden;
+      input.style.display = orig.display;
+      input.style.visibility = orig.visibility;
+    }, 150);
+    return {
+      ok: input.files && input.files.length === 1,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+    };
+  `;
+  return await evalJs(script, target);
+}
+
+async function textInput(args = {}) {
+  const { selector, label_pattern, text, text_path, target } = args;
+  if (!text && !text_path) throw new Error("text_input requires `text` or `text_path`");
+  if (text && text_path) throw new Error("text_input: pass `text` OR `text_path`, not both");
+
+  let body = text;
+  if (text_path) ({ data: body } = await readUserFile(text_path, "utf8"));
+  if (!body || !body.trim()) throw new Error("text_input: empty body");
+
+  const script = `
+    const text = ${JSON.stringify(body)};
+    const labelRe = ${label_pattern ? `new RegExp(${JSON.stringify(label_pattern)}, 'i')` : "null"};
+    const selector = ${selector ? JSON.stringify(selector) : "null"};
+    const MIN_RATIO = 0.9;
+    const minLen = Math.max(50, Math.floor(text.trim().length * MIN_RATIO));
+
+    function setPlain(el) {
+      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+      setter.call(el, text);
+      ['input', 'change', 'blur'].forEach(t => el.dispatchEvent(new Event(t, { bubbles: true })));
+      return (el.value || '').trim().length >= minLen;
+    }
+    function setRich(root) {
+      root.focus();
+      root.innerHTML = text.split(/\\n\\n+/).map(p => '<p>' + p.replace(/\\n/g, '<br>') + '</p>').join('');
+      ['input', 'change', 'blur'].forEach(t => root.dispatchEvent(new InputEvent(t, { bubbles: true, inputType: 'insertText', data: text })));
+      return (root.innerText || root.textContent || '').trim().length >= minLen;
+    }
+    function isRich(el) {
+      return el && (el.isContentEditable || el.classList?.contains('fr-element') || el.classList?.contains('ql-editor') || el.classList?.contains('ProseMirror'));
+    }
+
+    if (selector) {
+      const el = document.querySelector(selector);
+      if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) {
+        if (setPlain(el)) return { ok: true, kind: 'plain_selector', len: el.value.length };
+      }
+      if (isRich(el)) {
+        if (setRich(el)) return { ok: true, kind: 'rich_selector', len: (el.innerText || '').length };
+      }
+    }
+
+    if (labelRe) {
+      const labelOf = (el) => (el.labels?.[0]?.textContent || el.getAttribute('aria-label') || el.placeholder || el.name || '').trim();
+      const ta = Array.from(document.querySelectorAll('textarea')).find(el => labelRe.test(labelOf(el)));
+      if (ta && setPlain(ta)) return { ok: true, kind: 'plain_label', len: ta.value.length };
+
+      // iframe editors (TinyMCE) expose their root via contentDocument, not the iframe element itself.
+      const editors = Array.from(document.querySelectorAll('[contenteditable=true], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe'));
+      for (const ed of editors) {
+        const root = ed.tagName === 'IFRAME' ? (ed.contentDocument && ed.contentDocument.body) : ed;
+        if (!root) continue;
+        // Walk up to a labeled wrapper so we don't drop the text into the wrong contenteditable.
+        let scope = ed;
+        for (let i = 0; i < 6 && scope; i++) {
+          if (labelRe.test(scope.textContent || '')) break;
+          scope = scope.parentElement;
+        }
+        if (!scope || !labelRe.test(scope.textContent || '')) continue;
+        if (setRich(root)) return { ok: true, kind: 'rich_label', host: ed.className || ed.tagName, len: (root.innerText || '').length };
+      }
+    }
+
+    return { ok: false, error: 'no fillable field matched', tried: { selector: !!selector, label: !!labelRe } };
+  `;
+  return await evalJs(script, target);
+}
+
 // ---- MCP plumbing ----
 
 const TARGET_SCHEMA = {
@@ -730,6 +879,33 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "file_upload",
+    description: "Upload a file to an `<input type=file>` in the target tab WITHOUT shipping the file bytes through the agent context. Perch reads the file from disk, base64-encodes it server-side, and runs a DataTransfer assignment in the page via eval_js. Focus-independent: works on background tabs, never activates the browser, never steals focus from whatever you're doing. Agent only sends `{path, selector?, target?}` (~200 bytes) in the tool call. Returns `{ok, name, size, type}` on success. On `{ok: false}`, fall back to your manual-attach hand-off — don't retry, the failure is usually a non-standard upload widget that doesn't expose a plain `<input type=file>`.",
+    inputSchema: {
+      type: "object",
+      required: ["path"],
+      properties: {
+        path: { type: "string", description: "Absolute path or `~/...` to the file to upload. Resolved against $HOME before keystroking into the dialog." },
+        selector: { type: "string", description: "CSS selector for the file input. Default 'input[type=file]'." },
+        target: TARGET_SCHEMA,
+      },
+    },
+  },
+  {
+    name: "text_input",
+    description: "Fill a text field — plain `<textarea>`/`<input>` OR a rich-text editor (Froala, Quill, TinyMCE, ProseMirror, generic contenteditable). Tries plain first, falls back to detecting and assigning into the editor's content root with a synthetic InputEvent, then verifies the value landed (≥90% of input length). Pass `text_path` instead of `text` for long bodies (cover letters, essays) — perch reads from disk so the body stays out of the agent's tool args on retries. Returns `{ok, kind, len}` on success or `{ok: false, error}` if nothing matched. Provide `selector` for a direct hit, or `label_pattern` (regex string) to find by associated label / aria-label / placeholder / name.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The text to fill in. Mutually exclusive with `text_path`." },
+        text_path: { type: "string", description: "Path to a file containing the text. Mutually exclusive with `text`. Use this for cover letters / long answers." },
+        selector: { type: "string", description: "Optional CSS selector for the target field. If both given, `selector` is tried before `label_pattern`." },
+        label_pattern: { type: "string", description: "Optional regex (case-insensitive) matched against label / aria-label / placeholder / name. Example: 'cover letter|carta de motivaci[oó]n'." },
+        target: TARGET_SCHEMA,
+      },
+    },
+  },
 ];
 
 const server = new Server(
@@ -760,6 +936,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "get_html":      result = await getHtml(args.selector, args.target); break;
       case "open_devtools": result = await openDevtools(args); break;
       case "notify":        result = await notify(args); break;
+      case "file_upload":   result = await fileUpload(args); break;
+      case "text_input":    result = await textInput(args); break;
       default: throw new Error(`unknown tool: ${name}`);
     }
     if (result && result.__image) {
