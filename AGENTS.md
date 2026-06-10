@@ -9,6 +9,8 @@ perch exposes MCP tools for driving macOS browsers — tab listing, tab creation
 ```
 .
 ├── server.js     # single-file MCP server
+├── scripts/
+│   └── smoke.mjs # stdio MCP smoke test (`npm run smoke`)
 ├── install.sh    # macOS installer — clones, npm install, registers via `claude mcp add`
 ├── package.json  # one dep: @modelcontextprotocol/sdk
 ├── README.md     # public-facing intro + install
@@ -96,6 +98,7 @@ The server returns an actionable error when any layer blocks a call.
 - **Tools earn their slot.** New tools should solve a real workflow, not mirror CDP for completeness.
 - **AppleScript is synchronous; async is faked via polling.** `eval_js` defaults to sync (one osascript round-trip). `awaitPromise: true` wraps the script in an async IIFE, stashes the resolved value on `window.__perch_async_*`, and polls JXA-side until it appears. Adds latency (~50ms per poll tick) but unblocks Promise-using code — Figma Plugin API, async DOM extraction, fetch chains.
 - **Background-friendly by default.** `activate_tab`, `screenshot{raise:true}` (opt-in), and `click{trusted:true, raise:true}` (opt-in) are the only focus-stealers. `screenshot` defaults to CGWindowID capture and does not steal focus. Trusted input tools fail loudly when target is not frontmost and `raise: false`; they don't silently raise.
+- **Run `npm run smoke` after any server.js change.** It boots the server over stdio, asserts the tool-schema size budget and output shapes, and exercises the live JXA bridge when a browser is running (skips those checks otherwise).
 
 ## Ceiling — what AppleScript can't do
 

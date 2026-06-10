@@ -8,7 +8,8 @@
     "perch": "./server.js"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "smoke": "node scripts/smoke.mjs"
   },
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
