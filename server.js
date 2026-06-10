@@ -654,6 +654,7 @@ async function newTab(url, app = "Google Chrome") {
     if (!app.running()) app.activate();
     const kind = ${JSON.stringify(browser.kind)};
     let win;
+    let newTabId = null;
     if (kind === 'chrome' || kind === 'arc') {
       if (!app.windows.length) app.Window().make();
       win = app.windows[0];
@@ -661,6 +662,7 @@ async function newTab(url, app = "Google Chrome") {
       win.tabs.push(t);
       try {
         if (kind === 'arc') {
+          try { newTabId = t.id(); } catch (e) {}
           // Prefer the pushed specifier (race-free); fall back to positional.
           try { t.select(); } catch (e) { win.tabs[win.tabs.length - 1].select(); }
         }
@@ -691,7 +693,15 @@ async function newTab(url, app = "Google Chrome") {
       }
     }
     let winId = null; try { winId = win.id(); } catch (e) {}
-    let tabIndex = null; try { tabIndex = win.tabs.length - 1; } catch (e) {}
+    // Arc inserts new tabs mid-collection (sidebar "Today" section), so length-1
+    // is wrong there; resolve the pushed tab's real position by UUID.
+    let tabIndex = null;
+    try {
+      if (kind === 'arc' && newTabId != null) {
+        const i = win.tabs.id().indexOf(newTabId);
+        tabIndex = i >= 0 ? i : null;
+      } else tabIndex = win.tabs.length - 1;
+    } catch (e) {}
     JSON.stringify({ windowId: winId, tabIndex });
   `;
   const { windowId = null, tabIndex = null } = JSON.parse(await jxa(src));
