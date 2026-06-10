@@ -231,6 +231,21 @@ function arcActiveTabGuardJxa(toolName) {
   `;
 }
 
+// Runs the page JS held in JXA-side variable `jsVar` in the target tab and binds the
+// bridge's return value to `resultVar`. Assumes targetClause bindings in scope.
+// Arc auto-JSON.stringifies execute() returns, so its branch unwraps one layer.
+function execTabJsFragment(resultVar, jsVar) {
+  return `
+    let ${resultVar};
+    if (tab_kind === 'safari') ${resultVar} = Application(tab_app).doJavaScript(${jsVar}, { in: tab });
+    else if (tab_kind === 'arc') {
+      const __x = tab.execute({javascript: ${jsVar}});
+      try { ${resultVar} = JSON.parse(__x); } catch (e) { ${resultVar} = __x; }
+    }
+    else ${resultVar} = tab.execute({javascript: ${jsVar}});
+  `;
+}
+
 function targetClause(target) {
   const want = target || {};
   return `
@@ -476,21 +491,19 @@ async function evalJs(script, target, options = {}) {
       if (arcBg) {
         outcome = JSON.stringify({__perch_arc_bg: true});
       } else {
-        if (tab_kind === 'chrome') tab.execute({javascript: ${JSON.stringify(kickoff)}});
-        else if (tab_kind === 'arc') tab.execute({javascript: ${JSON.stringify(kickoff)}});
-        else Application(tab_app).doJavaScript(${JSON.stringify(kickoff)}, { in: tab });
+        const __kickJs = ${JSON.stringify(kickoff)};
+        const __pollJs = ${JSON.stringify(poll)};
+        ${execTabJsFragment("__kick", "__kickJs")}
         const start = Date.now();
         const timeout = ${timeout};
         outcome = JSON.stringify({__perch_timeout: true});
         while (Date.now() - start < timeout) {
           let r = 'null';
           try {
-            if (tab_kind === 'chrome') r = String(tab.execute({javascript: ${JSON.stringify(poll)}}) || 'null');
-            else if (tab_kind === 'arc') {
-              const a = tab.execute({javascript: ${JSON.stringify(poll)}});
-              try { r = String(JSON.parse(a) || 'null'); } catch (e) { r = String(a); }
-            }
-            else r = String(Application(tab_app).doJavaScript(${JSON.stringify(poll)}, {in: tab}) || 'null');
+            ${execTabJsFragment("__r", "__pollJs")}
+            // null/'' from the bridge mean "nothing yet", matching the old
+            // String(x || 'null'); the poll otherwise returns non-empty JSON.
+            r = (__r == null || __r === '') ? 'null' : String(__r);
           } catch (e) {}
           if (r !== 'null') { outcome = r; break; }
           delay(0.05);
@@ -510,22 +523,20 @@ async function evalJs(script, target, options = {}) {
   const wrapped = buildEvalWrapper(script);
   const src = `
     ${targetClause(target)}
+    const __evalJs = ${JSON.stringify(wrapped)};
     let raw;
-    if (tab_kind === 'chrome') raw = tab.execute({javascript: ${JSON.stringify(wrapped)}});
-    else if (tab_kind === 'arc') {
+    let arcBg = false;
+    if (tab_kind === 'arc') {
       // Arc tab.execute hangs on background tabs — pre-check we're the active tab.
       let isCurrent = false;
       try { isCurrent = ${ARC_TAB_IS_ACTIVE}; } catch (e) {}
-      if (!isCurrent) {
-        raw = '__PERCH_ARC_BG__';
-      } else {
-        // Arc auto-JSON.stringifies tab.execute return values, so the wrapper's
-        // JSON-stringified result ends up double-encoded. Undo one layer here.
-        const r = tab.execute({javascript: ${JSON.stringify(wrapped)}});
-        try { raw = JSON.parse(r); } catch (e) { raw = r; }
-      }
+      arcBg = !isCurrent;
     }
-    else raw = Application(tab_app).doJavaScript(${JSON.stringify(wrapped)}, { in: tab });
+    if (arcBg) raw = '__PERCH_ARC_BG__';
+    else {
+      ${execTabJsFragment("__raw", "__evalJs")}
+      raw = __raw;
+    }
     raw == null ? 'null' : String(raw);
   `;
   const raw = await jxa(src);
@@ -570,17 +581,12 @@ async function wait(args = {}, target) {
       const timeout = ${timeout};
       const interval = ${interval};
       outcome = JSON.stringify({ok: false, timeout: true});
+      const __checkJs = ${JSON.stringify(wrapped)};
       while (Date.now() - start < timeout) {
         let resultStr = 'null';
         try {
-          if (tab_kind === 'chrome') resultStr = String(tab.execute({javascript: ${JSON.stringify(wrapped)}}) || 'null');
-          else if (tab_kind === 'arc') {
-            // Arc auto-stringifies; unwrap one layer so JSON.parse below sees the same shape Chrome emits.
-            const r = tab.execute({javascript: ${JSON.stringify(wrapped)}});
-            let unwrapped; try { unwrapped = JSON.parse(r); } catch (e) { unwrapped = r; }
-            resultStr = String(unwrapped == null ? 'null' : unwrapped);
-          }
-          else resultStr = String(Application(tab_app).doJavaScript(${JSON.stringify(wrapped)}, {in: tab}) || 'null');
+          ${execTabJsFragment("__chk", "__checkJs")}
+          resultStr = (__chk == null || __chk === '') ? 'null' : String(__chk);
         } catch (e) {}
         let parsed = null;
         try { parsed = JSON.parse(resultStr); } catch (e) {}
@@ -1200,12 +1206,7 @@ async function trustedClick(args = {}) {
       ${needProbe ? `
         ${arcActiveTabGuardJxa('click')}
         const __probeJs = ${JSON.stringify(probeBody)};
-        let __probeRaw;
-        if (tab_kind === 'safari') __probeRaw = Application(tab_app).doJavaScript(__probeJs, { in: tab });
-        else if (tab_kind === 'arc') {
-          const a = tab.execute({javascript: __probeJs});
-          try { __probeRaw = JSON.parse(a); } catch (e) { __probeRaw = a; }
-        } else __probeRaw = tab.execute({javascript: __probeJs});
+        ${execTabJsFragment("__probeRaw", "__probeJs")}
         const __probe = JSON.parse(String(__probeRaw));
         if (__probe.__perch_ref_miss) { __result = __probe; break; }
         if (!__probe.ok) { __result = { ok: false, error: __probe.error }; break; }
@@ -1398,12 +1399,7 @@ async function trustedFill({ ref, selector, label_pattern, text, target }) {
     let __result = null;
     do {
       const __probeJs = ${JSON.stringify(probeBody)};
-      let __probeRaw;
-      if (tab_kind === 'safari') __probeRaw = Application(tab_app).doJavaScript(__probeJs, { in: tab });
-      else if (tab_kind === 'arc') {
-        const a = tab.execute({javascript: __probeJs});
-        try { __probeRaw = JSON.parse(a); } catch (e) { __probeRaw = a; }
-      } else __probeRaw = tab.execute({javascript: __probeJs});
+      ${execTabJsFragment("__probeRaw", "__probeJs")}
       const __probe = JSON.parse(String(__probeRaw));
       if (__probe.__perch_ref_miss) { __result = __probe; break; }
       if (!__probe.ok) { __result = { ok: false, error: __probe.error }; break; }
@@ -1457,12 +1453,7 @@ async function trustedFill({ ref, selector, label_pattern, text, target }) {
 
       delay(0.05);
       const __verifyJs = ${JSON.stringify(verifyBody)};
-      let __vRaw;
-      if (tab_kind === 'safari') __vRaw = Application(tab_app).doJavaScript(__verifyJs, { in: tab });
-      else if (tab_kind === 'arc') {
-        const a = tab.execute({javascript: __verifyJs});
-        try { __vRaw = JSON.parse(a); } catch (e) { __vRaw = a; }
-      } else __vRaw = tab.execute({javascript: __verifyJs});
+      ${execTabJsFragment("__vRaw", "__verifyJs")}
       const __v = JSON.parse(String(__vRaw));
       if (!__v.ok) { __result = { ok: false, error: __v.error }; break; }
       const __expected = Math.max(1, Math.floor(__text.trim().length * 0.9));
