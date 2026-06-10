@@ -767,10 +767,11 @@ async function pageState(target) {
       scroll: { x: window.scrollX, y: window.scrollY },
       doc: { w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight },
       meta: (function() {
+        const keep = ['description', 'og:title', 'og:description', 'og:image'];
         const out = {};
         document.querySelectorAll('meta').forEach(m => {
           const k = m.getAttribute('name') || m.getAttribute('property');
-          if (k && !(k in out)) out[k] = m.getAttribute('content');
+          if (k && keep.indexOf(k) >= 0 && !(k in out)) out[k] = m.getAttribute('content');
         });
         return out;
       })()
@@ -898,7 +899,7 @@ async function accessibilitySnapshot(args = {}) {
     function describe(el, ref, role) {
       const tag = el.tagName.toLowerCase();
       const out = { ref, role, name: accName(el) };
-      if (role === 'link' && el.href) out.href = el.href;
+      if (role === 'link' && el.href) out.href = el.href.length > 300 ? el.href.slice(0, 300) + '...' : el.href;
       // Form-specific extras — emitted only when set so the tree stays compact for
       // non-form pages but contains everything a form-filler needs in one snapshot.
       // Skip subtype values already implied by role (radio/checkbox/button/submit).
@@ -969,15 +970,19 @@ async function consoleCapture(args = {}) {
       const state = { entries: [], orig, installed: true, max: ${Number(max) || 500} };
       window.__perch_console = state;
       function safe(v) {
+        let s;
         try {
-          if (typeof v === 'string') return v;
-          if (v instanceof Error) return v.stack || v.message || String(v);
-          return JSON.stringify(v, function(k, val) {
+          if (typeof v === 'string') s = v;
+          else if (v instanceof Error) s = v.stack || v.message || String(v);
+          else s = JSON.stringify(v, function(k, val) {
             if (typeof val === 'function') return '[Function ' + (val.name || '') + ']';
             if (typeof val === 'undefined') return '[undefined]';
             return val;
           });
-        } catch (e) { return String(v); }
+        } catch (e) { s = String(v); }
+        s = String(s);
+        // Cap at record time so a page logging huge payloads can't bloat the buffer.
+        return s.length > 1000 ? s.slice(0, 1000) + '...[+' + (s.length - 1000) + ' chars]' : s;
       }
       function record(level, args) {
         if (state.entries.length >= state.max) state.entries.shift();
@@ -1572,7 +1577,7 @@ const TOOLS = [
   },
   {
     name: "page_state",
-    description: "Return URL, title, readyState, viewport, scroll, document size, and meta tags for the target tab.",
+    description: "Return URL, title, readyState, viewport, scroll, document size, and selected meta tags (description, og:*) for the target tab.",
     inputSchema: { type: "object", properties: { target: TARGET_SCHEMA } },
   },
   {
