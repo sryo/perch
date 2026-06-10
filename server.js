@@ -334,7 +334,7 @@ function resolveTargetIdsJxa() {
     let pid = null;
     try { pid = Application('System Events').processes.byName(tab_app).unixId(); } catch (e) {}
 
-    let windowNumber = null;
+    let windowNumber = null, cgBounds = null;
     try {
       ObjC.import('CoreGraphics');
       // kCGWindowListOptionOnScreenOnly (1) | kCGWindowListExcludeDesktopElements (16) = 17.
@@ -345,7 +345,7 @@ function resolveTargetIdsJxa() {
       // while CG includes the titlebar, so an exact match is brittle.
       const list = $.CGWindowListCopyWindowInfo(17, 0);
       const n = list.count;
-      let best = null, bestScore = Infinity;
+      let best = null, bestScore = Infinity, bestBounds = null;
       for (let i = 0; i < n; i++) {
         const entry = list.objectAtIndex(i);
         const entryPid = ObjC.unwrap(entry.objectForKey('kCGWindowOwnerPID'));
@@ -363,9 +363,10 @@ function resolveTargetIdsJxa() {
         if (score < bestScore) {
           bestScore = score;
           best = ObjC.unwrap(entry.objectForKey('kCGWindowNumber'));
+          bestBounds = { x: bx, y: by, w: bw, h: bh };
         }
       }
-      if (best != null) windowNumber = best;
+      if (best != null) { windowNumber = best; cgBounds = bestBounds; }
     } catch (e) {}
   `;
 }
@@ -633,7 +634,10 @@ async function newTab(url, app = "Google Chrome") {
       const t = app.Tab({ url: ${JSON.stringify(targetUrl)} });
       win.tabs.push(t);
       try {
-        if (kind === 'arc') win.tabs[win.tabs.length - 1].select();
+        if (kind === 'arc') {
+          // Prefer the pushed specifier (race-free); fall back to positional.
+          try { t.select(); } catch (e) { win.tabs[win.tabs.length - 1].select(); }
+        }
         else win.activeTabIndex = win.tabs.length;
       } catch (e) {}
     } else {
@@ -706,9 +710,9 @@ async function screenshot(args = {}) {
     // screencapture -l reads the window's pixels regardless of z-order, capturing
     // obscured windows without raising them. (Doesn't help with background tabs in
     // the same window: only the active tab is rendered to the window's pixel buffer.)
-    JSON.stringify({ geom, windowNumber });
+    JSON.stringify({ geom, windowNumber, cgBounds });
   `;
-  const { geom, windowNumber } = JSON.parse(await jxa(src));
+  const { geom, windowNumber, cgBounds } = JSON.parse(await jxa(src));
   const tmp = `/tmp/perch-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
   if (windowNumber != null) {
     await exec("screencapture", ["-l", String(windowNumber), "-x", "-o", tmp]);
@@ -731,10 +735,26 @@ async function screenshot(args = {}) {
     outPath = jpg;
     mime = "image/jpeg";
   }
+  // Final pixel dims (post-downscale/format) let callers map image -> screen
+  // coordinates: screenX = window.x + imageX * (window.w / image.w).
+  let imageDims = null;
+  try {
+    const { stdout } = await exec("sips", ["-g", "pixelWidth", "-g", "pixelHeight", outPath]);
+    const w = /pixelWidth: (\d+)/.exec(stdout), h = /pixelHeight: (\d+)/.exec(stdout);
+    if (w && h) imageDims = { w: Number(w[1]), h: Number(h[1]) };
+  } catch (e) {}
   const buf = await readFile(outPath);
   await unlink(tmp).catch(() => {});
   if (outPath !== tmp) await unlink(outPath).catch(() => {});
-  return { __image: true, data: buf.toString("base64"), mimeType: mime };
+  // The -l capture's pixels correspond to the CG window bounds (titlebar included),
+  // not AppleScript's inner-content geom; report whichever rect was actually captured.
+  const captureRect = windowNumber != null && cgBounds ? cgBounds : geom;
+  return {
+    __image: true,
+    data: buf.toString("base64"),
+    mimeType: mime,
+    meta: imageDims ? { window: captureRect, image: imageDims } : undefined,
+  };
 }
 
 async function pageState(target) {
@@ -1443,7 +1463,7 @@ async function trustedFill({ ref, selector, label_pattern, text, target }) {
       const __expected = Math.max(1, Math.floor(__text.trim().length * 0.9));
       const __actual = (__v.value || '').trim().length;
       if (__actual < __expected) {
-        __result = { ok: false, error: 'trusted fill: value did not land (got ' + __actual + ' chars, expected >= ' + __expected + ')', got: __v.value };
+        __result = { ok: false, error: 'trusted fill: value did not land (got ' + __actual + ' chars, expected >= ' + __expected + ')', got: String(__v.value || '').slice(0, 200) };
         break;
       }
       __result = { ok: true, kind: 'trusted_' + __probe.tag, len: __actual };
@@ -1539,7 +1559,7 @@ const TOOLS = [
   },
   {
     name: "screenshot",
-    description: "Capture the target browser window. CGWindowID capture reads pixels regardless of z-order, so obscured windows work without stealing focus. An explicit `tabIndex` targeting a non-active tab silently switches the window to it first. Images are downscaled to `maxWidth` before returning.",
+    description: "Capture the target browser window. CGWindowID capture reads pixels regardless of z-order, so obscured windows work without stealing focus. An explicit `tabIndex` targeting a non-active tab silently switches the window to it first. Images are downscaled to `maxWidth` before returning. A second text block carries `{window:{x,y,w,h}, image:{w,h}}` (screen points / pixels) for mapping image coordinates to screen: screenX = window.x + imageX * window.w / image.w.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1714,7 +1734,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       default: throw new Error(`unknown tool: ${name}`);
     }
     if (result && result.__image) {
-      return { content: [{ type: "image", data: result.data, mimeType: result.mimeType }] };
+      const content = [{ type: "image", data: result.data, mimeType: result.mimeType }];
+      if (result.meta) content.push({ type: "text", text: JSON.stringify(result.meta) });
+      return { content };
     }
     return { content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }] };
   } catch (e) {
