@@ -217,6 +217,20 @@ const FRONTMOST = `
   try { fm = Application('System Events').applicationProcesses.whose({frontmost: true})[0].name(); } catch (e) {}
 `;
 
+// Assumes targetClause bindings in scope. Arc's activeTabIndex()/currentTab both throw;
+// the activeTab UUID match is the only working activeness signal.
+const ARC_TAB_IS_ACTIVE = `tab.id() === tab_window.activeTab.id()`;
+
+function arcActiveTabGuardJxa(toolName) {
+  return `
+    if (tab_kind === 'arc') {
+      let __arcActive = false;
+      try { __arcActive = ${ARC_TAB_IS_ACTIVE}; } catch (e) {}
+      if (!__arcActive) throw new Error("Arc cannot ${toolName} on background tabs; call activate_tab on this target first, or operate on Arc's active tab.");
+    }
+  `;
+}
+
 function targetClause(target) {
   const want = target || {};
   return `
@@ -228,6 +242,8 @@ function targetClause(target) {
       let chosen = null;
       for (const b of browsers) {
         if (want.app && b.app !== want.app) continue;
+        // Once a candidate is locked in, only the frontmost browser can replace it.
+        if (chosen && b.app !== fm) continue;
         let app;
         try { app = Application(b.app); if (!app.running()) continue; } catch (e) { continue; }
         let winsLen;
@@ -242,15 +258,10 @@ function targetClause(target) {
           if (want.tabIndex != null) idx = want.tabIndex;
           else if (b.kind === 'chrome') {
             try { idx = win.activeTabIndex() - 1; } catch (e) { idx = 0; }
+          } else if (b.kind === 'arc') {
+            try { idx = Math.max(0, tabs.id().indexOf(win.activeTab.id())); } catch (e) { idx = 0; }
           } else {
-            idx = 0;
-            try {
-              const cur = win.currentTab();
-              const curIdx = cur.index();
-              for (let i = 0; i < tabs.length; i++) {
-                try { if (tabs[i].index() === curIdx) { idx = i; break; } } catch (e) {}
-              }
-            } catch (e) {}
+            try { idx = Math.max(0, tabs.index().indexOf(win.currentTab().index())); } catch (e) { idx = 0; }
           }
           if (idx < 0 || idx >= tabs.length) {
             if (want.tabIndex != null) {
@@ -282,6 +293,9 @@ function focusTabFragment() {
         if (tab_kind === 'chrome') {
           let idx; try { idx = tab.index(); } catch (e) { idx = 1; }
           tab_window.activeTabIndex = idx;
+        } else if (tab_kind === 'arc') {
+          // Arc forbids writing activeTab/currentTab, but the dictionary's select verb works.
+          tab.select();
         } else {
           tab_window.currentTab = tab;
         }
@@ -394,25 +408,35 @@ async function listTabs(args = {}) {
           let urls = [], titles = [];
           try { urls = win.tabs.url(); } catch (e) { continue; }
           try { titles = b.kind === 'safari' ? win.tabs.name() : win.tabs.title(); } catch (e) {}
+          // The active flag is only reported for window 0 of the frontmost browser;
+          // skip the detection round-trips everywhere else.
           let activeIdx = -1;
-          if (b.kind === 'chrome') {
-            try { activeIdx = win.activeTabIndex() - 1; } catch (e) {}
-          } else {
-            try {
-              const curIdx = win.currentTab().index();
-              const idxs = win.tabs.index();
-              for (let i = 0; i < idxs.length; i++) { if (idxs[i] === curIdx) { activeIdx = i; break; } }
-            } catch (e) {}
+          if (w === 0 && b.app === fm) {
+            if (b.kind === 'chrome') {
+              try { activeIdx = win.activeTabIndex() - 1; } catch (e) {}
+            } else if (b.kind === 'arc') {
+              try { activeIdx = win.tabs.id().indexOf(win.activeTab.id()); } catch (e) {}
+            } else {
+              try { activeIdx = win.tabs.index().indexOf(win.currentTab().index()); } catch (e) {}
+            }
           }
           for (let t = 0; t < urls.length; t++) {
-            out.push({ app: b.app, windowId: winId, tabIndex: t, url: urls[t] || '', title: titles[t] || '', active: t === activeIdx && w === 0 && b.app === fm });
+            out.push({ app: b.app, windowId: winId, tabIndex: t, url: urls[t] || '', title: titles[t] || '', active: t === activeIdx });
           }
         }
       } catch (e) {}
     }
     JSON.stringify(out);
   `;
-  return JSON.parse(await jxa(src));
+  let tabs = JSON.parse(await jxa(src));
+  const { urlContains, titleContains, limit } = args;
+  if (urlContains == null && titleContains == null && limit == null) return tabs;
+  if (urlContains) tabs = tabs.filter(t => t.url.toLowerCase().includes(String(urlContains).toLowerCase()));
+  if (titleContains) tabs = tabs.filter(t => t.title.toLowerCase().includes(String(titleContains).toLowerCase()));
+  const total = tabs.length;
+  if (limit != null && tabs.length > limit) tabs = tabs.slice(0, Math.max(0, limit));
+  // tabIndex fields keep their original window positions, so filtered rows stay addressable.
+  return { tabs, total };
 }
 
 async function evalJs(script, target, options = {}) {
@@ -444,7 +468,7 @@ async function evalJs(script, target, options = {}) {
       let arcBg = false;
       if (tab_kind === 'arc') {
         let isCurrent = false;
-        try { isCurrent = tab.index() === tab_window.currentTab().index(); } catch (e) {}
+        try { isCurrent = ${ARC_TAB_IS_ACTIVE}; } catch (e) {}
         if (!isCurrent) arcBg = true;
       }
       let outcome;
@@ -488,9 +512,9 @@ async function evalJs(script, target, options = {}) {
     let raw;
     if (tab_kind === 'chrome') raw = tab.execute({javascript: ${JSON.stringify(wrapped)}});
     else if (tab_kind === 'arc') {
-      // Arc tab.execute hangs on background tabs — pre-check we're the current tab.
+      // Arc tab.execute hangs on background tabs — pre-check we're the active tab.
       let isCurrent = false;
-      try { isCurrent = tab.index() === tab_window.currentTab().index(); } catch (e) {}
+      try { isCurrent = ${ARC_TAB_IS_ACTIVE}; } catch (e) {}
       if (!isCurrent) {
         raw = '__PERCH_ARC_BG__';
       } else {
@@ -534,7 +558,7 @@ async function wait(args = {}, target) {
     let arcBg = false;
     if (tab_kind === 'arc') {
       let isCurrent = false;
-      try { isCurrent = tab.index() === tab_window.currentTab().index(); } catch (e) {}
+      try { isCurrent = ${ARC_TAB_IS_ACTIVE}; } catch (e) {}
       if (!isCurrent) arcBg = true;
     }
     let outcome;
@@ -575,7 +599,8 @@ async function wait(args = {}, target) {
   return out;
 }
 
-async function navigate(url, target, wait = true) {
+// Param must not be named `wait` — it would shadow the module-level wait() called below.
+async function navigate(url, target, waitForLoad = true) {
   const src = `
     ${targetClause(target)}
     // Safari's tab.url assignment only takes effect on the document's currentTab —
@@ -585,7 +610,7 @@ async function navigate(url, target, wait = true) {
     'ok';
   `;
   await jxa(src);
-  if (wait) {
+  if (waitForLoad) {
     try { await wait({ readyState: "complete", timeout: 15000 }, target); }
     catch (e) {}
   } else {
@@ -607,7 +632,10 @@ async function newTab(url, app = "Google Chrome") {
       win = app.windows[0];
       const t = app.Tab({ url: ${JSON.stringify(targetUrl)} });
       win.tabs.push(t);
-      try { win.activeTabIndex = win.tabs.length; } catch (e) {}
+      try {
+        if (kind === 'arc') win.tabs[win.tabs.length - 1].select();
+        else win.activeTabIndex = win.tabs.length;
+      } catch (e) {}
     } else {
       // Safari: documents[0].tabs throws "cannot get object" under JXA, but
       // windows[0].tabs works. Use windows everywhere here for the same reason
@@ -651,18 +679,21 @@ async function activateTab(target) {
 }
 
 async function screenshot(args = {}) {
-  const { raise = false, target } = args;
+  const { raise = false, target, format = "png", maxWidth = 1568 } = args;
   const src = `
     ${targetClause(target)}
-    ${raise ? focusTabFragment() : `
-      // When tabIndex targets a non-active tab, silently switch the window to it so the
-      // right tab renders. No app.activate(), no window raise; user's focus stays put.
-      // Arc lacks reliable active-tab detection, so the switch is skipped there.
+    ${raise ? focusTabFragment() : !(target && target.tabIndex != null) ? "" : `
+      // An explicit tabIndex may target a non-active tab; silently switch the window to it
+      // so the right tab renders. No app.activate(), no window raise; user's focus stays put.
+      // Gated on explicit tabIndex: on the default path tab is the active tab by construction,
+      // and switching there could act on a bad fallback if active-tab detection failed.
       let __switched = false;
       try {
         if (tab_kind === 'chrome') {
           const __want = tab.index();
           if (tab_window.activeTabIndex() !== __want) { tab_window.activeTabIndex = __want; __switched = true; }
+        } else if (tab_kind === 'arc') {
+          if (!(${ARC_TAB_IS_ACTIVE})) { tab.select(); __switched = true; }
         } else if (tab_kind === 'safari') {
           const __want = tab.index();
           if (tab_window.currentTab().index() !== __want) { tab_window.currentTab = tab; __switched = true; }
@@ -686,9 +717,24 @@ async function screenshot(args = {}) {
     // rect capture, which is only reliable if the window happens to be on top.
     await exec("screencapture", ["-R", `${geom.x},${geom.y},${geom.w},${geom.h}`, "-x", "-o", tmp]);
   }
-  const buf = await readFile(tmp);
+  if (maxWidth > 0) {
+    try {
+      const { stdout } = await exec("sips", ["-g", "pixelWidth", tmp]);
+      const m = /pixelWidth: (\d+)/.exec(stdout);
+      if (m && Number(m[1]) > maxWidth) await exec("sips", ["--resampleWidth", String(maxWidth), tmp]);
+    } catch (e) {} // downscale is best-effort; full-size capture still returns
+  }
+  let outPath = tmp, mime = "image/png";
+  if (format === "jpeg") {
+    const jpg = tmp.replace(/\.png$/, ".jpg");
+    await exec("sips", ["-s", "format", "jpeg", "-s", "formatOptions", "80", tmp, "--out", jpg]);
+    outPath = jpg;
+    mime = "image/jpeg";
+  }
+  const buf = await readFile(outPath);
   await unlink(tmp).catch(() => {});
-  return { __image: true, data: buf.toString("base64"), mimeType: "image/png" };
+  if (outPath !== tmp) await unlink(outPath).catch(() => {});
+  return { __image: true, data: buf.toString("base64"), mimeType: mime };
 }
 
 async function pageState(target) {
@@ -712,18 +758,33 @@ async function pageState(target) {
   `, target);
 }
 
+// Slices page-side so oversized strings never cross the osascript bridge.
+function sliceReturnJs(expr, args) {
+  const maxChars = Math.max(1, Number(args.maxChars) || 20000);
+  const offset = Math.max(0, Number(args.offset) || 0);
+  return `
+    const __s = ${expr};
+    if (__s == null) return null;
+    if (${offset} === 0 && __s.length <= ${maxChars}) return __s;
+    return __s.slice(${offset}, ${offset} + ${maxChars}) +
+      "\\n[truncated: chars ${offset}-" + Math.min(${offset} + ${maxChars}, __s.length) +
+      " of " + __s.length + "; pass offset/maxChars for the rest]";
+  `;
+}
+
 async function getText(args = {}) {
   const { selector, ref, target } = args;
   if (ref) {
     return evalJs(`
       const el = (window.__perch_refs || {})[${JSON.stringify(ref)}];
       if (!el) return { __perch_ref_miss: true, ref: ${JSON.stringify(ref)} };
-      return el.innerText;
+      ${sliceReturnJs("el.innerText", args)}
     `, target);
   }
   return evalJs(`
     const el = document.querySelector(${JSON.stringify(selector || "body")});
-    return el ? el.innerText : null;
+    if (!el) return null;
+    ${sliceReturnJs("el.innerText", args)}
   `, target);
 }
 
@@ -733,12 +794,13 @@ async function getHtml(args = {}) {
     return evalJs(`
       const el = (window.__perch_refs || {})[${JSON.stringify(ref)}];
       if (!el) return { __perch_ref_miss: true, ref: ${JSON.stringify(ref)} };
-      return el.outerHTML;
+      ${sliceReturnJs("el.outerHTML", args)}
     `, target);
   }
   return evalJs(`
     const el = document.querySelector(${JSON.stringify(selector || "html")});
-    return el ? el.outerHTML : null;
+    if (!el) return null;
+    ${sliceReturnJs("el.outerHTML", args)}
   `, target);
 }
 
@@ -1111,6 +1173,7 @@ async function trustedClick(args = {}) {
       let sx = ${x === null ? "null" : Number(x)};
       let sy = ${y === null ? "null" : Number(y)};
       ${needProbe ? `
+        ${arcActiveTabGuardJxa('click')}
         const __probeJs = ${JSON.stringify(probeBody)};
         let __probeRaw;
         if (tab_kind === 'safari') __probeRaw = Application(tab_app).doJavaScript(__probeJs, { in: tab });
@@ -1302,9 +1365,10 @@ async function trustedFill({ ref, selector, label_pattern, text, target }) {
     ${targetClause(target)}
     ${assertAccessibilityGrantedJxa()}
     ${FRONTMOST}
-    if (tab_app !== fm) throw new Error('target not frontmost; pass raise:true or call activate_tab first');
+    if (tab_app !== fm) throw new Error('target not frontmost; call activate_tab first');
     ${resolveTargetIdsJxa()}
     if (pid == null) throw new Error('could not resolve PID for ' + tab_app);
+    ${arcActiveTabGuardJxa('fill')}
 
     let __result = null;
     do {
@@ -1393,22 +1457,25 @@ async function trustedFill({ ref, selector, label_pattern, text, target }) {
 
 const TARGET_SCHEMA = {
   type: "object",
-  description: "Optional. Defaults to the active tab of the frontmost browser.",
+  description: "Optional; default = active tab of the frontmost browser. windowId/tabIndex come from list_tabs.",
   properties: {
-    app: { type: "string", description: "App name, e.g. 'Google Chrome', 'Safari', 'Arc'." },
-    windowId: { type: ["string", "number"], description: "Window id as returned by list_tabs." },
-    tabIndex: { type: "number", description: "0-based tab index within the window." },
+    app: { type: "string" },
+    windowId: { type: ["string", "number"] },
+    tabIndex: { type: "number" },
   },
 };
 
 const TOOLS = [
   {
     name: "list_tabs",
-    description: "List open tabs across running macOS browsers (Chrome family + Safari + Arc). `active: true` marks the active tab of the frontmost browser's front window. Pass `app` to scope the listing to one browser — skips the cross-browser walk and cuts payload when other browsers carry noisy tab titles.",
+    description: "List open tabs across running browsers (Chrome family, Safari, Arc). `active: true` marks the active tab of the frontmost browser. Prefer the filters over dumping everything; with any filter the result is `{tabs, total}` and `tabIndex` keeps each tab's real window position.",
     inputSchema: {
       type: "object",
       properties: {
-        app: { type: "string", description: "Optional. Restrict the listing to one browser app, e.g. 'Google Chrome', 'Google Chrome Canary', 'Safari', 'Arc'. Unknown names return an empty array." },
+        app: { type: "string", description: "One browser, e.g. 'Google Chrome', 'Safari', 'Arc'." },
+        urlContains: { type: "string", description: "Case-insensitive URL substring filter." },
+        titleContains: { type: "string", description: "Case-insensitive title substring filter." },
+        limit: { type: "number", description: "Max rows returned; `total` reports matches before the cut." },
       },
     },
   },
@@ -1430,7 +1497,7 @@ const TOOLS = [
   },
   {
     name: "navigate",
-    description: "Navigate the target tab to a URL. Waits for document.readyState to reach 'complete' by default.",
+    description: "Navigate the target tab to a URL. `wait: true` (default) blocks until document.readyState is 'complete'.",
     inputSchema: {
       type: "object",
       required: ["url"],
@@ -1443,28 +1510,28 @@ const TOOLS = [
   },
   {
     name: "eval_js",
-    description: "Run JavaScript in the target tab. Your code runs inside an IIFE — use `return` to send a value back. The value is JSON-stringified on the page side and parsed here. Pass `awaitPromise: true` for async user code — perch wraps it in `await (async () => { ... })()`, stashes the result on the page, and polls until it lands. Requires the browser's 'Allow JavaScript from Apple Events' toggle.",
+    description: "Run JS in the target tab inside an IIFE; `return <value>` sends the value back. `awaitPromise: true` runs async code and waits for its Promise. Pass `script_path` to load the code from a local file, keeping large scripts out of tool args. Needs the browser's 'Allow JavaScript from Apple Events' toggle; on Arc the target tab must be active (activate_tab first).",
     inputSchema: {
       type: "object",
-      required: ["script"],
       properties: {
-        script: { type: "string", description: "Use `return <value>` to send a value back. With `awaitPromise: true`, you can use `await` freely." },
-        awaitPromise: { type: "boolean", description: "Treat the script as async; wait for its Promise to resolve before returning. Default false." },
-        timeout: { type: "number", description: "Async timeout in milliseconds (only with `awaitPromise`). Default 30000." },
+        script: { type: "string", description: "Mutually exclusive with `script_path`." },
+        script_path: { type: "string", description: "Absolute or ~/ path to a JS file to run." },
+        awaitPromise: { type: "boolean", description: "Default false." },
+        timeout: { type: "number", description: "ms, awaitPromise only. Default 30000." },
         target: TARGET_SCHEMA,
       },
     },
   },
   {
     name: "wait",
-    description: "Wait until the target tab matches a condition. Three modes: readyState/selector (returns {ok, waited}); or `expression` mode where a JS expression is polled and its truthy value is returned as {ok, waited, value}. Use expression mode for hands-free agent loops, e.g. `expression: \"window.__avis.summary().filter(a=>!a.status).length ? window.__avis.summary() : null\"`. Polls inside a single osascript call.",
+    description: "Block until the target tab matches `readyState`/`selector`, or until a polled JS `expression` returns non-null/non-false (returned as `value`). Polls inside one osascript call.",
     inputSchema: {
       type: "object",
       properties: {
         selector: { type: "string", description: "CSS selector that must exist." },
         readyState: { type: "string", enum: ["loading", "interactive", "complete"], description: "Minimum readyState. Default 'complete'." },
-        expression: { type: "string", description: "JS expression. When the value is non-null and non-false, it's returned in the response's `value` field. Mutually exclusive with selector/readyState." },
-        timeout: { type: "number", description: "Milliseconds. Default 10000." },
+        expression: { type: "string", description: "JS expression; mutually exclusive with selector/readyState." },
+        timeout: { type: "number", description: "ms. Default 10000." },
         interval: { type: "number", description: "Poll interval ms. Default 150." },
         target: TARGET_SCHEMA,
       },
@@ -1472,11 +1539,13 @@ const TOOLS = [
   },
   {
     name: "screenshot",
-    description: "Capture a PNG of the target browser window. Defaults to CGWindowID capture, reading the window's pixels regardless of z-order so a window obscured by other apps captures without stealing focus. If `tabIndex` targets a non-active tab, perch silently switches the window to that tab first (Chrome/Safari; Arc no-ops) so the right pixels render. No app activation, no window raise. Pass `raise: true` to bring the window forward.",
+    description: "Capture the target browser window. CGWindowID capture reads pixels regardless of z-order, so obscured windows work without stealing focus. An explicit `tabIndex` targeting a non-active tab silently switches the window to it first. Images are downscaled to `maxWidth` before returning.",
     inputSchema: {
       type: "object",
       properties: {
         raise: { type: "boolean", description: "Bring window to front before capture. Default false (focus-preserving)." },
+        maxWidth: { type: "number", description: "Downscale to this pixel width; 0 = original size. Default 1568." },
+        format: { type: "string", enum: ["png", "jpeg"], description: "Default png; jpeg is smaller." },
         target: TARGET_SCHEMA,
       },
     },
@@ -1488,39 +1557,43 @@ const TOOLS = [
   },
   {
     name: "get_text",
-    description: "Return the innerText of an element (default: body) in the target tab. Pass `ref` (from a prior `accessibility_snapshot`) instead of `selector` to target a snapshotted element.",
+    description: "innerText of an element (default body). Accepts `ref` from accessibility_snapshot instead of `selector`. Output is capped at `maxChars` with a truncation marker; page through long content with `offset`.",
     inputSchema: {
       type: "object",
       properties: {
         selector: { type: "string", description: "CSS selector. Default 'body'." },
-        ref: { type: "string", description: "Ref ID from a prior accessibility_snapshot call. Invalidated by the next snapshot or page navigation." },
+        ref: { type: "string", description: "Ref from a prior accessibility_snapshot; invalidated by the next snapshot or navigation." },
+        maxChars: { type: "number", description: "Default 20000." },
+        offset: { type: "number", description: "Start offset for paging. Default 0." },
         target: TARGET_SCHEMA,
       },
     },
   },
   {
     name: "get_html",
-    description: "Return the outerHTML of an element (default: <html>) in the target tab. Pass `ref` (from a prior `accessibility_snapshot`) instead of `selector` to target a snapshotted element.",
+    description: "outerHTML of an element (default <html>). Accepts `ref` from accessibility_snapshot instead of `selector`. Output is capped at `maxChars` with a truncation marker; page with `offset`. Prefer accessibility_snapshot or get_text when you don't need markup.",
     inputSchema: {
       type: "object",
       properties: {
         selector: { type: "string", description: "CSS selector. Default 'html'." },
-        ref: { type: "string", description: "Ref ID from a prior accessibility_snapshot call." },
+        ref: { type: "string", description: "Ref from a prior accessibility_snapshot." },
+        maxChars: { type: "number", description: "Default 20000." },
+        offset: { type: "number", description: "Start offset for paging. Default 0." },
         target: TARGET_SCHEMA,
       },
     },
   },
   {
     name: "accessibility_snapshot",
-    description: "Return a compact tree of interactive + landmark elements in the target tab — links, buttons, form fields, headings, ARIA-roled nodes. Each element gets a stable `ref` ID (e.g. \"1\", \"2\", ...) that other tools (`get_text`, `get_html`, `fill`, `click`) accept in place of a CSS selector. Cheaper than `get_html` for navigation/agent loops since it skips presentational markup. Refs are stashed on `window.__perch_refs` and INVALIDATED on each new snapshot or page navigation — always re-snapshot before acting on stale refs. To click a ref, use `click({ ref: \"<ref>\" })`. Pass `role` to scope the walk — filtering happens before the expensive visibility check and accessible-name computation, so it shrinks both the JSON payload and the time the walk takes on form-heavy pages. Elements carry `role` + accessible `name`, plus optional `value` / `checked` / `disabled` / `required`. Form fields additionally include `subtype` (input type — email/tel/password/...), `attr_name` (the HTML `name` attribute), and for `<select>` an `options` array (up to 30 visible option texts). Headings include `level`.",
+    description: "Compact tree of interactive + landmark elements (links, buttons, form fields, headings) with stable `ref` IDs that click/fill/get_text/get_html accept in place of selectors. Refs are invalidated by the next snapshot or page navigation; re-snapshot before reusing them. Pass `role` to filter at the walk, shrinking both payload and walk time. Form fields carry `subtype`/`attr_name`/`options`; headings carry `level`. Cheaper than get_html for agent loops.",
     inputSchema: {
       type: "object",
       properties: {
-        max: { type: "number", description: "Cap on returned elements. Default 500. The result includes `truncated: true` if the cap was hit." },
-        include_bounds: { type: "boolean", description: "Include each element's viewport bounds `{x,y,w,h}`. Default false." },
+        max: { type: "number", description: "Element cap; result gets `truncated: true` when hit. Default 500." },
+        include_bounds: { type: "boolean", description: "Include viewport bounds {x,y,w,h}. Default false." },
         role: {
           oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-          description: "Optional. Restrict to one role or a list. Common values: 'link', 'button', 'textbox', 'combobox', 'checkbox', 'radio', 'heading', 'slider'. Unknown role names yield an empty result (no throw).",
+          description: "Filter: 'link', 'button', 'textbox', 'combobox', 'checkbox', 'radio', 'heading', 'slider'. Unknown roles return empty.",
         },
         target: TARGET_SCHEMA,
       },
@@ -1528,7 +1601,7 @@ const TOOLS = [
   },
   {
     name: "console_capture",
-    description: "Capture page-side console output by patching `console.{log,info,warn,error,debug}`. Call with `mode: \"start\"` to install the wrapper, `\"read\"` to drain new entries (returns `{ok, entries: [{level, ts, args[]}]}`), `\"clear\"` to empty the buffer, `\"stop\"` to uninstall and drain. Misses messages issued BEFORE start. Buffer is per-document — page navigation wipes it; call `start` again after navigating. Bounded by `max` (default 500, oldest entries dropped first).",
+    description: "Capture page console output by patching console methods. `mode`: 'start' installs the wrapper, 'read' drains new entries, 'clear' empties, 'stop' uninstalls and drains. Misses messages logged before start; navigation wipes the buffer (start again after).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1540,65 +1613,61 @@ const TOOLS = [
   },
   {
     name: "notify",
-    description: "Display a macOS notification (appears in Notification Center). Useful for pinging the user when a long-running task finishes — agent has no other channel to interrupt. Fire-and-forget: no action buttons, no click handler, no return signal. Notification shows as coming from 'Script Editor' (osascript limitation, not fixable). Default sound 'Glass'.",
+    description: "Show a macOS notification, e.g. to ping the user when a long task finishes. Fire-and-forget; shows as from 'Script Editor' (osascript limitation).",
     inputSchema: {
       type: "object",
       required: ["message"],
       properties: {
         message:  { type: "string", description: "Body text." },
         title:    { type: "string", description: "Default 'perch'." },
-        subtitle: { type: "string", description: "Optional subtitle line." },
-        sound: {
-          type: "string",
-          enum: ["Basso","Blow","Bottle","Frog","Funk","Glass","Hero","Morse","Ping","Pop","Purr","Sosumi","Submarine","Tink"],
-          description: "System sound. Default 'Glass'.",
-        },
+        subtitle: { type: "string" },
+        sound:    { type: "string", description: "System sound name (Glass, Ping, Hero, ...). Default 'Glass'." },
       },
     },
   },
   {
     name: "file_upload",
-    description: "Upload a file to an `<input type=file>` in the target tab WITHOUT shipping the file bytes through the agent context. Perch reads the file from disk, base64-encodes it server-side, and runs a DataTransfer assignment in the page via eval_js. Focus-independent: works on background tabs, never activates the browser, never steals focus from whatever you're doing. Agent only sends `{path, selector?, target?}` (~200 bytes) in the tool call. Returns `{ok, name, size, type}` on success. On `{ok: false}`, fall back to your manual-attach hand-off — don't retry, the failure is usually a non-standard upload widget that doesn't expose a plain `<input type=file>`.",
+    description: "Set a file on an `<input type=file>` without shipping bytes through agent context; perch reads the file from disk and assigns it in the page. Works on background tabs (except Arc: activate_tab first), never activates the browser. On `{ok: false}` don't retry; the widget likely isn't a plain file input, so fall back to a manual hand-off.",
     inputSchema: {
       type: "object",
       required: ["path"],
       properties: {
-        path: { type: "string", description: "Absolute path or `~/...` to the file to upload. Resolved against $HOME before keystroking into the dialog." },
-        selector: { type: "string", description: "CSS selector for the file input. Default 'input[type=file]'." },
+        path: { type: "string", description: "Absolute or ~/ path to the file." },
+        selector: { type: "string", description: "File input selector. Default 'input[type=file]'." },
         target: TARGET_SCHEMA,
       },
     },
   },
   {
     name: "click",
-    description: "Click an element in the target tab. Default path calls `el.click()` via the JS bridge — fast, no special permission, same isTrusted:false semantics as today's `eval_js + .click()` pattern. Pass `trusted: true` to dispatch a real CGEvent.postToPid mouse event with `isTrusted: true` — needed for Cloudflare/WAF submit buttons, React form submits that silently no-op on synthetic clicks, Workday-class validators, Ashby autocomplete options. Trusted mode requires Accessibility permission (System Settings > Privacy & Security > Accessibility) and the target window to be frontmost (or pass `raise: true` to bring it forward first, mirroring `screenshot{raise:true}`). Returns `{ok, point, pid, windowNumber}` for trusted dispatch; `{ok}` for plain; `{__perch_ref_miss, ref}` if the ref is stale.",
+    description: "Click an element by `ref`, `selector`, or screen `x`/`y` (trusted only). Default path is el.click() (isTrusted: false). `trusted: true` posts a real CGEvent mouse click (isTrusted: true) for WAF buttons, React submits that ignore synthetic clicks, and Workday-class validators; it needs Accessibility permission and the window frontmost (or `raise: true`).",
     inputSchema: {
       type: "object",
       properties: {
-        ref: { type: "string", description: "Ref ID from a prior accessibility_snapshot call." },
-        selector: { type: "string", description: "CSS selector. Used when `ref` is not provided." },
-        x: { type: "number", description: "Screen-global X coordinate (CSS pixels). Only with `trusted: true`. Useful when you have coordinates from a screenshot vision pass and no ref." },
-        y: { type: "number", description: "Screen-global Y coordinate. Only with `trusted: true`." },
+        ref: { type: "string", description: "Ref from a prior accessibility_snapshot." },
+        selector: { type: "string", description: "CSS selector, used when `ref` is absent." },
+        x: { type: "number", description: "Screen X (trusted only), e.g. from a screenshot vision pass." },
+        y: { type: "number", description: "Screen Y (trusted only)." },
         button: { type: "string", enum: ["left", "right"], description: "Default 'left'." },
-        clickCount: { type: "number", description: "1 (default) or 2 for double-click." },
-        trusted: { type: "boolean", description: "Dispatch a real CGEvent (isTrusted: true) instead of el.click(). Default false." },
-        raise: { type: "boolean", description: "Bring target window to the front before clicking (trusted only). Default false." },
+        clickCount: { type: "number", description: "2 for double-click. Default 1." },
+        trusted: { type: "boolean", description: "Real CGEvent instead of el.click(). Default false." },
+        raise: { type: "boolean", description: "Bring window to front first (trusted only). Default false." },
         target: TARGET_SCHEMA,
       },
     },
   },
   {
     name: "fill",
-    description: "Fill a text field — plain `<textarea>`/`<input>` OR a rich-text editor (Froala, Quill, TinyMCE, ProseMirror, generic contenteditable). Default path tries plain first, falls back to detecting and assigning into the editor's content root with a synthetic InputEvent, then verifies the value landed (≥90% of input length). Pass `text_path` instead of `text` for long bodies (cover letters, essays) — perch reads from disk so the body stays out of the agent's tool args on retries. Pass `trusted: true` for plain `<input>`/`<textarea>` that reject synthetic input (React fields that hit `value_didnt_stick`, platforms that check `isTrusted` on input events — Workday class). Trusted mode focuses the field via a real CGEvent click, then types via `CGEventKeyboardSetUnicodeString`. Requires Accessibility permission and the target window to be frontmost. Rich editors don't need trusted mode — the InputEvent path already works. Returns `{ok, kind, len}` on success or `{ok: false, error}` if nothing matched. Targeting priority: `ref` > `selector` > `label_pattern`.",
+    description: "Fill a plain input/textarea or rich-text editor (Quill, TinyMCE, ProseMirror, Froala, contenteditable), then verify the value landed. Target priority: `ref` > `selector` > `label_pattern`. Use `text_path` for long bodies so the text stays out of tool args. `trusted: true` types real keystrokes for plain fields that reject synthetic input (Workday class); needs Accessibility permission and the window frontmost. Rich editors don't need trusted mode.",
     inputSchema: {
       type: "object",
       properties: {
-        text: { type: "string", description: "The text to fill in. Mutually exclusive with `text_path`." },
-        text_path: { type: "string", description: "Path to a file containing the text. Mutually exclusive with `text`. Use this for cover letters / long answers." },
-        ref: { type: "string", description: "Optional ref ID from a prior accessibility_snapshot call. Highest-priority target." },
-        selector: { type: "string", description: "Optional CSS selector for the target field." },
-        label_pattern: { type: "string", description: "Optional regex (case-insensitive) matched against label / aria-label / placeholder / name. Example: 'cover letter|carta de motivaci[oó]n'." },
-        trusted: { type: "boolean", description: "Dispatch real CGEvent keyboard events (isTrusted: true) instead of the setter/InputEvent path. Plain input/textarea only. Default false." },
+        text: { type: "string", description: "Mutually exclusive with `text_path`." },
+        text_path: { type: "string", description: "Path to a file with the text; for cover letters / long answers." },
+        ref: { type: "string", description: "Ref from a prior accessibility_snapshot." },
+        selector: { type: "string", description: "CSS selector for the field." },
+        label_pattern: { type: "string", description: "Case-insensitive regex against label/aria-label/placeholder/name." },
+        trusted: { type: "boolean", description: "Real CGEvent keystrokes; plain input/textarea only. Default false." },
         target: TARGET_SCHEMA,
       },
     },
@@ -1621,7 +1690,16 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       case "new_tab":       result = await newTab(args.url, args.app); break;
       case "activate_tab":  result = await activateTab(args.target); break;
       case "navigate":      result = await navigate(args.url, args.target, args.wait !== false); break;
-      case "eval_js":       result = await evalJs(args.script, args.target, { awaitPromise: args.awaitPromise, timeout: args.timeout }); break;
+      case "eval_js": {
+        let script = args.script;
+        if (args.script_path) {
+          if (script) throw new Error("eval_js: pass `script` OR `script_path`, not both");
+          ({ data: script } = await readUserFile(args.script_path, "utf8"));
+        }
+        if (!script) throw new Error("eval_js requires `script` or `script_path`");
+        result = await evalJs(script, args.target, { awaitPromise: args.awaitPromise, timeout: args.timeout });
+        break;
+      }
       case "wait":          result = await wait(args, args.target); break;
       case "screenshot":    result = await screenshot(args); break;
       case "page_state":    result = await pageState(args.target); break;
