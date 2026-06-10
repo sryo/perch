@@ -386,6 +386,26 @@ function resolveTargetIdsJxa() {
   `;
 }
 
+// Defines __postMouse for trusted-input CGEvent dispatch. Requires __pt (CGPoint),
+// pid, and windowNumber in scope (resolveTargetIdsJxa + the caller's CGPointMake).
+function postMouseFragmentJxa() {
+  return `
+      function __postMouse(evtType, pressure, state, mouseBtn) {
+        const e = $.CGEventCreateMouseEvent($(), evtType, __pt, mouseBtn);
+        $.CGEventSetIntegerValueField(e, 1, state);          // kCGMouseEventClickState
+        $.CGEventSetDoubleValueField(e, 11, pressure);        // kCGMouseEventPressure
+        $.CGEventSetIntegerValueField(e, 9, pid);             // kCGEventTargetUnixProcessID
+        if (windowNumber != null) {
+          $.CGEventSetIntegerValueField(e, 27, windowNumber); // kCGMouseEventWindowUnderMousePointer
+          $.CGEventSetIntegerValueField(e, 28, windowNumber); // ...ThatCanHandleThisEvent
+          $.CGEventSetIntegerValueField(e, 51, windowNumber); // private: target window
+          $.CGEventSetIntegerValueField(e, 58, 1);            // private: routing flag
+        }
+        $.CGEventPostToPid(pid, e);
+      }
+  `;
+}
+
 // JXA fragment that throws if the controlling app lacks Accessibility permission.
 // Used by every trusted-input dispatch (click {trusted:true}, fill {trusted:true}).
 // kCFBooleanFalse suppresses the OS prompt — controlling apps may surface odd icons there.
@@ -1221,28 +1241,16 @@ async function trustedClick(args = {}) {
       const __evtUp   = __isRight ? 4 : 2;   // kCGEventRightMouseUp / kCGEventLeftMouseUp
       const __pt = $.CGPointMake(sx, sy);
 
-      function __postMouse(evtType, pressure, state) {
-        const e = $.CGEventCreateMouseEvent($(), evtType, __pt, __mouseBtn);
-        $.CGEventSetIntegerValueField(e, 1, state);          // kCGMouseEventClickState
-        $.CGEventSetDoubleValueField(e, 11, pressure);        // kCGMouseEventPressure
-        $.CGEventSetIntegerValueField(e, 9, pid);             // kCGEventTargetUnixProcessID
-        if (windowNumber != null) {
-          $.CGEventSetIntegerValueField(e, 27, windowNumber); // kCGMouseEventWindowUnderMousePointer
-          $.CGEventSetIntegerValueField(e, 28, windowNumber); // ...ThatCanHandleThisEvent
-          $.CGEventSetIntegerValueField(e, 51, windowNumber); // private: target window
-          $.CGEventSetIntegerValueField(e, 58, 1);            // private: routing flag
-        }
-        $.CGEventPostToPid(pid, e);
-      }
+      ${postMouseFragmentJxa()}
 
-      __postMouse(__evtDown, 1.0, 1);
+      __postMouse(__evtDown, 1.0, 1, __mouseBtn);
       delay(0.012);
-      __postMouse(__evtUp, 0.0, 1);
+      __postMouse(__evtUp, 0.0, 1, __mouseBtn);
       if (${Number(clickCount) === 2 ? "true" : "false"}) {
         delay(0.06);
-        __postMouse(__evtDown, 1.0, 2);
+        __postMouse(__evtDown, 1.0, 2, __mouseBtn);
         delay(0.012);
-        __postMouse(__evtUp, 0.0, 2);
+        __postMouse(__evtUp, 0.0, 2, __mouseBtn);
       }
 
       __result = { ok: true, point: { x: sx, y: sy }, pid, windowNumber };
@@ -1408,22 +1416,10 @@ async function trustedFill({ ref, selector, label_pattern, text, target }) {
       ObjC.import('Foundation');
       const __pt = $.CGPointMake(__probe.sx, __probe.sy);
 
-      function __postMouse(evtType, pressure) {
-        const e = $.CGEventCreateMouseEvent($(), evtType, __pt, 0);
-        $.CGEventSetIntegerValueField(e, 1, 1);
-        $.CGEventSetDoubleValueField(e, 11, pressure);
-        $.CGEventSetIntegerValueField(e, 9, pid);
-        if (windowNumber != null) {
-          $.CGEventSetIntegerValueField(e, 27, windowNumber);
-          $.CGEventSetIntegerValueField(e, 28, windowNumber);
-          $.CGEventSetIntegerValueField(e, 51, windowNumber);
-          $.CGEventSetIntegerValueField(e, 58, 1);
-        }
-        $.CGEventPostToPid(pid, e);
-      }
-      __postMouse(1, 1.0);  // leftMouseDown
+      ${postMouseFragmentJxa()}
+      __postMouse(1, 1.0, 1, 0);  // leftMouseDown
       delay(0.012);
-      __postMouse(2, 0.0);  // leftMouseUp
+      __postMouse(2, 0.0, 1, 0);  // leftMouseUp
       delay(0.05);  // let focus settle before typing
 
       const __text = ${JSON.stringify(text)};
