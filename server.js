@@ -35,6 +35,7 @@ const BROWSERS = [
 // never `windows()`), multi-tab reads use bulk property access (`tabs.url()`).
 function jxaRuntime(BROWSERS) {
   ObjC.import("CoreGraphics");
+  ObjC.import("Foundation");
   const KIND = {};
   BROWSERS.forEach((b) => { KIND[b.app] = b.kind; });
   const apps = {};
@@ -44,14 +45,14 @@ function jxaRuntime(BROWSERS) {
   // the frontmost app, pids and CGWindowIDs. ~4ms vs ~60ms for a System Events
   // `frontmost` query, and it needs no extra permission.
   function procs() {
-    const out = { front: null, z: [], pid: {}, wins: {} };
+    const out = { front: null, frontPid: null, frontWid: null, z: [], pid: {}, wins: {} };
     let list = [];
     try { list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || []; } catch (e) {}
     for (const w of list) {
       const b = w.kCGWindowBounds || {};
       if (w.kCGWindowLayer !== 0 || b.Width < 100 || b.Height < 100) continue;
       const owner = w.kCGWindowOwnerName;
-      if (out.front === null) out.front = owner;
+      if (out.front === null) { out.front = owner; out.frontPid = w.kCGWindowOwnerPID; out.frontWid = w.kCGWindowNumber; }
       if (!KIND[owner]) continue;
       if (!out.wins[owner]) { out.z.push(owner); out.pid[owner] = w.kCGWindowOwnerPID; out.wins[owner] = []; }
       out.wins[owner].push({ wid: w.kCGWindowNumber, x: b.X, y: b.Y, w: b.Width, h: b.Height });
@@ -194,29 +195,27 @@ function jxaRuntime(BROWSERS) {
 
   function requireAccessibility() {
     ObjC.import("ApplicationServices");
-    // kCFBooleanFalse: never let the OS prompt pop up from inside a tool call.
-    const opts = $.NSDictionary.dictionaryWithObjectForKey($.kCFBooleanFalse, $.kAXTrustedCheckOptionPrompt);
-    if (!$.AXIsProcessTrustedWithOptions(opts)) {
-      throw new Error("Accessibility permission required: System Settings > Privacy & Security > Accessibility, tick the controlling app (Claude Code / Terminal / iTerm), then retry.");
+    // Read-only permission check; AXIsProcessTrusted never triggers the grant prompt.
+    if (!$.AXIsProcessTrusted()) {
+      throw new Error("Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch (Codex / ChatGPT / Terminal / iTerm), then retry.");
     }
   }
 
-  // Resolves the target for trusted input: permission, frontmost (or raise), ids.
+  // Resolves the target for trusted input: permission, optional foreground, ids.
   function trustedTarget(a) {
     const t = resolve(a.target);
     requireAccessibility();
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
-    else if (t.P.front !== t.app) throw new Error("target not frontmost; pass raise:true or call activate_tab first");
     const I = ids(t);
     if (I.windowNumber == null) throw new Error(t.app + "'s window isn't on screen (minimized or on another Space)");
-    return { t: t, I: I };
+    if (a.raise && t.P.front !== t.app) throw new Error("target did not become frontmost after raise");
+    return { t: t, I: I, background: !a.raise };
   }
 
-  // Events go through the HID event tap, like real hardware: on macOS 27 Chrome's
-  // page never sees CGEventPostToPid or SkyLight's SLEventPostToPid events (verified
-  // live with scripts/trusted-live.mjs --delivery). The HID tap moves the real
-  // cursor, so trusted calls put it back afterwards, and it clicks whatever is at
-  // that point, so points outside the target window are refused.
+  // The explicit raise path uses the HID tap and restores the real cursor.
+  // The default route addresses the exact pid/window through SkyLight. Chromium
+  // needs the window/gesture fields and an off-screen primer pair; a bare
+  // SLEventPostToPid (as in the old --delivery probe) is ignored by its renderer.
   // Field 1 is kCGMouseEventClickState, 11 kCGMouseEventPressure (raw indices:
   // $.kCG* constants aren't reliably bridged).
   function mouse(I, pt, type, state, pressure) {
@@ -236,11 +235,110 @@ function jxaRuntime(BROWSERS) {
     mouse(I, pt, 2, 1, 0.0); // kCGEventLeftMouseUp
   }
 
+  let skyReady = false;
+  function skyInit() {
+    if (skyReady) return;
+    ObjC.bindFunction("dlopen", ["void *", ["char *", "int"]]);
+    if (!$.dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", 2)) {
+      throw new Error("SkyLight framework unavailable; use raise:true for foreground trusted input");
+    }
+    ObjC.bindFunction("_SLPSGetFrontProcess", ["int", ["void *"]]);
+    ObjC.bindFunction("GetProcessForPID", ["int", ["int", "void *"]]);
+    ObjC.bindFunction("SLPSPostEventRecordTo", ["int", ["void *", "void *"]]);
+    ObjC.bindFunction("SLEventPostToPid", ["void", ["int", "void *"]]);
+    ObjC.bindFunction("SLEventSetIntegerValueField", ["void", ["void *", "unsigned int", "long long"]]);
+    ObjC.bindFunction("CGEventSetWindowLocation", ["void", ["void *", "double", "double"]]);
+    ObjC.bindFunction("memset", ["void *", ["void *", "int", "unsigned long"]]);
+    skyReady = true;
+  }
+
+  function skyByte(data, offset, byte) {
+    const one = $.NSMutableData.dataWithLength(1);
+    $.memset(one.mutableBytes, byte, 1);
+    data.replaceBytesInRangeWithBytesLength($.NSMakeRange(offset, 1), one.mutableBytes, 1);
+  }
+
+  function focusRecord(wid, direction) {
+    const record = $.NSMutableData.dataWithLength(0xf8);
+    skyByte(record, 0x04, 0xf8);
+    skyByte(record, 0x08, 0x0d);
+    for (let i = 0; i < 4; i++) skyByte(record, 0x3c + i, (wid >>> (8 * i)) & 0xff);
+    skyByte(record, 0x8a, direction);
+    return record;
+  }
+
+  function focusPost(psn, wid, direction) {
+    const record = focusRecord(wid, direction);
+    return $.SLPSPostEventRecordTo(psn.mutableBytes, record.mutableBytes) === 0;
+  }
+
+  // AppKit-active state is switched without raising the browser. Restore the
+  // user's key window in finally, or their next keystroke would be misrouted.
+  function backgroundBegin(T) {
+    skyInit();
+    if (T.I.pid == null || T.t.P.frontPid == null || T.t.P.frontWid == null) {
+      throw new Error("cannot identify background input process/window; use raise:true");
+    }
+    const prior = $.NSMutableData.dataWithLength(8);
+    const target = $.NSMutableData.dataWithLength(8);
+    if ($._SLPSGetFrontProcess(prior.mutableBytes) !== 0 || $.GetProcessForPID(T.I.pid, target.mutableBytes) !== 0) {
+      throw new Error("cannot resolve SkyLight process serial numbers; use raise:true");
+    }
+    const B = { prior: prior, target: target, priorWid: T.t.P.frontWid, targetWid: T.I.windowNumber };
+    if (!focusPost(prior, B.targetWid, 2)) throw new Error("SkyLight defocus failed; use raise:true");
+    if (!focusPost(target, B.targetWid, 1)) {
+      focusPost(prior, B.priorWid, 1);
+      throw new Error("SkyLight background activation failed; use raise:true");
+    }
+    delay(0.02);
+    return B;
+  }
+
+  function backgroundEnd(B) {
+    if (!B) return;
+    const a = focusPost(B.target, B.targetWid, 2);
+    const b = focusPost(B.prior, B.priorWid, 1);
+    if (!a || !b) throw new Error("SkyLight could not restore the user's key window");
+  }
+
+  function skyMouse(I, pt, type, phase, clickState, group) {
+    skyInit();
+    if (I.pid == null || I.windowNumber == null) throw new Error("SkyLight target has no pid/window id");
+    const e = $.CGEventCreateMouseEvent($.CGEventSourceCreate(1), type, $.CGPointMake(pt.x, pt.y), 0);
+    const set = function (field, value) { $.SLEventSetIntegerValueField(e, field, value); };
+    set(0, phase); set(1, clickState); set(3, 0); set(7, 3);
+    set(40, I.pid); set(51, I.windowNumber); set(58, group);
+    set(91, I.windowNumber); set(92, I.windowNumber);
+    // This SPI expects the point relative to the target window. Passing the
+    // screen point shifts background Chrome clicks by the window's origin.
+    const r = I.cgBounds || I.geom;
+    const primer = pt.x === -1 && pt.y === -1;
+    $.CGEventSetWindowLocation(e, primer ? -1 : pt.x - r.x, primer ? -1 : pt.y - r.y);
+    $.SLEventPostToPid(I.pid, e);
+  }
+
+  function skyClick(I, pt) {
+    const r = I.cgBounds || I.geom;
+    if (!(pt.x >= r.x && pt.x < r.x + r.w && pt.y >= r.y && pt.y < r.y + r.h)) {
+      throw new Error("point " + Math.round(pt.x) + "," + Math.round(pt.y) + " is outside the target window; nothing was clicked");
+    }
+    const group = Date.now() % 1000000000;
+    skyMouse(I, pt, 5, 2, 0, group);
+    delay(0.015);
+    skyMouse(I, { x: -1, y: -1 }, 1, 1, 1, group);
+    delay(0.001);
+    skyMouse(I, { x: -1, y: -1 }, 2, 2, 1, group);
+    delay(0.1);
+    skyMouse(I, pt, 1, 3, 1, group);
+    delay(0.001);
+    skyMouse(I, pt, 2, 3, 1, group);
+  }
+
   const cursorAt = () => { const p = $.CGEventGetLocation($.CGEventCreate($())); return { x: p.x, y: p.y }; };
 
   // Chunks are pre-split in Node (<= 20 UTF-16 units, CGEvent's buffer cap,
   // never splitting a surrogate pair).
-  function typeChunks(I, chunks) {
+  function typeChunks(I, chunks, background) {
     // The stock bridge signature rejects NSData bytes as a UniChar*; rebinding it
     // with void* parameters passes them through.
     ObjC.bindFunction("CGEventKeyboardSetUnicodeString", ["void", ["void *", "unsigned long", "void *"]]);
@@ -249,7 +347,8 @@ function jxaRuntime(BROWSERS) {
       [true, false].forEach(function (down) {
         const e = $.CGEventCreateKeyboardEvent($(), 0, down);
         $.CGEventKeyboardSetUnicodeString(e, chunk.length, data.bytes);
-        $.CGEventPost(1, e); // kCGSessionEventTap: lands in the frontmost target's focused field
+        if (background) $.SLEventPostToPid(I.pid, e);
+        else $.CGEventPost(1, e); // kCGSessionEventTap: foreground target
       });
       delay(0.005);
     });
@@ -281,7 +380,10 @@ function jxaRuntime(BROWSERS) {
       for (let tries = 0; tries < 10; tries++) {
         let got = null;
         try { got = parseExec(T.t, a.cal); } catch (e) {}
-        const m = got && got.moves.filter(function (v) { return Math.abs(v[2] - at.x) < 2 && Math.abs(v[3] - at.y) < 2; }).pop();
+        // Directed SkyLight moves may report a window-local screenX/Y in Blink.
+        // The buffer was cleared immediately before the post and the target is
+        // behind another app, so use its latest directed move for calibration.
+        const m = got && (T.background ? got.moves.pop() : got.moves.filter(function (v) { return Math.abs(v[2] - at.x) < 2 && Math.abs(v[3] - at.y) < 2; }).pop());
         if (m) return m;
         delay(0.025);
       }
@@ -289,7 +391,8 @@ function jxaRuntime(BROWSERS) {
     };
     for (let i = 0; i < 3; i++) {
       exec(T.t, a.calReset);
-      mouse(T.I, pt, 5, 0, 0.0); // kCGEventMouseMoved
+      if (T.background) skyMouse(T.I, pt, 5, 2, 0, Date.now() % 1000000000);
+      else mouse(T.I, pt, 5, 0, 0.0); // kCGEventMouseMoved
       const m = ours(pt);
       if (!m) break;
       const dx = Math.round(probe.cx - m[0]), dy = Math.round(probe.cy - m[1]);
@@ -448,28 +551,46 @@ function jxaRuntime(BROWSERS) {
     },
     trustedClick(a) {
       const T = trustedTarget(a);
-      const home = cursorAt();
+      const home = T.background ? null : cursorAt();
+      let B = null;
       try {
-        if (a.x != null) { leftClick(T.I, { x: a.x, y: a.y }); return { ok: true, point: { x: a.x, y: a.y } }; }
+        if (a.x != null) {
+          if (T.background) B = backgroundBegin(T);
+          if (T.background) skyClick(T.I, { x: a.x, y: a.y });
+          else leftClick(T.I, { x: a.x, y: a.y });
+          return { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" };
+        }
         const A = aim(T, a, "click");
         if (A.out) return A.out;
-        leftClick(T.I, A.pt);
+        if (T.background) B = backgroundBegin(T);
+        if (T.background) skyClick(T.I, A.pt);
+        else leftClick(T.I, A.pt);
         delay(0.05);
-        return Object.assign({ ok: true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration }, parseExec(T.t, a.check));
-      } finally { $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y)); }
+        const check = parseExec(T.t, a.check);
+        return Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, delivery: T.background ? "skylight" : "hid" }, check);
+      } finally {
+        if (B) backgroundEnd(B);
+        if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
+      }
     },
     trustedFill(a) {
       const T = trustedTarget(a);
-      const home = cursorAt();
+      const home = T.background ? null : cursorAt();
+      let B = null;
       try {
         const A = aim(T, a, "fill");
         if (A.out) return A.out;
-        leftClick(T.I, A.pt);
+        if (T.background) B = backgroundBegin(T);
+        if (T.background) skyClick(T.I, A.pt);
+        else leftClick(T.I, A.pt);
         delay(0.05); // let focus settle before typing
-        typeChunks(T.I, a.chunks);
+        typeChunks(T.I, a.chunks, T.background);
         delay(0.05);
-        return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration }, parseExec(T.t, a.check));
-      } finally { $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y)); }
+        return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, delivery: T.background ? "skylight" : "hid" }, parseExec(T.t, a.check));
+      } finally {
+        if (B) backgroundEnd(B);
+        if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
+      }
     },
   };
 }
@@ -1512,7 +1633,7 @@ const TOOLS = [
     selector: SEL,
     target: TARGET,
   }, ["path"]),
-  tool("click", "Click by ref/selector (el.click()). `trusted` posts a real OS click (isTrusted, needs Accessibility permission and the window in front or `raise`); only trusted accepts screen `x`/`y`.", {
+  tool("click", "Click by ref/selector (el.click()). `trusted` targets a window through SkyLight (needs Accessibility); `raise:true` uses the foreground HID route. Check `hit` after trusted input. Only trusted accepts screen `x`/`y`.", {
     ref: REF,
     selector: SEL,
     x: { type: "number" },

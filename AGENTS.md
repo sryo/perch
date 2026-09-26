@@ -80,22 +80,22 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Fallback:** without a CGWindowID (minimized, another Space), perch captures the screen rect, which is reliable only on top.
 - **Tab switching:** only the active tab of a window is rendered. An explicit `tabIndex` switches the window to that tab first, without raising it, and waits 150ms.
 
-**Trusted input.** `click {trusted:true}` and `fill {trusted:true}` produce `isTrusted: true` events for WAF gates and validators that reject synthetic input. Verified live (Chrome Canary, macOS 27) with `node scripts/trusted-live.mjs --yes`, which raises the browser only with that consent flag and restores focus afterwards. `--delivery` compares posting paths.
+**Trusted input.** `click {trusted:true}` and `fill {trusted:true}` default to the SkyLight route, which addresses a background browser window and restores the user's AppKit key window without raising the browser or moving the shared cursor. The Chrome Canary scratch-page harness verified `isTrusted` mouse/input events, exact click position, full Unicode text, unchanged foreground app and cursor. `raise:true` keeps the foreground HID route.
 
-1. `trustedTarget`: Accessibility check (`AXIsProcessTrustedWithOptions`, prompt suppressed, so a missing grant is a loud error rather than a silent drop), then the target must be frontmost unless `raise: true` (`focus` pins the window by id before raising, since `windows[i]` is positional). The pid and window frame come from `procs()`, and the current cursor position is saved.
-2. `aim`: `selectTab` shows the target tab first. A background tab's `screenX` and `outerWidth` are stale (verified: a hidden tab reported the window's old frame). `trusted_probe` retries until the page is visible, scrolls the element into view, estimates the point (screen origin + `outer - inner` chrome + element center), and arms mousemove/mousedown recorders.
-3. Calibration: a mouse move is posted at the estimate. Only the recorded move whose `screenX/Y` equals the posted point counts, because late events and the user's own mouse reach the page too. The point is corrected by `center - client` (at most three rounds; the `calibration` trace is returned). With no matching move, the estimate is used.
-4. The press, then `trusted_check` reports `hit` (did the mousedown land on the element) and, for fill, whether the typed text landed. The cursor is warped back to where it was.
+1. `trustedTarget` resolves the browser, checks Accessibility with `AXIsProcessTrusted()` (which does not prompt), and gets the target pid, CGWindowID, and frame from `procs()` / `ids()`. With `raise:true`, `focus` pins the window by id before raising it, since `windows[i]` is positional.
+2. `backgroundBegin` binds SkyLight functions in JXA, saves the front process's PSN, resolves the browser PSN, and posts the 0xf8-byte AppKit focus records. `backgroundEnd` restores the prior process/window even if the press or typing fails. A failed focus or restore operation is surfaced as an error.
+3. `aim` selects the target tab without raising the app. A hidden tab's `screenX` and `outerWidth` are stale, so `trusted_probe` retries until visible, scrolls the element into view, estimates the screen point, and arms event recorders. The foreground HID path calibrates the point from a posted mouse move and returns a `calibration` trace. Background input uses directed SkyLight events; it never posts an HID move.
+4. Background mouse events use `SLEventPostToPid` with target pid/window routing fields and `CGEventSetWindowLocation` set to the **window-local** point. The sequence includes a move primer and an off-screen click pair before the target pair. Passing a screen point to `CGEventSetWindowLocation` shifted the live Chrome click by the window's y-origin; the local point landed at the exact element center. Background keystrokes go to the target pid. The `raise:true` path uses `CGEventPost(kCGHIDEventTap)` for the click and the session tap for typing, then restores the cursor. `trusted_check` reports `hit` and, for fill, whether the text landed.
 
-Delivery is the HID event tap (`CGEventPost(kCGHIDEventTap)`), like real hardware, which is why the cursor moves and is restored. `CGEventPostToPid`, with or without the window-routing fields, and SkyLight's `SLEventPostToPid` never reached Chrome's page. Because the HID tap clicks whatever is at that point, `mouse` refuses any point outside the target window's frame.
+The earlier bare `CGEventPostToPid` / `SLEventPostToPid` delivery probes did not reach Chrome's page. The routed SkyLight sequence is a separate path. `skyClick` and `mouse` both reject a target point outside the window frame.
 
-Typing posts keyboard events at the session tap, virtual key 0, with the text attached via `CGEventKeyboardSetUnicodeString`. Chunks are split in Node (`chunkUtf16`: at most 20 UTF-16 units, never splitting a surrogate pair). Two traps, both of which make Chrome type "a" (key 0) instead of the text:
+Typing creates keyboard events with virtual key 0 and text attached via `CGEventKeyboardSetUnicodeString`. The background route posts each event to the target pid; the foreground route posts at the session tap. Chunks are split in Node (`chunkUtf16`: at most 20 UTF-16 units, never splitting a surrogate pair). Two traps, both of which make Chrome type "a" (key 0) instead of the text:
 - the encoding is `NSUTF16LittleEndianStringEncoding` = `0x94000100`, not `0x14000100` (which yields nil data);
 - the stock JXA signature of `CGEventKeyboardSetUnicodeString` rejects NSData bytes as `UniChar*`, so it is rebound with `void *` parameters.
 
 Mouse event fields use raw indices, because `$.kCG*` constants aren't reliably bridged: 1 = click state, 11 = pressure (double).
 
-Background trusted input (clicking an unfocused window without raising it) is unbuilt. `scripts/skylight-probe.js` shows SkyLight's `SLPSPostEventRecordTo` binds from pure JXA; note that `ObjC.bindFunction` registers the function on `$` (call `$.SLEventPostToPid(...)`) rather than returning it.
+`scripts/skylight-probe.js` proves `SLPSPostEventRecordTo` binds from pure JXA. `ObjC.bindFunction` registers the function on `$` (call `$.SLEventPostToPid(...)`) rather than returning it. The production route uses `NSMutableData` to build focus records without pointer arithmetic or a compiled helper.
 
 ## Browser support
 
@@ -120,7 +120,7 @@ Each blocked layer returns an actionable error.
 - **No user values in code.** JXA goes to `osascript` as one argument or one REPL line; runtime arguments are JSON. Page scripts read arguments only from `A`. User JS for `eval_js` is embedded through the wrappers.
 - **The runtime stays self-contained ES2019.** It must not reference Node scope; `test/runtime.test.mjs` runs it under `node:vm` and compiles it with real osascript.
 - **Tools earn their slot.** Solve a real workflow; don't mirror CDP. Check both consumers (avis, trabAGItos) before changing the surface. Keep `tools/list` under `SCHEMA_BUDGET`, with shared guidance in `INSTRUCTIONS`.
-- **Background-friendly by default.** Only `activate_tab`, `screenshot {raise}` and trusted input with `raise` take focus. Trusted input fails loudly when the target isn't in front.
+- **Background-friendly by default.** Only `activate_tab`, `screenshot {raise}` and trusted input with `raise` take focus. Background trusted input must restore the prior AppKit focus and leave the cursor alone.
 - **TDD.** Write the failing test first. Then run `npm test` (unit, no browser) and `npm run smoke` (live) after any change, and `node scripts/bench.mjs --compare bench/before.json` for anything performance related.
 
 ## Ceiling: what AppleScript can't do
@@ -129,4 +129,4 @@ Each blocked layer returns an actionable error.
 - **Pre-load instrumentation** (`document_start`): both bridges run after navigation.
 - **Safari background-tab JS:** `doJavaScript` needs the tab to be current, so call `activate_tab` first.
 - **Off-screen capture** of minimized windows or windows on another Space: the rect fallback needs the window on top.
-- **Background trusted input:** unbuilt (see Trusted input).
+- **Background trusted input:** live-verified on Chrome Canary on this macOS version. SkyLight is a private macOS API and can change between OS releases. The explicit `raise:true` HID route remains available.

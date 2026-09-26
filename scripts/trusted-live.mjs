@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Live check for trusted input (click/fill {trusted:true}). It raises the browser
-// window for a few seconds, so it only runs with --yes, and afterwards it puts the
-// previously frontmost app back.
+// Live check for trusted input (click/fill {trusted:true}). Foreground mode raises
+// the browser briefly; --background checks that input reaches it without changing
+// the front app or cursor. Both modes post real input and require --yes.
 //   node scripts/trusted-live.mjs --yes [--app "Google Chrome Canary"]
+//   node scripts/trusted-live.mjs --yes --background [--app "Google Chrome Canary"]
 // Uses a scratch about:blank tab in a Chrome-family browser (reused like smoke's).
 
 import { execFileSync } from "node:child_process";
@@ -10,22 +11,30 @@ import { connect, text } from "./mcp-client.mjs";
 
 const argv = process.argv.slice(2);
 if (!argv.includes("--yes")) {
-  console.error("trusted-live raises the browser window and posts real clicks/keys. Re-run with --yes to consent.");
+  console.error("trusted-live posts real clicks/keys and may raise a browser. Re-run with --yes to consent.");
   process.exit(2);
 }
 const appArg = argv.includes("--app") ? argv[argv.indexOf("--app") + 1] : null;
+const background = argv.includes("--background");
+if (background && argv.includes("--delivery")) {
+  console.error("--background and --delivery are separate probes; run one at a time.");
+  process.exit(2);
+}
 
 const frontApp = () => execFileSync("osascript", ["-l", "JavaScript", "-e",
   "ObjC.import('CoreGraphics');const l=ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(17,0)));" +
   "(l.find(w=>w.kCGWindowLayer===0&&w.kCGWindowBounds.Width>100)||{}).kCGWindowOwnerName||''"]).toString().trim();
+const cursorAt = () => JSON.parse(execFileSync("osascript", ["-l", "JavaScript", "-e",
+  "ObjC.import('CoreGraphics');const p=$.CGEventGetLocation($.CGEventCreate($()));JSON.stringify({x:p.x,y:p.y})"]).toString().trim());
 
 const PAGE = `
   document.body.innerHTML = '<div style="height:200px"></div>' +
     '<button id=b style="margin-left:180px;width:220px;height:56px">Trusted target</button>' +
     '<p style="margin-left:180px"><input id=i aria-label="Name" style="width:320px;height:32px"></p>';
-  window.__rec = { downs: [], moves: [] };
-  document.addEventListener('mousedown', e => window.__rec.downs.push({ id: e.target.id, trusted: e.isTrusted, x: e.clientX, y: e.clientY }), true);
-  document.addEventListener('mousemove', e => { if (window.__rec.moves.length < 10) window.__rec.moves.push([e.clientX, e.clientY]); }, true);
+  window.__rec = { downs: [], moves: [], inputs: [] };
+  document.onmousedown = e => window.__rec.downs.push({ id: e.target.id, trusted: e.isTrusted, x: e.clientX, y: e.clientY });
+  document.onmousemove = e => { if (window.__rec.moves.length < 10) window.__rec.moves.push([e.clientX, e.clientY]); };
+  document.oninput = e => window.__rec.inputs.push({ id: e.target.id, trusted: e.isTrusted });
   const c = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
   return { b: c('b'), i: c('i') };`;
 
@@ -98,9 +107,46 @@ try {
   }
   const centers = JSON.parse(text(await client.call("eval_js", { target, script: PAGE })));
 
-  const clickRes = await client.call("click", { trusted: true, raise: true, selector: "#b", target });
+  if (background && !before) {
+    throw new Error("could not identify the front app before the background probe");
+  }
+  if (background && before === tab.app) {
+    throw new Error(`bring another app in front of ${tab.app} before running --background`);
+  }
+  if (background && frontApp() !== before) {
+    throw new Error(`scratch-tab setup changed the front app from ${before} to ${frontApp()}`);
+  }
+  const cursorBefore = background ? cursorAt() : null;
+  const foregroundSamples = [];
+  let poll;
+  if (background) {
+    foregroundSamples.push(frontApp());
+    poll = setInterval(() => {
+      try { foregroundSamples.push(frontApp()); }
+      catch (e) { foregroundSamples.push(`(probe error: ${e.message})`); }
+    }, 75);
+  }
+
+  let clickRes, fillRes, inputError;
+  try {
+    clickRes = await client.call("click", { trusted: true, raise: !background, selector: "#b", target });
+    if (background) foregroundSamples.push(frontApp());
+    fillRes = await client.call("fill", { trusted: true, raise: !background, selector: "#i", text: TEXT, target });
+    if (background) foregroundSamples.push(frontApp());
+  } catch (e) {
+    inputError = e;
+  } finally {
+    if (poll) clearInterval(poll);
+    if (background) {
+      foregroundSamples.push(frontApp());
+      report(foregroundSamples.every((app) => app === before), "front app stays unchanged", JSON.stringify({ expected: before, observed: [...new Set(foregroundSamples)], samples: foregroundSamples.length }));
+      const cursorAfter = cursorAt();
+      report(Math.abs(cursorAfter.x - cursorBefore.x) <= 1 && Math.abs(cursorAfter.y - cursorBefore.y) <= 1,
+        "cursor stays in place", JSON.stringify({ before: cursorBefore, after: cursorAfter }));
+    }
+  }
+  if (inputError) throw inputError;
   const click = JSON.parse(text(clickRes).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
-  const fillRes = await client.call("fill", { trusted: true, raise: true, selector: "#i", text: TEXT, target });
   const fill = JSON.parse(text(fillRes).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
   const rec = JSON.parse(text(await client.call("eval_js", { target, script: "return { rec: window.__rec, value: document.getElementById('i').value }" })));
 
@@ -108,10 +154,10 @@ try {
   report(click.hit === true && !!down?.trusted, "trusted click lands on the button", JSON.stringify({ result: click, pageSaw: rec.rec.downs[0] || null }));
   if (down) report(Math.abs(down.x - centers.b[0]) <= 3 && Math.abs(down.y - centers.b[1]) <= 3, "click point matches the element center", `center ${centers.b.map(Math.round)}, pressed ${[down.x, down.y]}`);
   const firstMove = rec.rec.moves[0];
-  if (firstMove) console.log(`INFO estimate before calibration was off by ${[Math.round(centers.b[0] - firstMove[0]), Math.round(centers.b[1] - firstMove[1])]} (px)`);
-  else console.log("INFO no mousemove reached the page (calibration unavailable)");
+  if (!background && firstMove) console.log(`INFO estimate before calibration was off by ${[Math.round(centers.b[0] - firstMove[0]), Math.round(centers.b[1] - firstMove[1])]} (px)`);
+  else if (!firstMove) console.log("INFO no mousemove reached the page (calibration unavailable)");
   report(fill.ok === true && rec.value === TEXT, "trusted fill types the full text, emoji included", JSON.stringify({ result: fill, value: rec.value }));
-
+  report(rec.rec.inputs.some((e) => e.id === "i" && e.trusted), "page receives a trusted input event", JSON.stringify(rec.rec.inputs));
   await client.call("eval_js", { target, script: "document.body.innerHTML=''; delete window.__rec; return 1" });
 } catch (e) {
   if (!e.done) report(false, "harness", e.message);
@@ -120,6 +166,6 @@ try {
   if (before && before !== frontApp()) {
     try { execFileSync("osascript", ["-e", `tell application ${JSON.stringify(before)} to activate`]); } catch {}
   }
-  console.log(`focus returned to: ${before || "(unknown)"}`);
+  console.log(`front app after test: ${frontApp() || "(unknown)"}`);
 }
 process.exit(failures ? 1 : 0);

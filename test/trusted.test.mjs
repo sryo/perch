@@ -100,7 +100,7 @@ const chromeFront = () => install({
 // SLEventPostToPid never reach the page; only the HID event tap does.
 test("trusted click goes through the HID tap and puts the cursor back", async () => {
   const world = chromeFront();
-  const r = await handleCall("click", { trusted: true, x: 300, y: 200 });
+  const r = await handleCall("click", { trusted: true, raise: true, x: 300, y: 200 });
   assert.equal(r.isError, undefined, r.content[0].text);
   assert.deepEqual(world.posted.map((e) => [e.via, e.type, e.pt]), [["hid", 1, { x: 300, y: 200 }], ["hid", 2, { x: 300, y: 200 }]]);
   assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
@@ -112,19 +112,44 @@ test("trusted input refuses a point outside the target window", async () => {
   assert.equal(r.isError, true);
   assert.match(r.content[0].text, /outside the target window/);
   assert.equal(world.posted.length, 0);
+  assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 4, "restore AppKit focus after a failed press");
+  assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
+  assert.deepEqual(world.state.warps, []);
 });
 
-test("trusted input refuses when the browser isn't frontmost, raises when asked", async () => {
+test("trusted input reaches a background browser without changing app focus or cursor", async () => {
   const world = install({
-    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: tabs(1) }] }],
-    cg: [{ owner: "Terminal" }, { owner: "Google Chrome", pid: 5 }],
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(1) }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
   });
-  const r = await handleCall("click", { trusted: true, x: 1, y: 1 });
-  assert.equal(r.isError, true);
-  assert.match(r.content[0].text, /not frontmost/);
-  assert.equal(world.posted.length, 0);
-  await handleCall("click", { trusted: true, x: 1, y: 1, raise: true });
+  const r = await handleCall("click", { trusted: true, x: 300, y: 200 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.deepEqual(world.posted.filter((e) => e.kind === "mouse" && e.pt.x >= 0 && (e.type === 1 || e.type === 2)).map((e) => [e.via, e.type, e.pt]), [
+    ["skylight", 1, { x: 300, y: 200 }], ["skylight", 2, { x: 300, y: 200 }],
+  ]);
+  assert.deepEqual(world.posted.find((e) => e.kind === "mouse" && e.type === 1 && e.pt.x >= 0).windowPoint, { x: 290, y: 200 }, "stamp the target point relative to its window");
+  assert.equal(world.posted.filter((e) => e.via === "skylight").length, 5, "primer, offscreen pair, then target pair");
+  assert.ok(world.posted.every((e) => e.pid === 5 && e.fields[51] === 77 && e.fields[91] === 77 && e.fields[92] === 77));
+  const focusRecords = world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo");
+  assert.deepEqual(focusRecords.map(([, psn, record]) => [psn.readUInt32LE(4), record.readUInt32LE(0x3c), record[0x8a]]), [
+    [1, 77, 2], [5, 77, 1], [5, 77, 2], [1, 10, 1],
+  ], "activate target then restore the prior process and window");
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+  assert.equal(world.counts["win.index="], undefined);
+  assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
+  assert.deepEqual(world.state.warps, []);
+});
+
+test("raise:true keeps the existing foreground HID path", async () => {
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(1) }] }],
+    cg: [{ owner: "Terminal", pid: 1 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
+  });
+  const r = await handleCall("click", { trusted: true, x: 300, y: 200, raise: true });
+  assert.equal(r.isError, undefined, r.content[0].text);
   assert.equal(world.counts["activate(Google Chrome)"], 1);
+  assert.deepEqual(world.posted.map((e) => e.via), ["hid", "hid"]);
+  assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
 });
 
 test("trusted input without Accessibility permission fails before posting", async () => {
@@ -164,7 +189,7 @@ test("trusted click shows the target tab and waits until it's visible before mea
   const { dom, world } = domTab(`<button id=b>Go</button>`, METRICS);
   let hiddenChecks = 3;
   Object.defineProperty(dom.document, "visibilityState", { get: () => (hiddenChecks-- > 0 ? "hidden" : "visible"), configurable: true });
-  const r = await handleCall("click", { trusted: true, selector: "#b", target: { tabIndex: 1 } });
+  const r = await handleCall("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } });
   assert.equal(r.isError, undefined, r.content[0].text);
   assert.equal(world.counts["win.activeTabIndex="], 1);
   assert.equal(downs(world).length, 1);
@@ -178,7 +203,7 @@ test("calibration: a mouse move reveals the real offset and the click lands on t
     if (e.type !== 5) return;
     dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: e.pt.x - METRICS.screenX + 0, clientY: e.pt.y - 57 - 100, screenX: e.pt.x, screenY: e.pt.y }));
   };
-  const r = await handleCall("click", { trusted: true, selector: "#b", target: { tabIndex: 1 } });
+  const r = await handleCall("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } });
   const o = JSON.parse(r.content[0].text);
   assert.equal(o.calibrated, true);
   // Element center (50,10) in client px maps to screen (0 + 50, 57 + 100 + 10).
@@ -200,7 +225,7 @@ test("calibration ignores a mouse move recorded before its own post", async () =
     if (js.includes('retry: "hidden"')) dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: 50, clientY: 41, screenX: 106, screenY: 198 }));
     return out;
   };
-  const r = await handleCall("click", { trusted: true, selector: "#b", target: { tabIndex: 1 } });
+  const r = await handleCall("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } });
   const o = JSON.parse(r.content[0].text);
   assert.deepEqual(o.calibration, [[0, 0]]);
   assert.deepEqual(downs(world), [{ x: 106, y: 167 }]);
@@ -208,7 +233,7 @@ test("calibration ignores a mouse move recorded before its own post", async () =
 
 test("no mouse move reaches the page: click at the estimate, uncalibrated", async () => {
   const { world } = domTab(`<button id=b>Go</button>`, METRICS);
-  const r = await handleCall("click", { trusted: true, selector: "#b", target: { tabIndex: 1 } });
+  const r = await handleCall("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } });
   const o = JSON.parse(r.content[0].text);
   assert.equal(o.calibrated, false);
   assert.deepEqual(downs(world), [{ x: 0 + 56 + 50, y: 57 + 100 + 10 }]);
@@ -223,7 +248,7 @@ test("trusted fill types the whole text, emoji included, in surrogate-safe chunk
     }
   };
   const text = "Ada Lovelace 😀 ".repeat(3) + "ok";
-  const r = await handleCall("fill", { trusted: true, selector: "#i", text, target: { tabIndex: 1 } });
+  const r = await handleCall("fill", { trusted: true, raise: true, selector: "#i", text, target: { tabIndex: 1 } });
   const o = JSON.parse(r.content[0].text);
   assert.equal(o.ok, true, r.content[0].text);
   assert.equal(dom.document.getElementById("i").value, text);
@@ -231,6 +256,28 @@ test("trusted fill types the whole text, emoji included, in surrogate-safe chunk
   // key 0 ("a"), which is what the old 0x14000100 encoding constant produced.
   const keys = world.posted.filter((e) => e.kind === "key");
   assert.ok(keys.length && keys.every((e) => e.via === "tap1" && e.text && e.len === e.text.length));
+});
+
+test("trusted fill sends keys to a background browser and restores AppKit focus", async () => {
+  const dom = page(`<input id=i aria-label="Name">`);
+  withWindowMetrics(dom, METRICS);
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "about:blank", id: "t", dom }] }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600 }],
+  });
+  world.state.onPost = (e) => {
+    if (e.kind === "key" && e.down) dom.document.getElementById("i").value += e.text;
+  };
+  const r = await handleCall("fill", { trusted: true, selector: "#i", text: "Ada 😀" });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(JSON.parse(r.content[0].text).ok, true);
+  assert.equal(dom.document.getElementById("i").value, "Ada 😀");
+  const keys = world.posted.filter((e) => e.kind === "key");
+  assert.ok(keys.length > 0 && keys.every((e) => e.via === "skylight" && e.pid === 4242));
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+  assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
+  assert.deepEqual(world.state.warps, []);
+  assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 4);
 });
 
 test("calibration ignores moves that aren't the one it posted (late events, the real mouse)", async () => {
@@ -241,7 +288,7 @@ test("calibration ignores moves that aren't the one it posted (late events, the 
     dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: e.pt.x - 56, clientY: e.pt.y - 157, screenX: e.pt.x, screenY: e.pt.y }));
     dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: 10, clientY: 50, screenX: 3, screenY: 900 }));
   };
-  const r = await handleCall("click", { trusted: true, selector: "#b", target: { tabIndex: 1 } });
+  const r = await handleCall("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } });
   const o = JSON.parse(r.content[0].text);
   assert.deepEqual(o.calibration, [[0, 0]]);
   assert.deepEqual(downs(world), [{ x: 106, y: 167 }]);

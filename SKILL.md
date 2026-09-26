@@ -55,7 +55,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Trusted input
 
-`click {trusted: true}` and `fill {trusted: true}` post real OS events (`isTrusted: true`) for WAF-gated buttons and validators that reject synthetic input. They need Accessibility permission and the window in front (or `raise: true`, which takes focus). They briefly move the real cursor and put it back. Results report `hit` (the press landed on the element); `fill` also checks the typed text landed. Rich editors never need trusted mode.
+`click {trusted: true}` and `fill {trusted: true}` use SkyLight to address the browser window without raising it or moving the shared cursor. They require Accessibility permission. The background route was verified live on Chrome Canary; check `hit` and `ok` before continuing on any site. Pass `raise: true` for the HID route, which takes focus briefly and restores the cursor. `fill` verifies the typed text; rich editors usually work without trusted mode.
 
 ## Permissions
 

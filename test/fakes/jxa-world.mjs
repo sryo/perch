@@ -7,10 +7,22 @@ import vm from "node:vm";
 export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
   const clock = { t: 1_000_000 };
   const state = { loadTicks, ax: true, cursor: { x: 1, y: 2 }, warps: [] };
+  const cgEntries = cg.map((entry) => ({ ...entry }));
   const posted = [];
   const counts = {};
   const bump = (k) => { counts[k] = (counts[k] || 0) + 1; };
   const log = [];
+  const makeData = (len) => {
+    const bytes = Buffer.alloc(len);
+    return {
+      mutableBytes: bytes,
+      bytes,
+      get length() { return bytes.length; },
+      replaceBytesInRangeWithBytesLength: (range, source, count) => {
+        Buffer.from(source).copy(bytes, range.location, 0, count);
+      },
+    };
+  };
 
   function makePage(url) {
     const page = { url, ticks: state.loadTicks };
@@ -113,7 +125,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     winsByApp[b.name] = wins;
     const a = {
       running: () => { bump(`running(${b.name})`); return b.running !== false; },
-      activate: () => { bump(`activate(${b.name})`); log.push(["activate", b.name]); },
+      activate: () => {
+        bump(`activate(${b.name})`); log.push(["activate", b.name]);
+        const i = cgEntries.findIndex((entry) => entry.owner === b.name);
+        if (i > 0) cgEntries.unshift(cgEntries.splice(i, 1)[0]);
+      },
       doJavaScript: (js, { in: tab }) => {
         bump("doJavaScript");
         // Safari only runs JS in the window's current tab.
@@ -161,11 +177,29 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     $: Object.assign((str) => (str === undefined ? null : nsString(str)), {
       // CoreGraphics / AppKit stand-ins for trusted input: events are recorded, not posted.
       CGPointMake: (x, y) => ({ x, y }),
+      dlopen: () => ({}),
+      NSMakeRange: (location, length) => ({ location, length }),
+      NSMutableData: { dataWithLength: makeData },
+      memset: (bytes, value, len) => { bytes.fill(value, 0, len); return bytes; },
       CGEventCreateMouseEvent: (_s, type, pt) => ({ kind: "mouse", type, pt, fields: {} }),
+      CGEventSourceCreate: () => ({}),
       CGEventCreateKeyboardEvent: (_s, _k, down) => ({ kind: "key", down, fields: {} }),
       CGEventSetIntegerValueField: (e, f, v) => { e.fields[f] = v; },
+      SLEventSetIntegerValueField: (e, f, v) => { e.fields[f] = v; },
       CGEventSetDoubleValueField: (e, f, v) => { e.fields[f] = v; },
       CGEventKeyboardSetUnicodeString: (e, len, bytes) => { e.text = bytes; e.len = len; },
+      CGEventSetWindowLocation: (e, x, y) => { e.windowPoint = { x, y }; },
+      SLEventPostToPid: (pid, e) => {
+        posted.push({ via: "skylight", pid, ...e });
+        if (state.onPost) state.onPost(e);
+        return 0;
+      },
+      GetProcessForPID: (pid, psn) => { psn.writeUInt32LE(pid, 4); return 0; },
+      _SLPSGetFrontProcess: (psn) => { psn.writeUInt32LE(cgEntries[0]?.pid ?? 100, 4); return 0; },
+      SLPSPostEventRecordTo: (psn, bytes) => {
+        log.push(["SLPSPostEventRecordTo", Buffer.from(psn), Buffer.from(bytes)]);
+        return 0;
+      },
       CGEventPostToPid: (pid, e) => { posted.push({ via: "pid", pid, ...e }); if (state.onPost) state.onPost(e); },
       CGEventPost: (tap, e) => {
         posted.push({ via: tap === 0 ? "hid" : "tap" + tap, ...e });
@@ -177,12 +211,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
       CGWarpMouseCursorPosition: (pt) => { state.cursor = { x: pt.x, y: pt.y }; state.warps.push({ x: pt.x, y: pt.y }); },
       NSDictionary: { dictionaryWithObjectForKey: () => ({}) },
       NSString: { stringWithString: (str) => nsString(str) },
+      AXIsProcessTrusted: () => state.ax,
       AXIsProcessTrustedWithOptions: () => state.ax,
       kCFBooleanFalse: false,
       kAXTrustedCheckOptionPrompt: "prompt",
       CGWindowListCopyWindowInfo: () => {
         bump("CGWindowList");
-        return cg.map((e) => ({
+        return cgEntries.map((e) => ({
           kCGWindowLayer: e.layer ?? 0,
           kCGWindowOwnerName: e.owner,
           kCGWindowOwnerPID: e.pid ?? 100,

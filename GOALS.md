@@ -38,14 +38,22 @@ needs background browser automation without installing anything in the browser.
   in Node, ships through the AppleScript bridge in one `eval_js`. The
   ~80 KB bridge transit is the price for background-only + browser-agnostic.
 
-### Trusted input (2026-05): foreground CGEventPostToPid
-- ❌ Bridge-style background activation — `CGEvent.tapCreateForPid` needs a
-  C function-pointer callback to suppress focus-switch messages; JXA can't
-  construct one. Would force a compiled helper binary and break single-file.
-- ✅ Foreground `click {trusted:true}` / `fill {trusted:true}` via
-  `$.CGEventPostToPid`. Adds Accessibility permission. `raise: true` opt-in
-  mirrors `screenshot{raise:true}`. See AGENTS.md "Trusted input via
-  CGEventPostToPid" for the field table.
+### Trusted input (2026-09): background SkyLight route
+- ❌ `CGEventPostToPid` and a bare `SLEventPostToPid` did not reach Chrome's
+  page in live tests. The new SkyLight route adds process and window routing
+  fields, AppKit focus records, and a primer sequence.
+- ✅ Implemented and live-tested: default `click {trusted:true}` /
+  `fill {trusted:true}` routes events to the browser process and window through
+  SkyLight without raising the app or moving the shared cursor. Perch attempts
+  to restore prior AppKit focus after posting and reports a restore failure.
+  The Chrome Canary scratch-page test observed `isTrusted` mouse and input events,
+  exact click position, full Unicode text, unchanged foreground app and cursor.
+- ✅ The previously verified `raise:true` HID path raises the target,
+  posts hardware-style events, then restores the cursor. Both routes require
+  Accessibility permission.
+- ✅ The SkyLight functions and event-record bytes can be called from JXA, so
+  the implementation keeps the single-file server and has no compiled helper.
+  See `scripts/skylight-probe.js` for the FFI proof and AGENTS.md for the flow.
 
 ### Surface diet and runtime (2026-09): fewer tools, fewer tokens, one runtime
 - ✅ 17 tools became 15: `get_html` folded into `get_text {html}`, and the
