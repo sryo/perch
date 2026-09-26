@@ -162,7 +162,6 @@ function jxaRuntime(BROWSERS) {
     }
   }
 
-  const stripHash = (u) => String(u).split("#")[0];
 
   // Window geometry plus the pid and CGWindowID that screencapture -l and CGEvent
   // routing need. Chrome has position()/size(), Safari bounds(); Arc has neither,
@@ -345,6 +344,7 @@ function jxaRuntime(BROWSERS) {
       arcGuard(t, "wait");
       const r = poll(t, a.js, a.timeout, a.interval || 150);
       if (!r) throw new Error("wait timed out after " + a.timeout + "ms");
+      if (r.value && r.value.__perch_error) throw new Error("wait: " + r.value.__perch_error);
       return r;
     },
     // One round trip: stamp the current document, set the url, then wait until a
@@ -352,13 +352,19 @@ function jxaRuntime(BROWSERS) {
     // alone can read the OLD document's 'complete' right after the url is set.
     navigate(a) {
       const t = resolve(a.target);
-      const canEval = t.kind !== "arc" || isActive(t);
-      let sameDoc = false;
-      try { const cur = t.tab.url(); sameDoc = String(a.url).indexOf("#") >= 0 && stripHash(cur) === stripHash(a.url); } catch (e) {}
-      const token = "n" + Date.now() + Math.random().toString(36).slice(2, 6);
-      if (canEval && !sameDoc) { try { exec(t, "window.__perch_nav=" + JSON.stringify(token) + ";'1'"); } catch (e) {} }
-      // Safari only applies url on the document's current tab.
+      // Safari only runs JS in, and applies url to, the window's current tab.
       if (t.kind === "safari") { try { t.win.currentTab = t.tab; } catch (e) {} }
+      const canEval = t.kind !== "arc" || isActive(t);
+      const token = "n" + Date.now() + Math.random().toString(36).slice(2, 6);
+      // The page resolves the url against its own location, so a #fragment change is
+      // recognized as same-document even when the two spellings differ.
+      let sameDoc = false;
+      if (canEval) {
+        const stamp = "(function(){try{var u=new URL(" + JSON.stringify(a.url) + ",location.href);" +
+          "if(u.hash&&u.href.split('#')[0]===location.href.split('#')[0])return 'same'}catch(e){}" +
+          "window.__perch_nav=" + JSON.stringify(token) + ";return 'stamped'})()";
+        try { sameDoc = exec(t, stamp) === "same"; } catch (e) {}
+      }
       t.tab.url = a.url;
       if (!canEval || sameDoc) return { waited: false };
       const check = "(function(){try{return JSON.stringify(window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete')}catch(e){return 'false'}})()";
@@ -739,6 +745,9 @@ export function imageDims(buf) {
   return null;
 }
 
+// Process spawning behind a seam so tests can fake screencapture/sips.
+export const deps = { exec };
+
 async function screenshot(args = {}) {
   const { raise = false, target, format = "png", maxWidth = 1568 } = args;
   const g = await rt("shotGeom", { target, raise });
@@ -749,14 +758,17 @@ async function screenshot(args = {}) {
     // -l reads the window's own pixels regardless of z-order. Without a CGWindowID
     // (minimized, other Space) fall back to the screen rect, reliable only on top.
     const where = g.windowNumber != null ? ["-l", String(g.windowNumber)] : ["-R", `${g.geom.x},${g.geom.y},${g.geom.w},${g.geom.h}`];
-    await exec("screencapture", [...where, "-x", "-o", "-t", ext, files[0]]);
+    await deps.exec("screencapture", [...where, "-x", "-o", "-t", ext, files[0]]);
     let buf = await readFile(files[0]);
     let dims = imageDims(buf);
     if (maxWidth > 0 && dims && dims.w > maxWidth) {
       files.push(`${base}-s.${ext}`);
-      await exec("sips", ["--resampleWidth", String(maxWidth), ...(ext === "jpg" ? ["-s", "formatOptions", "80"] : []), files[0], "--out", files[1]]);
-      buf = await readFile(files[1]);
-      dims = imageDims(buf);
+      // Best effort: if sips fails, the full-size capture still goes back.
+      try {
+        await deps.exec("sips", ["--resampleWidth", String(maxWidth), ...(ext === "jpg" ? ["-s", "formatOptions", "80"] : []), files[0], "--out", files[1]]);
+        buf = await readFile(files[1]);
+        dims = imageDims(buf);
+      } catch {}
     }
     // -l pixels cover the CG bounds (titlebar included), not AppleScript's inner geom.
     const rect = g.windowNumber != null && g.cgBounds ? g.cgBounds : g.geom;
@@ -1049,7 +1061,10 @@ if (attr(ctl, "aria-expanded") !== "true") {
 }
 const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySelector("input");
 if (input) { setNativeValue(input, A.text); fire(input, ["input"]); }
-window.__perch_select = { ctl: ctl, input: input };
+// Where the choice shows: react-select v5 puts role=combobox on an inner <input>
+// that it empties after a pick, so read the surrounding control instead.
+const box = (ctl.closest && ctl.closest('.select__control, [class*="-control"]')) || (ctl.tagName === "INPUT" ? ctl.parentElement : ctl);
+window.__perch_select = { ctl: ctl, input: input, box: box };
 return { pending: true };
 `,
 
@@ -1061,6 +1076,7 @@ const opt = options().find(function (o) { return norm(o.textContent) === wantN; 
 if (!opt) return null;
 press(opt);
 s.picked = clip(opt.textContent, 80);
+s.pickedN = norm(opt.textContent);
 return { picked: true };
 `,
 
@@ -1071,8 +1087,9 @@ return { ok: false, error: "no matching option after open", candidates: options(
   // Until the control shows the choice: null (keep polling); A.final reports anyway.
   select_read: SELECT_LIB + String.raw`
 const s = window.__perch_select;
-const shown = clip(textOf(s.ctl) || (s.input && s.input.value) || "", 120);
-const seen = norm(shown).indexOf(norm(s.picked)) >= 0;
+const full = textOf(s.box) || (s.input && s.input.value) || "";
+const shown = clip(full, 120);
+const seen = norm(full).indexOf(s.pickedN) >= 0;
 if (!seen && !A.final) return null;
 const out = { ok: true, selected: s.picked, el: ident(s.ctl), value: shown };
 if (!seen) out.unverified = true;
@@ -1107,10 +1124,13 @@ setTimeout(function () { input.hidden = orig.hidden; input.style.display = orig.
 return { ok: !!input.files && input.files.length === 1, name: file.name, size: file.size, type: file.type };
 `,
 
+  // Chrome runs this in an isolated world, whose console the page never calls. A
+  // <script> patches the main world's console and relays entries as perch:console
+  // events (DOM events cross worlds). If CSP blocks it, the local console is patched.
   console_start: String.raw`
 const s = window.__perch_console;
 if (s && s.installed) return { ok: true, already: true, count: s.entries.length };
-const st = { entries: [], dropped: 0, orig: {}, installed: true };
+const st = { entries: [], dropped: 0, orig: {}, installed: true, bridge: false };
 window.__perch_console = st;
 function safe(v) {
   let out;
@@ -1123,17 +1143,57 @@ function safe(v) {
   // Capped at record time so a page logging huge payloads can't bloat the buffer.
   return out.length > 1000 ? out.slice(0, 1000) + "...[+" + (out.length - 1000) + " chars]" : out;
 }
-["log", "info", "warn", "error", "debug"].forEach(function (level) {
-  const orig = st.orig[level] = console[level];
-  console[level] = function () {
-    if (st.entries.length >= 500) { st.entries.shift(); st.dropped++; }
-    const parts = [];
-    for (let i = 0; i < arguments.length; i++) parts.push(safe(arguments[i]));
-    st.entries.push(level + ": " + parts.join(" "));
-    return orig.apply(console, arguments);
+function mainWorld(safe) {
+  if (window.__perchConsoleBridge) return;
+  window.__perchConsoleBridge = true;
+  const orig = {};
+  ["log", "info", "warn", "error", "debug"].forEach(function (level) {
+    orig[level] = console[level];
+    console[level] = function () {
+      try {
+        const parts = [];
+        for (let i = 0; i < arguments.length; i++) parts.push(safe(arguments[i]));
+        document.dispatchEvent(new CustomEvent("perch:console", { detail: level + ": " + parts.join(" ") }));
+      } catch (e) {}
+      return orig[level].apply(this, arguments);
+    };
+  });
+  const ping = function () { document.dispatchEvent(new CustomEvent("perch:console-pong")); };
+  const stop = function () {
+    for (const k in orig) console[k] = orig[k];
+    delete window.__perchConsoleBridge;
+    document.removeEventListener("perch:console-ping", ping);
+    document.removeEventListener("perch:console-stop", stop);
   };
-});
-return { ok: true, started: true };
+  document.addEventListener("perch:console-ping", ping);
+  document.addEventListener("perch:console-stop", stop);
+}
+function push(entry) {
+  if (st.entries.length >= 500) { st.entries.shift(); st.dropped++; }
+  st.entries.push(entry);
+}
+st.relay = function (e) { if (typeof e.detail === "string") push(e.detail); };
+document.addEventListener("perch:console", st.relay);
+const script = document.createElement("script");
+script.textContent = "(" + mainWorld + ")(" + safe + ");";
+(document.head || document.documentElement).appendChild(script);
+script.remove();
+const pong = function () { st.bridge = true; };
+document.addEventListener("perch:console-pong", pong);
+document.dispatchEvent(new CustomEvent("perch:console-ping"));
+document.removeEventListener("perch:console-pong", pong);
+if (!st.bridge) {
+  ["log", "info", "warn", "error", "debug"].forEach(function (level) {
+    const orig = st.orig[level] = console[level];
+    console[level] = function () {
+      const parts = [];
+      for (let i = 0; i < arguments.length; i++) parts.push(safe(arguments[i]));
+      push(level + ": " + parts.join(" "));
+      return orig.apply(console, arguments);
+    };
+  });
+}
+return { ok: true, started: true, bridge: st.bridge };
 `,
 
   console_read: String.raw`
@@ -1147,7 +1207,9 @@ return out;
   console_stop: String.raw`
 const s = window.__perch_console;
 if (!s || !s.installed) return { ok: false, error: "console_capture not started" };
+if (s.bridge) document.dispatchEvent(new CustomEvent("perch:console-stop"));
 for (const k in s.orig) console[k] = s.orig[k];
+document.removeEventListener("perch:console", s.relay);
 s.installed = false;
 return { ok: true, entries: s.entries.splice(0) };
 `,

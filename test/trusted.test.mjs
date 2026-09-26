@@ -246,3 +246,21 @@ test("calibration ignores moves that aren't the one it posted (late events, the 
   assert.deepEqual(o.calibration, [[0, 0]]);
   assert.deepEqual(downs(world), [{ x: 106, y: 167 }]);
 });
+
+test("screenshot: a failed downscale still returns the full-size capture", async () => {
+  const { deps } = await import("../server.js");
+  const { writeFile } = await import("node:fs/promises");
+  chromeFront();
+  const png = Buffer.alloc(33);
+  png.writeUInt32BE(0x89504e47, 0); png.writeUInt32BE(3000, 16); png.writeUInt32BE(2000, 20);
+  const real = deps.exec;
+  deps.exec = async (cmd, args) => {
+    if (cmd === "screencapture") { await writeFile(args[args.length - 1], png); return { stdout: "" }; }
+    throw new Error("sips: boom");
+  };
+  try {
+    const r = await handleCall("screenshot", {});
+    assert.equal(r.isError, undefined, r.content[0].text);
+    assert.deepEqual(JSON.parse(r.content[1].text).image, { w: 3000, h: 2000 });
+  } finally { deps.exec = real; }
+});

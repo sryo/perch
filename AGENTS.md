@@ -64,6 +64,7 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Persistence:** globals set by one eval persist for later evals; `window.__perch_refs` and `window.__perch_console` rely on this.
 - **Page globals:** the page's own globals are invisible, so probe page state through the DOM.
 - **Events:** a plain `click` still fires main-world handlers, because DOM events cross worlds.
+- **Console:** `console_capture` injects a `<script>` that patches the main world's console and relays entries as `perch:console` events. A ping/pong tells whether it ran; under a CSP that blocks inline scripts it patches the isolated console instead, which sees only perch's own evals.
 - **Timers:** page timers are throttled to about 1/s in background tabs. Anything that must wait polls from JXA (`poll` in the runtime) instead of `setTimeout` in the page. `select` is start/pick/readback steps polled that way.
 
 **Page scripts.** One prelude defines `vis`, `labelText`/`hintText`/`accName` (accessible-name precedence), `role`, `ident` (`role "name"`), `setNativeValue` (the prototype setter, which reaches React-controlled fields), `fire` and `resolveEl`.

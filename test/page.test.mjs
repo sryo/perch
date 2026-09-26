@@ -199,6 +199,37 @@ test("console capture: start is idempotent, entries are strings, stop restores",
   assert.equal(run(w, "console_read").ok, false);
 });
 
+test("console capture relays the main world's console (the page's own logs on Chrome)", () => {
+  const w = page(``);
+  assert.equal(run(w, "console_start").ok, true);
+  // happy-dom has one world: prove the bridge path by delivering an entry the way
+  // the main-world <script> does, as a perch:console event with a string detail.
+  w.document.dispatchEvent(new w.CustomEvent("perch:console", { detail: "error: from the page" }));
+  assert.deepEqual(run(w, "console_read").entries, ["error: from the page"]);
+  // A page log is recorded exactly once (bridge only, no second local patch).
+  w.eval("console.warn('once')");
+  assert.deepEqual(run(w, "console_read").entries, ["warn: once"]);
+  assert.equal(run(w, "console_stop").ok, true);
+  w.eval("console.warn('after stop')");
+  run(w, "console_start");
+  assert.deepEqual(run(w, "console_read").entries, []);
+  run(w, "console_stop");
+});
+
+test("console capture falls back to a local patch when CSP blocks the bridge", () => {
+  const w = page(``);
+  for (const root of [w.document.head, w.document.documentElement]) {
+    const orig = root.appendChild.bind(root);
+    root.appendChild = (n) => (n.tagName === "SCRIPT" ? n : orig(n));
+  }
+  const o = run(w, "console_start");
+  assert.equal(o.ok, true);
+  assert.equal(o.bridge, false);
+  w.eval("console.log('local')");
+  assert.deepEqual(run(w, "console_read").entries, ["log: local"]);
+  run(w, "console_stop");
+});
+
 test("wait_check: readyState ordering and selector presence", () => {
   const w = page(`<p id=x></p>`);
   assert.equal(run(w, "wait_check", { readyState: "interactive" }), true);

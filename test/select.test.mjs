@@ -75,3 +75,37 @@ test("select validates its arguments before touching the page", async () => {
   assert.match((await handleCall("select", { text: "x" })).content[0].text, /requires `ref`, `selector`, or `label_pattern`/);
   assert.match((await handleCall("select", { label_pattern: "(", text: "x" })).content[0].text, /invalid label_pattern/);
 });
+
+// react-select v5: role=combobox sits on the inner <input>, which is emptied after a
+// pick; the chosen value shows in a sibling single-value element.
+const REACT_SELECT = `<label id=lab>Seniority</label>
+  <div class="select__control"><div class="select__value-container">
+    <div class="select__single-value"></div>
+    <input role=combobox aria-labelledby=lab aria-expanded=false>
+  </div></div><div id=menu></div>`;
+const REACT_SELECT_JS = `
+  const input = document.querySelector('input');
+  document.querySelector('.select__control').addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !e.view) return;
+    input.setAttribute('aria-expanded', 'true');
+    document.getElementById('menu').innerHTML = '<div role=option>Staff engineer with a very long title that runs past eighty characters for sure</div><div role=option>Senior</div>';
+    document.querySelectorAll('[role=option]').forEach(o => o.addEventListener('click', () => {
+      document.querySelector('.select__single-value').textContent = o.textContent;
+      input.value = '';
+    }));
+  });`;
+
+test("react-select v5: readback comes from the control, not the emptied input", async () => {
+  onPage(REACT_SELECT, REACT_SELECT_JS);
+  const { o } = await select({ label_pattern: "seniority", text: "senior" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.value, "Senior");
+  assert.equal(o.unverified, undefined);
+});
+
+test("readback verifies options longer than the 80-char display clip", async () => {
+  onPage(REACT_SELECT, REACT_SELECT_JS);
+  const { o } = await select({ label_pattern: "seniority", text: "staff engineer" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.unverified, undefined, JSON.stringify(o));
+});

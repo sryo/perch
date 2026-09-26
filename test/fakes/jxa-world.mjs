@@ -18,6 +18,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     page.ctx = vm.createContext(win, { microtaskMode: "afterEvaluate" });
     vm.runInContext("window = globalThis; document = { get readyState() { return __ready(); } };", page.ctx);
     page.ctx.__ready = () => (page.ticks-- > 0 ? "loading" : "complete");
+    page.ctx.location = { href: url };
+    page.ctx.URL = URL;
     return page;
   }
 
@@ -36,7 +38,14 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     fn("loading", () => false);
     Object.defineProperty(tab, "url", {
       get: () => () => tab.page.url,
-      set: (u) => { bump("tab.url="); log.push(["navigate", b.name, u]); tab.page = makePage(u); },
+      set: (u) => {
+        bump("tab.url=");
+        log.push(["navigate", b.name, u]);
+        // A fragment-only change keeps the document, as browsers do.
+        const cur = new URL(tab.page.url), next = new URL(u, tab.page.url);
+        if (next.hash && next.href.split("#")[0] === cur.href.split("#")[0]) { tab.page.url = next.href; tab.page.ctx.location.href = next.href; return; }
+        tab.page = makePage(u);
+      },
     });
     tab.execute = ({ javascript }) => {
       bump("tab.execute");
@@ -107,6 +116,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
       activate: () => { bump(`activate(${b.name})`); log.push(["activate", b.name]); },
       doJavaScript: (js, { in: tab }) => {
         bump("doJavaScript");
+        // Safari only runs JS in the window's current tab.
+        if (!tab._active) throw new Error("Safari: tab is not current");
         return vm.runInContext(js, tab.page.ctx);
       },
       Tab: (props) => props,

@@ -208,3 +208,27 @@ test("raising a second window still switches the tab in THAT window", async () =
   const active = o.tabs.filter((t) => t.active);
   assert.deepEqual(active.map((t) => [t.windowId, t.tabIndex]), [[2, 3]]);
 });
+
+// ---- review fixes ----
+
+test("wait with an invalid selector is an error, not an instant success", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }] });
+  const { r, t } = await call("wait", { selector: "##" });
+  assert.equal(r.isError, true);
+  assert.match(t, /wait:.*(selector|##)/i);
+});
+
+test("Safari navigate makes the tab current before stamping the old document", async () => {
+  install({ browsers: [safari([{ id: 3, active: 0, tabs: tabs(2, "s") }])], cg: [{ owner: "Safari" }] });
+  const old = world.page("Safari", 0, 1);
+  const { o } = await call("navigate", { url: "https://next.test/", target: { tabIndex: 1 } });
+  assert.equal(o.ok, true);
+  assert.equal(typeof old.__perch_nav, "string", "stamp never reached the old document");
+});
+
+test("navigate: a #hash change on a normalized URL is same-document (no load wait)", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://a.test/", id: "x" }] }])], cg: [{ owner: "Google Chrome" }] });
+  const t0 = world.clock.t;
+  await call("navigate", { url: "https://a.test#sec" });
+  assert.ok(world.clock.t - t0 < 300, `waited ${world.clock.t - t0}ms`);
+});
