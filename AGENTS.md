@@ -98,6 +98,8 @@ Mouse event fields use raw indices, because `$.kCG*` constants aren't reliably b
 | private (target window) | 51 | windowNumber |
 | private (routing flag) | 58 | 1 |
 
+**Status: unverified live.** A 2026-09 check on Chrome Canary saw no mousedown reach the page, for this code or for the pre-redesign code. A plain HID-level `CGEventPost` didn't reach it either, so suspect window placement (Canary was on another Space) or how Accessibility is attributed before suspecting the renderer filter below. Treat `hit: null` as "the event never arrived".
+
 Trusted input is foreground only (Tier 1). Background dispatch in the style of cua ("two cursors") needs no event tap or C callback:
 - **Routing:** SkyLight's `SLEventPostToPid` routes the event without moving the shared cursor.
 - **Activation:** the yabai `SLPSPostEventRecordTo` recipe makes the target AppKit-active without raising it.
