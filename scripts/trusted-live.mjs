@@ -5,6 +5,8 @@
 //   node scripts/trusted-live.mjs --yes [--app "Google Chrome Canary"]
 //   node scripts/trusted-live.mjs --yes --background [--app "Google Chrome Canary"]
 // Uses a scratch about:blank tab in a Chrome-family browser (reused like smoke's).
+// --background requires another app to be foreground already. Defer the live
+// test when Chrome is frontmost; do not switch apps to satisfy the precondition.
 
 import { execFileSync } from "node:child_process";
 import { connect, text } from "./mcp-client.mjs";
@@ -111,7 +113,7 @@ try {
     throw new Error("could not identify the front app before the background probe");
   }
   if (background && before === tab.app) {
-    throw new Error(`bring another app in front of ${tab.app} before running --background`);
+    throw new Error(`${tab.app} is frontmost; defer --background until another app is naturally in front (do not switch apps for this test)`);
   }
   if (background && frontApp() !== before) {
     throw new Error(`scratch-tab setup changed the front app from ${before} to ${frontApp()}`);

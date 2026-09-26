@@ -122,6 +122,7 @@ Each blocked layer returns an actionable error.
 - **Tools earn their slot.** Solve a real workflow; don't mirror CDP. Check both consumers (avis, trabAGItos) before changing the surface. Keep `tools/list` under `SCHEMA_BUDGET`, with shared guidance in `INSTRUCTIONS`.
 - **Background-friendly by default.** Only `activate_tab`, `screenshot {raise}` and trusted input with `raise` take focus. Background trusted input must restore the prior AppKit focus and leave the cursor alone.
 - **TDD.** Write the failing test first. Then run `npm test` (unit, no browser) and `npm run smoke` (live) after any change, and `node scripts/bench.mjs --compare bench/before.json` for anything performance related.
+- **Live focus checks.** `scripts/trusted-live.mjs --background` needs a browser behind another app. If the browser is frontmost, defer that live check; never activate another app just to create the condition. Preserve the user's foreground while testing.
 
 ## Ceiling: what AppleScript can't do
 
