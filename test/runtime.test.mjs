@@ -182,6 +182,45 @@ test("new_tab and click run exactly once even when the call times out", async ()
   assert.equal(runs, 2);
 });
 
+test("new_tab creates a background tab without selecting it", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  const { r, o } = await call("new_tab", { app: "Google Chrome", url: "about:blank" });
+  assert.equal(r.isError, undefined);
+  assert.deepEqual(o, { app: "Google Chrome", windowId: 1, tabIndex: 1 });
+  assert.equal(world.counts["win.activeTabIndex="], undefined);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+});
+
+test("new_tab refuses to launch a browser or make a window implicitly", async () => {
+  install({ browsers: [chrome([], { running: false })], cg: [{ owner: "Terminal" }] });
+  const stopped = await call("new_tab", { app: "Google Chrome", url: "about:blank" });
+  assert.equal(stopped.r.isError, true);
+  assert.match(stopped.t, /already be running/);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+
+  install({ browsers: [chrome([])], cg: [{ owner: "Terminal" }] });
+  const noWindow = await call("new_tab", { app: "Google Chrome", url: "about:blank" });
+  assert.equal(noWindow.r.isError, true);
+  assert.match(noWindow.t, /existing window/);
+});
+
+test("new_tab never selects the new Arc or Safari tab", async () => {
+  install({
+    browsers: [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }]), safari([{ id: 2, active: 0, tabs: tabs(1, "s") }])],
+    cg: [{ owner: "Terminal" }, { owner: "Arc" }, { owner: "Safari" }],
+  });
+  const arcTab = await call("new_tab", { app: "Arc", url: "about:blank" });
+  const safariTab = await call("new_tab", { app: "Safari", url: "about:blank" });
+  assert.equal(arcTab.r.isError, undefined);
+  assert.equal(safariTab.r.isError, undefined);
+  assert.equal(arcTab.o.tabIndex, 1);
+  assert.equal(safariTab.o.tabIndex, 1);
+  assert.equal(world.counts["tab.select"], undefined);
+  assert.equal(world.counts["win.currentTab="], undefined);
+  assert.equal(world.counts["activate(Arc)"], undefined);
+  assert.equal(world.counts["activate(Safari)"], undefined);
+});
+
 test("activate_tab selects via each browser's working verb", async () => {
   install({
     browsers: [chrome([{ id: 1, active: 0, tabs: tabs(3, "c") }]), arc([{ id: "A", active: 0, tabs: tabs(3, "a") }]), safari([{ id: 3, active: 0, tabs: tabs(3, "s") }])],

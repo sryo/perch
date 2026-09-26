@@ -171,6 +171,22 @@ test("trusted input reaches a background browser without changing app focus or c
   assert.deepEqual(world.state.warps, []);
 });
 
+test("background trusted input refuses to switch a browser window's active tab", async () => {
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(2) }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
+  });
+  const target = { app: "Google Chrome", windowId: 1, tabIndex: 1 };
+  const click = await handleCall("click", { trusted: true, x: 300, y: 200, target });
+  const fill = await handleCall("fill", { trusted: true, selector: "input", text: "Ada", target });
+  assert.equal(click.isError, true);
+  assert.equal(fill.isError, true);
+  assert.match(click.content[0].text, /already be the active tab/);
+  assert.match(fill.content[0].text, /already be the active tab/);
+  assert.equal(world.counts["win.activeTabIndex="], undefined);
+  assert.equal(world.posted.length, 0);
+});
+
 test("raise:true keeps the existing foreground HID path", async () => {
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(1) }] }],
@@ -191,14 +207,16 @@ test("trusted input without Accessibility permission fails before posting", asyn
   assert.equal(world.posted.length, 0);
 });
 
-test("screenshot geometry: Arc frame comes from its CG window; tabIndex switches without raising", async () => {
+test("screenshot geometry: Arc frame comes from its CG window; inactive tabs need raise", async () => {
   const world = install({
     browsers: [{ name: "Arc", kind: "arc", windows: [{ id: "A", active: 0, tabs: tabs(3) }] }],
     cg: [{ owner: "Arc", pid: 9, wid: 31, x: 5, y: 6, w: 900, h: 700 }],
   });
-  const g = world.run(`JSON.stringify(__perch.shotGeom({ target: { tabIndex: 2 } }))`);
+  assert.throws(() => world.run(`__perch.shotGeom({ target: { tabIndex: 2 } })`), /already be the active tab/);
+  assert.equal(world.counts["tab.select"], undefined);
+  const g = world.run(`JSON.stringify(__perch.shotGeom({ target: { tabIndex: 0 } }))`);
   assert.deepEqual(JSON.parse(g), { geom: { x: 5, y: 6, w: 900, h: 700 }, pid: 9, windowNumber: 31, cgBounds: { x: 5, y: 6, w: 900, h: 700 } });
-  assert.equal(world.counts["tab.select"], 1);
+  assert.equal(world.counts["tab.select"], undefined);
   assert.equal(world.counts["activate(Arc)"], undefined);
 });
 

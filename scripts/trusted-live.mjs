@@ -5,10 +5,11 @@
 //   node scripts/trusted-live.mjs --yes [--app "Google Chrome Canary"]
 //   node scripts/trusted-live.mjs --yes --background [--app "Google Chrome Canary"]
 // Uses a scratch about:blank tab in a Chrome-family browser (reused like smoke's).
-// --background requires another app to be foreground already. Defer the live
-// test when Chrome is frontmost; do not switch apps to satisfy the precondition.
+// --background requires another app to be foreground and an existing scratch
+// tab already active in its Chrome window. Defer the live test otherwise;
+// never create/select tabs or switch apps to satisfy its preconditions.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { connect, text } from "./mcp-client.mjs";
 
 const argv = process.argv.slice(2);
@@ -32,6 +33,26 @@ const keyProcess = () => execFileSync("osascript", ["-l", "JavaScript", "-e",
   "ObjC.bindFunction('_SLPSGetFrontProcess',['int',['void *']]);" +
   "const d=$.NSMutableData.dataWithLength(8);if($._SLPSGetFrontProcess(d.mutableBytes)!==0)throw Error('front process unavailable');ObjC.unwrap(d.description)"
 ]).toString().trim();
+const monitorKeyProcess = () => {
+  const script = "ObjC.import('Foundation');ObjC.bindFunction('dlopen',['void *',['char *','int']]);" +
+    "$.dlopen('/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight',2);" +
+    "ObjC.bindFunction('_SLPSGetFrontProcess',['int',['void *']]);" +
+    "function sample(){const d=$.NSMutableData.dataWithLength(8);if($._SLPSGetFrontProcess(d.mutableBytes)!==0)throw Error('front process unavailable');return ObjC.unwrap(d.description)}" +
+    "const initial=sample();let last=initial;const changes=[];const until=Date.now()+4500;" +
+    "while(Date.now()<until){const now=sample();if(now!==last){changes.push({at:Date.now(),from:last,to:now});last=now}delay(0.005)}" +
+    "JSON.stringify({initial,final:last,changes})";
+  const child = spawn("osascript", ["-l", "JavaScript", "-e", script]);
+  return new Promise((resolve, reject) => {
+    let out = "", err = "";
+    child.stdout.on("data", (data) => { out += data; });
+    child.stderr.on("data", (data) => { err += data; });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) return reject(new Error(err || `focus monitor exited ${code}`));
+      try { resolve(JSON.parse(out.trim())); } catch (e) { reject(e); }
+    });
+  });
+};
 const cursorAt = () => JSON.parse(execFileSync("osascript", ["-l", "JavaScript", "-e",
   "ObjC.import('CoreGraphics');const p=$.CGEventGetLocation($.CGEventCreate($()));JSON.stringify({x:p.x,y:p.y})"]).toString().trim());
 
@@ -84,7 +105,10 @@ const report = (ok, label, detail) => { if (!ok) failures++; console.log(`${ok ?
 try {
   const listed = JSON.parse(text(await client.call("list_tabs", { urlContains: "about:blank", limit: 200 })));
   const chrome = (t) => /chrome|chromium|brave|edge|vivaldi/i.test(t.app) && (!appArg || t.app === appArg);
-  let tab = listed.tabs.find(chrome);
+  let tab = listed.tabs.find((t) => chrome(t) && (!background || t.active));
+  if (background && !tab) {
+    throw new Error("background probe needs an existing about:blank tab already active in its Chrome window; defer rather than creating or selecting a tab");
+  }
   if (!tab) {
     const all = JSON.parse(text(await client.call("list_tabs", { limit: 500 }))).tabs.find(chrome);
     if (!all) throw new Error("no Chrome-family browser running");
@@ -129,8 +153,10 @@ try {
   const foregroundSamples = [];
   const keySamples = [];
   const keyBefore = background ? keyProcess() : null;
+  const keyMonitor = background ? monitorKeyProcess().then((value) => ({ ok: true, value }), (error) => ({ ok: false, error: error.message })) : null;
   let poll;
   if (background) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
     foregroundSamples.push(frontApp());
     keySamples.push(keyBefore);
     poll = setInterval(() => {
@@ -156,6 +182,9 @@ try {
       keySamples.push(keyProcess());
       report(foregroundSamples.every((app) => app === before), "front app stays unchanged", JSON.stringify({ expected: before, observed: [...new Set(foregroundSamples)], samples: foregroundSamples.length }));
       report(keySamples.every((process) => process === keyBefore), "key focus stays with the user", JSON.stringify({ expected: keyBefore, observed: [...new Set(keySamples)], samples: keySamples.length }));
+      const monitored = await keyMonitor;
+      report(monitored.ok && monitored.value.initial === keyBefore && monitored.value.final === keyBefore && monitored.value.changes.length === 0,
+        "continuous key-focus monitor", JSON.stringify(monitored));
       const cursorAfter = cursorAt();
       if (Math.abs(cursorAfter.x - cursorBefore.x) <= 1 && Math.abs(cursorAfter.y - cursorBefore.y) <= 1) {
         report(true, "cursor stays in place", JSON.stringify({ before: cursorBefore, after: cursorAfter }));

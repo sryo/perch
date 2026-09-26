@@ -206,6 +206,7 @@ function jxaRuntime(BROWSERS) {
     const t = resolve(a.target);
     requireAccessibility();
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
+    else if (!isActive(t)) throw new Error("background trusted input requires the target to already be the active tab in its browser window; select the tab explicitly when you can spare focus");
     const I = ids(t);
     if (I.windowNumber == null) throw new Error(t.app + "'s window isn't on screen (minimized or on another Space)");
     if (a.raise && t.P.front !== t.app) throw new Error("target did not become frontmost after raise");
@@ -311,7 +312,7 @@ function jxaRuntime(BROWSERS) {
   // is posted and the page reports where it landed; the point is corrected (twice
   // at most). If no move reaches the page, the estimate is used as is.
   function aim(T, a, tool) {
-    selectTab(T.t);
+    if (!T.background) selectTab(T.t);
     arcGuard(T.t, tool);
     let probe;
     for (let i = 0; ; i++) {
@@ -438,33 +439,27 @@ function jxaRuntime(BROWSERS) {
     newTab(a) {
       const kind = KIND[a.app];
       const ap = app(a.app);
-      if (!ap.running()) ap.activate();
+      if (!ap.running()) throw new Error(a.app + " must already be running for background new_tab");
+      if (!ap.windows.length) throw new Error(a.app + " needs an existing window for background new_tab");
       let win, newId = null;
       if (kind === "chrome" || kind === "arc") {
-        if (!ap.windows.length) ap.Window().make();
         win = ap.windows[0];
+        let beforeIds = null;
+        if (kind === "arc") { try { beforeIds = win.tabs.id(); } catch (e) {} }
         const tab = ap.Tab({ url: a.url });
         win.tabs.push(tab);
-        try {
-          if (kind === "arc") {
-            try { newId = tab.id(); } catch (e) {}
-            try { tab.select(); } catch (e) { win.tabs[win.tabs.length - 1].select(); }
-          } else win.activeTabIndex = win.tabs.length;
-        } catch (e) {}
+        if (kind === "arc") {
+          try { newId = tab.id(); } catch (e) {}
+          if (newId == null && beforeIds) {
+            try { newId = win.tabs.id().find(function (id) { return beforeIds.indexOf(id) < 0; }); } catch (e) {}
+          }
+        }
       } else {
         // Safari: documents[0].tabs throws under JXA; windows[0].tabs works.
-        if (!ap.windows.length) { try { ap.Document().make(); } catch (e) {} }
         win = ap.windows[0];
         let created = false;
         try { win.tabs.push(ap.Tab({ url: a.url })); created = true; } catch (e) {}
-        try { win.currentTab = win.tabs[win.tabs.length - 1]; } catch (e) {}
-        if (!created) {
-          ap.activate();
-          delay(0.1);
-          Application("System Events").keystroke("t", { using: "command down" });
-          delay(0.15);
-          try { win.currentTab.url = a.url; } catch (e) {}
-        }
+        if (!created) throw new Error("Safari could not create a background tab");
       }
       let windowId = null; try { windowId = win.id(); } catch (e) {}
       // Arc inserts new tabs mid-collection (sidebar "Today"), so resolve by UUID.
@@ -479,12 +474,14 @@ function jxaRuntime(BROWSERS) {
       focus(resolve(a.target));
       return true;
     },
-    // Only the active tab of a window is rendered, so an explicit tabIndex switches
-    // the window to it first (no raise, no app activation).
+    // Only the active tab of a window is rendered. Never switch tabs implicitly:
+    // that can put Chrome's window into focus even without app.activate().
     shotGeom(a) {
       const t = resolve(a.target);
       if (a.raise) { focus(t); delay(0.25); t.P = procs(); }
-      else if (a.target && a.target.tabIndex != null && selectTab(t)) delay(0.15);
+      else if (a.target && a.target.tabIndex != null && !isActive(t)) {
+        throw new Error("background screenshot requires the target to already be the active tab in its browser window; use raise:true only when focus is available");
+      }
       return ids(t);
     },
     select(a) {
@@ -1528,10 +1525,10 @@ async function select(args = {}) {
 
 // Shared guidance lives here once instead of in every tool description.
 export const INSTRUCTIONS = `perch drives the user's own macOS browsers (Chrome family, Arc, Safari) over AppleScript.
-Targeting: tools take an optional \`target\` {app, windowId, tabIndex}; the default is the active tab of the topmost browser window. tabIndex is a position, not an id: it shifts as tabs open and close, so re-list instead of caching it. new_tab returns a ready-made target.
+Targeting: tools take an optional \`target\` {app, windowId, tabIndex}; the default is the active tab of the topmost browser window. tabIndex is a position, not an id: it shifts as tabs open and close, so re-list instead of caching it. new_tab creates an unselected tab in an existing browser window but may focus the browser; defer it while the user works.
 Elements: prefer \`ref\` (from accessibility_snapshot) over \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
-Arc runs page JS only on a window's active tab (activate_tab first). Only activate_tab, screenshot{raise} and trusted input with raise take focus.`;
+Arc runs page JS only on a window's active tab (activate_tab first). Background screenshot and trusted input require the target tab already active in its browser window. Only activate_tab, screenshot{raise} and trusted input with raise explicitly take focus.`;
 
 const TARGET = { type: "object", properties: { app: { type: "string" }, windowId: { type: ["string", "number"] }, tabIndex: { type: "number" } } };
 const REF = { type: "string", description: "From accessibility_snapshot." };
@@ -1547,7 +1544,7 @@ const TOOLS = [
     titleContains: { type: "string" },
     limit: { type: "number", description: "Default 50." },
   }),
-  tool("new_tab", "Open a tab (launches the browser if needed). Returns {app,windowId,tabIndex}, usable as `target`.", {
+  tool("new_tab", "Create an unselected tab in an already running browser window. Creation may focus the browser; defer while the user works. Returns {app,windowId,tabIndex}.", {
     url: { type: "string", description: "Default about:blank." },
     app: { type: "string", description: "Default Google Chrome." },
   }),
@@ -1566,7 +1563,7 @@ const TOOLS = [
     timeout: { type: "number", description: "ms, default 10000." },
     target: TARGET,
   }),
-  tool("screenshot", "Capture the target window without raising it; an explicit tabIndex switches that window to the tab first. Returns the image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w.", {
+  tool("screenshot", "Capture the target window without raising it; background mode requires an already active tab. Returns the image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w.", {
     raise: { type: "boolean" },
     maxWidth: { type: "number", description: "Default 1568; 0 = full size." },
     format: { type: "string", enum: ["png", "jpeg"] },

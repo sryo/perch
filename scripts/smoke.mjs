@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Live smoke test: boots server.js over stdio and exercises the real bridge.
 // Browser-dependent checks SKIP when no browser runs. Page-mutating checks run
-// on a scratch about:blank tab in a Chrome-family browser (reused across runs),
-// never on the user's own tabs. Non-zero exit on any FAIL.
+// on an existing scratch about:blank tab in a Chrome-family browser. The default
+// never creates or closes a tab; --with-tab-creation opts into those checks and
+// may focus the browser. Non-zero exit on any FAIL.
 
 import { execFileSync } from "node:child_process";
 import { writeFile, mkdtemp } from "node:fs/promises";
@@ -11,6 +12,7 @@ import { join } from "node:path";
 import { connect, text } from "./mcp-client.mjs";
 import { SCHEMA_BUDGET } from "../server.js";
 
+const withTabCreation = process.argv.includes("--with-tab-creation");
 const client = await connect();
 const call = client.call;
 const json = async (name, args) => JSON.parse(text(await call(name, args)));
@@ -63,8 +65,8 @@ try {
     return `window ${meta.window.w}x${meta.window.h}pt, image ${meta.image.w}x${meta.image.h}px`;
   });
 
-  // Page-mutating checks: a scratch about:blank tab in a Chrome-family browser
-  // (Arc can't eval background tabs). Reuse one from an earlier run if present.
+  // Page-mutating checks use a scratch about:blank tab in a Chrome-family browser
+  // (Arc can't eval background tabs). Never create a tab in the default run.
   const chromeTabs = tabs.filter((t) => /chrome|chromium|brave|edge|vivaldi/i.test(t.app));
   let scratch = null;
   const setDom = (html) => call("eval_js", { script: `document.body.innerHTML = ${JSON.stringify(html)}; return 1`, target: scratch });
@@ -72,6 +74,7 @@ try {
   await check("scratch tab", async () => {
     if (!chromeTabs.length) return skip("no chrome-family browser");
     const blank = chromeTabs.find((t) => t.url === "about:blank");
+    if (!blank && !withTabCreation) return skip("no existing scratch tab; --with-tab-creation may focus the browser");
     scratch = blank ? { app: blank.app, windowId: blank.windowId, tabIndex: blank.tabIndex } : await json("new_tab", { app: chromeTabs[0].app, url: "about:blank" });
     return `${blank ? "reused" : "opened"} ${scratch.app} @${scratch.tabIndex}`;
   });
@@ -134,6 +137,7 @@ try {
   });
 
   await check("TT-safe rich fill under Trusted Types", async () => {
+    if (!withTabCreation) return skip("requires tab creation, which may focus the browser");
     if (!chromeTabs.length) return skip("no chrome-family browser");
     // Trusted Types only engages when the page LOADS with the CSP, so set it at tab creation.
     const ttHtml = `<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"><div contenteditable aria-label="Body"></div>`;

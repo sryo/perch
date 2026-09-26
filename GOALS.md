@@ -51,6 +51,11 @@ needs background browser automation without installing anything in the browser.
   event and resulting value. The Chrome Canary scratch-page test observed
   exact click position, full Unicode text, unchanged foreground app, key
   process, and cursor.
+- A later user-observed focus change during live checks exposed an unmeasured
+  route: test tab creation and implicit tab selection. Background trusted input
+  and screenshots now refuse inactive target tabs; `new_tab` no longer launches
+  a browser or explicitly selects a tab. The default smoke test reuses an
+  existing scratch tab and skips tab creation.
 - ✅ The previously verified `raise:true` HID path raises the target,
   posts hardware-style events, then restores the cursor. Both routes require
   Accessibility permission.
