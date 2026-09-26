@@ -54,6 +54,7 @@ needs background browser automation without installing anything in the browser.
 - ✅ The SkyLight functions and event-record bytes can be called from JXA, so
   the implementation keeps the single-file server and has no compiled helper.
   See `scripts/skylight-probe.js` for the FFI proof and AGENTS.md for the flow.
+- Research: [Cua's implementation](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-macos/src/input) supplied the focus records and Chromium gesture fields. [CGSInternal](https://github.com/NUIKit/CGSInternal) catalogs private CoreGraphics/SkyLight APIs; [SkyLightWindow](https://github.com/Lakr233/SkyLightWindow) covers window and Space manipulation, not input delivery. [Stage Manager's logs](https://eclecticlight.co/2023/01/19/how-stage-manager-works-in-the-log/) show why calling SetFrontProcess would risk window reordering and a Space switch.
 
 ### Surface diet and runtime (2026-09): fewer tools, fewer tokens, one runtime
 - ✅ 17 tools became 15: `get_html` folded into `get_text {html}`, and the
