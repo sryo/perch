@@ -242,69 +242,19 @@ function jxaRuntime(BROWSERS) {
     if (!$.dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", 2)) {
       throw new Error("SkyLight framework unavailable; use raise:true for foreground trusted input");
     }
-    ObjC.bindFunction("_SLPSGetFrontProcess", ["int", ["void *"]]);
-    ObjC.bindFunction("GetProcessForPID", ["int", ["int", "void *"]]);
-    ObjC.bindFunction("SLPSPostEventRecordTo", ["int", ["void *", "void *"]]);
     ObjC.bindFunction("SLEventPostToPid", ["void", ["int", "void *"]]);
     ObjC.bindFunction("SLEventSetIntegerValueField", ["void", ["void *", "unsigned int", "long long"]]);
     ObjC.bindFunction("CGEventSetWindowLocation", ["void", ["void *", "double", "double"]]);
-    ObjC.bindFunction("memset", ["void *", ["void *", "int", "unsigned long"]]);
     skyReady = true;
-  }
-
-  function skyByte(data, offset, byte) {
-    const one = $.NSMutableData.dataWithLength(1);
-    $.memset(one.mutableBytes, byte, 1);
-    data.replaceBytesInRangeWithBytesLength($.NSMakeRange(offset, 1), one.mutableBytes, 1);
-  }
-
-  function focusRecord(wid, direction) {
-    const record = $.NSMutableData.dataWithLength(0xf8);
-    skyByte(record, 0x04, 0xf8);
-    skyByte(record, 0x08, 0x0d);
-    for (let i = 0; i < 4; i++) skyByte(record, 0x3c + i, (wid >>> (8 * i)) & 0xff);
-    skyByte(record, 0x8a, direction);
-    return record;
-  }
-
-  function focusPost(psn, wid, direction) {
-    const record = focusRecord(wid, direction);
-    return $.SLPSPostEventRecordTo(psn.mutableBytes, record.mutableBytes) === 0;
-  }
-
-  // AppKit-active state is switched without raising the browser. Restore the
-  // user's key window in finally, or their next keystroke would be misrouted.
-  function backgroundBegin(T) {
-    skyInit();
-    if (T.I.pid == null || T.t.P.frontPid == null || T.t.P.frontWid == null) {
-      throw new Error("cannot identify background input process/window; use raise:true");
-    }
-    const prior = $.NSMutableData.dataWithLength(8);
-    const target = $.NSMutableData.dataWithLength(8);
-    if ($._SLPSGetFrontProcess(prior.mutableBytes) !== 0 || $.GetProcessForPID(T.I.pid, target.mutableBytes) !== 0) {
-      throw new Error("cannot resolve SkyLight process serial numbers; use raise:true");
-    }
-    const B = { prior: prior, target: target, priorWid: T.t.P.frontWid, targetWid: T.I.windowNumber };
-    if (!focusPost(prior, B.targetWid, 2)) throw new Error("SkyLight defocus failed; use raise:true");
-    if (!focusPost(target, B.targetWid, 1)) {
-      focusPost(prior, B.priorWid, 1);
-      throw new Error("SkyLight background activation failed; use raise:true");
-    }
-    delay(0.02);
-    return B;
-  }
-
-  function backgroundEnd(B) {
-    if (!B) return;
-    const a = focusPost(B.target, B.targetWid, 2);
-    const b = focusPost(B.prior, B.priorWid, 1);
-    if (!a || !b) throw new Error("SkyLight could not restore the user's key window");
   }
 
   function skyMouse(I, pt, type, phase, clickState, group) {
     skyInit();
     if (I.pid == null || I.windowNumber == null) throw new Error("SkyLight target has no pid/window id");
     const e = $.CGEventCreateMouseEvent($.CGEventSourceCreate(1), type, $.CGPointMake(pt.x, pt.y), 0);
+    // Command permits delivery to a background window. Release it on mouseup
+    // so Chromium emits an ordinary click rather than a Command-click.
+    if (type !== 2) $.CGEventSetFlags(e, 0x100000);
     const set = function (field, value) { $.SLEventSetIntegerValueField(e, field, value); };
     set(0, phase); set(1, clickState); set(3, 0); set(7, 3);
     set(40, I.pid); set(51, I.windowNumber); set(58, group);
@@ -338,7 +288,7 @@ function jxaRuntime(BROWSERS) {
 
   // Chunks are pre-split in Node (<= 20 UTF-16 units, CGEvent's buffer cap,
   // never splitting a surrogate pair).
-  function typeChunks(I, chunks, background) {
+  function typeChunks(chunks) {
     // The stock bridge signature rejects NSData bytes as a UniChar*; rebinding it
     // with void* parameters passes them through.
     ObjC.bindFunction("CGEventKeyboardSetUnicodeString", ["void", ["void *", "unsigned long", "void *"]]);
@@ -347,8 +297,7 @@ function jxaRuntime(BROWSERS) {
       [true, false].forEach(function (down) {
         const e = $.CGEventCreateKeyboardEvent($(), 0, down);
         $.CGEventKeyboardSetUnicodeString(e, chunk.length, data.bytes);
-        if (background) $.SLEventPostToPid(I.pid, e);
-        else $.CGEventPost(1, e); // kCGSessionEventTap: foreground target
+        $.CGEventPost(1, e); // kCGSessionEventTap: foreground target
       });
       delay(0.005);
     });
@@ -552,43 +501,41 @@ function jxaRuntime(BROWSERS) {
     trustedClick(a) {
       const T = trustedTarget(a);
       const home = T.background ? null : cursorAt();
-      let B = null;
       try {
         if (a.x != null) {
-          if (T.background) B = backgroundBegin(T);
           if (T.background) skyClick(T.I, { x: a.x, y: a.y });
           else leftClick(T.I, { x: a.x, y: a.y });
           return { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" };
         }
         const A = aim(T, a, "click");
         if (A.out) return A.out;
-        if (T.background) B = backgroundBegin(T);
         if (T.background) skyClick(T.I, A.pt);
         else leftClick(T.I, A.pt);
         delay(0.05);
         const check = parseExec(T.t, a.check);
         return Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, delivery: T.background ? "skylight" : "hid" }, check);
       } finally {
-        if (B) backgroundEnd(B);
         if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
       }
     },
     trustedFill(a) {
       const T = trustedTarget(a);
       const home = T.background ? null : cursorAt();
-      let B = null;
       try {
         const A = aim(T, a, "fill");
         if (A.out) return A.out;
-        if (T.background) B = backgroundBegin(T);
         if (T.background) skyClick(T.I, A.pt);
         else leftClick(T.I, A.pt);
         delay(0.05); // let focus settle before typing
-        typeChunks(T.I, a.chunks, T.background);
+        if (T.background) {
+          const inserted = parseExec(T.t, a.insert);
+          const checked = parseExec(T.t, a.check);
+          return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, delivery: "skylight+editing" }, checked, inserted, { ok: inserted.ok === true && checked.ok === true });
+        }
+        typeChunks(a.chunks);
         delay(0.05);
         return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, delivery: T.background ? "skylight" : "hid" }, parseExec(T.t, a.check));
       } finally {
-        if (B) backgroundEnd(B);
         if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
       }
     },
@@ -1360,7 +1307,7 @@ if (A.forFill && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { o
 try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
 const r = el.getBoundingClientRect();
 if (!r.width || !r.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
-if (A.forFill) { setNativeValue(el, ""); fire(el, ["input"]); }
+if (A.forFill && !A.background) { setNativeValue(el, ""); fire(el, ["input"]); }
 const prev = window.__perch_trusted;
 if (prev && prev.off) prev.off();
 const st = window.__perch_trusted = { el: el, down: null, moves: [] };
@@ -1386,6 +1333,26 @@ const st = window.__perch_trusted || {};
 const moves = st.moves || [];
 st.moves = [];
 return A.reset || !moves.length ? null : { moves: moves };
+`,
+
+  // Chromium's editing command runs through the browser's editing pipeline and
+  // emits a trusted input event, even when the OS key window belongs to the user.
+  // Verify both the delivered event and the resulting value before reporting success.
+  trusted_insert: String.raw`
+const st = window.__perch_trusted;
+if (!st || !st.el || !st.el.isConnected) return { ok: false, error: "trusted field disappeared; re-snapshot" };
+const el = st.el;
+let trusted = false;
+const onInput = function (e) { if (e.target === el && e.isTrusted) trusted = true; };
+el.addEventListener("input", onInput, true);
+try {
+  el.focus({ preventScroll: true });
+  if (el.select) el.select();
+  const accepted = document.execCommand(A.text ? "insertText" : "delete", false, A.text);
+  const value = String(el.value || "");
+  const ok = accepted === true && trusted && value === A.text;
+  return { ok: ok, trusted: trusted, value: value, ...(ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
+} finally { el.removeEventListener("input", onInput, true); }
 `,
 
   // hit: the mousedown landed on the element; null: no mousedown reached the page.
@@ -1502,14 +1469,15 @@ async function trustedClick({ ref, selector, x, y, raise, target }) {
   });
 }
 
-// Real keystrokes for plain fields that reject synthetic input (Workday class).
-// The probe clears the field first so typing never appends or depends on Cmd+A.
+// Background fields use the browser's trusted editing command; the explicit
+// foreground route keeps the hardware-style keystrokes. Both verify the value.
 async function trustedFill({ ref, selector, label_pattern, text, raise, target }) {
   return rt("trustedFill", {
     target, raise,
-    probe: pageFn("trusted_probe", { ref, selector, label_pattern, forFill: true }),
+    probe: pageFn("trusted_probe", { ref, selector, label_pattern, forFill: true, background: !raise }),
     cal: pageFn("trusted_cal", {}),
     calReset: pageFn("trusted_cal", { reset: true }),
+    insert: pageFn("trusted_insert", { text }),
     check: pageFn("trusted_check", { forFill: true, text }),
     chunks: chunkUtf16(text),
   });
@@ -1642,7 +1610,7 @@ const TOOLS = [
     raise: { type: "boolean" },
     target: TARGET,
   }),
-  tool("fill", "Set a field's text and verify it landed: inputs, textareas, and rich editors (contenteditable, ProseMirror, Quill…). Returns {ok,kind,el,len,ambiguous?}. `trusted` types real keys into plain fields.", {
+  tool("fill", "Set a field's text and verify it landed: inputs, textareas, and rich editors (contenteditable, ProseMirror, Quill…). Returns {ok,kind,el,len,ambiguous?}. `trusted` gives plain fields a trusted input event without taking key focus; `raise:true` types foreground keys.", {
     text: { type: "string" },
     text_path: { type: "string", description: "File with the text." },
     ref: REF,

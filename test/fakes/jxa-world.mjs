@@ -187,6 +187,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
       CGEventSetIntegerValueField: (e, f, v) => { e.fields[f] = v; },
       SLEventSetIntegerValueField: (e, f, v) => { e.fields[f] = v; },
       CGEventSetDoubleValueField: (e, f, v) => { e.fields[f] = v; },
+      CGEventSetFlags: (e, flags) => { e.flags = flags; },
       CGEventKeyboardSetUnicodeString: (e, len, bytes) => { e.text = bytes; e.len = len; },
       CGEventSetWindowLocation: (e, x, y) => { e.windowPoint = { x, y }; },
       SLEventPostToPid: (pid, e) => {

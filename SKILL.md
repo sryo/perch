@@ -55,7 +55,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Trusted input
 
-`click {trusted: true}` and `fill {trusted: true}` use SkyLight to address the browser window without raising it or moving the shared cursor. They require Accessibility permission. The background route was verified live on Chrome Canary; check `hit` and `ok` before continuing on any site. Pass `raise: true` for the HID route, which takes focus briefly and restores the cursor. `fill` verifies the typed text; rich editors usually work without trusted mode.
+`click {trusted: true}` uses SkyLight to address the browser window without raising it, changing the user's key focus, or moving the shared cursor. Background `fill {trusted: true}` clicks the field there, then uses the browser's editing command; it verifies a trusted `input` event and the exact value. Both require Accessibility permission. This route was verified live on Chrome Canary; check `hit` and `ok` before continuing on any site. Pass `raise: true` for the HID route, which takes focus briefly and restores the cursor. Rich editors usually work without trusted mode.
 
 ## Permissions
 

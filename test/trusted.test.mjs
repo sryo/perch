@@ -80,6 +80,36 @@ test("trusted_check reports whether the mousedown hit the element, then disarms"
   assert.equal(run(w, "trusted_cal", {}), null, "listeners removed after check");
 });
 
+test("trusted_insert edits the probed field and requires a trusted input event", () => {
+  const w = page(`<input id=i aria-label="Name">`);
+  run(w, "trusted_probe", { selector: "#i", forFill: true });
+  w.document.execCommand = (_command, _ui, text) => {
+    const el = w.document.activeElement;
+    el.value = text;
+    const event = new w.Event("input", { bubbles: true });
+    Object.defineProperty(event, "isTrusted", { value: true });
+    el.dispatchEvent(event);
+    return true;
+  };
+  assert.deepEqual(run(w, "trusted_insert", { text: "Ada 😀" }), { ok: true, trusted: true, value: "Ada 😀" });
+  assert.equal(w.document.getElementById("i").value, "Ada 😀");
+});
+
+test("trusted_insert rejects a value change without a trusted input event", () => {
+  const w = page(`<input id=i value=old>`);
+  run(w, "trusted_probe", { selector: "#i", forFill: true, background: true });
+  w.document.execCommand = (_command, _ui, text) => {
+    const el = w.document.activeElement;
+    el.value = text;
+    el.dispatchEvent(new w.Event("input", { bubbles: true }));
+    return true;
+  };
+  const result = run(w, "trusted_insert", { text: "new" });
+  assert.equal(result.ok, false);
+  assert.equal(result.trusted, false);
+  assert.equal(result.value, "new");
+});
+
 // ---- runtime (fake JXA world) ----
 
 const tabs = (n) => Array.from({ length: n }, (_, i) => ({ url: `https://t${i}.test/`, id: `t${i}` }));
@@ -112,7 +142,7 @@ test("trusted input refuses a point outside the target window", async () => {
   assert.equal(r.isError, true);
   assert.match(r.content[0].text, /outside the target window/);
   assert.equal(world.posted.length, 0);
-  assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 4, "restore AppKit focus after a failed press");
+  assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 0, "never borrow the user's key focus");
   assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
   assert.deepEqual(world.state.warps, []);
 });
@@ -130,10 +160,11 @@ test("trusted input reaches a background browser without changing app focus or c
   assert.deepEqual(world.posted.find((e) => e.kind === "mouse" && e.type === 1 && e.pt.x >= 0).windowPoint, { x: 290, y: 200 }, "stamp the target point relative to its window");
   assert.equal(world.posted.filter((e) => e.via === "skylight").length, 5, "primer, offscreen pair, then target pair");
   assert.ok(world.posted.every((e) => e.pid === 5 && e.fields[51] === 77 && e.fields[91] === 77 && e.fields[92] === 77));
-  const focusRecords = world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo");
-  assert.deepEqual(focusRecords.map(([, psn, record]) => [psn.readUInt32LE(4), record.readUInt32LE(0x3c), record[0x8a]]), [
-    [1, 77, 2], [5, 77, 1], [5, 77, 2], [1, 10, 1],
-  ], "activate target then restore the prior process and window");
+  const targetDown = world.posted.find((e) => e.kind === "mouse" && e.type === 1 && e.pt.x >= 0);
+  const targetUp = world.posted.find((e) => e.kind === "mouse" && e.type === 2 && e.pt.x >= 0);
+  assert.equal(targetDown.flags, 0x100000, "Command flag lets WindowServer route the background press");
+  assert.equal(targetUp.flags, undefined, "release without Command so the page receives an ordinary click");
+  assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 0, "never borrow the user's key focus");
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
   assert.equal(world.counts["win.index="], undefined);
   assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
@@ -258,26 +289,30 @@ test("trusted fill types the whole text, emoji included, in surrogate-safe chunk
   assert.ok(keys.length && keys.every((e) => e.via === "tap1" && e.text && e.len === e.text.length));
 });
 
-test("trusted fill sends keys to a background browser and restores AppKit focus", async () => {
+test("trusted fill edits a background browser without changing AppKit focus", async () => {
   const dom = page(`<input id=i aria-label="Name">`);
   withWindowMetrics(dom, METRICS);
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "about:blank", id: "t", dom }] }] }],
     cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600 }],
   });
-  world.state.onPost = (e) => {
-    if (e.kind === "key" && e.down) dom.document.getElementById("i").value += e.text;
+  dom.document.execCommand = (_command, _ui, text) => {
+    const el = dom.document.activeElement;
+    el.value = text;
+    const event = new dom.Event("input", { bubbles: true });
+    Object.defineProperty(event, "isTrusted", { value: true });
+    el.dispatchEvent(event);
+    return true;
   };
   const r = await handleCall("fill", { trusted: true, selector: "#i", text: "Ada 😀" });
   assert.equal(r.isError, undefined, r.content[0].text);
   assert.equal(JSON.parse(r.content[0].text).ok, true);
   assert.equal(dom.document.getElementById("i").value, "Ada 😀");
-  const keys = world.posted.filter((e) => e.kind === "key");
-  assert.ok(keys.length > 0 && keys.every((e) => e.via === "skylight" && e.pid === 4242));
+  assert.equal(world.posted.filter((e) => e.kind === "key").length, 0, "do not borrow the user's keyboard focus");
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
   assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
   assert.deepEqual(world.state.warps, []);
-  assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 4);
+  assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 0);
 });
 
 test("calibration ignores moves that aren't the one it posted (late events, the real mouse)", async () => {

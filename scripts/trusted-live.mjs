@@ -26,15 +26,22 @@ if (background && argv.includes("--delivery")) {
 const frontApp = () => execFileSync("osascript", ["-l", "JavaScript", "-e",
   "ObjC.import('CoreGraphics');const l=ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(17,0)));" +
   "(l.find(w=>w.kCGWindowLayer===0&&w.kCGWindowBounds.Width>100)||{}).kCGWindowOwnerName||''"]).toString().trim();
+const keyProcess = () => execFileSync("osascript", ["-l", "JavaScript", "-e",
+  "ObjC.import('Foundation');ObjC.bindFunction('dlopen',['void *',['char *','int']]);" +
+  "$.dlopen('/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight',2);" +
+  "ObjC.bindFunction('_SLPSGetFrontProcess',['int',['void *']]);" +
+  "const d=$.NSMutableData.dataWithLength(8);if($._SLPSGetFrontProcess(d.mutableBytes)!==0)throw Error('front process unavailable');ObjC.unwrap(d.description)"
+]).toString().trim();
 const cursorAt = () => JSON.parse(execFileSync("osascript", ["-l", "JavaScript", "-e",
   "ObjC.import('CoreGraphics');const p=$.CGEventGetLocation($.CGEventCreate($()));JSON.stringify({x:p.x,y:p.y})"]).toString().trim());
 
 const PAGE = `
   document.body.innerHTML = '<div style="height:200px"></div>' +
     '<button id=b style="margin-left:180px;width:220px;height:56px">Trusted target</button>' +
-    '<p style="margin-left:180px"><input id=i aria-label="Name" style="width:320px;height:32px"></p>';
-  window.__rec = { downs: [], moves: [], inputs: [] };
+    '<p style="margin-left:180px"><input id=i aria-label="Name" value="Old value" style="width:320px;height:32px"></p>';
+  window.__rec = { downs: [], clicks: [], moves: [], inputs: [] };
   document.onmousedown = e => window.__rec.downs.push({ id: e.target.id, trusted: e.isTrusted, x: e.clientX, y: e.clientY });
+  document.onclick = e => window.__rec.clicks.push({ id: e.target.id, trusted: e.isTrusted, meta: e.metaKey });
   document.onmousemove = e => { if (window.__rec.moves.length < 10) window.__rec.moves.push([e.clientX, e.clientY]); };
   document.oninput = e => window.__rec.inputs.push({ id: e.target.id, trusted: e.isTrusted });
   const c = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
@@ -120,12 +127,17 @@ try {
   }
   const cursorBefore = background ? cursorAt() : null;
   const foregroundSamples = [];
+  const keySamples = [];
+  const keyBefore = background ? keyProcess() : null;
   let poll;
   if (background) {
     foregroundSamples.push(frontApp());
+    keySamples.push(keyBefore);
     poll = setInterval(() => {
       try { foregroundSamples.push(frontApp()); }
       catch (e) { foregroundSamples.push(`(probe error: ${e.message})`); }
+      try { keySamples.push(keyProcess()); }
+      catch (e) { keySamples.push(`(probe error: ${e.message})`); }
     }, 75);
   }
 
@@ -141,7 +153,9 @@ try {
     if (poll) clearInterval(poll);
     if (background) {
       foregroundSamples.push(frontApp());
+      keySamples.push(keyProcess());
       report(foregroundSamples.every((app) => app === before), "front app stays unchanged", JSON.stringify({ expected: before, observed: [...new Set(foregroundSamples)], samples: foregroundSamples.length }));
+      report(keySamples.every((process) => process === keyBefore), "key focus stays with the user", JSON.stringify({ expected: keyBefore, observed: [...new Set(keySamples)], samples: keySamples.length }));
       const cursorAfter = cursorAt();
       if (Math.abs(cursorAfter.x - cursorBefore.x) <= 1 && Math.abs(cursorAfter.y - cursorBefore.y) <= 1) {
         report(true, "cursor stays in place", JSON.stringify({ before: cursorBefore, after: cursorAfter }));
@@ -157,11 +171,13 @@ try {
 
   const down = rec.rec.downs.find((d) => d.id === "b");
   report(click.hit === true && !!down?.trusted, "trusted click lands on the button", JSON.stringify({ result: click, pageSaw: rec.rec.downs[0] || null }));
+  const clicked = rec.rec.clicks.find((e) => e.id === "b");
+  report(!!clicked?.trusted && !clicked.meta, "button receives an ordinary trusted click", JSON.stringify(clicked || null));
   if (down) report(Math.abs(down.x - centers.b[0]) <= 3 && Math.abs(down.y - centers.b[1]) <= 3, "click point matches the element center", `center ${centers.b.map(Math.round)}, pressed ${[down.x, down.y]}`);
   const firstMove = rec.rec.moves[0];
   if (!background && firstMove) console.log(`INFO estimate before calibration was off by ${[Math.round(centers.b[0] - firstMove[0]), Math.round(centers.b[1] - firstMove[1])]} (px)`);
   else if (!firstMove) console.log("INFO no mousemove reached the page (calibration unavailable)");
-  report(fill.ok === true && rec.value === TEXT, "trusted fill types the full text, emoji included", JSON.stringify({ result: fill, value: rec.value }));
+  report(fill.ok === true && fill.hit === true && rec.value === TEXT, "trusted fill replaces old text with the full text", JSON.stringify({ result: fill, value: rec.value }));
   const trustedInputs = rec.rec.inputs.filter((e) => e.id === "i" && e.trusted);
   report(trustedInputs.length > 0, "page receives a trusted input event", JSON.stringify({ trusted: trustedInputs.length, total: rec.rec.inputs.length }));
   await client.call("eval_js", { target, script: "document.body.innerHTML=''; delete window.__rec; return 1" });
@@ -169,7 +185,7 @@ try {
   if (!e.done) report(false, "harness", e.message);
 } finally {
   client.close();
-  if (before && before !== frontApp()) {
+  if (!background && before && before !== frontApp()) {
     try { execFileSync("osascript", ["-e", `tell application ${JSON.stringify(before)} to activate`]); } catch {}
   }
   console.log(`front app after test: ${frontApp() || "(unknown)"}`);

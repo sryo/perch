@@ -40,21 +40,24 @@ needs background browser automation without installing anything in the browser.
 
 ### Trusted input (2026-09): background SkyLight route
 - ❌ `CGEventPostToPid` and a bare `SLEventPostToPid` did not reach Chrome's
-  page in live tests. The new SkyLight route adds process and window routing
-  fields, AppKit focus records, and a primer sequence.
+  page in live tests. Posting AppKit focus records made routed events work, but
+  briefly redirected the user's keyboard. That violates the foreground goal.
 - ✅ Implemented and live-tested: default `click {trusted:true}` /
-  `fill {trusted:true}` routes events to the browser process and window through
-  SkyLight without raising the app or moving the shared cursor. Perch attempts
-  to restore prior AppKit focus after posting and reports a restore failure.
-  The Chrome Canary scratch-page test observed `isTrusted` mouse and input events,
-  exact click position, full Unicode text, unchanged foreground app and cursor.
+  `fill {trusted:true}` leave the user's AppKit key process unchanged. Clicks
+  use window-routed SkyLight events with a Command flag on the press and no
+  flag on release, yielding an ordinary trusted click in Chrome. Background
+  fill clicks the field, then uses Chromium's editing command, which produced
+  a trusted input event while replacing existing text. Perch verifies the
+  event and resulting value. The Chrome Canary scratch-page test observed
+  exact click position, full Unicode text, unchanged foreground app, key
+  process, and cursor.
 - ✅ The previously verified `raise:true` HID path raises the target,
   posts hardware-style events, then restores the cursor. Both routes require
   Accessibility permission.
-- ✅ The SkyLight functions and event-record bytes can be called from JXA, so
-  the implementation keeps the single-file server and has no compiled helper.
-  See `scripts/skylight-probe.js` for the FFI proof and AGENTS.md for the flow.
-- Research: [Cua's implementation](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-macos/src/input) supplied the focus records and Chromium gesture fields. [CGSInternal](https://github.com/NUIKit/CGSInternal) catalogs private CoreGraphics/SkyLight APIs; [SkyLightWindow](https://github.com/Lakr233/SkyLightWindow) covers window and Space manipulation, not input delivery. [Stage Manager's logs](https://eclecticlight.co/2023/01/19/how-stage-manager-works-in-the-log/) show why calling SetFrontProcess would risk window reordering and a Space switch.
+- ✅ The SkyLight event functions can be called from JXA, so the implementation
+  keeps the single-file server and has no compiled helper. See
+  `scripts/skylight-probe.js` for the FFI proof and AGENTS.md for the flow.
+- Research: [Cua's implementation](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-macos/src/input) supplied Chromium gesture fields; [Lakr233's background-click analysis](https://github.com/Lakr233/bgclick-rev-skill) identified the Command flag that permits background routing. [CGSInternal](https://github.com/NUIKit/CGSInternal) catalogs private CoreGraphics/SkyLight APIs; [SkyLightWindow](https://github.com/Lakr233/SkyLightWindow) covers window and Space manipulation, not input delivery. [Stage Manager's logs](https://eclecticlight.co/2023/01/19/how-stage-manager-works-in-the-log/) show why calling SetFrontProcess would risk window reordering and a Space switch.
 
 ### Surface diet and runtime (2026-09): fewer tools, fewer tokens, one runtime
 - ✅ 17 tools became 15: `get_html` folded into `get_text {html}`, and the
