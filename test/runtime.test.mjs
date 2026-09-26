@@ -82,7 +82,7 @@ test("active tab detection per browser kind", async () => {
   });
   const { o } = await call("list_tabs", {});
   const rows = Array.isArray(o) ? o : o.tabs;
-  assert.deepEqual(rows.filter((r) => r.active).map((r) => r.title), ["c2"]);
+  assert.deepEqual(rows.filter((r) => r.active).map((r) => r.title), ["c2", "a1", "s2"]);
   for (const [app, idx] of [["Google Chrome", 2], ["Arc", 1], ["Safari", 2]]) {
     await call("eval_js", { script: "window.picked = 1; return 1", target: { app } });
     assert.equal(world.page(app, 0, idx).picked, 1, app);

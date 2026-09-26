@@ -6,7 +6,8 @@ import vm from "node:vm";
 
 export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
   const clock = { t: 1_000_000 };
-  const state = { loadTicks };
+  const state = { loadTicks, ax: true };
+  const posted = [];
   const counts = {};
   const bump = (k) => { counts[k] = (counts[k] || 0) + 1; };
   const log = [];
@@ -39,7 +40,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     tab.execute = ({ javascript }) => {
       bump("tab.execute");
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
-      const r = vm.runInContext(javascript, tab.page.ctx);
+      // spec.dom: a happy-dom Window standing in for the page.
+      const r = spec.dom ? spec.dom.eval(javascript) : vm.runInContext(javascript, tab.page.ctx);
       return b.kind === "arc" ? JSON.stringify(r) : r;
     };
     tab.select = () => { bump("tab.select"); w.spec.active = w.tabs.indexOf(tab); };
@@ -65,6 +67,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     Object.defineProperty(win, "tabs", { get: () => { bump("win.tabs"); return coll; } });
     Object.defineProperty(win, "id", { get: () => () => { bump("win.id()"); return spec.id; } });
     Object.defineProperty(win, "index", { set: (v) => { bump("win.index="); spec.raised = v === 1; } });
+    win.position = () => { if (b.kind !== "chrome") throw new Error("no position"); return [spec.x ?? 0, spec.y ?? 0]; };
+    win.size = () => { if (b.kind !== "chrome") throw new Error("no size"); return [spec.w ?? 800, spec.h ?? 600]; };
+    win.bounds = () => { if (b.kind !== "safari") throw new Error("no bounds"); return { x: spec.x ?? 0, y: spec.y ?? 0, width: spec.w ?? 800, height: spec.h ?? 600 }; };
     Object.defineProperty(win, "activeTabIndex", {
       get: () => () => { bump("win.activeTabIndex()"); if (b.kind !== "chrome") throw new Error("Can't convert types"); return spec.active + 1; },
       set: (v) => { bump("win.activeTabIndex="); spec.active = v - 1; },
@@ -122,7 +127,21 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
       deepUnwrap: (x) => { bump("deepUnwrap"); return x; },
       unwrap: (x) => x,
     },
-    $: {
+    // JXA's `$` is callable (`$()` is a nil pointer) and carries the bridged symbols.
+    $: Object.assign(() => null, {
+      // CoreGraphics / AppKit stand-ins for trusted input: events are recorded, not posted.
+      CGPointMake: (x, y) => ({ x, y }),
+      CGEventCreateMouseEvent: (_s, type, pt) => ({ kind: "mouse", type, pt, fields: {} }),
+      CGEventCreateKeyboardEvent: (_s, _k, down) => ({ kind: "key", down, fields: {} }),
+      CGEventSetIntegerValueField: (e, f, v) => { e.fields[f] = v; },
+      CGEventSetDoubleValueField: (e, f, v) => { e.fields[f] = v; },
+      CGEventKeyboardSetUnicodeString: (e, len, bytes) => { e.text = bytes; e.len = len; },
+      CGEventPostToPid: (pid, e) => { posted.push({ pid, ...e }); },
+      NSDictionary: { dictionaryWithObjectForKey: () => ({}) },
+      NSString: { stringWithString: (s) => ({ dataUsingEncoding: () => ({ length: s.length * 2, bytes: s }) }) },
+      AXIsProcessTrustedWithOptions: () => state.ax,
+      kCFBooleanFalse: false,
+      kAXTrustedCheckOptionPrompt: "prompt",
       CGWindowListCopyWindowInfo: () => {
         bump("CGWindowList");
         return cg.map((e) => ({
@@ -133,7 +152,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
           kCGWindowBounds: { X: e.x ?? 0, Y: e.y ?? 0, Width: e.w ?? 800, Height: e.h ?? 600 },
         }));
       },
-    },
+    }),
     JSON,
     Math,
     String,
@@ -141,7 +160,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
   };
   const ctx = vm.createContext(sandbox);
   return {
-    ctx, counts, log, clock, apps,
+    ctx, counts, log, clock, apps, posted,
     reset() { for (const k of Object.keys(counts)) delete counts[k]; log.length = 0; },
     state,
     page: (name, w, t) => winsByApp[name][w].tabs[t].page.ctx,

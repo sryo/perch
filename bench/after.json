@@ -1,0 +1,71 @@
+{
+  "rev": "a06ab44",
+  "date": "2026-09-26T14:06:47.989Z",
+  "runs": 15,
+  "results": {
+    "list_tabs": {
+      "p50": 149.4,
+      "p95": 165.5,
+      "min": 130.8,
+      "bytes": 11449
+    },
+    "list_tabs limit:1": {
+      "p50": 154.6,
+      "p95": 203,
+      "min": 130.2,
+      "bytes": 304
+    },
+    "eval_js default target": {
+      "p50": 83.5,
+      "p95": 84.9,
+      "min": 81.6,
+      "bytes": 28
+    },
+    "eval_js explicit target": {
+      "p50": 83.5,
+      "p95": 91.4,
+      "min": 81.5,
+      "bytes": 28
+    },
+    "eval_js awaitPromise": {
+      "p50": 99.7,
+      "p95": 216.1,
+      "min": 91.4,
+      "bytes": 28
+    },
+    "wait readyState": {
+      "p50": 83.1,
+      "p95": 89.8,
+      "min": 79.9,
+      "bytes": 54
+    },
+    "accessibility_snapshot": {
+      "p50": 83.5,
+      "p95": 92.8,
+      "min": 73.1,
+      "bytes": 3052
+    },
+    "get_text 2000": {
+      "p50": 83.5,
+      "p95": 84.3,
+      "min": 82,
+      "bytes": 300
+    },
+    "screenshot png": {
+      "p50": 228.8,
+      "p95": 264.5,
+      "min": 215.1,
+      "bytes": 108448
+    },
+    "screenshot jpeg": {
+      "p50": 232.4,
+      "p95": 239.2,
+      "min": 217.3,
+      "bytes": 79693
+    },
+    "schema": {
+      "tools": 15,
+      "chars": 7535
+    }
+  }
+}

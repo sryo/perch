@@ -1,15 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PAGE_PRELUDE, PAGE_SCRIPTS, pageScript, buildEvalWrapper, buildAsyncKickoff, validateLabelPattern } from "../server.js";
-import { page, run, runBody, runAsync } from "./helpers/page.mjs";
+import { PAGE_PRELUDE, PAGE_SCRIPTS, pageScript, buildEvalWrapper, validateLabelPattern } from "../server.js";
+import { page, run, runBody } from "./helpers/page.mjs";
 
 // ---- prelude ----
 
 test("prelude has no template holes and every script parses", () => {
   assert.ok(!PAGE_PRELUDE.includes("${"));
   for (const k of Object.keys(PAGE_SCRIPTS)) {
-    const src = pageScript(k, { text: "x", label_pattern: "x", max: 1 });
-    assert.doesNotThrow(() => new Function(k === "select" ? buildAsyncKickoff(src, "k") : buildEvalWrapper(src)), k);
+    assert.doesNotThrow(() => new Function(buildEvalWrapper(pageScript(k, { text: "x", label_pattern: "x", max: 1 }))), k);
   }
 });
 
@@ -164,38 +163,6 @@ test("fill: stale ref is the shared miss sentinel; ambiguous selector is reporte
   assert.equal(o.ok, true);
   assert.deepEqual(o.ambiguous, [`textbox "A"`, `textbox "B"`]);
   assert.equal(run(w, "fill", { label_pattern: "zzz", text: "a" }).ok, false);
-});
-
-// ---- select ----
-
-test("select: native select by text, value, substring; candidates on miss", async () => {
-  const w = page(`<label>Country <select><option value="">Pick</option><option value=ar>Argentina</option><option value=br>Brazil</option></select></label>`);
-  assert.deepEqual(await runAsync(w, "select", { label_pattern: "country", text: "Argentina" }), { ok: true, selected: "Argentina", el: `combobox "Country"` });
-  assert.equal((await runAsync(w, "select", { label_pattern: "country", text: "br" })).selected, "Brazil");
-  assert.equal((await runAsync(w, "select", { label_pattern: "country", text: "razi" })).selected, "Brazil");
-  const miss = await runAsync(w, "select", { label_pattern: "country", text: "Chile" });
-  assert.equal(miss.ok, false);
-  assert.deepEqual(miss.candidates, ["Pick", "Argentina", "Brazil"]);
-});
-
-test("select: custom combobox opens only on a real left-button pointer sequence", async () => {
-  const w = page(`<label id=lab>Level</label><div class="select__control"><div role=combobox aria-labelledby=lab aria-expanded=false tabindex=0><span class=v>Choose</span></div></div><div id=menu></div>`);
-  runBody(w, `
-    const cb = document.querySelector('[role=combobox]');
-    document.querySelector('.select__control').addEventListener('mousedown', (e) => {
-      if (e.button !== 0 || !e.view) return;
-      cb.setAttribute('aria-expanded', 'true');
-      setTimeout(() => {
-        document.getElementById('menu').innerHTML = '<div role=option>Junior</div><div role=option>Senior</div>';
-        document.querySelectorAll('[role=option]').forEach(o => o.addEventListener('click', () => { cb.querySelector('.v').textContent = o.textContent; }));
-      }, 30);
-    });
-    return 1`);
-  const o = await runAsync(w, "select", { label_pattern: "level", text: "senior" });
-  assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.selected, "Senior");
-  assert.equal(o.value, "Senior");
-  assert.equal(o.unverified, undefined);
 });
 
 // ---- click, upload, console, wait ----

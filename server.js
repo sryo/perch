@@ -6,8 +6,8 @@ import { execFile, spawn } from "node:child_process";
 import { readFile, unlink } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
-import { resolve as resolvePath } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
@@ -98,7 +98,7 @@ function jxaRuntime(BROWSERS) {
           if (want.tabIndex != null) throw new Error("tabIndex " + want.tabIndex + " out of range; window has " + tabs.length + " tabs");
           continue;
         }
-        return { tab: tabs[idx], kind, app: name, win, P };
+        return { tab: tabs[idx], kind, app: name, win, w, P };
       }
     }
     throw new Error(want.app && !KIND[want.app] ? "unknown browser " + want.app : "no matching tab");
@@ -157,6 +157,97 @@ function jxaRuntime(BROWSERS) {
 
   const stripHash = (u) => String(u).split("#")[0];
 
+  // Window geometry plus the pid and CGWindowID that screencapture -l and CGEvent
+  // routing need. Chrome has position()/size(), Safari bounds(); Arc has neither,
+  // so its frame comes from its own CG entry. AppleScript reports inner-content
+  // bounds while CG includes the titlebar, so the closest CG entry wins.
+  function ids(t) {
+    let geom = null;
+    try { const p = t.win.position(), s = t.win.size(); geom = { x: p[0], y: p[1], w: s[0], h: s[1] }; } catch (e) {}
+    if (!geom) { try { const b = t.win.bounds(); geom = { x: b.x, y: b.y, w: b.width, h: b.height }; } catch (e) {} }
+    const cands = t.P.wins[t.app] || [];
+    let best = null;
+    if (geom) {
+      let bestScore = Infinity;
+      cands.forEach(function (c) {
+        const score = Math.abs(c.x - geom.x) + Math.abs(c.y - geom.y) + Math.abs(c.w - geom.w) + Math.abs(c.h - geom.h);
+        if (score < bestScore) { bestScore = score; best = c; }
+      });
+    } else {
+      best = cands[t.w] || cands[0] || null;
+      if (best) geom = { x: best.x, y: best.y, w: best.w, h: best.h };
+    }
+    if (!geom) throw new Error("cannot get window geometry for " + t.app + " (minimized or on another Space?)");
+    return {
+      geom: geom,
+      pid: t.P.pid[t.app] == null ? null : t.P.pid[t.app],
+      windowNumber: best ? best.wid : null,
+      cgBounds: best ? { x: best.x, y: best.y, w: best.w, h: best.h } : null,
+    };
+  }
+
+  function requireAccessibility() {
+    ObjC.import("ApplicationServices");
+    // kCFBooleanFalse: never let the OS prompt pop up from inside a tool call.
+    const opts = $.NSDictionary.dictionaryWithObjectForKey($.kCFBooleanFalse, $.kAXTrustedCheckOptionPrompt);
+    if (!$.AXIsProcessTrustedWithOptions(opts)) {
+      throw new Error("Accessibility permission required: System Settings > Privacy & Security > Accessibility, tick the controlling app (Claude Code / Terminal / iTerm), then retry.");
+    }
+  }
+
+  // Resolves the target for trusted input: permission, frontmost (or raise), ids.
+  function trustedTarget(a) {
+    const t = resolve(a.target);
+    requireAccessibility();
+    if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
+    else if (t.P.front !== t.app) throw new Error("target not frontmost; pass raise:true or call activate_tab first");
+    const I = ids(t);
+    if (I.pid == null) throw new Error("could not resolve the pid for " + t.app);
+    return { t: t, I: I };
+  }
+
+  // CGEvent integer fields by raw index ($.kCG* symbols aren't reliably bridged):
+  // 1 click state, 9 target pid, 11 pressure (double), 27/28 window under pointer,
+  // 51 target window (private), 58 routing flag (private).
+  function mouse(I, pt, type, state, pressure) {
+    const e = $.CGEventCreateMouseEvent($(), type, $.CGPointMake(pt.x, pt.y), 0);
+    $.CGEventSetIntegerValueField(e, 1, state);
+    $.CGEventSetDoubleValueField(e, 11, pressure);
+    $.CGEventSetIntegerValueField(e, 9, I.pid);
+    if (I.windowNumber != null) {
+      $.CGEventSetIntegerValueField(e, 27, I.windowNumber);
+      $.CGEventSetIntegerValueField(e, 28, I.windowNumber);
+      $.CGEventSetIntegerValueField(e, 51, I.windowNumber);
+      $.CGEventSetIntegerValueField(e, 58, 1);
+    }
+    $.CGEventPostToPid(I.pid, e);
+  }
+
+  function leftClick(I, pt) {
+    mouse(I, pt, 1, 1, 1.0); // kCGEventLeftMouseDown
+    delay(0.012);
+    mouse(I, pt, 2, 1, 0.0); // kCGEventLeftMouseUp
+  }
+
+  // Chunks are pre-split in Node (<= 20 UTF-16 units, CGEvent's buffer cap,
+  // never splitting a surrogate pair).
+  function typeChunks(I, chunks) {
+    ObjC.import("Foundation");
+    chunks.forEach(function (chunk) {
+      // NSUTF16LittleEndianStringEncoding; the NSData bytes go straight to CGEvent.
+      const data = $.NSString.stringWithString(chunk).dataUsingEncoding(0x14000100);
+      [true, false].forEach(function (down) {
+        const e = $.CGEventCreateKeyboardEvent($(), 0, down);
+        $.CGEventKeyboardSetUnicodeString(e, data.length / 2, data.bytes);
+        $.CGEventSetIntegerValueField(e, 9, I.pid);
+        $.CGEventPostToPid(I.pid, e);
+      });
+      delay(0.005);
+    });
+  }
+
+  const parseExec = function (t, js) { return JSON.parse(String(exec(t, js))); };
+
   globalThis.__perch = {
     listTabs(a) {
       const P = procs();
@@ -172,8 +263,8 @@ function jxaRuntime(BROWSERS) {
           let urls, titles = [];
           try { urls = win.tabs.url(); } catch (e) { continue; }
           try { titles = kind === "safari" ? win.tabs.name() : win.tabs.title(); } catch (e) {}
-          // `active` is reported for the topmost browser's front window only.
-          const act = w === 0 && name === names[0] && P.z[0] === name ? activeIndex(kind, win, win.tabs) : -1;
+          // `active` marks each browser's front-window tab (one extra read per browser).
+          const act = w === 0 ? activeIndex(kind, win, win.tabs) : -1;
           for (let i = 0; i < urls.length; i++) {
             const row = { app: name, windowId: id, tabIndex: i, url: urls[i] || "", title: titles[i] || "" };
             if (i === act) row.active = true;
@@ -276,6 +367,51 @@ function jxaRuntime(BROWSERS) {
     activate(a) {
       focus(resolve(a.target));
       return true;
+    },
+    // Only the active tab of a window is rendered, so an explicit tabIndex switches
+    // the window to it first (no raise, no app activation).
+    shotGeom(a) {
+      const t = resolve(a.target);
+      if (a.raise) { focus(t); delay(0.25); t.P = procs(); }
+      else if (a.target && a.target.tabIndex != null && selectTab(t)) delay(0.15);
+      return ids(t);
+    },
+    select(a) {
+      const t = resolve(a.target);
+      arcGuard(t, "select");
+      const r = parseExec(t, a.start);
+      if (!r || !r.pending) return r;
+      const picked = poll(t, a.pick, 1500, 50);
+      if (!picked) return parseExec(t, a.miss);
+      if (picked.value.ok === false) return picked.value;
+      const read = poll(t, a.read, 500, 50);
+      return read ? read.value : parseExec(t, a.readFinal);
+    },
+    trustedClick(a) {
+      const T = trustedTarget(a);
+      let pt = a.x != null ? { x: a.x, y: a.y } : null;
+      let probe = null;
+      if (!pt) {
+        arcGuard(T.t, "click");
+        probe = parseExec(T.t, a.probe);
+        if (!probe.ok) return probe;
+        pt = { x: probe.x, y: probe.y };
+      }
+      leftClick(T.I, pt);
+      const out = { ok: true, point: pt };
+      if (probe) { delay(0.05); Object.assign(out, parseExec(T.t, a.check)); out.el = probe.el; }
+      return out;
+    },
+    trustedFill(a) {
+      const T = trustedTarget(a);
+      arcGuard(T.t, "fill");
+      const probe = parseExec(T.t, a.probe);
+      if (!probe.ok) return probe;
+      leftClick(T.I, { x: probe.x, y: probe.y });
+      delay(0.05); // let focus settle before typing
+      typeChunks(T.I, a.chunks);
+      delay(0.05);
+      return Object.assign({ el: probe.el }, parseExec(T.t, a.check));
     },
   };
 }
@@ -465,114 +601,6 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   return raw ? out : JSON.parse(out);
 }
 
-const FRONTMOST = `
-  let fm = '';
-  try { fm = Application('System Events').applicationProcesses.whose({frontmost: true})[0].name(); } catch (e) {}
-`;
-
-// Assumes targetClause bindings in scope. Arc's activeTabIndex()/currentTab both throw;
-// the activeTab UUID match is the only working activeness signal.
-const ARC_TAB_IS_ACTIVE = `tab.id() === tab_window.activeTab.id()`;
-
-function arcActiveTabGuardJxa(toolName) {
-  return `
-    if (tab_kind === 'arc') {
-      let __arcActive = false;
-      try { __arcActive = ${ARC_TAB_IS_ACTIVE}; } catch (e) {}
-      if (!__arcActive) throw new Error("Arc cannot ${toolName} on background tabs; call activate_tab on this target first, or operate on Arc's active tab.");
-    }
-  `;
-}
-
-// Runs the page JS held in JXA-side variable `jsVar` in the target tab and binds the
-// bridge's return value to `resultVar`. Assumes targetClause bindings in scope.
-// Arc auto-JSON.stringifies execute() returns, so its branch unwraps one layer.
-function execTabJsFragment(resultVar, jsVar) {
-  return `
-    let ${resultVar};
-    if (tab_kind === 'safari') ${resultVar} = Application(tab_app).doJavaScript(${jsVar}, { in: tab });
-    else if (tab_kind === 'arc') {
-      const __x = tab.execute({javascript: ${jsVar}});
-      try { ${resultVar} = JSON.parse(__x); } catch (e) { ${resultVar} = __x; }
-    }
-    else ${resultVar} = tab.execute({javascript: ${jsVar}});
-  `;
-}
-
-function targetClause(target) {
-  const want = target || {};
-  return `
-    let tab, tab_kind, tab_app, tab_window;
-    {
-      ${FRONTMOST}
-      const browsers = ${JSON.stringify(BROWSERS)};
-      const want = ${JSON.stringify(want)};
-      let chosen = null;
-      for (const b of browsers) {
-        if (want.app && b.app !== want.app) continue;
-        // Once a candidate is locked in, only the frontmost browser can replace it.
-        if (chosen && b.app !== fm) continue;
-        let app;
-        try { app = Application(b.app); if (!app.running()) continue; } catch (e) { continue; }
-        let winsLen;
-        try { winsLen = app.windows.length; } catch (e) { continue; }
-        for (let w = 0; w < winsLen; w++) {
-          const win = app.windows[w];
-          let winId; try { winId = win.id(); } catch (e) { winId = w; }
-          if (want.windowId != null && String(winId) !== String(want.windowId)) continue;
-          let tabs;
-          try { tabs = win.tabs; tabs.length; } catch (e) { continue; }
-          let idx;
-          if (want.tabIndex != null) idx = want.tabIndex;
-          else if (b.kind === 'chrome') {
-            try { idx = win.activeTabIndex() - 1; } catch (e) { idx = 0; }
-          } else if (b.kind === 'arc') {
-            try { idx = Math.max(0, tabs.id().indexOf(win.activeTab.id())); } catch (e) { idx = 0; }
-          } else {
-            try { idx = Math.max(0, tabs.index().indexOf(win.currentTab().index())); } catch (e) { idx = 0; }
-          }
-          if (idx < 0 || idx >= tabs.length) {
-            if (want.tabIndex != null) {
-              throw new Error('tabIndex ' + want.tabIndex + ' out of range; window has ' + tabs.length + ' tabs');
-            }
-            continue;
-          }
-          const cand = { tab: tabs[idx], kind: b.kind, app: b.app, window: win };
-          if (b.app === fm) { chosen = cand; break; }
-          if (!chosen) chosen = cand;
-        }
-        if (chosen && chosen.app === fm) break;
-      }
-      if (!chosen) throw new Error('no matching tab');
-      tab = chosen.tab;
-      tab_kind = chosen.kind;
-      tab_app = chosen.app;
-      tab_window = chosen.window;
-    }
-  `;
-}
-
-function focusTabFragment() {
-  return `
-    {
-      const app = Application(tab_app);
-      try { tab_window.index = 1; } catch (e) {}
-      try {
-        if (tab_kind === 'chrome') {
-          let idx; try { idx = tab.index(); } catch (e) { idx = 1; }
-          tab_window.activeTabIndex = idx;
-        } else if (tab_kind === 'arc') {
-          // Arc forbids writing activeTab/currentTab, but the dictionary's select verb works.
-          tab.select();
-        } else {
-          tab_window.currentTab = tab;
-        }
-      } catch (e) {}
-      app.activate();
-    }
-  `;
-}
-
 // Page-side error shape, shared by the sync wrapper and the async kickoff.
 const ERROR_SHAPE = `function(e){return {__perch_error:(e&&e.message)?e.message:String(e),__perch_error_name:(e&&e.name)||'Error',__perch_error_stack_head:(e&&e.stack)?String(e.stack).split('\\n').slice(0,2).join(' | ').slice(0,300):null}}`;
 
@@ -593,101 +621,6 @@ function buildAsyncPoll(key) {
 }
 
 const parsePage = (raw) => { if (raw === "") return null; try { return JSON.parse(raw); } catch { return raw; } };
-
-// Returns a JXA fragment that binds `geom`, `pid`, and `windowNumber` in scope.
-// Requires `tab`, `tab_kind`, `tab_app`, `tab_window` from a prior `targetClause(target)`.
-// Geometry source varies by browser: Chrome has position()+size(), Safari has bounds(),
-// Arc has neither, so we fall back to the System Events accessibility frame.
-// `windowNumber` (CGWindowID) is needed by screencapture -l and by CGEvent's window
-// addressing fields. Match by owner + bounds with a 2px tolerance for off-by-one
-// between AppleScript and CG coordinate systems.
-function resolveTargetIdsJxa() {
-  return `
-    let geom = null;
-    try { const p = tab_window.position(), s = tab_window.size(); geom = {x: p[0], y: p[1], w: s[0], h: s[1]}; } catch (e) {}
-    if (!geom) { try { const b = tab_window.bounds(); geom = {x: b.x, y: b.y, w: b.width, h: b.height}; } catch (e) {} }
-    if (!geom) {
-      try {
-        const proc = Application('System Events').processes.byName(tab_app);
-        const win = proc.windows[0];
-        const p = win.position(), s = win.size();
-        geom = {x: p[0], y: p[1], w: s[0], h: s[1]};
-      } catch (e) {}
-    }
-    if (!geom) throw new Error('cannot get window geometry for ' + tab_app);
-
-    let pid = null;
-    try { pid = Application('System Events').processes.byName(tab_app).unixId(); } catch (e) {}
-
-    let windowNumber = null, cgBounds = null;
-    try {
-      ObjC.import('CoreGraphics');
-      // kCGWindowListOptionOnScreenOnly (1) | kCGWindowListExcludeDesktopElements (16) = 17.
-      // Match by kCGWindowOwnerPID first (reliable across browser variants), then by bounds
-      // (some browsers split a window into multiple CG entries — toolbars, popovers, the
-      // actual content). Among the pid-matching entries, prefer the one whose bounds are
-      // closest to the AppleScript geom. AppleScript Chrome reports inner-content bounds
-      // while CG includes the titlebar, so an exact match is brittle.
-      const list = $.CGWindowListCopyWindowInfo(17, 0);
-      const n = list.count;
-      let best = null, bestScore = Infinity, bestBounds = null;
-      for (let i = 0; i < n; i++) {
-        const entry = list.objectAtIndex(i);
-        const entryPid = ObjC.unwrap(entry.objectForKey('kCGWindowOwnerPID'));
-        const owner = ObjC.unwrap(entry.objectForKey('kCGWindowOwnerName'));
-        if (pid != null ? entryPid !== pid : owner !== tab_app) continue;
-        const b = entry.objectForKey('kCGWindowBounds');
-        if (!b) continue;
-        const bx = ObjC.unwrap(b.objectForKey('X'));
-        const by = ObjC.unwrap(b.objectForKey('Y'));
-        const bw = ObjC.unwrap(b.objectForKey('Width'));
-        const bh = ObjC.unwrap(b.objectForKey('Height'));
-        // Skip obvious non-content entries (chrome dropdowns are tiny, decorations are thin).
-        if (bw < 200 || bh < 100) continue;
-        const score = Math.abs(bx - geom.x) + Math.abs(by - geom.y) + Math.abs(bw - geom.w) + Math.abs(bh - geom.h);
-        if (score < bestScore) {
-          bestScore = score;
-          best = ObjC.unwrap(entry.objectForKey('kCGWindowNumber'));
-          bestBounds = { x: bx, y: by, w: bw, h: bh };
-        }
-      }
-      if (best != null) { windowNumber = best; cgBounds = bestBounds; }
-    } catch (e) {}
-  `;
-}
-
-// Defines __postMouse for trusted-input CGEvent dispatch. Requires __pt (CGPoint),
-// pid, and windowNumber in scope (resolveTargetIdsJxa + the caller's CGPointMake).
-function postMouseFragmentJxa() {
-  return `
-      function __postMouse(evtType, pressure, state, mouseBtn) {
-        const e = $.CGEventCreateMouseEvent($(), evtType, __pt, mouseBtn);
-        $.CGEventSetIntegerValueField(e, 1, state);          // kCGMouseEventClickState
-        $.CGEventSetDoubleValueField(e, 11, pressure);        // kCGMouseEventPressure
-        $.CGEventSetIntegerValueField(e, 9, pid);             // kCGEventTargetUnixProcessID
-        if (windowNumber != null) {
-          $.CGEventSetIntegerValueField(e, 27, windowNumber); // kCGMouseEventWindowUnderMousePointer
-          $.CGEventSetIntegerValueField(e, 28, windowNumber); // ...ThatCanHandleThisEvent
-          $.CGEventSetIntegerValueField(e, 51, windowNumber); // private: target window
-          $.CGEventSetIntegerValueField(e, 58, 1);            // private: routing flag
-        }
-        $.CGEventPostToPid(pid, e);
-      }
-  `;
-}
-
-// JXA fragment that throws if the controlling app lacks Accessibility permission.
-// Used by every trusted-input dispatch (click {trusted:true}, fill {trusted:true}).
-// kCFBooleanFalse suppresses the OS prompt — controlling apps may surface odd icons there.
-function assertAccessibilityGrantedJxa() {
-  return `
-    ObjC.import('ApplicationServices');
-    const __axOpts = $.NSDictionary.dictionaryWithObjectForKey($.kCFBooleanFalse, $.kAXTrustedCheckOptionPrompt);
-    if (!$.AXIsProcessTrustedWithOptions(__axOpts)) {
-      throw new Error("Accessibility permission required: System Settings > Privacy & Security > Accessibility, tick the controlling app (Claude Code / Terminal / iTerm). Then retry.");
-    }
-  `;
-}
 
 // ---- tools ----
 
@@ -740,79 +673,45 @@ async function activateTab(target) {
   return { ok: true };
 }
 
+// Pixel size from the PNG IHDR or the JPEG SOFn header, so no `sips -g` spawn.
+export function imageDims(buf) {
+  if (buf.length > 24 && buf.readUInt32BE(0) === 0x89504e47) return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  if (buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  for (let i = 2; i + 9 < buf.length;) {
+    if (buf[i] !== 0xff) { i++; continue; }
+    const m = buf[i + 1];
+    if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
+    if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+    i += 2 + buf.readUInt16BE(i + 2);
+  }
+  return null;
+}
+
 async function screenshot(args = {}) {
   const { raise = false, target, format = "png", maxWidth = 1568 } = args;
-  const src = `
-    ${targetClause(target)}
-    ${raise ? focusTabFragment() : !(target && target.tabIndex != null) ? "" : `
-      // An explicit tabIndex may target a non-active tab; silently switch the window to it
-      // so the right tab renders. No app.activate(), no window raise; user's focus stays put.
-      // Gated on explicit tabIndex: on the default path tab is the active tab by construction,
-      // and switching there could act on a bad fallback if active-tab detection failed.
-      let __switched = false;
-      try {
-        if (tab_kind === 'chrome') {
-          const __want = tab.index();
-          if (tab_window.activeTabIndex() !== __want) { tab_window.activeTabIndex = __want; __switched = true; }
-        } else if (tab_kind === 'arc') {
-          if (!(${ARC_TAB_IS_ACTIVE})) { tab.select(); __switched = true; }
-        } else if (tab_kind === 'safari') {
-          const __want = tab.index();
-          if (tab_window.currentTab().index() !== __want) { tab_window.currentTab = tab; __switched = true; }
-        }
-      } catch (e) {}
-      if (__switched) delay(0.15);
-    `}
-    ${raise ? "delay(0.25);" : ""}
-    ${resolveTargetIdsJxa()}
-    // screencapture -l reads the window's pixels regardless of z-order, capturing
-    // obscured windows without raising them. (Doesn't help with background tabs in
-    // the same window: only the active tab is rendered to the window's pixel buffer.)
-    JSON.stringify({ geom, windowNumber, cgBounds });
-  `;
-  const { geom, windowNumber, cgBounds } = JSON.parse(await jxa(src));
-  const tmp = `/tmp/perch-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
-  if (windowNumber != null) {
-    await exec("screencapture", ["-l", String(windowNumber), "-x", "-o", tmp]);
-  } else {
-    // No CGWindowID match (minimized, on another Space, ObjC bridge failed). Fall back to
-    // rect capture, which is only reliable if the window happens to be on top.
-    await exec("screencapture", ["-R", `${geom.x},${geom.y},${geom.w},${geom.h}`, "-x", "-o", tmp]);
-  }
-  if (maxWidth > 0) {
-    try {
-      const { stdout } = await exec("sips", ["-g", "pixelWidth", tmp]);
-      const m = /pixelWidth: (\d+)/.exec(stdout);
-      if (m && Number(m[1]) > maxWidth) await exec("sips", ["--resampleWidth", String(maxWidth), tmp]);
-    } catch (e) {} // downscale is best-effort; full-size capture still returns
-  }
-  let outPath = tmp, mime = "image/png";
-  if (format === "jpeg") {
-    const jpg = tmp.replace(/\.png$/, ".jpg");
-    await exec("sips", ["-s", "format", "jpeg", "-s", "formatOptions", "80", tmp, "--out", jpg]);
-    outPath = jpg;
-    mime = "image/jpeg";
-  }
-  // Final pixel dims (post-downscale/format) let callers map image -> screen
-  // coordinates: screenX = window.x + imageX * (window.w / image.w).
-  let imageDims = null;
+  const g = await rt("shotGeom", { target, raise });
+  const ext = format === "jpeg" ? "jpg" : "png";
+  const base = join(tmpdir(), `perch-${process.pid}-${Date.now().toString(36)}`);
+  const files = [`${base}.${ext}`];
   try {
-    const { stdout } = await exec("sips", ["-g", "pixelWidth", "-g", "pixelHeight", outPath]);
-    const w = /pixelWidth: (\d+)/.exec(stdout), h = /pixelHeight: (\d+)/.exec(stdout);
-    if (w && h) imageDims = { w: Number(w[1]), h: Number(h[1]) };
-  } catch (e) {}
-  const buf = await readFile(outPath);
-  await unlink(tmp).catch(() => {});
-  if (outPath !== tmp) await unlink(outPath).catch(() => {});
-  // The -l capture's pixels correspond to the CG window bounds (titlebar included),
-  // not AppleScript's inner-content geom; report whichever rect was actually captured.
-  const captureRect = windowNumber != null && cgBounds ? cgBounds : geom;
-  return {
-    __image: true,
-    data: buf.toString("base64"),
-    mimeType: mime,
-    meta: imageDims ? { window: captureRect, image: imageDims } : undefined,
-  };
+    // -l reads the window's own pixels regardless of z-order. Without a CGWindowID
+    // (minimized, other Space) fall back to the screen rect, reliable only on top.
+    const where = g.windowNumber != null ? ["-l", String(g.windowNumber)] : ["-R", `${g.geom.x},${g.geom.y},${g.geom.w},${g.geom.h}`];
+    await exec("screencapture", [...where, "-x", "-o", "-t", ext, files[0]]);
+    let buf = await readFile(files[0]);
+    let dims = imageDims(buf);
+    if (maxWidth > 0 && dims && dims.w > maxWidth) {
+      files.push(`${base}-s.${ext}`);
+      await exec("sips", ["--resampleWidth", String(maxWidth), ...(ext === "jpg" ? ["-s", "formatOptions", "80"] : []), files[0], "--out", files[1]]);
+      buf = await readFile(files[1]);
+      dims = imageDims(buf);
+    }
+    // -l pixels cover the CG bounds (titlebar included), not AppleScript's inner geom.
+    const rect = g.windowNumber != null && g.cgBounds ? g.cgBounds : g.geom;
+    return { __image: true, data: buf.toString("base64"), mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: dims ? { window: rect, image: dims } : undefined };
+  } finally {
+    await Promise.all(files.map((f) => unlink(f).catch(() => {})));
+  }
 }
 
 // ---- page scripts ----
@@ -902,6 +801,18 @@ function resolveEl(a, dflt) {
   try { el = document.querySelector(sel); } catch (e) { return { out: { ok: false, error: "bad selector: " + sel } }; }
   return el ? { el: el } : { out: { ok: false, error: "no element for selector " + sel } };
 }
+`;
+
+const SELECT_LIB = String.raw`
+const norm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
+const wantN = norm(A.text);
+const options = function () { return Array.from(document.querySelectorAll("[role=option]")).filter(vis); };
+const press = function (el) {
+  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (t) {
+    const C = t.indexOf("pointer") === 0 && window.PointerEvent ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new C(t, { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window }));
+  });
+};
 `;
 
 export const PAGE_SCRIPTS = {
@@ -1055,12 +966,9 @@ if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { ret
 return out;
 `,
 
-  // Async: custom comboboxes render options after a tick. Polls instead of fixed sleeps.
-  select: String.raw`
-const want = String(A.text);
-const norm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
-const wantN = norm(want);
-const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  // select runs in phases polled from JXA (runtime `select`), never with page
+  // timers: Chrome throttles those to ~1/s in background tabs.
+  select_start: SELECT_LIB + String.raw`
 let ctl;
 if (A.ref || A.selector) {
   const r = resolveEl(A);
@@ -1083,31 +991,39 @@ if (nat) {
   return { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
 }
 // react-select and friends open on a left-button press with a view, on the control wrapper.
-const press = function (el) {
-  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (t) {
-    const C = t.indexOf("pointer") === 0 && window.PointerEvent ? PointerEvent : MouseEvent;
-    el.dispatchEvent(new C(t, { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window }));
-  });
-};
 if (attr(ctl, "aria-expanded") !== "true") {
   if (ctl.focus) ctl.focus();
   press((ctl.closest && ctl.closest(".select__control")) || ctl);
 }
 const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySelector("input");
-if (input) { setNativeValue(input, want); fire(input, ["input"]); }
-const find = function () {
-  const os = Array.from(document.querySelectorAll("[role=option]")).filter(vis);
-  return { os: os, opt: os.find(function (o) { return norm(o.textContent) === wantN; }) || os.find(function (o) { return norm(o.textContent).indexOf(wantN) >= 0; }) };
-};
-let f = find();
-for (let i = 0; !f.opt && i < 30; i++) { await sleep(50); f = find(); }
-if (!f.opt) return { ok: false, error: "no matching option after open", candidates: f.os.slice(0, 8).map(function (o) { return clip(o.textContent, 60); }) };
-press(f.opt);
-const picked = norm(f.opt.textContent);
-const shown = function () { return clip(textOf(ctl) || (input && input.value) || "", 120); };
-for (let i = 0; i < 10 && norm(shown()).indexOf(picked) < 0; i++) await sleep(50);
-const out = { ok: true, selected: clip(f.opt.textContent, 80), el: ident(ctl), value: shown() };
-if (norm(out.value).indexOf(picked) < 0) out.unverified = true;
+if (input) { setNativeValue(input, A.text); fire(input, ["input"]); }
+window.__perch_select = { ctl: ctl, input: input };
+return { pending: true };
+`,
+
+  // null = keep polling.
+  select_pick: SELECT_LIB + String.raw`
+const s = window.__perch_select;
+if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
+const opt = options().find(function (o) { return norm(o.textContent) === wantN; }) || options().find(function (o) { return norm(o.textContent).indexOf(wantN) >= 0; });
+if (!opt) return null;
+press(opt);
+s.picked = clip(opt.textContent, 80);
+return { picked: true };
+`,
+
+  select_miss: SELECT_LIB + String.raw`
+return { ok: false, error: "no matching option after open", candidates: options().slice(0, 8).map(function (o) { return clip(o.textContent, 60); }) };
+`,
+
+  // Until the control shows the choice: null (keep polling); A.final reports anyway.
+  select_read: SELECT_LIB + String.raw`
+const s = window.__perch_select;
+const shown = clip(textOf(s.ctl) || (s.input && s.input.value) || "", 120);
+const seen = norm(shown).indexOf(norm(s.picked)) >= 0;
+if (!seen && !A.final) return null;
+const out = { ok: true, selected: s.picked, el: ident(s.ctl), value: shown };
+if (!seen) out.unverified = true;
 return out;
 `,
 
@@ -1184,6 +1100,54 @@ s.installed = false;
 return { ok: true, entries: s.entries.splice(0) };
 `,
 
+  // Trusted input: find the element, scroll it into view, estimate its screen
+  // point, and arm a mousedown listener so the result can say whether it hit.
+  // Estimate: screen origin + browser chrome (outer - inner; Arc's sidebar is on
+  // the left, toolbars on top) + the element's center. Assumes 100% zoom.
+  trusted_probe: String.raw`
+let el;
+if (A.ref || A.selector) {
+  const r = resolveEl(A);
+  if (r.out) return r.out;
+  el = r.el;
+} else {
+  const re = new RegExp(A.label_pattern, "i");
+  const fields = Array.from(document.querySelectorAll("input, textarea")).filter(function (e) {
+    return !(e.tagName === "INPUT" && INPUT_SKIP.indexOf((e.type || "text").toLowerCase()) >= 0) && !e.disabled && !e.readOnly;
+  });
+  const hit = function (e) { return re.test(labelText(e)) || re.test(hintText(e)); };
+  el = fields.filter(vis).find(hit) || fields.find(hit);
+  if (!el) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
+}
+if (A.forFill && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, error: "fill {trusted:true} types into plain inputs/textareas only; rich editors work without trusted" };
+try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
+const r = el.getBoundingClientRect();
+if (!r.width || !r.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
+if (A.forFill) { setNativeValue(el, ""); fire(el, ["input"]); }
+const st = window.__perch_trusted = { el: el, down: null };
+const onDown = function (e) { st.down = el === e.target || el.contains(e.target); window.removeEventListener("mousedown", onDown, true); };
+window.addEventListener("mousedown", onDown, true);
+return {
+  ok: true,
+  el: ident(el),
+  x: window.screenX + (window.outerWidth - window.innerWidth) + r.left + r.width / 2,
+  y: window.screenY + (window.outerHeight - window.innerHeight) + r.top + r.height / 2,
+};
+`,
+
+  // hit: the mousedown landed on the element; null: no mousedown reached the page.
+  trusted_check: String.raw`
+const st = window.__perch_trusted || {};
+const out = { hit: st.down };
+if (A.forFill && st.el) {
+  const got = String(st.el.value || "");
+  out.len = got.length;
+  out.ok = got.replace(/\s/g, "").length >= Math.floor(A.text.replace(/\s/g, "").length * 0.9);
+  if (!out.ok) out.error = "trusted typing did not land (got " + got.length + " chars)";
+}
+return out;
+`,
+
   wait_check: String.raw`
 const order = { loading: 0, interactive: 1, complete: 2 };
 if (A.readyState && order[document.readyState] < order[A.readyState]) return false;
@@ -1258,205 +1222,39 @@ async function readUserFile(p, encoding) {
   catch (e) { throw new Error(`cannot read ${abs}: ${e.message}`); }
 }
 
-async function trustedClick(args = {}) {
-  const {
-    ref = null,
-    selector = null,
-    x = null, y = null,
-    raise = false,
-    target,
-  } = args;
-  const button = "left", clickCount = 1;
-  if (!ref && !selector && (x == null || y == null)) {
-    throw new Error("click {trusted:true} requires `ref`, `selector`, or both `x` and `y`");
+// Splits text into <= max UTF-16 unit chunks without cutting a surrogate pair.
+export function chunkUtf16(text, max = 20) {
+  const out = [];
+  let cur = "";
+  for (const ch of text) {
+    if (cur.length + ch.length > max) { out.push(cur); cur = ""; }
+    cur += ch;
   }
-  const needProbe = !!(ref || selector);
-  // The probe runs in the page via tab.execute / doJavaScript synchronously, so the
-  // whole trusted-click dispatch fits in one osascript round-trip. Two layers of
-  // JSON-stringify: inside the probe (to return data back through the bridge), and
-  // around the probe body itself (to embed it as a string into the JXA script).
-  const probeBody = `
-    (function(){
-      try {
-        var ref = ${JSON.stringify(ref)};
-        var sel = ${JSON.stringify(selector)};
-        var el = null;
-        if (ref) el = (window.__perch_refs || {})[ref];
-        else if (sel) el = document.querySelector(sel);
-        if (!el) return JSON.stringify(ref ? { __perch_ref_miss: true, ref: ref } : { ok: false, error: 'no element for selector ' + sel });
-        try { el.scrollIntoView({block:'center', inline:'center', behavior:'instant'}); } catch (e) {}
-        var r = el.getBoundingClientRect();
-        if (r.width === 0 || r.height === 0) return JSON.stringify({ ok: false, error: 'element offscreen / zero size' });
-        return JSON.stringify({ ok: true, sx: window.screenX + r.left + r.width/2, sy: window.screenY + r.top + r.height/2 });
-      } catch (e) { return JSON.stringify({ ok: false, error: String(e && e.message || e) }); }
-    })()
-  `;
-
-  const src = `
-    ${targetClause(target)}
-    ${assertAccessibilityGrantedJxa()}
-    ${raise ? focusTabFragment() + "delay(0.2);" : `
-      ${FRONTMOST}
-      if (tab_app !== fm) throw new Error('target not frontmost; pass raise:true or call activate_tab first');
-    `}
-    ${resolveTargetIdsJxa()}
-    if (pid == null) throw new Error('could not resolve PID for ' + tab_app);
-
-    let __result = null;
-    do {
-      let sx = ${x === null ? "null" : Number(x)};
-      let sy = ${y === null ? "null" : Number(y)};
-      ${needProbe ? `
-        ${arcActiveTabGuardJxa('click')}
-        const __probeJs = ${JSON.stringify(probeBody)};
-        ${execTabJsFragment("__probeRaw", "__probeJs")}
-        const __probe = JSON.parse(String(__probeRaw));
-        if (__probe.__perch_ref_miss) { __result = __probe; break; }
-        if (!__probe.ok) { __result = { ok: false, error: __probe.error }; break; }
-        sx = __probe.sx; sy = __probe.sy;
-      ` : ""}
-
-      // CGEvent dispatch — see AGENTS.md "Trusted input via CGEventPostToPid".
-      ObjC.import('CoreGraphics');
-      const __isRight = ${JSON.stringify(button)} === 'right';
-      const __mouseBtn = __isRight ? 1 : 0;
-      const __evtDown = __isRight ? 3 : 1;   // kCGEventRightMouseDown / kCGEventLeftMouseDown
-      const __evtUp   = __isRight ? 4 : 2;   // kCGEventRightMouseUp / kCGEventLeftMouseUp
-      const __pt = $.CGPointMake(sx, sy);
-
-      ${postMouseFragmentJxa()}
-
-      __postMouse(__evtDown, 1.0, 1, __mouseBtn);
-      delay(0.012);
-      __postMouse(__evtUp, 0.0, 1, __mouseBtn);
-      if (${Number(clickCount) === 2 ? "true" : "false"}) {
-        delay(0.06);
-        __postMouse(__evtDown, 1.0, 2, __mouseBtn);
-        delay(0.012);
-        __postMouse(__evtUp, 0.0, 2, __mouseBtn);
-      }
-
-      __result = { ok: true, point: { x: sx, y: sy }, pid, windowNumber };
-    } while (false);
-    JSON.stringify(__result);
-  `;
-  return JSON.parse(await jxa(src));
+  if (cur) out.push(cur);
+  return out;
 }
 
-// Trusted typing: real CGEvent keyboard events with isTrusted:true. Plain input/textarea
-// only — rich editors are React-controlled and the InputEvent path already works for them.
-// The probe clears the field via the setter before typing so the trusted keys land on
-// an empty target (avoids appending to existing text or relying on Cmd+A, which would be
-// keyboard-layout-dependent on non-US layouts).
-async function trustedFill({ ref, selector, label_pattern, text, target }) { // TODO(phase4): raise
-  const probeBody = `
-    (function(){
-      try {
-        var ref = ${JSON.stringify(ref)};
-        var sel = ${JSON.stringify(selector)};
-        var labelRe = ${label_pattern ? `new RegExp(${JSON.stringify(label_pattern)}, 'i')` : "null"};
-        var el = null;
-        if (ref) el = (window.__perch_refs || {})[ref];
-        else if (sel) el = document.querySelector(sel);
-        else if (labelRe) {
-          var labelOf = function(e){ return (e.labels && e.labels[0] && e.labels[0].textContent || (e.getAttribute && e.getAttribute('aria-label')) || e.placeholder || e.name || '').trim(); };
-          el = Array.from(document.querySelectorAll('input, textarea')).find(function(e){ return labelRe.test(labelOf(e)); }) || null;
-        }
-        if (!el) return JSON.stringify(ref ? { __perch_ref_miss: true, ref: ref } : { ok: false, error: 'no fillable field matched' });
-        if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') {
-          return JSON.stringify({ ok: false, error: 'fill {trusted:true} supports plain input/textarea only; rich editors must use trusted:false' });
-        }
-        try { el.scrollIntoView({block:'center', inline:'center', behavior:'instant'}); } catch (e) {}
-        var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-        try { setter.call(el, ''); el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
-        var r = el.getBoundingClientRect();
-        if (r.width === 0 || r.height === 0) return JSON.stringify({ ok: false, error: 'element offscreen / zero size' });
-        var tag = el.tagName.toLowerCase();
-        try { window.__perch_trusted_fill_target = el; } catch (e) {}
-        return JSON.stringify({ ok: true, sx: window.screenX + r.left + r.width/2, sy: window.screenY + r.top + r.height/2, tag: tag });
-      } catch (e) { return JSON.stringify({ ok: false, error: String(e && e.message || e) }); }
-    })()
-  `;
+const pageFn = (name, A) => buildEvalWrapper(pageScript(name, A));
 
-  const verifyBody = `
-    (function(){
-      try {
-        var el = window.__perch_trusted_fill_target || document.activeElement;
-        if (!el) return JSON.stringify({ ok: false, error: 'verification: no element' });
-        return JSON.stringify({ ok: true, value: el.value || '' });
-      } catch (e) { return JSON.stringify({ ok: false, error: String(e && e.message || e) }); }
-    })()
-  `;
+async function trustedClick({ ref, selector, x, y, raise, target }) {
+  if (!ref && !selector && (x == null || y == null)) throw new Error("click {trusted:true} requires `ref`, `selector`, or both `x` and `y`");
+  const probing = !!(ref || selector);
+  return rt("trustedClick", {
+    target, raise, x, y,
+    probe: probing ? pageFn("trusted_probe", { ref, selector }) : null,
+    check: probing ? pageFn("trusted_check", {}) : null,
+  });
+}
 
-  const src = `
-    ${targetClause(target)}
-    ${assertAccessibilityGrantedJxa()}
-    ${FRONTMOST}
-    if (tab_app !== fm) throw new Error('target not frontmost; call activate_tab first');
-    ${resolveTargetIdsJxa()}
-    if (pid == null) throw new Error('could not resolve PID for ' + tab_app);
-    ${arcActiveTabGuardJxa('fill')}
-
-    let __result = null;
-    do {
-      const __probeJs = ${JSON.stringify(probeBody)};
-      ${execTabJsFragment("__probeRaw", "__probeJs")}
-      const __probe = JSON.parse(String(__probeRaw));
-      if (__probe.__perch_ref_miss) { __result = __probe; break; }
-      if (!__probe.ok) { __result = { ok: false, error: __probe.error }; break; }
-
-      ObjC.import('CoreGraphics');
-      ObjC.import('Foundation');
-      const __pt = $.CGPointMake(__probe.sx, __probe.sy);
-
-      ${postMouseFragmentJxa()}
-      __postMouse(1, 1.0, 1, 0);  // leftMouseDown
-      delay(0.012);
-      __postMouse(2, 0.0, 1, 0);  // leftMouseUp
-      delay(0.05);  // let focus settle before typing
-
-      const __text = ${JSON.stringify(text)};
-      const __chunkSize = 20;
-      // NSUTF16LittleEndianStringEncoding = 0x14000100. NSData's .bytes is a const void* the
-      // ObjC bridge passes straight to CGEventKeyboardSetUnicodeString — no manual UniChar
-      // buffer allocation needed. Length is bytes/2.
-      const __enc = 0x14000100;
-      for (let __i = 0; __i < __text.length; __i += __chunkSize) {
-        const __chunk = __text.slice(__i, __i + __chunkSize);
-        const __ns = $.NSString.stringWithUTF8String(__chunk);
-        const __data = __ns.dataUsingEncoding(__enc);
-        const __len = __data.length / 2;
-        const __buf = __data.bytes;
-
-        const __eDown = $.CGEventCreateKeyboardEvent($(), 0, true);
-        $.CGEventKeyboardSetUnicodeString(__eDown, __len, __buf);
-        $.CGEventSetIntegerValueField(__eDown, 9, pid);
-        $.CGEventPostToPid(pid, __eDown);
-
-        const __eUp = $.CGEventCreateKeyboardEvent($(), 0, false);
-        $.CGEventKeyboardSetUnicodeString(__eUp, __len, __buf);
-        $.CGEventSetIntegerValueField(__eUp, 9, pid);
-        $.CGEventPostToPid(pid, __eUp);
-        delay(0.005);
-      }
-
-      delay(0.05);
-      const __verifyJs = ${JSON.stringify(verifyBody)};
-      ${execTabJsFragment("__vRaw", "__verifyJs")}
-      const __v = JSON.parse(String(__vRaw));
-      if (!__v.ok) { __result = { ok: false, error: __v.error }; break; }
-      const __expected = Math.max(1, Math.floor(__text.trim().length * 0.9));
-      const __actual = (__v.value || '').trim().length;
-      if (__actual < __expected) {
-        __result = { ok: false, error: 'trusted fill: value did not land (got ' + __actual + ' chars, expected >= ' + __expected + ')', got: String(__v.value || '').slice(0, 200) };
-        break;
-      }
-      __result = { ok: true, kind: 'trusted_' + __probe.tag, len: __actual };
-    } while (false);
-    JSON.stringify(__result);
-  `;
-  return JSON.parse(await jxa(src));
+// Real keystrokes for plain fields that reject synthetic input (Workday class).
+// The probe clears the field first so typing never appends or depends on Cmd+A.
+async function trustedFill({ ref, selector, label_pattern, text, raise, target }) {
+  return rt("trustedFill", {
+    target, raise,
+    probe: pageFn("trusted_probe", { ref, selector, label_pattern, forFill: true }),
+    check: pageFn("trusted_check", { forFill: true, text }),
+    chunks: chunkUtf16(text),
+  });
 }
 
 async function fileUpload(args = {}) {
@@ -1493,7 +1291,13 @@ async function select(args = {}) {
   if (text == null) throw new Error("select requires `text` (the option to choose)");
   if (!ref && !selector && !label_pattern) throw new Error("select requires `ref`, `selector`, or `label_pattern`");
   if (label_pattern) validateLabelPattern("select", label_pattern);
-  return runPage("select", "select", { ref, selector, label_pattern, text: String(text) }, target, { awaitPromise: true, timeout: 5000 });
+  const A = { ref, selector, label_pattern, text: String(text) };
+  const step = (name, extra = {}) => pageFn(name, { ...A, ...extra });
+  return rt("select", {
+    target,
+    start: step("select_start"), pick: step("select_pick"), miss: step("select_miss"),
+    read: step("select_read"), readFinal: step("select_read", { final: true }),
+  }, { lane: "slow" });
 }
 
 // Shared guidance lives here once instead of in every tool description.
@@ -1652,7 +1456,7 @@ export async function handleCall(name, args = {}) {
   }
 }
 
-export { TOOLS, buildAsyncKickoff };
+export { TOOLS };
 
 // Start only when run as the entry point (realpath: npm's bin is a symlink), so tests can import.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
