@@ -23,7 +23,264 @@ const BROWSERS = [
   { app: "Safari",               kind: "safari" },
 ];
 
-const JXA_PRELUDE = "";
+// ---- JXA runtime ----
+//
+// Everything that runs inside osascript lives in this one function. Its source
+// (not a template) is shipped once per daemon as the prelude, so each tool call
+// sends only `__perch.<fn>(<json args>)`. It must stay self-contained (no Node
+// scope) and ES2019; test/runtime.test.mjs runs it under node:vm with a fake
+// JXA world and compiles it with real osascript.
+//
+// JXA access rules (see AGENTS.md): collections are read lazily (`windows[i]`,
+// never `windows()`), multi-tab reads use bulk property access (`tabs.url()`).
+function jxaRuntime(BROWSERS) {
+  ObjC.import("CoreGraphics");
+  const KIND = {};
+  BROWSERS.forEach((b) => { KIND[b.app] = b.kind; });
+  const apps = {};
+  const app = (name) => apps[name] || (apps[name] = Application(name));
+
+  // One CGWindowList read replaces System Events: z-order of on-screen browsers,
+  // the frontmost app, pids and CGWindowIDs. ~4ms vs ~60ms for a System Events
+  // `frontmost` query, and it needs no extra permission.
+  function procs() {
+    const out = { front: null, z: [], pid: {}, wins: {} };
+    let list = [];
+    try { list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || []; } catch (e) {}
+    for (const w of list) {
+      const b = w.kCGWindowBounds || {};
+      if (w.kCGWindowLayer !== 0 || b.Width < 100 || b.Height < 100) continue;
+      const owner = w.kCGWindowOwnerName;
+      if (out.front === null) out.front = owner;
+      if (!KIND[owner]) continue;
+      if (!out.wins[owner]) { out.z.push(owner); out.pid[owner] = w.kCGWindowOwnerPID; out.wins[owner] = []; }
+      out.wins[owner].push({ wid: w.kCGWindowNumber, x: b.X, y: b.Y, w: b.Width, h: b.Height });
+    }
+    return out;
+  }
+
+  // Browsers on screen first (topmost first), then the rest in declared order.
+  function candidates(P, onlyApp) {
+    const names = P.z.concat(BROWSERS.map((b) => b.app).filter((n) => P.z.indexOf(n) < 0));
+    return names.filter((n) => {
+      if (onlyApp && n !== onlyApp) return false;
+      if (P.z.indexOf(n) >= 0) return true;
+      try { return app(n).running(); } catch (e) { return false; }
+    });
+  }
+
+  function activeIndex(kind, win, tabs) {
+    try {
+      if (kind === "chrome") return win.activeTabIndex() - 1;
+      // Arc: activeTabIndex()/currentTab throw; activeTab's UUID is the only signal.
+      if (kind === "arc") return Math.max(0, tabs.id().indexOf(win.activeTab.id()));
+      return Math.max(0, tabs.index().indexOf(win.currentTab().index()));
+    } catch (e) { return 0; }
+  }
+
+  function resolve(want) {
+    want = want || {};
+    const P = procs();
+    for (const name of candidates(P, want.app)) {
+      const a = app(name), kind = KIND[name];
+      let n;
+      try { n = a.windows.length; } catch (e) { continue; }
+      for (let w = 0; w < n; w++) {
+        const win = a.windows[w];
+        if (want.windowId != null) {
+          let id; try { id = win.id(); } catch (e) { id = w; }
+          if (String(id) !== String(want.windowId)) continue;
+        }
+        let tabs;
+        try { tabs = win.tabs; if (!tabs.length) continue; } catch (e) { continue; }
+        const idx = want.tabIndex != null ? want.tabIndex : activeIndex(kind, win, tabs);
+        if (idx < 0 || idx >= tabs.length) {
+          if (want.tabIndex != null) throw new Error("tabIndex " + want.tabIndex + " out of range; window has " + tabs.length + " tabs");
+          continue;
+        }
+        return { tab: tabs[idx], kind, app: name, win, P };
+      }
+    }
+    throw new Error(want.app && !KIND[want.app] ? "unknown browser " + want.app : "no matching tab");
+  }
+
+  function isActive(t) {
+    try {
+      if (t.kind === "chrome") return t.win.activeTabIndex() === t.tab.index();
+      if (t.kind === "arc") return t.tab.id() === t.win.activeTab.id();
+      return t.win.currentTab().index() === t.tab.index();
+    } catch (e) { return false; }
+  }
+
+  // Switches the window's visible tab without raising the window or the app.
+  function selectTab(t) {
+    if (isActive(t)) return false;
+    try {
+      if (t.kind === "chrome") t.win.activeTabIndex = t.tab.index();
+      // Arc forbids writing activeTab/currentTab; its `select` verb works.
+      else if (t.kind === "arc") t.tab.select();
+      else t.win.currentTab = t.tab;
+    } catch (e) { return false; }
+    return true;
+  }
+
+  function focus(t) {
+    try { t.win.index = 1; } catch (e) {}
+    selectTab(t);
+    app(t.app).activate();
+  }
+
+  // Arc's execute hangs (until timeout) on background tabs; refuse up front.
+  function arcGuard(t, tool) {
+    if (t.kind === "arc" && !isActive(t)) throw new Error("Arc cannot " + tool + " on background tabs; activate_tab first.");
+  }
+
+  function exec(t, js) {
+    if (t.kind === "safari") return app(t.app).doJavaScript(js, { in: t.tab });
+    const x = t.tab.execute({ javascript: js });
+    // Arc JSON.stringifies whatever execute returns; perch's wrappers already did.
+    if (t.kind === "arc") { try { return JSON.parse(x); } catch (e) { return x; } }
+    return x;
+  }
+
+  // Re-runs `js` (which returns a JSON string) until it yields non-null/non-false.
+  function poll(t, js, timeout, interval) {
+    const start = Date.now();
+    for (;;) {
+      let v = null;
+      try { const r = exec(t, js); if (r != null && r !== "") v = JSON.parse(String(r)); } catch (e) {}
+      if (v !== null && v !== false) return { value: v, waited: Date.now() - start };
+      if (Date.now() - start >= timeout) return null;
+      delay(interval / 1000);
+    }
+  }
+
+  const stripHash = (u) => String(u).split("#")[0];
+
+  globalThis.__perch = {
+    listTabs(a) {
+      const P = procs();
+      const out = [];
+      const names = candidates(P, a.app);
+      for (const name of names) {
+        const ap = app(name), kind = KIND[name];
+        let n;
+        try { n = ap.windows.length; } catch (e) { continue; }
+        for (let w = 0; w < n; w++) {
+          const win = ap.windows[w];
+          let id; try { id = win.id(); } catch (e) { id = w; }
+          let urls, titles = [];
+          try { urls = win.tabs.url(); } catch (e) { continue; }
+          try { titles = kind === "safari" ? win.tabs.name() : win.tabs.title(); } catch (e) {}
+          // `active` is reported for the topmost browser's front window only.
+          const act = w === 0 && name === names[0] && P.z[0] === name ? activeIndex(kind, win, win.tabs) : -1;
+          for (let i = 0; i < urls.length; i++) {
+            const row = { app: name, windowId: id, tabIndex: i, url: urls[i] || "", title: titles[i] || "" };
+            if (i === act) row.active = true;
+            out.push(row);
+          }
+        }
+      }
+      return out;
+    },
+    evalJs(a) {
+      const t = resolve(a.target);
+      arcGuard(t, a.tool || "eval_js");
+      return exec(t, a.js);
+    },
+    evalAsync(a) {
+      const t = resolve(a.target);
+      arcGuard(t, "eval_js");
+      exec(t, a.kick);
+      const r = poll(t, a.poll, a.timeout, 50);
+      if (!r) throw new Error("eval_js (awaitPromise) timed out after " + a.timeout + "ms");
+      return r.value;
+    },
+    wait(a) {
+      const t = resolve(a.target);
+      arcGuard(t, "wait");
+      const r = poll(t, a.js, a.timeout, a.interval || 150);
+      if (!r) throw new Error("wait timed out after " + a.timeout + "ms");
+      return r;
+    },
+    // One round trip: stamp the current document, set the url, then wait until a
+    // document without the stamp reports readyState 'complete'. Checking readyState
+    // alone can read the OLD document's 'complete' right after the url is set.
+    navigate(a) {
+      const t = resolve(a.target);
+      const canEval = t.kind !== "arc" || isActive(t);
+      let sameDoc = false;
+      try { const cur = t.tab.url(); sameDoc = String(a.url).indexOf("#") >= 0 && stripHash(cur) === stripHash(a.url); } catch (e) {}
+      const token = "n" + Date.now() + Math.random().toString(36).slice(2, 6);
+      if (canEval && !sameDoc) { try { exec(t, "window.__perch_nav=" + JSON.stringify(token) + ";'1'"); } catch (e) {} }
+      // Safari only applies url on the document's current tab.
+      if (t.kind === "safari") { try { t.win.currentTab = t.tab; } catch (e) {} }
+      t.tab.url = a.url;
+      if (!canEval || sameDoc) return { waited: false };
+      const check = "(function(){try{return JSON.stringify(window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete')}catch(e){return 'false'}})()";
+      const start = Date.now();
+      let idle = 0;
+      while (Date.now() - start < a.timeout) {
+        let done = false;
+        try { done = JSON.parse(String(exec(t, check))) === true; } catch (e) {}
+        if (done) return { waited: true };
+        // A download or 204 never replaces the document; Chrome's `loading` settles.
+        if (t.kind !== "safari" && Date.now() - start > 300) {
+          try { idle = t.tab.loading() ? 0 : idle + 1; } catch (e) {}
+          if (idle >= 2) return { waited: true };
+        }
+        delay(0.1);
+      }
+      return { waited: false };
+    },
+    newTab(a) {
+      const kind = KIND[a.app];
+      const ap = app(a.app);
+      if (!ap.running()) ap.activate();
+      let win, newId = null;
+      if (kind === "chrome" || kind === "arc") {
+        if (!ap.windows.length) ap.Window().make();
+        win = ap.windows[0];
+        const tab = ap.Tab({ url: a.url });
+        win.tabs.push(tab);
+        try {
+          if (kind === "arc") {
+            try { newId = tab.id(); } catch (e) {}
+            try { tab.select(); } catch (e) { win.tabs[win.tabs.length - 1].select(); }
+          } else win.activeTabIndex = win.tabs.length;
+        } catch (e) {}
+      } else {
+        // Safari: documents[0].tabs throws under JXA; windows[0].tabs works.
+        if (!ap.windows.length) { try { ap.Document().make(); } catch (e) {} }
+        win = ap.windows[0];
+        let created = false;
+        try { win.tabs.push(ap.Tab({ url: a.url })); created = true; } catch (e) {}
+        try { win.currentTab = win.tabs[win.tabs.length - 1]; } catch (e) {}
+        if (!created) {
+          ap.activate();
+          delay(0.1);
+          Application("System Events").keystroke("t", { using: "command down" });
+          delay(0.15);
+          try { win.currentTab.url = a.url; } catch (e) {}
+        }
+      }
+      let windowId = null; try { windowId = win.id(); } catch (e) {}
+      // Arc inserts new tabs mid-collection (sidebar "Today"), so resolve by UUID.
+      let tabIndex = null;
+      try {
+        if (kind === "arc" && newId != null) { const i = win.tabs.id().indexOf(newId); tabIndex = i >= 0 ? i : null; }
+        else tabIndex = win.tabs.length - 1;
+      } catch (e) {}
+      return { windowId, tabIndex };
+    },
+    activate(a) {
+      focus(resolve(a.target));
+      return true;
+    },
+  };
+}
+
+export const JXA_PRELUDE = `(${jxaRuntime})(${JSON.stringify(BROWSERS)})`;
 
 export const ERR = {
   jsOff: "JavaScript-from-AppleEvents is off. Enable it: Chromium-family → View > Developer > Allow JavaScript from Apple Events. " +
@@ -165,7 +422,7 @@ const JXA_DEFAULT_TIMEOUT = 30000;
 // this margin so the outer kill never races the inner loop.
 const JXA_OVERHEAD = 5000;
 
-const DAEMONS = process.env.PERCH_DAEMON === "0" ? {} : {
+export const DAEMONS = process.env.PERCH_DAEMON === "0" ? {} : {
   fast: new OsaDaemon({ prelude: JXA_PRELUDE }),
   slow: new OsaDaemon({ prelude: JXA_PRELUDE }),
 };
@@ -198,6 +455,14 @@ async function jxaOneShot(script, { timeout = JXA_DEFAULT_TIMEOUT } = {}) {
   } catch (e) {
     throw new Error(formatOsaFailure(e, timeout));
   }
+}
+
+// Calls a runtime entry. `raw` returns the entry's string result untouched
+// (page JSON from eval); otherwise the result is JSON round-tripped.
+async function rt(fn, args, { raw = false, lane, timeout } = {}) {
+  const call = `__perch.${fn}(${JSON.stringify(args)})`;
+  const out = await jxa(raw ? call : `JSON.stringify(${call})`, { lane, timeout });
+  return raw ? out : JSON.parse(out);
 }
 
 const FRONTMOST = `
@@ -308,9 +573,26 @@ function focusTabFragment() {
   `;
 }
 
-function buildEvalWrapper(userScript) {
-  return `(function(){ try { var __r = (function(){ ${userScript} })(); return JSON.stringify(__r === undefined ? null : __r); } catch(e) { return JSON.stringify({__perch_error: (e && e.message) ? e.message : String(e), __perch_error_name: (e && e.name) || 'Error', __perch_error_stack_head: (e && e.stack) ? String(e.stack).split('\\n').slice(0, 2).join(' | ').slice(0, 300) : null}); } })()`;
+// Page-side error shape, shared by the sync wrapper and the async kickoff.
+const ERROR_SHAPE = `function(e){return {__perch_error:(e&&e.message)?e.message:String(e),__perch_error_name:(e&&e.name)||'Error',__perch_error_stack_head:(e&&e.stack)?String(e.stack).split('\\n').slice(0,2).join(' | ').slice(0,300):null}}`;
+
+// The newline before `})` keeps a trailing `// comment` in user code from eating the wrapper.
+export function buildEvalWrapper(js) {
+  return `(function(){var __E=${ERROR_SHAPE};try{var __r=(function(){${js}\n})();return JSON.stringify(__r===undefined?null:__r)}catch(e){return JSON.stringify(__E(e))}})()`;
 }
+
+// AppleScript can't await, so async code stashes its outcome on window[key] and JXA polls it.
+function buildAsyncKickoff(js, key) {
+  const k = JSON.stringify(key);
+  return `(function(){var __E=${ERROR_SHAPE};(async function(){try{var __r=await (async function(){${js}\n})();window[${k}]={value:__r===undefined?null:__r}}catch(e){window[${k}]=__E(e)}})();return "1"})()`;
+}
+
+function buildAsyncPoll(key) {
+  const k = JSON.stringify(key);
+  return `(function(){var v=window[${k}];if(v===undefined)return "null";delete window[${k}];return JSON.stringify(v)})()`;
+}
+
+const parsePage = (raw) => { if (raw === "") return null; try { return JSON.parse(raw); } catch { return raw; } };
 
 // Returns a JXA fragment that binds `geom`, `pid`, and `windowNumber` in scope.
 // Requires `tab`, `tab_kind`, `tab_app`, `tab_window` from a prior `targetClause(target)`.
@@ -410,49 +692,7 @@ function assertAccessibilityGrantedJxa() {
 // ---- tools ----
 
 async function listTabs(args = {}) {
-  const { app: filterApp = null } = args;
-  const src = `
-    ${FRONTMOST}
-    const browsers = ${JSON.stringify(BROWSERS)};
-    const filterApp = ${JSON.stringify(filterApp)};
-    const out = [];
-    for (const b of browsers) {
-      if (filterApp && b.app !== filterApp) continue;
-      let app;
-      try { app = Application(b.app); if (!app.running()) continue; } catch (e) { continue; }
-      try {
-        // Lazy windows[w] access preserves the bridge context that the called form
-        // loses on Arc — making property chains like win.tabs.url() fail otherwise.
-        const winsLen = app.windows.length;
-        for (let w = 0; w < winsLen; w++) {
-          const win = app.windows[w];
-          let winId; try { winId = win.id(); } catch (e) { winId = w; }
-          // Bulk-fetch URL + title in one JXA call each — per-tab access is ~30x slower
-          // and hits timeouts on Arc windows with hundreds of tabs.
-          let urls = [], titles = [];
-          try { urls = win.tabs.url(); } catch (e) { continue; }
-          try { titles = b.kind === 'safari' ? win.tabs.name() : win.tabs.title(); } catch (e) {}
-          // The active flag is only reported for window 0 of the frontmost browser;
-          // skip the detection round-trips everywhere else.
-          let activeIdx = -1;
-          if (w === 0 && b.app === fm) {
-            if (b.kind === 'chrome') {
-              try { activeIdx = win.activeTabIndex() - 1; } catch (e) {}
-            } else if (b.kind === 'arc') {
-              try { activeIdx = win.tabs.id().indexOf(win.activeTab.id()); } catch (e) {}
-            } else {
-              try { activeIdx = win.tabs.index().indexOf(win.currentTab().index()); } catch (e) {}
-            }
-          }
-          for (let t = 0; t < urls.length; t++) {
-            out.push({ app: b.app, windowId: winId, tabIndex: t, url: urls[t] || '', title: titles[t] || '', active: t === activeIdx });
-          }
-        }
-      } catch (e) {}
-    }
-    JSON.stringify(out);
-  `;
-  let tabs = JSON.parse(await jxa(src));
+  let tabs = await rt("listTabs", { app: args.app || null });
   const { urlContains, titleContains, limit } = args;
   if (urlContains == null && titleContains == null && limit == null) return tabs;
   if (urlContains) tabs = tabs.filter(t => t.url.toLowerCase().includes(String(urlContains).toLowerCase()));
@@ -463,246 +703,46 @@ async function listTabs(args = {}) {
   return { tabs, total };
 }
 
-async function evalJs(script, target, options = {}) {
-  const { awaitPromise = false, timeout = 30000 } = options;
-
-  if (awaitPromise) {
-    // The AppleScript bridge is synchronous — it doesn't await Promises. To
-    // support async user code we wrap it in an async IIFE that stashes its
-    // result on window[key], then poll that slot from JXA until it appears.
-    const key = `__perch_async_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    const kickoff = `(function(){
-      (async () => {
-        try {
-          var __r = await (async () => { ${script} })();
-          window[${JSON.stringify(key)}] = { ok: true, value: __r === undefined ? null : __r };
-        } catch(e) {
-          window[${JSON.stringify(key)}] = { ok: false, error: (e && e.message) ? e.message : String(e), name: (e && e.name) || 'Error', stack: (e && e.stack) ? String(e.stack).split('\\n').slice(0, 2).join(' | ').slice(0, 300) : null };
-        }
-      })();
-    })()`;
-    const poll = buildEvalWrapper(`
-      if (window[${JSON.stringify(key)}] === undefined) return null;
-      var v = window[${JSON.stringify(key)}];
-      delete window[${JSON.stringify(key)}];
-      return v;
-    `);
-    const src = `
-      ${targetClause(target)}
-      let arcBg = false;
-      if (tab_kind === 'arc') {
-        let isCurrent = false;
-        try { isCurrent = ${ARC_TAB_IS_ACTIVE}; } catch (e) {}
-        if (!isCurrent) arcBg = true;
-      }
-      let outcome;
-      if (arcBg) {
-        outcome = JSON.stringify({__perch_arc_bg: true});
-      } else {
-        const __kickJs = ${JSON.stringify(kickoff)};
-        const __pollJs = ${JSON.stringify(poll)};
-        ${execTabJsFragment("__kick", "__kickJs")}
-        const start = Date.now();
-        const timeout = ${timeout};
-        outcome = JSON.stringify({__perch_timeout: true});
-        while (Date.now() - start < timeout) {
-          let r = 'null';
-          try {
-            ${execTabJsFragment("__r", "__pollJs")}
-            // null/'' from the bridge mean "nothing yet", matching the old
-            // String(x || 'null'); the poll otherwise returns non-empty JSON.
-            r = (__r == null || __r === '') ? 'null' : String(__r);
-          } catch (e) {}
-          if (r !== 'null') { outcome = r; break; }
-          delay(0.05);
-        }
-      }
-      outcome;
-    `;
-    const raw = await jxa(src, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch { return raw; }
-    if (parsed && parsed.__perch_arc_bg) throw new Error("Arc cannot eval_js on background tabs; call activate_tab on this target first, or operate on Arc's current tab.");
-    if (parsed && parsed.__perch_timeout) throw new Error(`eval_js (awaitPromise) timed out after ${timeout}ms`);
-    if (parsed && parsed.ok === false) return { __perch_error: parsed.error, __perch_error_name: parsed.name || 'Error', __perch_error_stack_head: parsed.stack || null };
-    return parsed && Object.prototype.hasOwnProperty.call(parsed, "value") ? parsed.value : parsed;
-  }
-
-  const wrapped = buildEvalWrapper(script);
-  const src = `
-    ${targetClause(target)}
-    const __evalJs = ${JSON.stringify(wrapped)};
-    let raw;
-    let arcBg = false;
-    if (tab_kind === 'arc') {
-      // Arc tab.execute hangs on background tabs — pre-check we're the active tab.
-      let isCurrent = false;
-      try { isCurrent = ${ARC_TAB_IS_ACTIVE}; } catch (e) {}
-      arcBg = !isCurrent;
-    }
-    if (arcBg) raw = '__PERCH_ARC_BG__';
-    else {
-      ${execTabJsFragment("__raw", "__evalJs")}
-      raw = __raw;
-    }
-    raw == null ? 'null' : String(raw);
-  `;
-  const raw = await jxa(src);
-  if (raw === '__PERCH_ARC_BG__') {
-    throw new Error("Arc cannot eval_js on background tabs; call activate_tab on this target first, or operate on Arc's current tab.");
-  }
-  try { return JSON.parse(raw); } catch { return raw; }
+async function evalJs(script, target, { awaitPromise = false, timeout = 30000, tool = "eval_js" } = {}) {
+  if (!awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool }, { raw: true }));
+  const key = `__perch_async_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const r = await rt("evalAsync", { target, kick: buildAsyncKickoff(script, key), poll: buildAsyncPoll(key), timeout },
+    { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+  return r && Object.hasOwn(r, "value") ? r.value : r;
 }
 
-async function wait(args = {}, target) {
-  const { selector, readyState = "complete", expression, timeout = 10000, interval = 150 } = args;
-  let wrapped;
-  if (expression) {
-    // Expression mode: poll a user JS expression. Truthy non-null/false result is returned as `value`.
-    wrapped = `(function(){ try { var __r = (${expression}); return JSON.stringify(__r === undefined ? null : __r); } catch(e) { return 'null'; } })()`;
-  } else {
-    const checkScript = `
-      return (function(){
+async function wait(args = {}) {
+  const { selector, readyState = "complete", expression, timeout = 10000, interval = 150, target } = args;
+  const js = expression
+    ? `(function(){try{var __r=(${expression});return JSON.stringify(__r===undefined?null:__r)}catch(e){return "null"}})()`
+    : buildEvalWrapper(`
         const order = { loading: 0, interactive: 1, complete: 2 };
         const wantReady = ${JSON.stringify(readyState)};
         if (wantReady && order[document.readyState] < order[wantReady]) return false;
         const wantSel = ${JSON.stringify(selector || "")};
         if (wantSel && !document.querySelector(wantSel)) return false;
-        return true;
-      })();
-    `;
-    wrapped = buildEvalWrapper(checkScript);
-  }
-  const src = `
-    ${targetClause(target)}
-    let arcBg = false;
-    if (tab_kind === 'arc') {
-      let isCurrent = false;
-      try { isCurrent = ${ARC_TAB_IS_ACTIVE}; } catch (e) {}
-      if (!isCurrent) arcBg = true;
-    }
-    let outcome;
-    if (arcBg) {
-      outcome = JSON.stringify({ok: false, arc_background: true});
-    } else {
-      const start = Date.now();
-      const timeout = ${timeout};
-      const interval = ${interval};
-      outcome = JSON.stringify({ok: false, timeout: true});
-      const __checkJs = ${JSON.stringify(wrapped)};
-      while (Date.now() - start < timeout) {
-        let resultStr = 'null';
-        try {
-          ${execTabJsFragment("__chk", "__checkJs")}
-          resultStr = (__chk == null || __chk === '') ? 'null' : String(__chk);
-        } catch (e) {}
-        let parsed = null;
-        try { parsed = JSON.parse(resultStr); } catch (e) {}
-        if (parsed !== null && parsed !== false) {
-          outcome = JSON.stringify({ok: true, waited: Date.now() - start, value: parsed});
-          break;
-        }
-        delay(interval / 1000);
-      }
-    }
-    outcome;
-  `;
-  const out = JSON.parse(await jxa(src, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD }));
-  if (out.arc_background) throw new Error("Arc cannot wait on background tabs; call activate_tab on this target first, or operate on Arc's current tab.");
-  if (!out.ok) throw new Error(`wait timed out after ${timeout}ms`);
-  if (!expression) return { ok: true, waited: out.waited };
-  return out;
+        return true;`);
+  const r = await rt("wait", { target, js, timeout, interval }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+  return expression ? { ok: true, waited: r.waited, value: r.value } : { ok: true, waited: r.waited };
 }
 
-// Param must not be named `wait` — it would shadow the module-level wait() called below.
-async function navigate(url, target, waitForLoad = true) {
-  const src = `
-    ${targetClause(target)}
-    // Safari's tab.url assignment only takes effect on the document's currentTab —
-    // make our target current first. Chrome family accepts it on any tab.
-    if (tab_kind === 'safari') { try { tab_window.currentTab = tab; } catch (e) {} }
-    tab.url = ${JSON.stringify(url)};
-    'ok';
-  `;
-  await jxa(src);
-  if (waitForLoad) {
-    try { await wait({ readyState: "complete", timeout: 15000 }, target); }
-    catch (e) {}
-  } else {
-    await new Promise(r => setTimeout(r, 200));
-  }
+const NAV_TIMEOUT = 15000;
+
+async function navigate(url, target) {
+  await rt("navigate", { target, url, timeout: NAV_TIMEOUT }, { lane: "slow", timeout: NAV_TIMEOUT + JXA_OVERHEAD });
   return { ok: true, url };
 }
 
-async function newTab(url, app = "Google Chrome") {
-  const browser = BROWSERS.find(b => b.app === app) || BROWSERS[0];
+async function newTab(url, appName = "Google Chrome") {
+  const browser = BROWSERS.find(b => b.app === appName);
+  if (!browser) throw new Error(`unknown browser ${appName}; one of: ${BROWSERS.map(b => b.app).join(", ")}`);
   const targetUrl = url || "about:blank";
-  const src = `
-    const app = Application(${JSON.stringify(browser.app)});
-    if (!app.running()) app.activate();
-    const kind = ${JSON.stringify(browser.kind)};
-    let win;
-    let newTabId = null;
-    if (kind === 'chrome' || kind === 'arc') {
-      if (!app.windows.length) app.Window().make();
-      win = app.windows[0];
-      const t = app.Tab({ url: ${JSON.stringify(targetUrl)} });
-      win.tabs.push(t);
-      try {
-        if (kind === 'arc') {
-          try { newTabId = t.id(); } catch (e) {}
-          // Prefer the pushed specifier (race-free); fall back to positional.
-          try { t.select(); } catch (e) { win.tabs[win.tabs.length - 1].select(); }
-        }
-        else win.activeTabIndex = win.tabs.length;
-      } catch (e) {}
-    } else {
-      // Safari: documents[0].tabs throws "cannot get object" under JXA, but
-      // windows[0].tabs works. Use windows everywhere here for the same reason
-      // listTabs/targetClause do.
-      if (!app.windows.length) {
-        try { app.Document().make(); } catch (e) {}
-      }
-      win = app.windows[0];
-      let created = false;
-      try {
-        const t = app.Tab({ url: ${JSON.stringify(targetUrl)} });
-        win.tabs.push(t);
-        created = true;
-      } catch (e) {}
-      try { win.currentTab = win.tabs[win.tabs.length - 1]; } catch (e) {}
-      if (!created) {
-        const se = Application('System Events');
-        app.activate();
-        delay(0.1);
-        se.keystroke('t', {using: 'command down'});
-        delay(0.15);
-        try { win.currentTab.url = ${JSON.stringify(targetUrl)}; } catch (e) {}
-      }
-    }
-    let winId = null; try { winId = win.id(); } catch (e) {}
-    // Arc inserts new tabs mid-collection (sidebar "Today" section), so length-1
-    // is wrong there; resolve the pushed tab's real position by UUID.
-    let tabIndex = null;
-    try {
-      if (kind === 'arc' && newTabId != null) {
-        const i = win.tabs.id().indexOf(newTabId);
-        tabIndex = i >= 0 ? i : null;
-      } else tabIndex = win.tabs.length - 1;
-    } catch (e) {}
-    JSON.stringify({ windowId: winId, tabIndex });
-  `;
-  const { windowId = null, tabIndex = null } = JSON.parse(await jxa(src));
+  const { windowId = null, tabIndex = null } = await rt("newTab", { app: browser.app, url: targetUrl });
   return { ok: true, app: browser.app, url: targetUrl, windowId, tabIndex };
 }
 
 async function activateTab(target) {
-  const src = `
-    ${targetClause(target)}
-    ${focusTabFragment()}
-    'ok';
-  `;
-  await jxa(src);
+  await rt("activate", { target });
   return { ok: true };
 }
 
@@ -1897,7 +1937,7 @@ export const HANDLERS = {
   list_tabs:     (a) => listTabs(a),
   new_tab:       (a) => newTab(a.url, a.app),
   activate_tab:  (a) => activateTab(a.target),
-  navigate:      (a) => navigate(a.url, a.target, a.wait !== false),
+  navigate:      (a) => navigate(a.url, a.target),
   eval_js:       async (a) => {
     let script = a.script;
     if (a.script_path) {
@@ -1907,7 +1947,7 @@ export const HANDLERS = {
     if (!script) throw new Error("eval_js requires `script` or `script_path`");
     return evalJs(script, a.target, { awaitPromise: a.awaitPromise, timeout: a.timeout });
   },
-  wait:          (a) => wait(a, a.target),
+  wait:          (a) => wait(a),
   screenshot:    (a) => screenshot(a),
   page_state:    (a) => pageState(a.target),
   get_text:      (a) => getText(a),

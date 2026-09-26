@@ -102,7 +102,8 @@ try {
 
   await check("eval_js round-trip", async () => {
     if (!haveBrowser) return skip("no browser running");
-    const target = { app: tabs[0].app, windowId: tabs[0].windowId, tabIndex: tabs[0].tabIndex };
+    const t = tabs.find((x) => x.active) || tabs[0];
+    const target = { app: t.app, windowId: t.windowId, tabIndex: t.tabIndex };
     const out = text(await call("eval_js", { script: "return 1+1", target }));
     if (out !== "2") throw new Error(`expected "2", got ${JSON.stringify(out)}`);
   });
