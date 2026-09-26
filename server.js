@@ -98,17 +98,18 @@ function jxaRuntime(BROWSERS) {
           if (want.tabIndex != null) throw new Error("tabIndex " + want.tabIndex + " out of range; window has " + tabs.length + " tabs");
           continue;
         }
-        return { tab: tabs[idx], kind, app: name, win, w, P };
+        return { tab: tabs[idx], idx, kind, app: name, win, w, P };
       }
     }
     throw new Error(want.app && !KIND[want.app] ? "unknown browser " + want.app : "no matching tab");
   }
 
+  // Chrome tabs have no `index` property (it throws), so positions come from resolve.
   function isActive(t) {
     try {
-      if (t.kind === "chrome") return t.win.activeTabIndex() === t.tab.index();
+      if (t.kind === "chrome") return t.win.activeTabIndex() === t.idx + 1;
       if (t.kind === "arc") return t.tab.id() === t.win.activeTab.id();
-      return t.win.currentTab().index() === t.tab.index();
+      return t.win.currentTab().index() === t.idx + 1;
     } catch (e) { return false; }
   }
 
@@ -116,7 +117,7 @@ function jxaRuntime(BROWSERS) {
   function selectTab(t) {
     if (isActive(t)) return false;
     try {
-      if (t.kind === "chrome") t.win.activeTabIndex = t.tab.index();
+      if (t.kind === "chrome") t.win.activeTabIndex = t.idx + 1;
       // Arc forbids writing activeTab/currentTab; its `select` verb works.
       else if (t.kind === "arc") t.tab.select();
       else t.win.currentTab = t.tab;
@@ -124,8 +125,14 @@ function jxaRuntime(BROWSERS) {
     return true;
   }
 
+  // windows[w] is a by-position specifier and raising reorders the list, so pin the
+  // window (and tab) by id first; afterwards it is the app's front window.
   function focus(t) {
-    try { t.win.index = 1; } catch (e) {}
+    try {
+      t.win = app(t.app).windows.byId(t.win.id());
+      t.tab = t.win.tabs[t.idx];
+    } catch (e) {}
+    try { t.win.index = 1; t.w = 0; } catch (e) {}
     selectTab(t);
     app(t.app).activate();
   }
@@ -202,25 +209,26 @@ function jxaRuntime(BROWSERS) {
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
     else if (t.P.front !== t.app) throw new Error("target not frontmost; pass raise:true or call activate_tab first");
     const I = ids(t);
-    if (I.pid == null) throw new Error("could not resolve the pid for " + t.app);
+    if (I.windowNumber == null) throw new Error(t.app + "'s window isn't on screen (minimized or on another Space)");
     return { t: t, I: I };
   }
 
-  // CGEvent integer fields by raw index ($.kCG* symbols aren't reliably bridged):
-  // 1 click state, 9 target pid, 11 pressure (double), 27/28 window under pointer,
-  // 51 target window (private), 58 routing flag (private).
+  // Events go through the HID event tap, like real hardware: on macOS 27 Chrome's
+  // page never sees CGEventPostToPid or SkyLight's SLEventPostToPid events (verified
+  // live with scripts/trusted-live.mjs --delivery). The HID tap moves the real
+  // cursor, so trusted calls put it back afterwards, and it clicks whatever is at
+  // that point, so points outside the target window are refused.
+  // Field 1 is kCGMouseEventClickState, 11 kCGMouseEventPressure (raw indices:
+  // $.kCG* constants aren't reliably bridged).
   function mouse(I, pt, type, state, pressure) {
+    const r = I.cgBounds || I.geom;
+    if (!(pt.x >= r.x && pt.x < r.x + r.w && pt.y >= r.y && pt.y < r.y + r.h)) {
+      throw new Error("point " + Math.round(pt.x) + "," + Math.round(pt.y) + " is outside the target window; nothing was clicked");
+    }
     const e = $.CGEventCreateMouseEvent($(), type, $.CGPointMake(pt.x, pt.y), 0);
     $.CGEventSetIntegerValueField(e, 1, state);
     $.CGEventSetDoubleValueField(e, 11, pressure);
-    $.CGEventSetIntegerValueField(e, 9, I.pid);
-    if (I.windowNumber != null) {
-      $.CGEventSetIntegerValueField(e, 27, I.windowNumber);
-      $.CGEventSetIntegerValueField(e, 28, I.windowNumber);
-      $.CGEventSetIntegerValueField(e, 51, I.windowNumber);
-      $.CGEventSetIntegerValueField(e, 58, 1);
-    }
-    $.CGEventPostToPid(I.pid, e);
+    $.CGEventPost(0, e); // kCGHIDEventTap
   }
 
   function leftClick(I, pt) {
@@ -229,24 +237,69 @@ function jxaRuntime(BROWSERS) {
     mouse(I, pt, 2, 1, 0.0); // kCGEventLeftMouseUp
   }
 
+  const cursorAt = () => { const p = $.CGEventGetLocation($.CGEventCreate($())); return { x: p.x, y: p.y }; };
+
   // Chunks are pre-split in Node (<= 20 UTF-16 units, CGEvent's buffer cap,
   // never splitting a surrogate pair).
   function typeChunks(I, chunks) {
-    ObjC.import("Foundation");
+    // The stock bridge signature rejects NSData bytes as a UniChar*; rebinding it
+    // with void* parameters passes them through.
+    ObjC.bindFunction("CGEventKeyboardSetUnicodeString", ["void", ["void *", "unsigned long", "void *"]]);
     chunks.forEach(function (chunk) {
-      // NSUTF16LittleEndianStringEncoding; the NSData bytes go straight to CGEvent.
-      const data = $.NSString.stringWithString(chunk).dataUsingEncoding(0x14000100);
+      const data = $(chunk).dataUsingEncoding(0x94000100); // NSUTF16LittleEndianStringEncoding
       [true, false].forEach(function (down) {
         const e = $.CGEventCreateKeyboardEvent($(), 0, down);
-        $.CGEventKeyboardSetUnicodeString(e, data.length / 2, data.bytes);
-        $.CGEventSetIntegerValueField(e, 9, I.pid);
-        $.CGEventPostToPid(I.pid, e);
+        $.CGEventKeyboardSetUnicodeString(e, chunk.length, data.bytes);
+        $.CGEventPost(1, e); // kCGSessionEventTap: lands in the frontmost target's focused field
       });
       delay(0.005);
     });
   }
 
   const parseExec = function (t, js) { return JSON.parse(String(exec(t, js))); };
+
+  // Finds the screen point for a trusted press. The target tab is shown first: a
+  // background tab's screenX/outerWidth are stale. The page's estimate can't tell
+  // which side a panel is on, or the zoom, so a harmless mouse move at the estimate
+  // is posted and the page reports where it landed; the point is corrected (twice
+  // at most). If no move reaches the page, the estimate is used as is.
+  function aim(T, a, tool) {
+    selectTab(T.t);
+    arcGuard(T.t, tool);
+    let probe;
+    for (let i = 0; ; i++) {
+      probe = parseExec(T.t, a.probe);
+      if (!probe.retry) break;
+      if (i >= 20) return { out: { ok: false, error: "tab never became visible to measure" } };
+      delay(0.05);
+    }
+    if (!probe.ok) return { out: probe };
+    let pt = { x: probe.x, y: probe.y };
+    const trace = [];
+    // Only the move this loop posted counts: late events and the user's real mouse
+    // also reach the page, so match on the screen point the move was posted at.
+    const ours = function (at) {
+      for (let tries = 0; tries < 10; tries++) {
+        let got = null;
+        try { got = parseExec(T.t, a.cal); } catch (e) {}
+        const m = got && got.moves.filter(function (v) { return Math.abs(v[2] - at.x) < 2 && Math.abs(v[3] - at.y) < 2; }).pop();
+        if (m) return m;
+        delay(0.025);
+      }
+      return null;
+    };
+    for (let i = 0; i < 3; i++) {
+      exec(T.t, a.calReset);
+      mouse(T.I, pt, 5, 0, 0.0); // kCGEventMouseMoved
+      const m = ours(pt);
+      if (!m) break;
+      const dx = Math.round(probe.cx - m[0]), dy = Math.round(probe.cy - m[1]);
+      trace.push([dx, dy]);
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) break;
+      pt = { x: pt.x + dx, y: pt.y + dy };
+    }
+    return { pt: pt, el: probe.el, calibrated: trace.length > 0, calibration: trace };
+  }
 
   globalThis.__perch = {
     listTabs(a) {
@@ -389,29 +442,28 @@ function jxaRuntime(BROWSERS) {
     },
     trustedClick(a) {
       const T = trustedTarget(a);
-      let pt = a.x != null ? { x: a.x, y: a.y } : null;
-      let probe = null;
-      if (!pt) {
-        arcGuard(T.t, "click");
-        probe = parseExec(T.t, a.probe);
-        if (!probe.ok) return probe;
-        pt = { x: probe.x, y: probe.y };
-      }
-      leftClick(T.I, pt);
-      const out = { ok: true, point: pt };
-      if (probe) { delay(0.05); Object.assign(out, parseExec(T.t, a.check)); out.el = probe.el; }
-      return out;
+      const home = cursorAt();
+      try {
+        if (a.x != null) { leftClick(T.I, { x: a.x, y: a.y }); return { ok: true, point: { x: a.x, y: a.y } }; }
+        const A = aim(T, a, "click");
+        if (A.out) return A.out;
+        leftClick(T.I, A.pt);
+        delay(0.05);
+        return Object.assign({ ok: true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration }, parseExec(T.t, a.check));
+      } finally { $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y)); }
     },
     trustedFill(a) {
       const T = trustedTarget(a);
-      arcGuard(T.t, "fill");
-      const probe = parseExec(T.t, a.probe);
-      if (!probe.ok) return probe;
-      leftClick(T.I, { x: probe.x, y: probe.y });
-      delay(0.05); // let focus settle before typing
-      typeChunks(T.I, a.chunks);
-      delay(0.05);
-      return Object.assign({ el: probe.el }, parseExec(T.t, a.check));
+      const home = cursorAt();
+      try {
+        const A = aim(T, a, "fill");
+        if (A.out) return A.out;
+        leftClick(T.I, A.pt);
+        delay(0.05); // let focus settle before typing
+        typeChunks(T.I, a.chunks);
+        delay(0.05);
+        return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration }, parseExec(T.t, a.check));
+      } finally { $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y)); }
     },
   };
 }
@@ -1101,10 +1153,12 @@ return { ok: true, entries: s.entries.splice(0) };
 `,
 
   // Trusted input: find the element, scroll it into view, estimate its screen
-  // point, and arm a mousedown listener so the result can say whether it hit.
-  // Estimate: screen origin + browser chrome (outer - inner; Arc's sidebar is on
-  // the left, toolbars on top) + the element's center. Assumes 100% zoom.
+  // point, and arm listeners: mousemove for calibration, mousedown for `hit`.
+  // Estimate: screen origin + browser chrome (outer - inner, assumed left and top)
+  // + the element's center. A hidden tab's screenX/outerWidth are stale, so it
+  // asks to retry until the tab is visible.
   trusted_probe: String.raw`
+if (document.visibilityState === "hidden") return { ok: false, retry: "hidden" };
 let el;
 if (A.ref || A.selector) {
   const r = resolveEl(A);
@@ -1124,20 +1178,37 @@ try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant"
 const r = el.getBoundingClientRect();
 if (!r.width || !r.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
 if (A.forFill) { setNativeValue(el, ""); fire(el, ["input"]); }
-const st = window.__perch_trusted = { el: el, down: null };
+const prev = window.__perch_trusted;
+if (prev && prev.off) prev.off();
+const st = window.__perch_trusted = { el: el, down: null, moves: [] };
+const onMove = function (e) { if (st.moves.length < 20) st.moves.push([e.clientX, e.clientY, e.screenX, e.screenY]); };
 const onDown = function (e) { st.down = el === e.target || el.contains(e.target); window.removeEventListener("mousedown", onDown, true); };
+window.addEventListener("mousemove", onMove, true);
 window.addEventListener("mousedown", onDown, true);
+st.off = function () { window.removeEventListener("mousemove", onMove, true); window.removeEventListener("mousedown", onDown, true); };
+const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
 return {
   ok: true,
   el: ident(el),
-  x: window.screenX + (window.outerWidth - window.innerWidth) + r.left + r.width / 2,
-  y: window.screenY + (window.outerHeight - window.innerHeight) + r.top + r.height / 2,
-};
+  x: window.screenX + (window.outerWidth - window.innerWidth) + cx,
+  y: window.screenY + (window.outerHeight - window.innerHeight) + cy,
+  cx: cx,
+  cy: cy,
+};`,
+
+  // Drains recorded mouse moves as [clientX, clientY, screenX, screenY]; null if none.
+  // A.reset only clears them.
+  trusted_cal: String.raw`
+const st = window.__perch_trusted || {};
+const moves = st.moves || [];
+st.moves = [];
+return A.reset || !moves.length ? null : { moves: moves };
 `,
 
   // hit: the mousedown landed on the element; null: no mousedown reached the page.
   trusted_check: String.raw`
 const st = window.__perch_trusted || {};
+if (st.off) st.off();
 const out = { hit: st.down };
 if (A.forFill && st.el) {
   const got = String(st.el.value || "");
@@ -1242,6 +1313,8 @@ async function trustedClick({ ref, selector, x, y, raise, target }) {
   return rt("trustedClick", {
     target, raise, x, y,
     probe: probing ? pageFn("trusted_probe", { ref, selector }) : null,
+    cal: probing ? pageFn("trusted_cal", {}) : null,
+    calReset: probing ? pageFn("trusted_cal", { reset: true }) : null,
     check: probing ? pageFn("trusted_check", {}) : null,
   });
 }
@@ -1252,6 +1325,8 @@ async function trustedFill({ ref, selector, label_pattern, text, raise, target }
   return rt("trustedFill", {
     target, raise,
     probe: pageFn("trusted_probe", { ref, selector, label_pattern, forFill: true }),
+    cal: pageFn("trusted_cal", {}),
+    calReset: pageFn("trusted_cal", { reset: true }),
     check: pageFn("trusted_check", { forFill: true, text }),
     chunks: chunkUtf16(text),
   });

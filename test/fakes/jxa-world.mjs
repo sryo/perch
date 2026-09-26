@@ -6,7 +6,7 @@ import vm from "node:vm";
 
 export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
   const clock = { t: 1_000_000 };
-  const state = { loadTicks, ax: true };
+  const state = { loadTicks, ax: true, cursor: { x: 1, y: 2 }, warps: [] };
   const posted = [];
   const counts = {};
   const bump = (k) => { counts[k] = (counts[k] || 0) + 1; };
@@ -31,7 +31,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     fn("id", () => spec.id);
     fn("title", () => spec.title || "");
     fn("name", () => spec.title || "");
-    fn("index", () => w.tabs.indexOf(tab) + 1);
+    // Chrome's dictionary has no tab `index` (it throws); Safari's does.
+    fn("index", () => { if (b.kind === "chrome") throw new Error("Can't get object."); return w.tabs.indexOf(tab) + 1; });
     fn("loading", () => false);
     Object.defineProperty(tab, "url", {
       get: () => () => tab.page.url,
@@ -66,7 +67,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     const win = {};
     Object.defineProperty(win, "tabs", { get: () => { bump("win.tabs"); return coll; } });
     Object.defineProperty(win, "id", { get: () => () => { bump("win.id()"); return spec.id; } });
-    Object.defineProperty(win, "index", { set: (v) => { bump("win.index="); spec.raised = v === 1; } });
+    // Raising a window reorders the app's window list, like the real `index = 1`.
+    Object.defineProperty(win, "index", { set: (v) => {
+      bump("win.index=");
+      spec.raised = v === 1;
+      if (v === 1) { const all = winsByApp[b.name]; all.splice(all.indexOf(w), 1); all.unshift(w); }
+    } });
     win.position = () => { if (b.kind !== "chrome") throw new Error("no position"); return [spec.x ?? 0, spec.y ?? 0]; };
     win.size = () => { if (b.kind !== "chrome") throw new Error("no size"); return [spec.w ?? 800, spec.h ?? 600]; };
     win.bounds = () => { if (b.kind !== "safari") throw new Error("no bounds"); return { x: spec.x ?? 0, y: spec.y ?? 0, width: spec.w ?? 800, height: spec.h ?? 600 }; };
@@ -88,6 +94,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
 
   const apps = {};
   const winsByApp = {};
+  const nsString = (str) => ({ dataUsingEncoding: (enc) => (enc === 0x94000100 ? { length: str.length * 2, bytes: str } : null) });
+  const specifier = (resolveWin) => new Proxy({}, {
+    get: (_, k) => { const w = resolveWin(); const v = w[k]; return typeof v === "function" ? v.bind(w) : v; },
+    set: (_, k, v) => { resolveWin()[k] = v; return true; },
+  });
   for (const b of browsers) {
     const wins = (b.windows || []).map((ws) => makeWindow(ws, b));
     winsByApp[b.name] = wins;
@@ -105,7 +116,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     a.windows = new Proxy([], {
       get(_, k) {
         if (k === "length") { bump(`windows.length(${b.name})`); return wins.length; }
-        if (/^\d+$/.test(String(k))) { bump(`windows[${k}](${b.name})`); return wins[Number(k)] && wins[Number(k)].win; }
+        // JXA specifiers are lazy: windows[k] means "whatever is k-th when used".
+        if (/^\d+$/.test(String(k))) {
+          bump(`windows[${k}](${b.name})`);
+          if (!wins[Number(k)]) return undefined;
+          return specifier(() => wins[Number(k)] && wins[Number(k)].win);
+        }
+        if (k === "byId") return (id) => specifier(() => { const w = wins.find((x) => String(x.spec.id) === String(id)); return w && w.win; });
         return undefined;
       },
     });
@@ -126,9 +143,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
       castRefToObject: (x) => x,
       deepUnwrap: (x) => { bump("deepUnwrap"); return x; },
       unwrap: (x) => x,
+      bindFunction: () => {},
     },
     // JXA's `$` is callable (`$()` is a nil pointer) and carries the bridged symbols.
-    $: Object.assign(() => null, {
+    // $(jsString) bridges to an NSString; only real UTF-16LE (0x94000100) encodes.
+    $: Object.assign((str) => (str === undefined ? null : nsString(str)), {
       // CoreGraphics / AppKit stand-ins for trusted input: events are recorded, not posted.
       CGPointMake: (x, y) => ({ x, y }),
       CGEventCreateMouseEvent: (_s, type, pt) => ({ kind: "mouse", type, pt, fields: {} }),
@@ -136,9 +155,17 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
       CGEventSetIntegerValueField: (e, f, v) => { e.fields[f] = v; },
       CGEventSetDoubleValueField: (e, f, v) => { e.fields[f] = v; },
       CGEventKeyboardSetUnicodeString: (e, len, bytes) => { e.text = bytes; e.len = len; },
-      CGEventPostToPid: (pid, e) => { posted.push({ pid, ...e }); },
+      CGEventPostToPid: (pid, e) => { posted.push({ via: "pid", pid, ...e }); if (state.onPost) state.onPost(e); },
+      CGEventPost: (tap, e) => {
+        posted.push({ via: tap === 0 ? "hid" : "tap" + tap, ...e });
+        if (e.kind === "mouse") state.cursor = e.pt;
+        if (state.onPost) state.onPost(e);
+      },
+      CGEventCreate: () => ({ kind: "probe", fields: {} }),
+      CGEventGetLocation: () => ({ ...state.cursor }),
+      CGWarpMouseCursorPosition: (pt) => { state.cursor = { x: pt.x, y: pt.y }; state.warps.push({ x: pt.x, y: pt.y }); },
       NSDictionary: { dictionaryWithObjectForKey: () => ({}) },
-      NSString: { stringWithString: (s) => ({ dataUsingEncoding: () => ({ length: s.length * 2, bytes: s }) }) },
+      NSString: { stringWithString: (str) => nsString(str) },
       AXIsProcessTrustedWithOptions: () => state.ax,
       kCFBooleanFalse: false,
       kAXTrustedCheckOptionPrompt: "prompt",

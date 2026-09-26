@@ -4,6 +4,7 @@
 // on a scratch about:blank tab in a Chrome-family browser (reused across runs),
 // never on the user's own tabs. Non-zero exit on any FAIL.
 
+import { execFileSync } from "node:child_process";
 import { writeFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -137,7 +138,11 @@ try {
     // Trusted Types only engages when the page LOADS with the CSP, so set it at tab creation.
     const ttHtml = `<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"><div contenteditable aria-label="Body"></div>`;
     const tt = await json("new_tab", { app: chromeTabs[0].app, url: "data:text/html," + encodeURIComponent(ttHtml) });
-    const reset = () => call("eval_js", { script: "location.href='about:blank'; return 1", target: tt }).catch(() => {});
+    // perch has no close-tab tool, so close the throwaway tab straight through AppleScript.
+    const reset = async () => {
+      try { execFileSync("osascript", ["-l", "JavaScript", "-e", `Application(${JSON.stringify(tt.app)}).windows.byId(${JSON.stringify(String(tt.windowId))}).tabs[${tt.tabIndex}].close()`]); }
+      catch { await call("eval_js", { script: "location.href='about:blank'; return 1", target: tt }).catch(() => {}); }
+    };
     const present = text(await call("eval_js", { script: "return !!document.querySelector('[contenteditable]')", target: tt }));
     if (present !== "true") { await reset(); return skip("browser did not load the data: URL"); }
     const o = await json("fill", { label_pattern: "body", text: body, target: tt });

@@ -196,3 +196,15 @@ test("activate_tab selects via each browser's working verb", async () => {
   assert.equal(world.counts["win.currentTab="], 1);
   assert.equal(world.counts["activate(Arc)"], 1);
 });
+
+test("raising a second window still switches the tab in THAT window", async () => {
+  install({
+    browsers: [chrome([{ id: 1, active: 0, tabs: tabs(4, "a") }, { id: 2, active: 0, tabs: tabs(4, "b") }])],
+    cg: [{ owner: "Google Chrome" }],
+  });
+  const { r } = await call("activate_tab", { target: { windowId: 2, tabIndex: 3 } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const { o } = await call("list_tabs", {});
+  const active = o.tabs.filter((t) => t.active);
+  assert.deepEqual(active.map((t) => [t.windowId, t.tabIndex]), [[2, 3]]);
+});

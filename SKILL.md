@@ -55,7 +55,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Trusted input
 
-`click {trusted: true}` and `fill {trusted: true}` post real OS events (`isTrusted: true`) for WAF-gated buttons and validators that reject synthetic input. They need Accessibility permission and the window in front (or `raise: true`, which takes focus). `click` reports `hit: true|false` for whether the press landed on the element. Rich editors never need trusted mode.
+`click {trusted: true}` and `fill {trusted: true}` post real OS events (`isTrusted: true`) for WAF-gated buttons and validators that reject synthetic input. They need Accessibility permission and the window in front (or `raise: true`, which takes focus). They briefly move the real cursor and put it back. Results report `hit` (the press landed on the element); `fill` also checks the typed text landed. Rich editors never need trusted mode.
 
 ## Permissions
 
