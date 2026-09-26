@@ -1,200 +1,156 @@
 #!/usr/bin/env node
-// Smoke test for the perch MCP server. Node stdlib only; speaks MCP stdio
-// JSON-RPC directly. Assertions that need a live browser SKIP when none is
-// running. Non-zero exit on any FAIL.
+// Live smoke test: boots server.js over stdio and exercises the real bridge.
+// Browser-dependent checks SKIP when no browser runs. Page-mutating checks run
+// on a scratch about:blank tab in a Chrome-family browser (reused across runs),
+// never on the user's own tabs. Non-zero exit on any FAIL.
 
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { writeFile, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { connect, text } from "./mcp-client.mjs";
+import { SCHEMA_BUDGET } from "../server.js";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SCHEMA_CHAR_BUDGET = 15000;
-const CALL_TIMEOUT_MS = 20000;
-
-const child = spawn("node", [join(ROOT, "server.js")], {
-  stdio: ["pipe", "pipe", "inherit"],
-  env: process.env,
-});
-
-let buffer = "";
-const pending = new Map();
-child.stdout.on("data", (chunk) => {
-  buffer += chunk.toString();
-  let nl;
-  while ((nl = buffer.indexOf("\n")) >= 0) {
-    const line = buffer.slice(0, nl).trim();
-    buffer = buffer.slice(nl + 1);
-    if (!line) continue;
-    let msg;
-    try { msg = JSON.parse(line); } catch { continue; }
-    const waiter = pending.get(msg.id);
-    if (waiter) { pending.delete(msg.id); waiter.resolve(msg); }
-  }
-});
-
-let nextId = 1;
-function rpc(method, params) {
-  const id = nextId++;
-  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(() => { pending.delete(id); reject(new Error(`${method} timed out after ${CALL_TIMEOUT_MS}ms`)); }, CALL_TIMEOUT_MS);
-    pending.set(id, { resolve: (m) => { clearTimeout(t); resolve(m); } });
-  });
-}
-function notify(method, params) {
-  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
-}
-async function call(name, args = {}) {
-  const res = await rpc("tools/call", { name, arguments: args });
-  if (res.error) throw new Error(`${name}: rpc error ${JSON.stringify(res.error)}`);
-  return res.result;
-}
-function text(result) { return result.content.find((c) => c.type === "text")?.text; }
+const client = await connect();
+const call = client.call;
+const json = async (name, args) => JSON.parse(text(await call(name, args)));
 
 let failures = 0;
-function report(status, label, detail = "") {
-  if (status === "FAIL") failures++;
+const SKIP = Symbol("skip");
+let skipReason = "";
+const skip = (why) => { skipReason = why; return SKIP; };
+async function check(label, fn) {
+  let status = "PASS", detail = "";
+  try {
+    const r = await fn();
+    if (r === SKIP) { status = "SKIP"; detail = skipReason; } else detail = r || "";
+  } catch (e) { status = "FAIL"; detail = e.message; failures++; }
   console.log(`${status.padEnd(4)} ${label}${detail ? ` — ${detail}` : ""}`);
 }
-async function check(label, fn) {
-  try {
-    const detail = await fn();
-    if (detail === SKIP) report("SKIP", label, SKIP.reason);
-    else report("PASS", label, detail || "");
-  } catch (e) {
-    report("FAIL", label, e.message);
-  }
-}
-const SKIP = { reason: "" };
-function skip(reason) { SKIP.reason = reason; return SKIP; }
+const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
 
 try {
-  await rpc("initialize", {
-    protocolVersion: "2024-11-05",
-    capabilities: {},
-    clientInfo: { name: "perch-smoke", version: "0" },
-  });
-  notify("notifications/initialized");
-
   await check("tools/list within schema budget", async () => {
-    const res = await rpc("tools/list", {});
-    const size = JSON.stringify(res.result.tools).length;
-    if (size >= SCHEMA_CHAR_BUDGET) throw new Error(`${size} chars >= budget ${SCHEMA_CHAR_BUDGET}`);
-    return `${res.result.tools.length} tools, ${size} chars`;
+    const { tools } = (await client.rpc("tools/list", {})).result;
+    const size = JSON.stringify(tools).length;
+    expect(size < SCHEMA_BUDGET, `${size} chars >= budget ${SCHEMA_BUDGET}`);
+    expect(client.init.instructions, "no server instructions");
+    return `${tools.length} tools, ${size} chars`;
   });
 
-  let tabs = null;
-  await check("list_tabs bare shape (no params)", async () => {
-    tabs = JSON.parse(text(await call("list_tabs")));
-    if (!Array.isArray(tabs)) throw new Error(`expected bare array, got ${typeof tabs}`);
-    return `${tabs.length} tabs`;
+  let tabs = [];
+  await check("list_tabs returns {tabs, total}", async () => {
+    const out = await json("list_tabs", { limit: 500 });
+    expect(Array.isArray(out.tabs) && typeof out.total === "number", `got ${JSON.stringify(out).slice(0, 80)}`);
+    tabs = out.tabs;
+    return `${out.total} tabs`;
   });
+  const haveBrowser = tabs.length > 0;
+  const active = tabs.find((t) => t.active) || tabs[0];
 
-  await check("list_tabs filtered shape ({limit: 1})", async () => {
-    const out = JSON.parse(text(await call("list_tabs", { limit: 1 })));
-    if (Array.isArray(out) || !Array.isArray(out.tabs) || typeof out.total !== "number") {
-      throw new Error(`expected {tabs, total}, got ${JSON.stringify(out).slice(0, 80)}`);
-    }
-    return `total ${out.total}`;
-  });
-
-  const haveBrowser = Array.isArray(tabs) && tabs.length > 0;
-
-  await check("eval_js round-trip", async () => {
+  await check("eval_js round-trip on the active tab", async () => {
     if (!haveBrowser) return skip("no browser running");
-    const t = tabs.find((x) => x.active) || tabs[0];
-    const target = { app: t.app, windowId: t.windowId, tabIndex: t.tabIndex };
-    const out = text(await call("eval_js", { script: "return 1+1", target }));
-    if (out !== "2") throw new Error(`expected "2", got ${JSON.stringify(out)}`);
+    const out = text(await call("eval_js", { script: "return 1+1", target: { app: active.app, windowId: active.windowId, tabIndex: active.tabIndex } }));
+    expect(out === "2", `expected "2", got ${JSON.stringify(out)}`);
   });
 
   await check("screenshot image + metadata block", async () => {
     if (!haveBrowser) return skip("no browser running");
-    const target = { app: tabs[0].app, windowId: tabs[0].windowId };
-    const res = await call("screenshot", { target });
-    const img = res.content.find((c) => c.type === "image");
-    if (!img) throw new Error(`no image block: ${JSON.stringify(res.content.map((c) => c.type))}`);
-    const metaText = text(res);
-    if (!metaText) throw new Error("no metadata text block");
-    const meta = JSON.parse(metaText);
-    for (const k of ["x", "y", "w", "h"]) if (typeof meta.window?.[k] !== "number") throw new Error(`window.${k} missing in ${metaText}`);
-    for (const k of ["w", "h"]) if (typeof meta.image?.[k] !== "number") throw new Error(`image.${k} missing in ${metaText}`);
+    const res = await call("screenshot", { target: { app: active.app, windowId: active.windowId } });
+    expect(res.content.find((c) => c.type === "image"), "no image block");
+    const meta = JSON.parse(text(res));
+    for (const k of ["x", "y", "w", "h"]) expect(typeof meta.window?.[k] === "number", `window.${k} missing`);
     return `window ${meta.window.w}x${meta.window.h}pt, image ${meta.image.w}x${meta.image.h}px`;
   });
 
-  // --- status-first changes (A–E). Run on a disposable scratch tab so real tabs
-  // are never navigated. Prefer a Chrome-family browser (Arc restricts bg-tab eval).
-  const chromeTab = Array.isArray(tabs) && tabs.find((t) => /chrome|chromium/i.test(t.app));
+  // Page-mutating checks: a scratch about:blank tab in a Chrome-family browser
+  // (Arc can't eval background tabs). Reuse one from an earlier run if present.
+  const chromeTabs = tabs.filter((t) => /chrome|chromium|brave|edge|vivaldi/i.test(t.app));
   let scratch = null;
-  const body = "Hi there, this is a multi-line reply body.\nSecond line.\n\nA second paragraph that makes the text comfortably longer than fifty characters.";
-  // data: navigation via AppleScript doesn't load content in Chrome, so build test DOM
-  // in-page with eval_js instead (about:blank has no Trusted Types, so innerHTML is fine here).
-  const setDom = (html) => call("eval_js", { script: `document.body.innerHTML = ${JSON.stringify(html)}; return document.body.children.length;`, target: scratch });
+  const setDom = (html) => call("eval_js", { script: `document.body.innerHTML = ${JSON.stringify(html)}; return 1`, target: scratch });
 
-  await check("open scratch tab for status-first tests", async () => {
-    if (!haveBrowser) return skip("no browser running");
-    if (!chromeTab) return skip("no chrome-family browser for a safe scratch tab");
-    const out = JSON.parse(text(await call("new_tab", { app: chromeTab.app, url: "about:blank" })));
-    scratch = { app: out.app, windowId: out.windowId, tabIndex: out.tabIndex };
-    return `scratch in ${out.app} @${out.tabIndex}`;
+  await check("scratch tab", async () => {
+    if (!chromeTabs.length) return skip("no chrome-family browser");
+    const blank = chromeTabs.find((t) => t.url === "about:blank");
+    scratch = blank ? { app: blank.app, windowId: blank.windowId, tabIndex: blank.tabIndex } : await json("new_tab", { app: chromeTabs[0].app, url: "about:blank" });
+    return `${blank ? "reused" : "opened"} ${scratch.app} @${scratch.tabIndex}`;
   });
 
   await check("eval_js typed error sets isError + name", async () => {
     if (!scratch) return skip("no scratch tab");
     const res = await call("eval_js", { script: "throw new TypeError('boom')", target: scratch });
-    if (res.isError !== true) throw new Error(`isError not set: ${JSON.stringify(res).slice(0, 120)}`);
+    expect(res.isError === true, "isError not set");
     const o = JSON.parse(text(res));
-    if (o.__perch_error_name !== "TypeError") throw new Error(`name=${o.__perch_error_name}`);
-    if (!/boom/.test(o.__perch_error || "")) throw new Error("message missing");
-    return "isError + TypeError";
+    expect(o.__perch_error_name === "TypeError" && /boom/.test(o.__perch_error), text(res));
   });
+
+  await check("eval_js script_path + script in one call", async () => {
+    if (!scratch) return skip("no scratch tab");
+    const dir = await mkdtemp(join(tmpdir(), "perch-smoke-"));
+    const lib = join(dir, "lib.js");
+    await writeFile(lib, "(function(){ window.__smoke = 41 })()");
+    const out = text(await call("eval_js", { script_path: lib, script: "return window.__smoke + 1", target: scratch }));
+    expect(out === "42", `got ${out}`);
+  });
+
+  const body = "Hi there, this is a multi-line reply body.\nSecond line.\n\nA second paragraph that makes the text comfortably longer than fifty characters.";
 
   await check("fill skips hidden textarea, hits visible contenteditable", async () => {
     if (!scratch) return skip("no scratch tab");
     await setDom(`<textarea name="bodyHtml" style="display:none"></textarea><div contenteditable aria-label="Message Body"></div>`);
-    const o = JSON.parse(text(await call("fill", { label_pattern: "body", text: body, target: scratch })));
-    if (!o.ok) throw new Error(`not ok: ${JSON.stringify(o)}`);
-    if (!o.matched || o.matched.tag !== "div") throw new Error(`matched=${JSON.stringify(o.matched)}`);
-    if (!o.matched.visible) throw new Error("matched not visible");
-    if (!/^Hi there/.test(o.value || "")) throw new Error(`value=${JSON.stringify(o.value)}`);
-    return `matched ${o.matched.tag} "${o.matched.name}"`;
+    const o = await json("fill", { label_pattern: "body", text: body, target: scratch });
+    expect(o.ok && o.kind === "rich" && o.el === 'textbox "Message Body"', JSON.stringify(o));
+    return o.el;
   });
 
-  await check("page_state reports an open, empty editor", async () => {
+  await check("snapshot lists the editor with its value", async () => {
     if (!scratch) return skip("no scratch tab");
-    await setDom(`<div contenteditable aria-label="Reply"></div>`);
-    const o = JSON.parse(text(await call("page_state", { target: scratch })));
-    if (!Array.isArray(o.editors) || !o.editors.some((e) => e.name === "Reply" && e.empty)) throw new Error(`editors=${JSON.stringify(o.editors)}`);
-    return `${o.editors.length} editor(s)`;
+    await setDom(`<div contenteditable aria-label="Reply"></div><input aria-label="Subject" value="Re: hi">`);
+    const out = text(await call("accessibility_snapshot", { role: "textbox", target: scratch }));
+    const lines = out.split("\n");
+    expect(lines[0].startsWith("# {"), `header: ${lines[0]}`);
+    expect(lines.includes('1 textbox "Reply"') && lines.includes('2 textbox "Subject" value="Re: hi"'), out);
+    return `${lines.length - 1} lines`;
+  });
+
+  await check("get_text html", async () => {
+    if (!scratch) return skip("no scratch tab");
+    await setDom(`<p id=p>para</p>`);
+    const out = text(await call("get_text", { selector: "#p", html: true, target: scratch }));
+    expect(out === '<p id="p">para</p>', out);
+  });
+
+  await check("stale ref is an error with a re-snapshot hint", async () => {
+    if (!scratch) return skip("no scratch tab");
+    const res = await call("click", { ref: "9999", target: scratch });
+    expect(res.isError && /accessibility_snapshot/.test(text(res)), text(res));
   });
 
   await check("select picks from a native <select>", async () => {
     if (!scratch) return skip("no scratch tab");
     await setDom(`<label>Country <select><option>Pick</option><option>Argentina</option><option>Brazil</option></select></label>`);
-    const o = JSON.parse(text(await call("select", { label_pattern: "country", text: "Argentina", target: scratch })));
-    if (!o.ok || o.selected !== "Argentina") throw new Error(`select result ${JSON.stringify(o)}`);
-    return `selected ${o.selected}`;
+    const o = await json("select", { label_pattern: "country", text: "Argentina", target: scratch });
+    expect(o.ok && o.selected === "Argentina" && o.el === 'combobox "Country"', JSON.stringify(o));
   });
 
   await check("TT-safe rich fill under Trusted Types", async () => {
-    if (!haveBrowser || !chromeTab) return skip("no chrome-family browser");
+    if (!chromeTabs.length) return skip("no chrome-family browser");
     // Trusted Types only engages when the page LOADS with the CSP, so set it at tab creation.
     const ttHtml = `<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"><div contenteditable aria-label="Body"></div>`;
-    const out = JSON.parse(text(await call("new_tab", { app: chromeTab.app, url: "data:text/html," + encodeURIComponent(ttHtml) })));
-    const tt = { app: out.app, windowId: out.windowId, tabIndex: out.tabIndex };
+    const tt = await json("new_tab", { app: chromeTabs[0].app, url: "data:text/html," + encodeURIComponent(ttHtml) });
+    const reset = () => call("eval_js", { script: "location.href='about:blank'; return 1", target: tt }).catch(() => {});
     const present = text(await call("eval_js", { script: "return !!document.querySelector('[contenteditable]')", target: tt }));
-    if (present !== "true") { try { await call("eval_js", { script: "location.href='about:blank'; return true", target: tt }); } catch { /* ignore */ } return skip("browser did not load data: URL for CSP test"); }
-    const o = JSON.parse(text(await call("fill", { label_pattern: "body", text: body, target: tt })));
-    try { await call("eval_js", { script: "location.href='about:blank'; return true", target: tt }); } catch { /* ignore */ }
-    if (!o.ok) throw new Error(`not ok under Trusted Types: ${JSON.stringify(o)}`);
-    return `ok under TT, kind ${o.kind}`;
+    if (present !== "true") { await reset(); return skip("browser did not load the data: URL"); }
+    const o = await json("fill", { label_pattern: "body", text: body, target: tt });
+    await reset();
+    expect(o.ok, `not ok under Trusted Types: ${JSON.stringify(o)}`);
   });
 
-  if (scratch) { try { await call("eval_js", { script: "document.body.innerHTML=''; return true", target: scratch }); } catch { /* leave clean */ } }
+  if (scratch) await call("eval_js", { script: "document.body.innerHTML=''; return 1", target: scratch }).catch(() => {});
 } catch (e) {
-  report("FAIL", "harness", e.message);
+  failures++;
+  console.log(`FAIL harness — ${e.message}`);
 } finally {
-  child.kill();
+  client.close();
 }
 
 console.log(failures ? `\n${failures} failure(s)` : "\nall good");

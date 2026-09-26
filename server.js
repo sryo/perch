@@ -691,16 +691,16 @@ function assertAccessibilityGrantedJxa() {
 
 // ---- tools ----
 
+export function shapeTabs(rows, { urlContains, titleContains, limit = 50 } = {}) {
+  const has = (v, q) => v.toLowerCase().includes(String(q).toLowerCase());
+  if (urlContains) rows = rows.filter((t) => has(t.url, urlContains));
+  if (titleContains) rows = rows.filter((t) => has(t.title, titleContains));
+  // tabIndex keeps each tab's real window position, so filtered rows stay addressable.
+  return { tabs: rows.slice(0, Math.max(0, limit)), total: rows.length };
+}
+
 async function listTabs(args = {}) {
-  let tabs = await rt("listTabs", { app: args.app || null });
-  const { urlContains, titleContains, limit } = args;
-  if (urlContains == null && titleContains == null && limit == null) return tabs;
-  if (urlContains) tabs = tabs.filter(t => t.url.toLowerCase().includes(String(urlContains).toLowerCase()));
-  if (titleContains) tabs = tabs.filter(t => t.title.toLowerCase().includes(String(titleContains).toLowerCase()));
-  const total = tabs.length;
-  if (limit != null && tabs.length > limit) tabs = tabs.slice(0, Math.max(0, limit));
-  // tabIndex fields keep their original window positions, so filtered rows stay addressable.
-  return { tabs, total };
+  return shapeTabs(await rt("listTabs", { app: args.app || null }), args);
 }
 
 async function evalJs(script, target, { awaitPromise = false, timeout = 30000, tool = "eval_js" } = {}) {
@@ -712,17 +712,11 @@ async function evalJs(script, target, { awaitPromise = false, timeout = 30000, t
 }
 
 async function wait(args = {}) {
-  const { selector, readyState = "complete", expression, timeout = 10000, interval = 150, target } = args;
+  const { selector, readyState = "complete", expression, timeout = 10000, target } = args;
   const js = expression
     ? `(function(){try{var __r=(${expression});return JSON.stringify(__r===undefined?null:__r)}catch(e){return "null"}})()`
-    : buildEvalWrapper(`
-        const order = { loading: 0, interactive: 1, complete: 2 };
-        const wantReady = ${JSON.stringify(readyState)};
-        if (wantReady && order[document.readyState] < order[wantReady]) return false;
-        const wantSel = ${JSON.stringify(selector || "")};
-        if (wantSel && !document.querySelector(wantSel)) return false;
-        return true;`);
-  const r = await rt("wait", { target, js, timeout, interval }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+    : buildEvalWrapper(pageScript("wait_check", { selector, readyState }));
+  const r = await rt("wait", { target, js, timeout }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
   return expression ? { ok: true, waited: r.waited, value: r.value } : { ok: true, waited: r.waited };
 }
 
@@ -738,7 +732,7 @@ async function newTab(url, appName = "Google Chrome") {
   if (!browser) throw new Error(`unknown browser ${appName}; one of: ${BROWSERS.map(b => b.app).join(", ")}`);
   const targetUrl = url || "about:blank";
   const { windowId = null, tabIndex = null } = await rt("newTab", { app: browser.app, url: targetUrl });
-  return { ok: true, app: browser.app, url: targetUrl, windowId, tabIndex };
+  return { app: browser.app, windowId, tabIndex };
 }
 
 async function activateTab(target) {
@@ -821,330 +815,412 @@ async function screenshot(args = {}) {
   };
 }
 
-async function pageState(target) {
-  return evalJs(`
-    function vis(el) {
-      if (!el || el.hidden) return false;
-      const cs = getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-      const r = el.getBoundingClientRect();
-      return !(r.width === 0 && r.height === 0);
-    }
-    function nm(el) {
-      const al = el.getAttribute && el.getAttribute('aria-label');
-      if (al) return al.trim().slice(0, 80);
-      const lb = el.getAttribute && el.getAttribute('aria-labelledby');
-      if (lb) { const t = lb.split(/\\s+/).map(id => { const n = document.getElementById(id); return n ? n.textContent : ''; }).join(' ').trim(); if (t) return t.slice(0, 80); }
-      if (el.labels && el.labels[0]) return (el.labels[0].textContent || '').trim().slice(0, 80);
-      if (el.placeholder) return el.placeholder.trim().slice(0, 80);
-      const tt = el.getAttribute && (el.getAttribute('title') || el.getAttribute('name'));
-      return (tt || '').trim().slice(0, 80);
-    }
-    function role(el) {
-      const ex = el.getAttribute && el.getAttribute('role'); if (ex) return ex;
-      if (el.isContentEditable) return 'textbox';
-      const tag = el.tagName.toLowerCase();
-      if (tag === 'textarea' || tag === 'input') return 'textbox';
-      return tag;
-    }
-    const INPUT_SKIP = ['hidden','checkbox','radio','file','submit','button','image','reset','range','color'];
-    const out = {
-      url: location.href,
-      title: document.title,
-      readyState: document.readyState,
-      viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio },
-      scroll: { x: window.scrollX, y: window.scrollY },
-      doc: { w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight },
-      meta: (function() {
-        const keep = ['description', 'og:title', 'og:description', 'og:image'];
-        const o = {};
-        document.querySelectorAll('meta').forEach(m => {
-          const k = m.getAttribute('name') || m.getAttribute('property');
-          if (k && keep.indexOf(k) >= 0 && !(k in o)) o[k] = m.getAttribute('content');
-        });
-        return o;
-      })()
-    };
-    const active = document.activeElement;
-    if (active && active !== document.body) out.focused = { tag: active.tagName.toLowerCase(), role: role(active), name: nm(active) };
-    const dialogs = Array.from(document.querySelectorAll('[role=dialog], [aria-modal=true], dialog[open]')).filter(vis).slice(0, 20).map(d => ({ name: nm(d) }));
-    if (dialogs.length) out.dialogs = dialogs;
-    const editors = Array.from(document.querySelectorAll('textarea, input, [contenteditable]')).filter(el => {
-      if (el.tagName === 'INPUT') return INPUT_SKIP.indexOf((el.type || 'text').toLowerCase()) < 0 && vis(el);
-      if (el.tagName === 'TEXTAREA') return vis(el);
-      return el.isContentEditable && vis(el);
-    }).slice(0, 20).map(el => {
-      const val = (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') ? (el.value || '') : (el.innerText || el.textContent || '');
-      return { role: role(el), name: nm(el), empty: !val.trim(), value: val.slice(0, 80), focused: el === active };
+// ---- page scripts ----
+//
+// Page code is plain strings (String.raw, no `${`): one shared prelude plus one
+// body per tool. Tool arguments enter only through `const A = <json>`, so no
+// user value is ever spliced into code. test/page.test.mjs runs every script
+// in happy-dom through the same wrappers the bridge uses.
+export const PAGE_PRELUDE = String.raw`
+const INPUT_SKIP = ["hidden", "checkbox", "radio", "file", "submit", "button", "image", "reset", "range", "color"];
+function attr(el, k) { return (el && el.getAttribute && el.getAttribute(k)) || ""; }
+function clip(s, n) { s = String(s == null ? "" : s).replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; }
+function textOf(n) { return n ? (n.innerText || n.textContent || "") : ""; }
+// A <label>'s own words, without the text of the control(s) it wraps.
+function labelWords(l) {
+  const c = l.cloneNode(true);
+  c.querySelectorAll("select, input, textarea, button").forEach(function (x) { x.remove(); });
+  return c.textContent || "";
+}
+function editable(el) { return !!el && (el.isContentEditable === true || (!!el.hasAttribute && el.hasAttribute("contenteditable") && attr(el, "contenteditable") !== "false")); }
+function vis(el) {
+  if (!el || el.hidden) return false;
+  const cs = getComputedStyle(el);
+  if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return false;
+  const r = el.getBoundingClientRect();
+  return !(r.width === 0 && r.height === 0);
+}
+// Strong label sources, in accessible-name precedence order.
+function labelText(el) {
+  const ids = attr(el, "aria-labelledby");
+  if (ids) {
+    const t = ids.split(/\s+/).map(function (id) { return textOf(document.getElementById(id)); }).join(" ");
+    if (t.trim()) return clip(t, 120);
+  }
+  const al = attr(el, "aria-label");
+  if (al.trim()) return clip(al, 120);
+  if (el.labels && el.labels[0] && labelWords(el.labels[0]).trim()) return clip(labelWords(el.labels[0]), 120);
+  // Custom widgets aren't labelable; a wrapping <label> still names them.
+  const wrap = !el.labels && el.closest && el.closest("label");
+  return wrap ? clip(labelWords(wrap), 120) : "";
+}
+function hintText(el) { return attr(el, "placeholder") || attr(el, "name") || attr(el, "data-tooltip") || attr(el, "title"); }
+function accName(el) {
+  let s = labelText(el) || attr(el, "placeholder") || attr(el, "alt");
+  if (!s && el.tagName === "INPUT" && /^(submit|button|reset)$/i.test(el.type)) s = el.value;
+  // A <select>'s text is its options, not a name.
+  if (!s && !/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) s = textOf(el);
+  if (!s) s = attr(el, "title") || attr(el, "name");
+  return clip(s, 120);
+}
+function role(el) {
+  const ex = attr(el, "role");
+  if (ex) return ex;
+  const tag = el.tagName.toLowerCase();
+  if (tag === "a") return el.hasAttribute("href") ? "link" : "generic";
+  if (tag === "button" || tag === "summary") return "button";
+  if (tag === "select") return "combobox";
+  if (tag === "textarea") return "textbox";
+  if (tag === "input") {
+    const t = (el.type || "text").toLowerCase();
+    if (t === "checkbox" || t === "radio") return t;
+    if (/^(submit|button|image|reset)$/.test(t)) return "button";
+    if (t === "range") return "slider";
+    return "textbox";
+  }
+  if (/^h[1-6]$/.test(tag)) return "heading";
+  if (editable(el)) return "textbox";
+  return "generic";
+}
+function ident(el) { return role(el) + " " + JSON.stringify(accName(el)) + (vis(el) ? "" : " hidden"); }
+// The prototype setter reaches React-controlled fields whose instance setter is patched.
+function setNativeValue(el, v) {
+  const P = el.tagName === "TEXTAREA" ? HTMLTextAreaElement : el.tagName === "SELECT" ? HTMLSelectElement : HTMLInputElement;
+  const d = Object.getOwnPropertyDescriptor(P.prototype, "value");
+  if (d && d.set) d.set.call(el, v); else el.value = v;
+}
+function fire(el, types) { types.forEach(function (t) { el.dispatchEvent(new Event(t, { bubbles: true })); }); }
+// -> {el} or {out}, where out is the tool's return value (ref miss or no match).
+function resolveEl(a, dflt) {
+  if (a.ref) {
+    const el = (window.__perch_refs || {})[a.ref];
+    return el && el.isConnected ? { el: el } : { out: { __perch_ref_miss: true, ref: String(a.ref) } };
+  }
+  const sel = a.selector || dflt;
+  if (!sel) return { el: null };
+  let el;
+  try { el = document.querySelector(sel); } catch (e) { return { out: { ok: false, error: "bad selector: " + sel } }; }
+  return el ? { el: el } : { out: { ok: false, error: "no element for selector " + sel } };
+}
+`;
+
+export const PAGE_SCRIPTS = {
+  get_text: String.raw`
+const r = resolveEl(A, A.html ? "html" : "body");
+if (r.out) return r.out;
+const s = A.html ? r.el.outerHTML : textOf(r.el);
+if (A.offset === 0 && s.length <= A.maxChars) return s;
+return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.offset + "-" + Math.min(A.offset + A.maxChars, s.length) + " of " + s.length + "; pass offset/maxChars for the rest]";
+`,
+
+  // Line format: "# {header json}", then "<ref> <role> <json name> key=<json>... flags".
+  snapshot: String.raw`
+const refs = {};
+window.__perch_refs = refs;
+const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
+const roles = A.role == null ? null : [].concat(A.role);
+const q = JSON.stringify;
+const origin = location.origin;
+const lines = [];
+let n = 0, truncated = false;
+for (const el of document.querySelectorAll(SEL)) {
+  const r = role(el);
+  if (roles && roles.indexOf(r) < 0) continue;
+  if (!vis(el)) continue;
+  if (n >= A.max) { truncated = true; break; }
+  const ref = String(++n);
+  refs[ref] = el;
+  const tag = el.tagName;
+  let line = ref + " " + r + " " + q(accName(el));
+  const kv = function (k, v) { line += " " + k + "=" + q(v); };
+  if (r === "heading") { const m = /^H([1-6])$/.exec(tag); kv("level", m ? Number(m[1]) : Number(attr(el, "aria-level")) || 0); }
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) && el.name) kv("name", el.name);
+  if (tag === "INPUT") { const t = (el.type || "text").toLowerCase(); if (!/^(text|checkbox|radio|button|submit)$/.test(t)) kv("type", t); }
+  else if (tag === "TEXTAREA") kv("type", "textarea");
+  if (tag === "SELECT") {
+    const o = [];
+    for (const opt of el.options) { if (o.length >= 30) break; const t = clip(opt.text, 60); if (t && t !== "--") o.push(t); }
+    if (o.length) kv("options", o);
+    if (el.value) kv("value", el.value);
+  } else if (r === "textbox" && el.value) kv("value", clip(el.value, 200));
+  if (r === "link") {
+    let h = el.href || "";
+    if (h.indexOf(origin + "/") === 0) h = h.slice(origin.length);
+    kv("href", h.length > 150 ? h.slice(0, 150) + "…" : h);
+  }
+  if (el.required || attr(el, "aria-required") === "true") line += " required";
+  if (el.checked) line += " checked";
+  if (el.disabled) line += " disabled";
+  if (attr(el, "aria-expanded") === "true") line += " expanded";
+  lines.push(line);
+}
+const head = { url: location.href, title: document.title, ready: document.readyState, count: n };
+if (truncated) head.truncated = true;
+const act = document.activeElement;
+if (act && act !== document.body && act !== document.documentElement) {
+  let fr = null;
+  for (const k in refs) if (refs[k] === act) { fr = k; break; }
+  head.focus = fr || ident(act);
+}
+const dialogs = Array.from(document.querySelectorAll("[role=dialog], [aria-modal=true], dialog[open]")).filter(vis).slice(0, 5).map(accName);
+if (dialogs.length) head.dialogs = dialogs;
+const forms = Array.from(document.querySelectorAll("form")).filter(vis);
+if (forms.length) {
+  const FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
+  let big = forms[0];
+  forms.forEach(function (f) { if (f.querySelectorAll(FIELDS).length > big.querySelectorAll(FIELDS).length) big = f; });
+  const fields = Array.from(big.querySelectorAll(FIELDS)).filter(function (el) { return !(el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0); });
+  const requiredEmpty = fields.filter(function (el) { return (el.required || attr(el, "aria-required") === "true") && !String(el.value || el.textContent || "").trim(); }).length;
+  head.form = { fields: fields.length, requiredEmpty: requiredEmpty };
+}
+return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "");
+`,
+
+  fill: String.raw`
+const text = A.text;
+// Compare non-whitespace counts: rich editors normalize whitespace on the way in.
+const want = Math.floor(text.replace(/\s/g, "").length * 0.9);
+const landed = function (s) { return String(s || "").replace(/\s/g, "").length >= want; };
+const isField = function (el) { return el.tagName === "TEXTAREA" || el.tagName === "INPUT"; };
+function isRich(el) {
+  return !!el && (editable(el) || !!(el.classList && (el.classList.contains("fr-element") || el.classList.contains("ql-editor") || el.classList.contains("ProseMirror"))));
+}
+function setPlain(el) {
+  setNativeValue(el, text);
+  fire(el, ["input", "change", "blur"]);
+  return landed(el.value);
+}
+function setRich(root) {
+  root.focus();
+  // Build nodes rather than assigning innerHTML: an HTML-string sink trips
+  // Trusted Types (require-trusted-types-for 'script') on Gmail-class pages.
+  while (root.firstChild) root.removeChild(root.firstChild);
+  text.split(/\n\n+/).forEach(function (para) {
+    const block = document.createElement("div");
+    para.split("\n").forEach(function (line, i) {
+      if (i) block.appendChild(document.createElement("br"));
+      block.appendChild(document.createTextNode(line));
     });
-    if (editors.length) out.editors = editors;
-    const openControls = Array.from(document.querySelectorAll('[aria-expanded=true], [role=listbox]')).filter(vis).slice(0, 20).map(el => ({
-      role: role(el), name: nm(el), optionCount: el.querySelectorAll ? el.querySelectorAll('[role=option]').length : 0
-    }));
-    if (openControls.length) out.openControls = openControls;
-    const forms = Array.from(document.querySelectorAll('form')).filter(vis);
-    if (forms.length) {
-      let big = forms[0], bigN = -1;
-      forms.forEach(f => { const n = f.querySelectorAll('input, textarea, select, [contenteditable=true]').length; if (n > bigN) { bigN = n; big = f; } });
-      const fields = Array.from(big.querySelectorAll('input, textarea, select, [contenteditable=true]')).filter(el => !(el.tagName === 'INPUT' && INPUT_SKIP.indexOf((el.type || 'text').toLowerCase()) >= 0));
-      const requiredEmpty = fields.filter(el => (el.required || (el.getAttribute && el.getAttribute('aria-required') === 'true')) && !((el.value || el.textContent || '').trim())).length;
-      out.form = { fields: fields.length, requiredEmpty: requiredEmpty };
-    }
-    return out;
-  `, target);
+    if (!block.childNodes.length) block.appendChild(document.createElement("br"));
+    root.appendChild(block);
+  });
+  ["input", "change", "blur"].forEach(function (t) { root.dispatchEvent(new InputEvent(t, { bubbles: true, inputType: "insertText", data: text })); });
+  return landed(textOf(root));
+}
+function tryFill(el, host) {
+  if (isField(el)) return setPlain(el) ? { ok: true, kind: "plain", el: ident(el), len: el.value.length } : null;
+  if (isRich(el)) return setRich(el) ? { ok: true, kind: "rich", el: ident(host || el), len: textOf(el).length } : null;
+  return null;
+}
+if (A.ref || A.selector) {
+  const r = resolveEl(A);
+  if (r.out) return r.out;
+  const out = tryFill(r.el);
+  if (!out) return { ok: false, error: ident(r.el) + " is not fillable or rejected the text" };
+  if (A.selector) {
+    const hits = Array.from(document.querySelectorAll(A.selector)).filter(vis);
+    if (hits.length > 1) out.ambiguous = hits.slice(0, 3).map(ident);
+  }
+  return out;
+}
+// Ranked search across every editable surface, so a visible field outranks a
+// hidden one and text never lands silently in the wrong element.
+const re = new RegExp(A.label_pattern, "i");
+const scored = [];
+document.querySelectorAll("textarea, input, [contenteditable], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe").forEach(function (el) {
+  if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return;
+  if (el.hasAttribute("contenteditable") && !editable(el)) return;
+  const root = el.tagName === "IFRAME" ? el.contentDocument && el.contentDocument.body : el;
+  if (!root) return;
+  let s;
+  if (re.test(labelText(el))) s = 100;
+  else if (re.test(hintText(el))) s = 40;
+  else {
+    let p = el, hit = false;
+    for (let i = 0; i < 6 && p; i++, p = p.parentElement) if (re.test(p.textContent || "")) { hit = true; break; }
+    if (!hit) return;
+    s = 10;
+  }
+  if (vis(el)) s += 20;
+  if (!el.disabled && !el.readOnly) s += 10;
+  scored.push({ el: el, root: root, s: s });
+});
+scored.sort(function (a, b) { return b.s - a.s; });
+if (!scored.length) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
+const best = scored[0];
+const out = tryFill(isField(best.el) ? best.el : best.root, best.el);
+if (!out) return { ok: false, error: ident(best.el) + " did not accept the text" };
+const rivals = scored.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
+if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
+return out;
+`,
+
+  // Async: custom comboboxes render options after a tick. Polls instead of fixed sleeps.
+  select: String.raw`
+const want = String(A.text);
+const norm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
+const wantN = norm(want);
+const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+let ctl;
+if (A.ref || A.selector) {
+  const r = resolveEl(A);
+  if (r.out) return r.out;
+  ctl = r.el;
+} else {
+  const re = new RegExp(A.label_pattern, "i");
+  const cands = Array.from(document.querySelectorAll("select, [role=combobox], [aria-haspopup=listbox], [role=listbox]"));
+  const hit = function (el) { return re.test(labelText(el)) || re.test(hintText(el)); };
+  ctl = cands.filter(vis).find(hit) || cands.find(hit);
+  if (!ctl) return { ok: false, error: "no select/combobox matched /" + A.label_pattern + "/i" };
+}
+const nat = ctl.tagName === "SELECT" ? ctl : ctl.querySelector && ctl.querySelector("select");
+if (nat) {
+  const opts = Array.from(nat.options);
+  const opt = opts.find(function (o) { return norm(o.text) === wantN || norm(o.value) === wantN; }) || opts.find(function (o) { return norm(o.text).indexOf(wantN) >= 0; });
+  if (!opt) return { ok: false, error: "no matching option", candidates: opts.slice(0, 8).map(function (o) { return clip(o.text, 60); }) };
+  setNativeValue(nat, opt.value);
+  fire(nat, ["input", "change"]);
+  return { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
+}
+// react-select and friends open on a left-button press with a view, on the control wrapper.
+const press = function (el) {
+  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (t) {
+    const C = t.indexOf("pointer") === 0 && window.PointerEvent ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new C(t, { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window }));
+  });
+};
+if (attr(ctl, "aria-expanded") !== "true") {
+  if (ctl.focus) ctl.focus();
+  press((ctl.closest && ctl.closest(".select__control")) || ctl);
+}
+const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySelector("input");
+if (input) { setNativeValue(input, want); fire(input, ["input"]); }
+const find = function () {
+  const os = Array.from(document.querySelectorAll("[role=option]")).filter(vis);
+  return { os: os, opt: os.find(function (o) { return norm(o.textContent) === wantN; }) || os.find(function (o) { return norm(o.textContent).indexOf(wantN) >= 0; }) };
+};
+let f = find();
+for (let i = 0; !f.opt && i < 30; i++) { await sleep(50); f = find(); }
+if (!f.opt) return { ok: false, error: "no matching option after open", candidates: f.os.slice(0, 8).map(function (o) { return clip(o.textContent, 60); }) };
+press(f.opt);
+const picked = norm(f.opt.textContent);
+const shown = function () { return clip(textOf(ctl) || (input && input.value) || "", 120); };
+for (let i = 0; i < 10 && norm(shown()).indexOf(picked) < 0; i++) await sleep(50);
+const out = { ok: true, selected: clip(f.opt.textContent, 80), el: ident(ctl), value: shown() };
+if (norm(out.value).indexOf(picked) < 0) out.unverified = true;
+return out;
+`,
+
+  click: String.raw`
+const r = resolveEl(A);
+if (r.out) return r.out;
+r.el.click();
+return { ok: true, el: ident(r.el) };
+`,
+
+  file_upload: String.raw`
+const r = resolveEl(A, "input[type=file]");
+if (r.out) return r.out;
+const input = r.el;
+const bin = atob(A.b64);
+const arr = new Uint8Array(bin.length);
+for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+const file = new File([arr], A.name, { type: A.mime });
+const dt = new DataTransfer();
+dt.items.add(file);
+// CSS-hidden inputs reject .files assignment; unhide with !important, then restore.
+const orig = { display: input.style.display, visibility: input.style.visibility, hidden: input.hidden };
+input.hidden = false;
+input.style.setProperty("display", "block", "important");
+input.style.setProperty("visibility", "visible", "important");
+input.files = dt.files;
+fire(input, ["change", "input", "blur"]);
+setTimeout(function () { input.hidden = orig.hidden; input.style.display = orig.display; input.style.visibility = orig.visibility; }, 150);
+return { ok: !!input.files && input.files.length === 1, name: file.name, size: file.size, type: file.type };
+`,
+
+  console_start: String.raw`
+const s = window.__perch_console;
+if (s && s.installed) return { ok: true, already: true, count: s.entries.length };
+const st = { entries: [], dropped: 0, orig: {}, installed: true };
+window.__perch_console = st;
+function safe(v) {
+  let out;
+  try {
+    if (typeof v === "string") out = v;
+    else if (v instanceof Error) out = v.stack || v.message || String(v);
+    else out = JSON.stringify(v, function (k, x) { return typeof x === "function" ? "[Function " + (x.name || "") + "]" : x === undefined ? "[undefined]" : x; });
+  } catch (e) { out = String(v); }
+  out = String(out);
+  // Capped at record time so a page logging huge payloads can't bloat the buffer.
+  return out.length > 1000 ? out.slice(0, 1000) + "...[+" + (out.length - 1000) + " chars]" : out;
+}
+["log", "info", "warn", "error", "debug"].forEach(function (level) {
+  const orig = st.orig[level] = console[level];
+  console[level] = function () {
+    if (st.entries.length >= 500) { st.entries.shift(); st.dropped++; }
+    const parts = [];
+    for (let i = 0; i < arguments.length; i++) parts.push(safe(arguments[i]));
+    st.entries.push(level + ": " + parts.join(" "));
+    return orig.apply(console, arguments);
+  };
+});
+return { ok: true, started: true };
+`,
+
+  console_read: String.raw`
+const s = window.__perch_console;
+if (!s || !s.installed) return { ok: false, error: "console_capture not started on this page (or it navigated since)" };
+const out = { ok: true, entries: s.entries.splice(0) };
+if (s.dropped) { out.dropped = s.dropped; s.dropped = 0; }
+return out;
+`,
+
+  console_stop: String.raw`
+const s = window.__perch_console;
+if (!s || !s.installed) return { ok: false, error: "console_capture not started" };
+for (const k in s.orig) console[k] = s.orig[k];
+s.installed = false;
+return { ok: true, entries: s.entries.splice(0) };
+`,
+
+  wait_check: String.raw`
+const order = { loading: 0, interactive: 1, complete: 2 };
+if (A.readyState && order[document.readyState] < order[A.readyState]) return false;
+if (A.selector && !document.querySelector(A.selector)) return false;
+return true;
+`,
+};
+
+export function pageScript(name, A) {
+  return PAGE_PRELUDE + "\nconst A = " + JSON.stringify(A) + ";\n" + (name ? PAGE_SCRIPTS[name] : "");
 }
 
-// Slices page-side so oversized strings never cross the osascript bridge.
-function sliceReturnJs(expr, args) {
-  const maxChars = Math.max(1, Number(args.maxChars) || 20000);
-  const offset = Math.max(0, Number(args.offset) || 0);
-  return `
-    const __s = ${expr};
-    if (__s == null) return null;
-    if (${offset} === 0 && __s.length <= ${maxChars}) return __s;
-    return __s.slice(${offset}, ${offset} + ${maxChars}) +
-      "\\n[truncated: chars ${offset}-" + Math.min(${offset} + ${maxChars}, __s.length) +
-      " of " + __s.length + "; pass offset/maxChars for the rest]";
-  `;
+export function validateLabelPattern(tool, p) {
+  try { new RegExp(p, "i"); } catch (e) { throw new Error(`${tool}: invalid label_pattern: ${e.message}`); }
 }
+
+const runPage = (tool, name, A, target, opts = {}) => evalJs(pageScript(name, A), target, { tool, ...opts });
+
+// ---- page tools ----
 
 async function getText(args = {}) {
-  const { selector, ref, target } = args;
-  if (ref) {
-    return evalJs(`
-      const el = (window.__perch_refs || {})[${JSON.stringify(ref)}];
-      if (!el) return { __perch_ref_miss: true, ref: ${JSON.stringify(ref)} };
-      ${sliceReturnJs("el.innerText", args)}
-    `, target);
-  }
-  return evalJs(`
-    const el = document.querySelector(${JSON.stringify(selector || "body")});
-    if (!el) return null;
-    ${sliceReturnJs("el.innerText", args)}
-  `, target);
-}
-
-async function getHtml(args = {}) {
-  const { selector, ref, target } = args;
-  if (ref) {
-    return evalJs(`
-      const el = (window.__perch_refs || {})[${JSON.stringify(ref)}];
-      if (!el) return { __perch_ref_miss: true, ref: ${JSON.stringify(ref)} };
-      ${sliceReturnJs("el.outerHTML", args)}
-    `, target);
-  }
-  return evalJs(`
-    const el = document.querySelector(${JSON.stringify(selector || "html")});
-    if (!el) return null;
-    ${sliceReturnJs("el.outerHTML", args)}
-  `, target);
+  const { selector, ref, html = false, target } = args;
+  const maxChars = Math.max(1, Number(args.maxChars) || 20000);
+  const offset = Math.max(0, Number(args.offset) || 0);
+  return runPage("get_text", "get_text", { selector, ref, html, maxChars, offset }, target);
 }
 
 async function accessibilitySnapshot(args = {}) {
-  const { target, max = 500, include_bounds = false, role = null } = args;
-  const roleList = role == null ? null : (Array.isArray(role) ? role : [role]);
-  const script = `
-    const refs = {};
-    window.__perch_refs = refs;
-
-    function visible(el) {
-      if (el.hidden) return false;
-      const cs = getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) return false;
-      return true;
-    }
-
-    function trim(s, max) {
-      s = (s || '').replace(/\\s+/g, ' ').trim();
-      return s.length > max ? s.slice(0, max) + '…' : s;
-    }
-
-    function accName(el) {
-      const lb = el.getAttribute && el.getAttribute('aria-labelledby');
-      if (lb) {
-        const txt = lb.split(/\\s+/).map(id => {
-          const t = document.getElementById(id);
-          return t ? (t.innerText || t.textContent || '').trim() : '';
-        }).filter(Boolean).join(' ');
-        if (txt) return trim(txt, 120);
-      }
-      const al = el.getAttribute && el.getAttribute('aria-label');
-      if (al) return trim(al, 120);
-      if (el.labels && el.labels[0]) {
-        const t = el.labels[0].innerText || el.labels[0].textContent || '';
-        if (t.trim()) return trim(t, 120);
-      }
-      if (el.placeholder) return trim(el.placeholder, 120);
-      if (el.alt) return trim(el.alt, 120);
-      if (el.value && (el.tagName === 'INPUT' || el.tagName === 'BUTTON')) {
-        const t = el.tagName === 'BUTTON' ? null : el.value;
-        if (t) return trim(t, 120);
-      }
-      const txt = (el.innerText || el.textContent || '').trim();
-      if (txt) return trim(txt, 120);
-      if (el.name) return el.name;
-      if (el.title) return trim(el.title, 120);
-      return '';
-    }
-
-    function roleOf(el) {
-      const explicit = el.getAttribute && el.getAttribute('role');
-      if (explicit) return explicit;
-      const tag = el.tagName.toLowerCase();
-      if (tag === 'a' && el.href) return 'link';
-      if (tag === 'button') return 'button';
-      if (tag === 'select') return 'combobox';
-      if (tag === 'textarea') return 'textbox';
-      if (tag === 'input') {
-        const t = (el.type || 'text').toLowerCase();
-        if (t === 'checkbox') return 'checkbox';
-        if (t === 'radio') return 'radio';
-        if (t === 'submit' || t === 'button' || t === 'image' || t === 'reset') return 'button';
-        if (t === 'range') return 'slider';
-        return 'textbox';
-      }
-      if (/^h[1-6]$/.test(tag)) return 'heading';
-      if (tag === 'summary') return 'button';
-      if (el.isContentEditable) return 'textbox';
-      return 'generic';
-    }
-
-    function describe(el, ref, role) {
-      const tag = el.tagName.toLowerCase();
-      const out = { ref, role, name: accName(el) };
-      if (role === 'link' && el.href) out.href = el.href.length > 300 ? el.href.slice(0, 300) + '...' : el.href;
-      // Form-specific extras — emitted only when set so the tree stays compact for
-      // non-form pages but contains everything a form-filler needs in one snapshot.
-      // Skip subtype values already implied by role (radio/checkbox/button/submit).
-      if (tag === 'input') {
-        const t = (el.type || 'text').toLowerCase();
-        if (t && t !== 'text' && t !== 'radio' && t !== 'checkbox' && t !== 'button' && t !== 'submit') out.subtype = t;
-      } else if (tag === 'textarea') {
-        out.subtype = 'textarea';
-      }
-      if (el.name && (tag === 'input' || tag === 'textarea' || tag === 'select')) out.attr_name = el.name;
-      if (role === 'textbox' && el.value) out.value = trim(String(el.value), 200);
-      if ((role === 'checkbox' || role === 'radio') && el.checked) out.checked = true;
-      if (el.disabled) out.disabled = true;
-      if (el.required) out.required = true;
-      if (tag === 'select') {
-        const opts = [];
-        for (let i = 0; i < el.options.length && opts.length < 30; i++) {
-          const t = (el.options[i].text || '').trim();
-          if (t && t !== '--') opts.push(t);
-        }
-        if (opts.length) out.options = opts;
-        if (el.value) out.value = el.value;
-      }
-      if (role === 'heading') {
-        const lvl = /^h([1-6])$/.exec(tag);
-        out.level = lvl ? Number(lvl[1]) : Number(el.getAttribute('aria-level')) || null;
-      }
-      if (${include_bounds}) {
-        const r = el.getBoundingClientRect();
-        out.bounds = { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
-      }
-      return out;
-    }
-
-    const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable=true], [contenteditable=""], summary';
-    const seen = new Set();
-    const elements = [];
-    const max = ${Number(max) || 500};
-    const roleFilter = ${JSON.stringify(roleList)};
-    const roleSet = roleFilter && roleFilter.length ? new Set(roleFilter) : null;
-    let id = 0;
-    for (const el of document.querySelectorAll(SEL)) {
-      if (elements.length >= max) break;
-      if (seen.has(el)) continue;
-      const role = roleOf(el);
-      if (roleSet && !roleSet.has(role)) continue;
-      if (!visible(el)) continue;
-      seen.add(el);
-      id += 1;
-      const ref = String(id);
-      refs[ref] = el;
-      elements.push(describe(el, ref, role));
-    }
-
-    return { url: location.href, title: document.title, count: elements.length, truncated: elements.length >= max, elements };
-  `;
-  return await evalJs(script, target);
+  const { role = null, target } = args;
+  const max = args.max == null ? 500 : Math.max(0, Number(args.max) || 0);
+  return runPage("accessibility_snapshot", "snapshot", { max, role }, target);
 }
 
 async function consoleCapture(args = {}) {
-  const { mode = "read", target, max = 500 } = args;
-  if (mode === "start") {
-    return evalJs(`
-      if (window.__perch_console && window.__perch_console.installed) {
-        return { ok: true, already: true, count: window.__perch_console.entries.length };
-      }
-      const orig = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug };
-      const state = { entries: [], orig, installed: true, max: ${Number(max) || 500} };
-      window.__perch_console = state;
-      function safe(v) {
-        let s;
-        try {
-          if (typeof v === 'string') s = v;
-          else if (v instanceof Error) s = v.stack || v.message || String(v);
-          else s = JSON.stringify(v, function(k, val) {
-            if (typeof val === 'function') return '[Function ' + (val.name || '') + ']';
-            if (typeof val === 'undefined') return '[undefined]';
-            return val;
-          });
-        } catch (e) { s = String(v); }
-        s = String(s);
-        // Cap at record time so a page logging huge payloads can't bloat the buffer.
-        return s.length > 1000 ? s.slice(0, 1000) + '...[+' + (s.length - 1000) + ' chars]' : s;
-      }
-      function record(level, args) {
-        if (state.entries.length >= state.max) state.entries.shift();
-        const arr = []; for (let i = 0; i < args.length; i++) arr.push(safe(args[i]));
-        state.entries.push({ level, ts: Date.now(), args: arr });
-      }
-      console.log   = function() { record('log',   arguments); orig.log  .apply(console, arguments); };
-      console.info  = function() { record('info',  arguments); orig.info .apply(console, arguments); };
-      console.warn  = function() { record('warn',  arguments); orig.warn .apply(console, arguments); };
-      console.error = function() { record('error', arguments); orig.error.apply(console, arguments); };
-      console.debug = function() { record('debug', arguments); orig.debug.apply(console, arguments); };
-      return { ok: true, started: true, max: state.max };
-    `, target);
-  }
-  if (mode === "read") {
-    return evalJs(`
-      const s = window.__perch_console;
-      if (!s || !s.installed) return { ok: false, error: 'console_capture not started on this page (or page navigated since start)' };
-      const out = s.entries.slice();
-      s.entries.length = 0;
-      return { ok: true, entries: out };
-    `, target);
-  }
-  if (mode === "clear") {
-    return evalJs(`
-      const s = window.__perch_console;
-      if (!s || !s.installed) return { ok: false, error: 'console_capture not started' };
-      const n = s.entries.length;
-      s.entries.length = 0;
-      return { ok: true, cleared: n };
-    `, target);
-  }
-  if (mode === "stop") {
-    return evalJs(`
-      const s = window.__perch_console;
-      if (!s || !s.installed) return { ok: false, error: 'console_capture not started' };
-      const out = s.entries.slice();
-      console.log = s.orig.log;
-      console.info = s.orig.info;
-      console.warn = s.orig.warn;
-      console.error = s.orig.error;
-      console.debug = s.orig.debug;
-      s.installed = false;
-      return { ok: true, entries: out };
-    `, target);
-  }
-  throw new Error("console_capture: unknown mode '" + mode + "' (expected start | read | clear | stop)");
+  const { mode = "read", target } = args;
+  if (!["start", "read", "stop"].includes(mode)) throw new Error(`console_capture: unknown mode '${mode}' (expected start | read | stop)`);
+  return runPage("console_capture", "console_" + mode, {}, target);
 }
 
 async function notify(args = {}) {
@@ -1182,97 +1258,15 @@ async function readUserFile(p, encoding) {
   catch (e) { throw new Error(`cannot read ${abs}: ${e.message}`); }
 }
 
-async function fileUpload(args = {}) {
-  const { selector = "input[type=file]", path, target } = args;
-  if (!path) throw new Error("file_upload requires `path`");
-
-  const { abs, data: bytes } = await readUserFile(path);
-  const b64 = bytes.toString("base64");
-  const filename = abs.split("/").pop();
-  const mime = MIME_BY_EXT[filename.split(".").pop().toLowerCase()] || "application/octet-stream";
-
-  // CSS-hidden inputs reject .files assignment, so promote to visible via inline !important then restore.
-  const script = `
-    const b64 = ${JSON.stringify(b64)};
-    const bin = atob(b64);
-    const arr = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-    const file = new File([arr], ${JSON.stringify(filename)}, { type: ${JSON.stringify(mime)} });
-    const dt = new DataTransfer();
-    dt.items.add(file);
-    const input = document.querySelector(${JSON.stringify(selector)});
-    if (!input) return { ok: false, error: 'no input matching ' + ${JSON.stringify(selector)} };
-    const orig = { display: input.style.display, visibility: input.style.visibility, hidden: input.hidden };
-    if (input.hidden) input.hidden = false;
-    input.style.setProperty('display', 'block', 'important');
-    input.style.setProperty('visibility', 'visible', 'important');
-    input.files = dt.files;
-    ['change', 'input', 'blur'].forEach(t => input.dispatchEvent(new Event(t, { bubbles: true })));
-    setTimeout(() => {
-      input.hidden = orig.hidden;
-      input.style.display = orig.display;
-      input.style.visibility = orig.visibility;
-    }, 150);
-    return {
-      ok: input.files && input.files.length === 1,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-    };
-  `;
-  return await evalJs(script, target);
-}
-
-async function click(args = {}) {
-  const {
-    ref = null,
-    selector = null,
-    x = null, y = null,
-    button = "left",
-    clickCount = 1,
-    trusted = false,
-    raise = false,
-    target,
-  } = args;
-
-  if (trusted) return await trustedClick({ ref, selector, x, y, button, clickCount, raise, target });
-
-  if (!ref && !selector) {
-    throw new Error("click without trusted:true requires `ref` or `selector` (x,y is screen coords, only meaningful with trusted:true)");
-  }
-  // Plain path: el.click() in the page. Same isTrusted:false semantics as today's
-  // eval_js({script:'...refs[ref].click()'}) pattern, just a first-class tool call.
-  const script = `
-    const refId = ${JSON.stringify(ref)};
-    const sel = ${JSON.stringify(selector)};
-    const button = ${JSON.stringify(button)};
-    const clickCount = ${Number(clickCount) || 1};
-    let el = null;
-    if (refId) el = (window.__perch_refs || {})[refId];
-    else if (sel) el = document.querySelector(sel);
-    if (!el) return refId ? { __perch_ref_miss: true, ref: refId } : { ok: false, error: 'no element for selector ' + sel };
-    if (button === 'right') {
-      const r = el.getBoundingClientRect();
-      el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + r.width/2, clientY: r.top + r.height/2, button: 2 }));
-    } else {
-      el.click();
-      if (clickCount === 2) el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true }));
-    }
-    return { ok: true };
-  `;
-  return await evalJs(script, target);
-}
-
 async function trustedClick(args = {}) {
   const {
     ref = null,
     selector = null,
     x = null, y = null,
-    button = "left",
-    clickCount = 1,
     raise = false,
     target,
   } = args;
+  const button = "left", clickCount = 1;
   if (!ref && !selector && (x == null || y == null)) {
     throw new Error("click {trusted:true} requires `ref`, `selector`, or both `x` and `y`");
   }
@@ -1349,169 +1343,12 @@ async function trustedClick(args = {}) {
   return JSON.parse(await jxa(src));
 }
 
-async function fill(args = {}) {
-  const { selector, label_pattern, ref, text, text_path, target, trusted = false } = args;
-  if (!text && !text_path) throw new Error("fill requires `text` or `text_path`");
-  if (text && text_path) throw new Error("fill: pass `text` OR `text_path`, not both");
-
-  let body = text;
-  if (text_path) ({ data: body } = await readUserFile(text_path, "utf8"));
-  if (!body || !body.trim()) throw new Error("fill: empty body");
-
-  if (trusted) return await trustedFill({ ref, selector, label_pattern, text: body, target });
-
-  const script = `
-    const text = ${JSON.stringify(body)};
-    const labelRe = ${label_pattern ? `new RegExp(${JSON.stringify(label_pattern)}, 'i')` : "null"};
-    const selector = ${selector ? JSON.stringify(selector) : "null"};
-    const ref = ${ref ? JSON.stringify(ref) : "null"};
-    const MIN_RATIO = 0.9;
-    const expectedLen = Math.max(1, Math.floor(text.trim().length * MIN_RATIO));
-    // Rich-editor innerText normalizes whitespace and may add/drop chars, so allow a
-    // lower bound that's never less than ~50 — covers cases where setter "worked" but
-    // some structural transform shrunk the visible text.
-    const richMinLen = Math.max(50, expectedLen);
-
-    function fVisible(el) {
-      if (!el || el.hidden) return false;
-      const cs = getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-      const r = el.getBoundingClientRect();
-      return !(r.width === 0 && r.height === 0);
-    }
-    function fRole(el) {
-      const ex = el.getAttribute && el.getAttribute('role'); if (ex) return ex;
-      const tag = el.tagName.toLowerCase();
-      if (tag === 'textarea' || tag === 'input') return 'textbox';
-      if (el.isContentEditable) return 'textbox';
-      return 'generic';
-    }
-    function fName(el) {
-      return ((el.labels && el.labels[0] && el.labels[0].textContent) || (el.getAttribute && el.getAttribute('aria-label')) || el.placeholder || el.name || '').trim().replace(/\\s+/g, ' ').slice(0, 120);
-    }
-    function fIdentity(el, matchedBy) {
-      return { tag: el.tagName.toLowerCase(), role: fRole(el), name: fName(el), id: el.id || '', visible: fVisible(el), matchedBy: matchedBy };
-    }
-    function fReadback(el) {
-      const raw = (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') ? (el.value || '') : (el.innerText || el.textContent || '');
-      return raw.slice(0, 120);
-    }
-
-    function setPlain(el) {
-      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-      setter.call(el, text);
-      ['input', 'change', 'blur'].forEach(t => el.dispatchEvent(new Event(t, { bubbles: true })));
-      return (el.value || '').trim().length >= expectedLen;
-    }
-    function setRich(root) {
-      root.focus();
-      // Build nodes rather than assigning innerHTML: an HTML-string sink trips
-      // Trusted Types (require-trusted-types-for 'script') on Gmail/strict-CSP pages.
-      while (root.firstChild) root.removeChild(root.firstChild);
-      text.split(/\\n\\n+/).forEach(para => {
-        const block = document.createElement('div');
-        para.split('\\n').forEach((line, i) => {
-          if (i) block.appendChild(document.createElement('br'));
-          block.appendChild(document.createTextNode(line));
-        });
-        if (!block.childNodes.length) block.appendChild(document.createElement('br'));
-        root.appendChild(block);
-      });
-      ['input', 'change', 'blur'].forEach(t => root.dispatchEvent(new InputEvent(t, { bubbles: true, inputType: 'insertText', data: text })));
-      return (root.innerText || root.textContent || '').trim().length >= richMinLen;
-    }
-    function isRich(el) {
-      return el && (el.isContentEditable || el.classList?.contains('fr-element') || el.classList?.contains('ql-editor') || el.classList?.contains('ProseMirror'));
-    }
-    function tryFill(el, kindLabel) {
-      if (!el) return null;
-      if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
-        if (setPlain(el)) return { ok: true, kind: 'plain_' + kindLabel, len: el.value.length, matched: fIdentity(el, kindLabel), value: fReadback(el) };
-      }
-      if (isRich(el)) {
-        if (setRich(el)) return { ok: true, kind: 'rich_' + kindLabel, host: el.className || el.tagName, len: (el.innerText || '').length, matched: fIdentity(el, kindLabel), value: fReadback(el) };
-      }
-      return null;
-    }
-
-    if (ref) {
-      const el = (window.__perch_refs || {})[ref];
-      if (!el) return { ok: false, error: 'ref ' + ref + ' missing (call accessibility_snapshot first, or the page navigated)' };
-      const r = tryFill(el, 'ref');
-      if (r) return r;
-      return { ok: false, error: 'ref ' + ref + ' is not a fillable element' };
-    }
-
-    if (selector) {
-      const hits = Array.from(document.querySelectorAll(selector)).filter(fVisible);
-      const r = tryFill(document.querySelector(selector), 'selector');
-      if (r) {
-        if (hits.length > 1) {
-          r.ambiguous = true;
-          r.candidates = hits.slice(0, 3).map(e => ({ tag: e.tagName.toLowerCase(), role: fRole(e), name: fName(e), visible: fVisible(e) }));
-        }
-        return r;
-      }
-    }
-
-    if (labelRe) {
-      // Unified, ranked candidate search across every editable surface (textarea, text
-      // input, contenteditable/rich editor) so a visible field outranks a hidden one and
-      // we never silently drop text into the wrong element.
-      const INPUT_SKIP = ['hidden', 'checkbox', 'radio', 'file', 'submit', 'button', 'image', 'reset', 'range', 'color'];
-      const roots = [];
-      document.querySelectorAll('textarea, input, [contenteditable=true], [contenteditable=""], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe').forEach(el => {
-        if (el.tagName === 'INPUT' && INPUT_SKIP.indexOf((el.type || 'text').toLowerCase()) >= 0) return;
-        const root = el.tagName === 'IFRAME' ? (el.contentDocument && el.contentDocument.body) : el;
-        if (root) roots.push({ el: el, root: root });
-      });
-      const strongLabel = (el) => ((el.labels && el.labels[0] && el.labels[0].textContent) || (el.getAttribute && el.getAttribute('aria-label')) || '').trim();
-      const weakLabel = (el) => (el.placeholder || el.name || (el.getAttribute && el.getAttribute('data-tooltip')) || el.title || '').trim();
-      const scored = [];
-      for (const cand of roots) {
-        const el = cand.el;
-        let s = 0;
-        if (labelRe.test(strongLabel(el))) s += 100;
-        else if (labelRe.test(weakLabel(el))) s += 40;
-        else {
-          // Loose fallback: a labeled wrapper within 6 ancestors (old behavior, low weight).
-          let scope = el, hit = false;
-          for (let i = 0; i < 6 && scope; i++) { if (labelRe.test(scope.textContent || '')) { hit = true; break; } scope = scope.parentElement; }
-          if (!hit) continue;
-          s += 10;
-        }
-        if (fVisible(el)) s += 20;
-        if (!el.disabled && !el.readOnly) s += 10;
-        scored.push({ el: el, root: cand.root, s: s });
-      }
-      scored.sort((a, b) => b.s - a.s);
-      if (scored.length) {
-        const best = scored[0];
-        const target = (best.el.tagName === 'TEXTAREA' || best.el.tagName === 'INPUT') ? best.el : best.root;
-        const r = tryFill(target, 'label');
-        if (r) {
-          const rivals = scored.filter(c => (best.s - c.s) <= 10 && c.s >= 50);
-          if (rivals.length > 1) {
-            r.ambiguous = true;
-            r.candidates = rivals.slice(0, 3).map(c => ({ tag: c.el.tagName.toLowerCase(), role: fRole(c.el), name: fName(c.el), visible: fVisible(c.el) }));
-          }
-          return r;
-        }
-      }
-    }
-
-    return { ok: false, error: 'no fillable field matched', tried: { selector: !!selector, label: !!labelRe } };
-  `;
-  return await evalJs(script, target);
-}
-
 // Trusted typing: real CGEvent keyboard events with isTrusted:true. Plain input/textarea
 // only — rich editors are React-controlled and the InputEvent path already works for them.
 // The probe clears the field via the setter before typing so the trusted keys land on
 // an empty target (avoids appending to existing text or relying on Cmd+A, which would be
 // keyboard-layout-dependent on non-US layouts).
-async function trustedFill({ ref, selector, label_pattern, text, target }) {
+async function trustedFill({ ref, selector, label_pattern, text, target }) { // TODO(phase4): raise
   const probeBody = `
     (function(){
       try {
@@ -1622,336 +1459,157 @@ async function trustedFill({ ref, selector, label_pattern, text, target }) {
   return JSON.parse(await jxa(src));
 }
 
-// ---- MCP plumbing ----
+async function fileUpload(args = {}) {
+  const { selector, ref, path, target } = args;
+  if (!path) throw new Error("file_upload requires `path`");
+  const { abs, data } = await readUserFile(path);
+  const name = abs.split("/").pop();
+  const mime = MIME_BY_EXT[name.split(".").pop().toLowerCase()] || "application/octet-stream";
+  return runPage("file_upload", "file_upload", { selector, ref, b64: data.toString("base64"), name, mime }, target);
+}
 
-// Pick an option from a native <select>, a react-select, or an ARIA combobox/listbox in
-// one call: resolve the control, open it, filter if searchable, click the matching option,
-// and read back what got selected. Uses the async eval path so it can await the option list.
+async function click(args = {}) {
+  const { ref = null, selector = null, x = null, y = null, trusted = false, raise = false, target } = args;
+  if (trusted) return trustedClick({ ref, selector, x, y, raise, target });
+  if (!ref && !selector) throw new Error("click requires `ref` or `selector` (x/y is screen coords, trusted:true only)");
+  return runPage("click", "click", { ref, selector }, target);
+}
+
+async function fill(args = {}) {
+  const { selector, label_pattern, ref, text, text_path, target, trusted = false, raise = false } = args;
+  if (!text && !text_path) throw new Error("fill requires `text` or `text_path`");
+  if (text && text_path) throw new Error("fill: pass `text` OR `text_path`, not both");
+  if (!ref && !selector && !label_pattern) throw new Error("fill requires `ref`, `selector`, or `label_pattern`");
+  if (label_pattern) validateLabelPattern("fill", label_pattern);
+  let body = text;
+  if (text_path) ({ data: body } = await readUserFile(text_path, "utf8"));
+  if (!body || !body.trim()) throw new Error("fill: empty body");
+  if (trusted) return trustedFill({ ref, selector, label_pattern, text: body, raise, target });
+  return runPage("fill", "fill", { ref, selector, label_pattern, text: body }, target);
+}
+
 async function select(args = {}) {
   const { ref = null, selector = null, label_pattern = null, text = null, target } = args;
   if (text == null) throw new Error("select requires `text` (the option to choose)");
   if (!ref && !selector && !label_pattern) throw new Error("select requires `ref`, `selector`, or `label_pattern`");
-  const script = `
-    const refId = ${JSON.stringify(ref)};
-    const sel = ${JSON.stringify(selector)};
-    const labelRe = ${label_pattern ? `new RegExp(${JSON.stringify(label_pattern)}, 'i')` : "null"};
-    const want = ${JSON.stringify(String(text))};
-    const d = ms => new Promise(r => setTimeout(r, ms));
-    const norm = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-    const wantN = norm(want);
-    function vis(el) {
-      if (!el || el.hidden) return false;
-      const cs = getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-      const r = el.getBoundingClientRect();
-      return !(r.width === 0 && r.height === 0);
-    }
-    function nm(el) {
-      return ((el.labels && el.labels[0] && el.labels[0].textContent) || (el.getAttribute && el.getAttribute('aria-label')) || (el.getAttribute && el.getAttribute('placeholder')) || el.name || '').trim().slice(0, 120);
-    }
-    function ident(el) { return { tag: el.tagName.toLowerCase(), role: (el.getAttribute && el.getAttribute('role')) || el.tagName.toLowerCase(), name: nm(el), visible: vis(el) }; }
-
-    let ctl = null;
-    if (refId) ctl = (window.__perch_refs || {})[refId];
-    else if (sel) ctl = document.querySelector(sel);
-    else if (labelRe) {
-      const cands = Array.from(document.querySelectorAll('select, [role=combobox], [aria-haspopup=listbox], [role=listbox]'));
-      ctl = cands.filter(vis).find(el => labelRe.test(nm(el)) || labelRe.test((el.closest('label') && el.closest('label').textContent) || '')) || cands.find(el => labelRe.test(nm(el)));
-    }
-    if (!ctl) return refId ? { __perch_ref_miss: true, ref: refId } : { ok: false, error: 'no select/combobox matched' };
-
-    // Native <select>
-    const nativeSel = ctl.tagName === 'SELECT' ? ctl : (ctl.querySelector && ctl.querySelector('select'));
-    if (nativeSel && nativeSel.tagName === 'SELECT') {
-      const opts = Array.from(nativeSel.options);
-      const opt = opts.find(o => norm(o.text) === wantN || norm(o.value) === wantN) || opts.find(o => norm(o.text).indexOf(wantN) >= 0);
-      if (!opt) return { ok: false, error: 'no matching option', candidates: opts.slice(0, 8).map(o => o.text.trim()) };
-      nativeSel.value = opt.value;
-      ['input', 'change'].forEach(t => nativeSel.dispatchEvent(new Event(t, { bubbles: true })));
-      return { ok: true, selected: opt.text.trim(), matched: ident(nativeSel) };
-    }
-
-    // Custom combobox / react-select / ARIA listbox
-    ctl.focus && ctl.focus();
-    ctl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    ctl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    ctl.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40, bubbles: true }));
-    const input = ctl.tagName === 'INPUT' ? ctl : (ctl.querySelector && ctl.querySelector('input'));
-    if (input) {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      setter.call(input, want);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    let opt = null;
-    for (let attempt = 0; attempt < 2 && !opt; attempt++) {
-      await d(attempt === 0 ? 400 : 300);
-      const opts = Array.from(document.querySelectorAll('[role=option]')).filter(vis);
-      opt = opts.find(o => norm(o.textContent) === wantN) || opts.find(o => norm(o.textContent).indexOf(wantN) >= 0);
-      if (!opt && attempt === 1) return { ok: false, error: 'no matching option after open', candidates: opts.slice(0, 8).map(o => (o.textContent || '').trim()) };
-    }
-    opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    opt.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    opt.click();
-    await d(200);
-    const shown = (ctl.innerText || ctl.textContent || (input && input.value) || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
-    return { ok: true, selected: (opt.textContent || '').trim().slice(0, 80), matched: ident(ctl), value: shown };
-  `;
-  return await evalJs(script, target, { awaitPromise: true });
+  if (label_pattern) validateLabelPattern("select", label_pattern);
+  return runPage("select", "select", { ref, selector, label_pattern, text: String(text) }, target, { awaitPromise: true, timeout: 5000 });
 }
 
-const TARGET_SCHEMA = {
-  type: "object",
-  description: "Optional; default = active tab of the frontmost browser. windowId/tabIndex come from list_tabs.",
-  properties: {
-    app: { type: "string" },
-    windowId: { type: ["string", "number"] },
-    tabIndex: { type: "number" },
-  },
-};
+// Shared guidance lives here once instead of in every tool description.
+export const INSTRUCTIONS = `perch drives the user's own macOS browsers (Chrome family, Arc, Safari) over AppleScript.
+Targeting: tools take an optional \`target\` {app, windowId, tabIndex}; the default is the active tab of the topmost browser window. tabIndex is a position, not an id: it shifts as tabs open and close, so re-list instead of caching it. new_tab returns a ready-made target.
+Elements: prefer \`ref\` (from accessibility_snapshot) over \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
+{ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
+Arc runs page JS only on a window's active tab (activate_tab first). Only activate_tab, screenshot{raise} and trusted input with raise take focus.`;
+
+const TARGET = { type: "object", properties: { app: { type: "string" }, windowId: { type: ["string", "number"] }, tabIndex: { type: "number" } } };
+const REF = { type: "string", description: "From accessibility_snapshot." };
+const SEL = { type: "string", description: "CSS selector." };
+const LABEL = { type: "string", description: "Regex over the field's label." };
+const tool = (name, description, properties = {}, required) =>
+  ({ name, description, inputSchema: { type: "object", properties, ...(required ? { required } : {}) } });
 
 const TOOLS = [
-  {
-    name: "list_tabs",
-    description: "List open tabs across running browsers (Chrome family, Safari, Arc). `active: true` marks the active tab of the frontmost browser. Prefer the filters over dumping everything; with any filter the result is `{tabs, total}` and `tabIndex` keeps each tab's real window position.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        app: { type: "string", description: "One browser, e.g. 'Google Chrome', 'Safari', 'Arc'." },
-        urlContains: { type: "string", description: "Case-insensitive URL substring filter." },
-        titleContains: { type: "string", description: "Case-insensitive title substring filter." },
-        limit: { type: "number", description: "Max rows returned; `total` reports matches before the cut." },
-      },
-    },
-  },
-  {
-    name: "new_tab",
-    description: "Open a new tab in the named browser. Launches the app if it isn't running.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        url: { type: "string", description: "Optional. Defaults to about:blank." },
-        app: { type: "string", description: "Optional. Defaults to Google Chrome." },
-      },
-    },
-  },
-  {
-    name: "activate_tab",
-    description: "Bring the target tab and its window to the foreground.",
-    inputSchema: { type: "object", properties: { target: TARGET_SCHEMA } },
-  },
-  {
-    name: "navigate",
-    description: "Navigate the target tab to a URL. `wait: true` (default) blocks until document.readyState is 'complete'.",
-    inputSchema: {
-      type: "object",
-      required: ["url"],
-      properties: {
-        url: { type: "string" },
-        wait: { type: "boolean", description: "Wait for load. Default true." },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "eval_js",
-    description: "Run JS in the target tab inside an IIFE; `return <value>` sends the value back. `awaitPromise: true` runs async code and waits for its Promise. Pass `script_path` to load the code from a local file, keeping large scripts out of tool args. Needs the browser's 'Allow JavaScript from Apple Events' toggle; on Arc the target tab must be active (activate_tab first).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        script: { type: "string", description: "Mutually exclusive with `script_path`." },
-        script_path: { type: "string", description: "Absolute or ~/ path to a JS file to run." },
-        awaitPromise: { type: "boolean", description: "Default false." },
-        timeout: { type: "number", description: "ms, awaitPromise only. Default 30000." },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "wait",
-    description: "Block until the target tab matches `readyState`/`selector`, or until a polled JS `expression` returns non-null/non-false (returned as `value`). Polls inside one osascript call.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        selector: { type: "string", description: "CSS selector that must exist." },
-        readyState: { type: "string", enum: ["loading", "interactive", "complete"], description: "Minimum readyState. Default 'complete'." },
-        expression: { type: "string", description: "JS expression; mutually exclusive with selector/readyState." },
-        timeout: { type: "number", description: "ms. Default 10000." },
-        interval: { type: "number", description: "Poll interval ms. Default 150." },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "screenshot",
-    description: "Capture the target browser window. CGWindowID capture reads pixels regardless of z-order, so obscured windows work without stealing focus. An explicit `tabIndex` targeting a non-active tab silently switches the window to it first. Images are downscaled to `maxWidth` before returning. A second text block carries `{window:{x,y,w,h}, image:{w,h}}` (screen points / pixels) for mapping image coordinates to screen: screenX = window.x + imageX * window.w / image.w.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        raise: { type: "boolean", description: "Bring window to front before capture. Default false (focus-preserving)." },
-        maxWidth: { type: "number", description: "Downscale to this pixel width; 0 = original size. Default 1568." },
-        format: { type: "string", enum: ["png", "jpeg"], description: "Default png; jpeg is smaller." },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "page_state",
-    description: "Return URL, title, readyState, viewport, scroll, document size, and selected meta tags (description, og:*) for the target tab.",
-    inputSchema: { type: "object", properties: { target: TARGET_SCHEMA } },
-  },
-  {
-    name: "get_text",
-    description: "innerText of an element (default body). Accepts `ref` from accessibility_snapshot instead of `selector`. Output is capped at `maxChars` with a truncation marker; page through long content with `offset`.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        selector: { type: "string", description: "CSS selector. Default 'body'." },
-        ref: { type: "string", description: "Ref from a prior accessibility_snapshot; invalidated by the next snapshot or navigation." },
-        maxChars: { type: "number", description: "Default 20000." },
-        offset: { type: "number", description: "Start offset for paging. Default 0." },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "get_html",
-    description: "outerHTML of an element (default <html>). Accepts `ref` from accessibility_snapshot instead of `selector`. Output is capped at `maxChars` with a truncation marker; page with `offset`. Prefer accessibility_snapshot or get_text when you don't need markup.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        selector: { type: "string", description: "CSS selector. Default 'html'." },
-        ref: { type: "string", description: "Ref from a prior accessibility_snapshot." },
-        maxChars: { type: "number", description: "Default 20000." },
-        offset: { type: "number", description: "Start offset for paging. Default 0." },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "accessibility_snapshot",
-    description: "Compact tree of interactive + landmark elements (links, buttons, form fields, headings) with stable `ref` IDs that click/fill/get_text/get_html accept in place of selectors. Refs are invalidated by the next snapshot or page navigation; re-snapshot before reusing them. Pass `role` to filter at the walk, shrinking both payload and walk time. Form fields carry `subtype`/`attr_name`/`options`; headings carry `level`. Cheaper than get_html for agent loops.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        max: { type: "number", description: "Element cap; result gets `truncated: true` when hit. Default 500." },
-        include_bounds: { type: "boolean", description: "Include viewport bounds {x,y,w,h}. Default false." },
-        role: {
-          oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
-          description: "Filter: 'link', 'button', 'textbox', 'combobox', 'checkbox', 'radio', 'heading', 'slider'. Unknown roles return empty.",
-        },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "console_capture",
-    description: "Capture page console output by patching console methods. `mode`: 'start' installs the wrapper, 'read' drains new entries, 'clear' empties, 'stop' uninstalls and drains. Misses messages logged before start; navigation wipes the buffer (start again after).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        mode: { type: "string", enum: ["start", "read", "clear", "stop"], description: "Default 'read'." },
-        max: { type: "number", description: "Max buffered entries (only used with `start`). Default 500." },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "notify",
-    description: "Show a macOS notification, e.g. to ping the user when a long task finishes. Fire-and-forget; shows as from 'Script Editor' (osascript limitation).",
-    inputSchema: {
-      type: "object",
-      required: ["message"],
-      properties: {
-        message:  { type: "string", description: "Body text." },
-        title:    { type: "string", description: "Default 'perch'." },
-        subtitle: { type: "string" },
-        sound:    { type: "string", description: "System sound name (Glass, Ping, Hero, ...). Default 'Glass'." },
-      },
-    },
-  },
-  {
-    name: "file_upload",
-    description: "Set a file on an `<input type=file>` without shipping bytes through agent context; perch reads the file from disk and assigns it in the page. Works on background tabs (except Arc: activate_tab first), never activates the browser. On `{ok: false}` don't retry; the widget likely isn't a plain file input, so fall back to a manual hand-off.",
-    inputSchema: {
-      type: "object",
-      required: ["path"],
-      properties: {
-        path: { type: "string", description: "Absolute or ~/ path to the file." },
-        selector: { type: "string", description: "File input selector. Default 'input[type=file]'." },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "click",
-    description: "Click an element by `ref`, `selector`, or screen `x`/`y` (trusted only). Default path is el.click() (isTrusted: false). `trusted: true` posts a real CGEvent mouse click (isTrusted: true) for WAF buttons, React submits that ignore synthetic clicks, and Workday-class validators; it needs Accessibility permission and the window frontmost (or `raise: true`).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        ref: { type: "string", description: "Ref from a prior accessibility_snapshot." },
-        selector: { type: "string", description: "CSS selector, used when `ref` is absent." },
-        x: { type: "number", description: "Screen X (trusted only), e.g. from a screenshot vision pass." },
-        y: { type: "number", description: "Screen Y (trusted only)." },
-        button: { type: "string", enum: ["left", "right"], description: "Default 'left'." },
-        clickCount: { type: "number", description: "2 for double-click. Default 1." },
-        trusted: { type: "boolean", description: "Real CGEvent instead of el.click(). Default false." },
-        raise: { type: "boolean", description: "Bring window to front first (trusted only). Default false." },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "fill",
-    description: "Fill a plain input/textarea or rich-text editor (Quill, TinyMCE, ProseMirror, Froala, contenteditable), then verify the value landed. Target priority: `ref` > `selector` > `label_pattern`. Use `text_path` for long bodies so the text stays out of tool args. `trusted: true` types real keystrokes for plain fields that reject synthetic input (Workday class); needs Accessibility permission and the window frontmost. Rich editors don't need trusted mode.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        text: { type: "string", description: "Mutually exclusive with `text_path`." },
-        text_path: { type: "string", description: "Path to a file with the text; for cover letters / long answers." },
-        ref: { type: "string", description: "Ref from a prior accessibility_snapshot." },
-        selector: { type: "string", description: "CSS selector for the field." },
-        label_pattern: { type: "string", description: "Case-insensitive regex against label/aria-label/placeholder/name." },
-        trusted: { type: "boolean", description: "Real CGEvent keystrokes; plain input/textarea only. Default false." },
-        target: TARGET_SCHEMA,
-      },
-    },
-  },
-  {
-    name: "select",
-    description: "Choose an option from a native <select>, a react-select, or an ARIA combobox/listbox in one call: resolves the control, opens it, filters if searchable, clicks the matching option, and reads back what got selected. Target priority: `ref` > `selector` > `label_pattern`. Returns { ok, selected, matched, value } or { ok:false, error, candidates }.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        text: { type: "string", description: "The option text to choose (case-insensitive; exact match preferred, else substring)." },
-        ref: { type: "string", description: "Ref from a prior accessibility_snapshot." },
-        selector: { type: "string", description: "CSS selector for the select/combobox control." },
-        label_pattern: { type: "string", description: "Case-insensitive regex against the control's label/aria-label." },
-        target: TARGET_SCHEMA,
-      },
-      required: ["text"],
-    },
-  },
+  tool("list_tabs", "List open tabs as {tabs:[{app,windowId,tabIndex,url,title,active?}], total}. Filter rather than dumping; `total` counts matches before `limit`.", {
+    app: { type: "string" },
+    urlContains: { type: "string" },
+    titleContains: { type: "string" },
+    limit: { type: "number", description: "Default 50." },
+  }),
+  tool("new_tab", "Open a tab (launches the browser if needed). Returns {app,windowId,tabIndex}, usable as `target`.", {
+    url: { type: "string", description: "Default about:blank." },
+    app: { type: "string", description: "Default Google Chrome." },
+  }),
+  tool("activate_tab", "Bring the target tab and its window to the front.", { target: TARGET }),
+  tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading.", { url: { type: "string" }, target: TARGET }, ["url"]),
+  tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. With both `script_path` and `script`, the file runs first, then `script`, in one call.", {
+    script: { type: "string" },
+    script_path: { type: "string", description: "Local .js file." },
+    awaitPromise: { type: "boolean", description: "Await async code (30s cap)." },
+    target: TARGET,
+  }),
+  tool("wait", "Wait until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`).", {
+    selector: SEL,
+    readyState: { type: "string", enum: ["loading", "interactive", "complete"], description: "Default complete." },
+    expression: { type: "string" },
+    timeout: { type: "number", description: "ms, default 10000." },
+    target: TARGET,
+  }),
+  tool("screenshot", "Capture the target window without raising it; an explicit tabIndex switches that window to the tab first. Returns the image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w.", {
+    raise: { type: "boolean" },
+    maxWidth: { type: "number", description: "Default 1568; 0 = full size." },
+    format: { type: "string", enum: ["png", "jpeg"] },
+    target: TARGET,
+  }),
+  tool("get_text", "innerText (or outerHTML with `html`) of an element, default body/html, paged by `offset`/`maxChars`.", {
+    selector: SEL,
+    ref: REF,
+    html: { type: "boolean" },
+    maxChars: { type: "number", description: "Default 20000." },
+    offset: { type: "number" },
+    target: TARGET,
+  }),
+  tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`. Refs feed click/fill/select/get_text.", {
+    max: { type: "number", description: "Element cap, default 500; 0 = header only." },
+    role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles, e.g. textbox, combobox, button." },
+    target: TARGET,
+  }),
+  tool("console_capture", "Patch console.* in the page: `start`, then `read` drains entries as \"level: text\" strings, `stop` restores. Navigation clears it.", {
+    mode: { type: "string", enum: ["start", "read", "stop"], description: "Default read." },
+    target: TARGET,
+  }),
+  tool("notify", "Show a macOS notification (appears as Script Editor).", {
+    message: { type: "string" },
+    title: { type: "string" },
+    subtitle: { type: "string" },
+    sound: { type: "string", description: "Default Glass." },
+  }, ["message"]),
+  tool("file_upload", "Put a local file on an <input type=file> (default the first one) without the bytes entering context. {ok:false} means it isn't a plain file input: hand off instead of retrying.", {
+    path: { type: "string" },
+    ref: REF,
+    selector: SEL,
+    target: TARGET,
+  }, ["path"]),
+  tool("click", "Click by ref/selector (el.click()). `trusted` posts a real OS click (isTrusted, needs Accessibility permission and the window in front or `raise`); only trusted accepts screen `x`/`y`.", {
+    ref: REF,
+    selector: SEL,
+    x: { type: "number" },
+    y: { type: "number" },
+    trusted: { type: "boolean" },
+    raise: { type: "boolean" },
+    target: TARGET,
+  }),
+  tool("fill", "Set a field's text and verify it landed: inputs, textareas, and rich editors (contenteditable, ProseMirror, Quill…). Returns {ok,kind,el,len,ambiguous?}. `trusted` types real keys into plain fields.", {
+    text: { type: "string" },
+    text_path: { type: "string", description: "File with the text." },
+    ref: REF,
+    selector: SEL,
+    label_pattern: LABEL,
+    trusted: { type: "boolean" },
+    raise: { type: "boolean" },
+    target: TARGET,
+  }),
+  tool("select", "Choose an option in a native <select>, react-select, or ARIA combobox/listbox, and read back what's shown. Exact text or value first, then substring.", {
+    text: { type: "string" },
+    ref: REF,
+    selector: SEL,
+    label_pattern: LABEL,
+    target: TARGET,
+  }, ["text"]),
 ];
+
+export const SCHEMA_BUDGET = 9000;
 
 export const HANDLERS = {
   list_tabs:     (a) => listTabs(a),
   new_tab:       (a) => newTab(a.url, a.app),
   activate_tab:  (a) => activateTab(a.target),
   navigate:      (a) => navigate(a.url, a.target),
-  eval_js:       async (a) => {
-    let script = a.script;
-    if (a.script_path) {
-      if (script) throw new Error("eval_js: pass `script` OR `script_path`, not both");
-      ({ data: script } = await readUserFile(a.script_path, "utf8"));
-    }
-    if (!script) throw new Error("eval_js requires `script` or `script_path`");
-    return evalJs(script, a.target, { awaitPromise: a.awaitPromise, timeout: a.timeout });
-  },
+  eval_js:       async (a) => evalJs(await composeEvalScript(a), a.target, { awaitPromise: a.awaitPromise }),
   wait:          (a) => wait(a),
   screenshot:    (a) => screenshot(a),
-  page_state:    (a) => pageState(a.target),
   get_text:      (a) => getText(a),
-  get_html:      (a) => getHtml(a),
   accessibility_snapshot: (a) => accessibilitySnapshot(a),
   console_capture:        (a) => consoleCapture(a),
   notify:        (a) => notify(a),
@@ -1961,11 +1619,22 @@ export const HANDLERS = {
   select:        (a) => select(a),
 };
 
+// File first, then `script`, in one function body: one call can inject a library and read it back.
+export async function composeEvalScript({ script, script_path } = {}) {
+  let file = "";
+  if (script_path) ({ data: file } = await readUserFile(script_path, "utf8"));
+  if (!file && !script) throw new Error("eval_js requires `script` or `script_path`");
+  return file && script ? file + "\n;\n" + script : file || script;
+}
+
 export function formatResult(result) {
   if (result && result.__image) {
     const content = [{ type: "image", data: result.data, mimeType: result.mimeType }];
     if (result.meta) content.push({ type: "text", text: JSON.stringify(result.meta) });
     return { content };
+  }
+  if (result && typeof result === "object" && result.__perch_ref_miss) {
+    return { content: [{ type: "text", text: `error: ref ${result.ref} is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)` }], isError: true };
   }
   if (result && typeof result === "object" && result.__perch_error !== undefined) {
     return { content: [{ type: "text", text: JSON.stringify(result) }], isError: true };
@@ -1983,11 +1652,11 @@ export async function handleCall(name, args = {}) {
   }
 }
 
-export { TOOLS };
+export { TOOLS, buildAsyncKickoff };
 
 // Start only when run as the entry point (realpath: npm's bin is a symlink), so tests can import.
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const server = new Server({ name: "perch", version: "0.1.0" }, { capabilities: { tools: {} } });
+  const server = new Server({ name: "perch", version: "0.2.0" }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, (req) => handleCall(req.params.name, req.params.arguments || {}));
   await server.connect(new StdioServerTransport());
