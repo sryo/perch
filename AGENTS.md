@@ -2,110 +2,139 @@
 
 Architecture and invariants for the perch MCP server.
 
-perch exposes MCP tools for driving macOS browsers — tab listing, tab creation/activation, navigation, JS evaluation, condition waits, screenshots, DOM extraction, accessibility snapshots, console capture, file/text input, user-facing notifications. It shells out to `osascript -l JavaScript` and uses each browser's AppleScript dictionary. No browser extension, no debug ports. The current tool surface is the `TOOLS` array in `server.js`; `SKILL.md` mirrors it for skill authors.
+perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigation, JS evaluation, waits, screenshots, page text, accessibility snapshots, console capture, form input, file upload, notifications. It runs `osascript -l JavaScript` against each browser's AppleScript dictionary. No extension, no debug port. The tool surface is `TOOLS` in `server.js`; `SKILL.md` mirrors it for skill authors, and `test/docs.test.mjs` keeps the two in sync.
 
 ## Layout
 
 ```
 .
-├── server.js     # single-file MCP server
+├── server.js        # the whole MCP server (single file)
+├── test/            # node:test unit tests (npm test), no browser needed
+│   ├── fakes/       # fake osascript REPL, fake JXA world (browsers, tabs, CGWindowList)
+│   └── helpers/     # happy-dom page runner for page scripts
 ├── scripts/
-│   └── smoke.mjs # stdio MCP smoke test (`npm run smoke`)
-├── install.sh    # macOS installer — clones, npm install, registers via `claude mcp add`
-├── package.json  # one dep: @modelcontextprotocol/sdk
-├── README.md     # public-facing intro + install
-├── GOALS.md      # goals, non-goals, and decisions on record. Read before adding a new tool.
-├── SKILL.md      # usage reference for skill authors and agents using perch
-├── AGENTS.md     # this file
-├── CLAUDE.md     # pointer to AGENTS.md
-└── LICENSE
+│   ├── smoke.mjs    # live stdio smoke test (npm run smoke)
+│   ├── bench.mjs    # live latency/payload bench (node scripts/bench.mjs --compare bench/before.json)
+│   ├── mcp-client.mjs  # tiny MCP stdio client shared by smoke and bench
+│   └── skylight-probe.js  # proof that SkyLight event routing binds from pure JXA
+├── bench/           # recorded bench results
+├── install.sh       # macOS installer: clone, npm install, `claude mcp add`
+├── GOALS.md         # goals, non-goals, decisions on record. Read before adding a tool.
+├── SKILL.md         # usage reference for agents
+└── AGENTS.md        # this file (CLAUDE.md points here)
 ```
 
 ## Architecture
 
 ```
-MCP client (Claude Code, etc.) <--stdio--> server.js <--osascript--> Chrome / Safari / Brave / Edge / Arc / Vivaldi
+MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events--> Chrome / Arc / Safari / ...
+                                                          \--tab.execute / doJavaScript--> page scripts
 ```
 
-JXA scripts are built as strings and passed to `osascript -l JavaScript` via a long-lived REPL subprocess (see "osascript daemon" below) with a one-shot `execFile` fallback. User JS is embedded via `JSON.stringify` and wrapped in an IIFE that JSON-stringifies its return; errors come back as `{__perch_error: msg}`. Tab targeting goes through `targetClause(target)`, which walks `BROWSERS`, prefers the frontmost app, and binds `tab`, `tab_kind`, `tab_app`, `tab_window` for downstream snippets. Chrome-family tabs use `tab.execute({javascript: code})`; Safari uses `Application('Safari').doJavaScript(code, {in: tab})`. Both are synchronous on the AppleScript side. For async user code, `eval_js` with `awaitPromise: true` wraps the script in an async IIFE that stashes its result on a `window.__perch_async_*` slot, then polls from JXA until it lands.
+`server.js` has four layers, top to bottom:
 
-**osascript daemon.** A single `osascript -i -l JavaScript` REPL subprocess is kept alive across tool calls and fed via stdin. Realistic perch scripts (e.g. `list_tabs`) drop from ~90ms cold-spawn to ~25ms in the warm REPL — the savings are dominated by the JXA bridge's startup, not the fork. Commands serialize through a FIFO queue. Framing: each script is URI-encoded (single ASCII line, no quotes, no newlines) and sent as `eval(decodeURIComponent("..."))` inside an IIFE that prints a `<<P:<id>:O:...>>` / `<<P:<id>:E:...>>` marker. `<`, `>`, and `:` are always percent-encoded by `encodeURIComponent`, so the markers can't collide with the payload. On any infrastructure failure (process exit, stdin write error, per-call framing timeout) the daemon is killed and the call falls through to the one-shot path; the next call lazily respawns. Disable with `PERCH_DAEMON=0`.
+1. **Transport.** `OsaDaemon` keeps one `osascript -i -l JavaScript` REPL per lane. `jxa(script, {lane})` runs a script there, falling back to one-shot `execFile` only when the script never reached stdin.
+2. **JXA runtime.** `jxaRuntime()` is a real function whose source is sent once per daemon as the prelude. It defines `globalThis.__perch` with the per-call entry points. Node calls `rt(fn, args)`, which sends one short line: `__perch.fn(<json>)`.
+3. **Page scripts.** `PAGE_PRELUDE` plus `PAGE_SCRIPTS[name]` are plain strings that run inside the tab. `pageScript(name, A)` prepends `const A = <json>`, and `buildEvalWrapper` wraps the result.
+4. **Tools.** Thin Node handlers (`HANDLERS`) validate arguments, call `rt` or `evalJs`, and shape results. `formatResult` maps them to MCP content.
 
-**accessibility_snapshot refs.** `accessibility_snapshot` walks `a[href], button, input, textarea, select, [role], [tabindex], h1-h6, [contenteditable], summary`, filters to visible elements, computes the accessible name (labelledby → aria-label → `<label>` → placeholder → innerText → name → title), and stashes each chosen element on `window.__perch_refs[ref]` (a plain object — Map would break the JSON round-trip via `tab.execute`'s return path). Refs are numeric strings ("1", "2", ...) reset on every snapshot, so callers that cache refs across snapshots will hit stale references. `fill`, `click`, `get_text`, and `get_html` consume refs through `window.__perch_refs[ref]`; missing refs return `{__perch_ref_miss: true, ref}` rather than throwing, so the caller can re-snapshot. Form fields carry `subtype` (only set when it adds info beyond `role` — `text/radio/checkbox/button/submit` are suppressed), `attr_name` (HTML `name` attribute, only for form elements), and `options` (visible `<select>` option texts, capped at 30). Optional `role` filter (string or array — `'textbox'`, `['textbox','combobox','checkbox','radio']`, etc.) is applied at element-emit time, before `visible()` and `accName()` run, so it shrinks both the walk cost and the JSON payload on form-heavy pages. Roles match perch's computed `role` field (the same value emitted in the result), not raw tag names.
+**osascript daemon.** A warm REPL runs a realistic script in about 25ms against about 90ms cold. That saving is JXA bridge startup, not the fork.
+- **Lanes:** there are two, `fast` and `slow`, so a polling `wait`, `select`, `navigate` or `awaitPromise` never blocks quick calls.
+- **Framing:** each script is URI-encoded onto one line and evaluated inside an IIFE that prints a `<<P:<id>:O|E:...>>` marker. `encodeURIComponent` always escapes `<`, `>` and `:`, so markers can't collide with the payload. Output is scanned incrementally.
+- **Start-up:** the prelude round-trip is the ready handshake; there is no fixed settle delay.
+- **Failure policy:** a timeout or a mid-call exit rejects and kills the REPL, and the next call respawns it. Neither is retried, because the script may already have opened a tab or posted a click. Only a script that never reached stdin (`notSent`) falls back to one-shot.
+- **Off switch:** disable the daemon with `PERCH_DAEMON=0`.
 
-**console_capture.** Patches `console.{log,info,warn,error,debug}` and pushes structured entries `{level, ts, args: [<stringified>]}` onto `window.__perch_console.entries`. Bounded ring buffer (default 500, oldest dropped). `safe()` stringifies functions as `[Function name]` and Errors as their `stack || message`. State lives on `window` so it survives between tool calls but dies on page navigation — `read` returns `{ok: false, error: '...not started...'}` after navigation, prompting the caller to `start` again. Misses messages issued before `start`.
+**Targeting (`resolve`).** `procs()` does one `CGWindowListCopyWindowInfo` read, about 4ms. It gives the on-screen z-order of browsers, the frontmost app, and pids and CGWindowIDs. It replaces a System Events `frontmost` query, which took about 60ms per call and needed Automation permission for System Events.
+- **Search order:** candidates are on-screen browsers topmost first, then the rest of `BROWSERS` in declared order, checked with `running()`.
+- **Stopping:** the walk stops at the first match.
+- **Window ids:** `win.id()` is read only when `windowId` was given.
+- **Default target:** with no target, the active tab of the first window.
 
-**JXA access patterns.** Collections are always read lazily — `app.windows[i]` and `win.tabs[i]`, never `app.windows()` or `win.tabs()`. The called form unwraps to a plain Array on some browsers (Chrome) but loses the bridge context on others (Arc), making subsequent property chains throw "cannot convert types." Multi-tab reads use bulk property access — `win.tabs.url()` returns all URLs in one call, ~30× faster than per-tab loops and the difference between working and timing out on Arc windows with hundreds of tabs.
+**JXA access patterns.** Read collections lazily (`app.windows[i]`, `win.tabs[i]`), never with the called form (`app.windows()`). The called form loses the bridge context on Arc, and later property chains throw "Can't convert types". Multi-tab reads use bulk property access (`win.tabs.url()`), about 30x faster than per-tab loops. That's the difference between working and timing out on Arc windows with hundreds of tabs.
 
-**Arc-specific quirks.** Arc shares Chrome's `tab.execute` verb but auto-applies `JSON.stringify` to whatever value the executed function returns. perch's wrappers already JSON-stringify, so Arc's bridge double-encodes; the Arc dispatch path unwraps one layer before handing the value back to the caller. Arc also can't return window geometry — `position()`, `size()`, and `bounds()` all throw — so `screenshot` falls back to the System Events accessibility frame, which works for any visible window. Active-tab *read* lands via `win.activeTab.id()` matched against bulk `win.tabs.id()` — neither `win.activeTabIndex()` nor `win.currentTab` works on Arc (both throw "Can't convert types"), but Arc's `activeTab` property returns a tab object with a stable UUID. If the UUID match fails, default targeting silently falls back to tab 0. Active-tab *write* via property assignment is forbidden — `win.activeTab = tab` throws "Access not authorized" and `win.currentTab = tab` throws "Can't convert types" — but Arc's dictionary has a `select` verb that works: `tab.select()` switches the active tab without raising the window or activating the app. All Arc tab-switching paths use it.
+**Arc quirks.**
+- **Double encoding:** Arc's `execute` JSON-stringifies whatever the page function returns, so `exec` unwraps one layer.
+- **Reading the active tab:** `win.activeTabIndex()` and `win.currentTab` both throw. `win.activeTab.id()` matched against `win.tabs.id()` works.
+- **Switching tabs:** writing `activeTab`/`currentTab` is forbidden, but `tab.select()` switches without raising.
+- **Background tabs:** `execute` hangs until timeout on a background tab, so `arcGuard` refuses first.
+- **Geometry:** Arc has no window geometry verbs, so its frame comes from its own CGWindowList entry.
 
-**Screenshot capture path.** Default is `screencapture -l <CGWindowID>`, which reads a window's pixels regardless of z-order, so a window obscured by other apps captures without being raised. perch resolves geometry first (`position()` + `size()` for Chrome, `bounds()` for Safari, System Events accessibility frame for Arc), then walks `CGWindowListCopyWindowInfo` via the JXA ObjC bridge, matching by `kCGWindowOwnerName` + bounds (2px tolerance) to find the CGWindowID. If no match (minimized window, on another Space, bridge fails), falls back to `screencapture -R` at the screen rect, which is only reliable if the window is already on top. `raise: true` forces the legacy focus-then-rect path. **Only the active tab in a window is rendered**, so capturing a specific tab requires it to be active first. When `tabIndex` targets a non-active tab, the default path silently switches the window to that tab (Chrome via `activeTabIndex`, Arc via `tab.select()`, Safari via `currentTab`) without raising the window or activating the app, then waits 150ms for the render to swap.
+**Eval runs in an isolated world (Chrome family).** Chrome runs Apple Events JS in an isolated world. The DOM and `location` are shared with the page; JS globals are not.
+- **Persistence:** globals set by one eval persist for later evals; `window.__perch_refs` and `window.__perch_console` rely on this.
+- **Page globals:** the page's own globals are invisible, so probe page state through the DOM.
+- **Events:** a plain `click` still fires main-world handlers, because DOM events cross worlds.
+- **Timers:** page timers are throttled to about 1/s in background tabs. Anything that must wait polls from JXA (`poll` in the runtime) instead of `setTimeout` in the page. `select` is start/pick/readback steps polled that way.
 
-**Eval runs in an isolated world (Chrome family).** Chrome executes Apple Events JS in an isolated world: the DOM is shared with the page, but JS globals are not. Globals set by one eval call persist and are visible to later eval calls (`window.__perch_refs`, `window.__perch_console`, injected helpers all rely on this), but the page's own main-world globals are invisible to eval — probe page state through the DOM (attributes, dataset, text), never through `window.*` the page set. A plain `click` still fires main-world handlers (real DOM events cross worlds).
+**Page scripts.** One prelude defines `vis`, `labelText`/`hintText`/`accName` (accessible-name precedence), `role`, `ident` (`role "name"`), `setNativeValue` (the prototype setter, which reaches React-controlled fields), `fire` and `resolveEl`.
+- **Arguments:** every tool body reads its arguments from `A`; no user value is spliced into code.
+- **Refs:** `resolveEl` treats a missing or detached ref as `{__perch_ref_miss}`, which `formatResult` turns into an error with a re-snapshot hint.
+- **Snapshot:** `accessibility_snapshot` stores elements on `window.__perch_refs` (a plain object, since a Map breaks the JSON round trip). It emits a line format: a `# {header}` line, then `ref role "name" key=json... flags`.
 
-**Tab indices are positional, not identifiers.** `tabIndex` reflects a tab's current position in its window — opening or closing other tabs shifts every index after them. Callers that cache a `tabIndex` from one `list_tabs` call and use it minutes later will race with the user. Re-target by URL match (or by re-listing) when in doubt. `new_tab` returns the index of the tab it just created, but only as a hint; treat it as valid only for the immediate next call.
+**Tab indices are positional.** `tabIndex` is the tab's current position; opening or closing tabs shifts it. Re-target by URL or re-list rather than caching.
 
-**Trusted input via CGEventPostToPid.** `click {trusted:true}` and `fill {trusted:true}` produce `isTrusted: true` events that pass Cloudflare/WAF gates and React/Workday-class validators which reject synthetic `el.click()` / `dispatchEvent`. The dispatch path:
+**Screenshots.**
+- **Capture:** `screencapture -l <CGWindowID> -t png|jpg` reads a window's own pixels regardless of z-order.
+- **Downscaling:** `sips` runs only when the image is wider than `maxWidth`. Dimensions come from the PNG/JPEG header (`imageDims`).
+- **Fallback:** without a CGWindowID (minimized, another Space), perch captures the screen rect, which is reliable only on top.
+- **Tab switching:** only the active tab of a window is rendered. An explicit `tabIndex` switches the window to that tab first, without raising it, and waits 150ms.
 
-1. `targetClause` resolves the tab.
-2. `assertAccessibilityGrantedJxa()` checks `AXIsProcessTrustedWithOptions` with `kCFBooleanFalse` for prompt-suppression — throws an actionable error if the controlling app lacks Accessibility permission.
-3. Frontmost guard: compares `tab_app` to `FRONTMOST`'s `fm`; throws if not frontmost and `raise: false`. `raise: true` calls `focusTabFragment()` first, mirroring `screenshot{raise:true}`.
-4. `resolveTargetIdsJxa()` (shared with `screenshot`) binds `pid`, `windowNumber`, `geom`.
-5. For ref/selector inputs, an inline `tab.execute({javascript})` / `doJavaScript` probe returns `window.screenX + r.left + r.width/2` etc. — single osascript round-trip for the whole dispatch.
-6. `$.CGEventCreateMouseEvent` / `CGEventCreateKeyboardEvent` + field configuration + `$.CGEventPostToPid(pid, e)`.
+**Trusted input via CGEventPostToPid.** `click {trusted:true}` and `fill {trusted:true}` produce `isTrusted: true` events for WAF gates and validators that reject synthetic input. `trustedTarget` handles the preconditions:
+- **Accessibility:** `AXIsProcessTrustedWithOptions` with the prompt suppressed; a missing grant is a loud error, not a silent drop.
+- **Frontmost:** the target must be in front, or pass `raise: true`.
+- **Ids:** pid and window number come from `procs()`.
 
-Mouse event integer fields set on each event (raw indices because `$.kCG*` symbols aren't reliably bridged for CoreGraphics):
+The `trusted_probe` page script finds the element, scrolls it into view and estimates its screen point. The estimate is `screenX/Y` plus browser chrome (`outer - inner`: toolbars on top, Arc's sidebar on the left) plus the element's center, assuming 100% zoom. It also arms a mousedown listener, so the result reports `hit`. Typing is chunked in Node at 20 UTF-16 units (CGEvent's buffer cap) without splitting surrogate pairs.
+
+Mouse event fields use raw indices, because `$.kCG*` constants aren't reliably bridged:
 
 | Field | Raw idx | Value |
 |---|---|---|
-| `kCGMouseEventClickState` | 1 | `clickCount` (1 default, 2 for dblclick) |
-| `kCGEventTargetUnixProcessID` | 9 | `pid` |
-| `kCGMouseEventPressure` (double) | 11 | `1.0` on down, `0.0` on up |
-| `kCGMouseEventWindowUnderMousePointer` | 27 | `windowNumber` |
-| `kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent` | 28 | `windowNumber` |
-| private (target window) | 51 | `windowNumber` |
-| private (routing flag) | 58 | `1` |
+| `kCGMouseEventClickState` | 1 | 1 |
+| `kCGEventTargetUnixProcessID` | 9 | pid |
+| `kCGMouseEventPressure` (double) | 11 | 1.0 down, 0.0 up |
+| `kCGMouseEventWindowUnderMousePointer` | 27 | windowNumber |
+| `kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent` | 28 | windowNumber |
+| private (target window) | 51 | windowNumber |
+| private (routing flag) | 58 | 1 |
 
-Keyboard typing uses `CGEventCreateKeyboardEvent(nil, virtualKey=0, keyDown)` + `CGEventKeyboardSetUnicodeString(e, len, UniChar*)` + pid field, chunked at ~20 UTF-16 units (the cap of CGEvent's internal buffer). Buffer is allocated via `NSMutableData.dataWithLength(len*2)` and filled by `NSString.getCharactersRange`.
+Trusted input is foreground only (Tier 1). Background dispatch in the style of cua ("two cursors") needs no event tap or C callback:
+- **Routing:** SkyLight's `SLEventPostToPid` routes the event without moving the shared cursor.
+- **Activation:** the yabai `SLPSPostEventRecordTo` recipe makes the target AppKit-active without raising it.
+- **Proof:** `scripts/skylight-probe.js` shows both bind and run from pure JXA; what's left is engineering.
 
-Foreground-only (Tier 1) as shipped. True background dispatch — the cua "two cursors" approach — does NOT need `CGEvent.tapCreateForPid` or a C-callback. cua routes the event with SkyLight's `SLEventPostToPid` (no shared-cursor move, so there are no focus-switch messages to suppress) and flips the target AppKit-active without raising via the yabai `SLPSPostEventRecordTo` recipe. `scripts/skylight-probe.js` confirms both symbols bind and call from pure JXA: `SLPSPostEventRecordTo` executes (returns a real CGError) with its 0xf8-byte event record built via `NSMutableData` + `memset` + `replaceBytesInRange` — no pointer arithmetic, no compiled helper, single-file rule intact. The remaining work is engineering (resolve a live window's PSN + CGWindowID and route one click), not an FFI impossibility.
-
-Chrome renderer-filter contingency: the cua blog reports Chromium's renderer rejects standard `CGEvent.postToPid` clicks unless they come via the private SkyLight `SLEventPostToPid`. The Bridge article disagrees. Public `CGEventPostToPid` is what we ship; if real-world Chrome targets reject `isTrusted: true` from this path, the fallback is `SLEventPostToPid`, reached via `ObjC.bindFunction('SLEventPostToPid', ['int', ['int', 'void *']])` — SkyLight is already loaded in-process, so no explicit dlopen is needed. (Note: `$.dlopen`/`$.dlsym` are NOT directly callable on the JXA bridge — both are undefined and throw. If you ever do need an explicit load, bind dlopen first: `ObjC.bindFunction('dlopen', ['void *', ['char *', 'int']])`.) See `scripts/skylight-probe.js` for the verified binding recipe.
+If Chrome's renderer ever rejects `CGEventPostToPid` clicks, the fallback is `SLEventPostToPid`. Bind it with `ObjC.bindFunction('SLEventPostToPid', ['int', ['int', 'void *']])`; SkyLight is already loaded in-process. `$.dlopen` and `$.dlsym` are not callable on the bridge.
 
 ## Browser support
 
-| Browser | JS eval | Navigation | New/close/activate tab | Notes |
+| Browser | JS eval | Navigation | New/activate tab | Notes |
 |---|---|---|---|---|
 | Google Chrome (+Beta/Canary) | yes | yes | yes | Reference target. |
-| Brave / Edge / Vivaldi | yes | yes | yes | Same AppleScript dictionary as Chrome. |
-| Arc | yes | yes | yes | Separate dictionary; covered by the JXA access patterns + Arc-specific quirks above. |
-| Safari | yes | yes | tab create sometimes flaky | Tab creation falls back to System Events Cmd+T if the JXA path fails. |
+| Brave / Edge / Vivaldi | yes | yes | yes | Same dictionary as Chrome. |
+| Arc | active tab only | yes | yes | See Arc quirks. |
+| Safari | current tab only | yes | tab create sometimes flaky | Falls back to System Events Cmd+T. |
 
 ## Permissions
 
-Three layers, each prompted once:
+1. **Browser:** Allow JavaScript from Apple Events. Chromium family: View > Developer (per profile). Safari: Develop menu.
+2. **macOS Automation** for the controlling app (Claude Code, Terminal, iTerm) to each browser. Prompted on first call.
+3. **macOS Accessibility**, only for trusted input.
 
-1. **Browser side** — `Allow JavaScript from Apple Events`:
-   - Chromium-family: `View > Developer > Allow JavaScript from Apple Events`. Per-profile.
-   - Safari: `Preferences > Advanced > Show Develop menu`, then `Develop > Allow JavaScript from Apple Events`.
-2. **macOS Automation** — for the controlling app (Claude Code, Terminal, iTerm) to talk to each target browser and to System Events. `System Settings > Privacy & Security > Automation`. First call surfaces an OS prompt.
-3. **macOS Accessibility** — required only for `click {trusted:true}` and `fill {trusted:true}`. `System Settings > Privacy & Security > Accessibility`, tick the controlling app. perch checks via `AXIsProcessTrustedWithOptions` (with `kAXTrustedCheckOptionPrompt: false` to keep the OS prompt out of the controlling-app context) and returns an actionable error before posting any CGEvent — silent drop is the default failure mode without this permission, and we want a loud one.
-
-The server returns an actionable error when any layer blocks a call.
+Each blocked layer returns an actionable error.
 
 ## Rules for changes
 
-- **Single-file server, one dep.** Only `@modelcontextprotocol/sdk` plus Node built-ins (`child_process`, `fs/promises`). No build step.
-- **No shell concatenation of user input.** Always pass JXA as one `-e` argument to `osascript` via `execFile`. Embed user JS only through `JSON.stringify`.
-- **Tools earn their slot.** New tools should solve a real workflow, not mirror CDP for completeness.
-- **AppleScript is synchronous; async is faked via polling.** `eval_js` defaults to sync (one osascript round-trip). `awaitPromise: true` wraps the script in an async IIFE, stashes the resolved value on `window.__perch_async_*`, and polls JXA-side until it appears. Adds latency (~50ms per poll tick) but unblocks Promise-using code — Figma Plugin API, async DOM extraction, fetch chains.
-- **Background-friendly by default.** `activate_tab`, `screenshot{raise:true}` (opt-in), and `click{trusted:true, raise:true}` (opt-in) are the only focus-stealers. `screenshot` defaults to CGWindowID capture and does not steal focus. Trusted input tools fail loudly when target is not frontmost and `raise: false`; they don't silently raise.
-- **Run `npm run smoke` after any server.js change.** It boots the server over stdio, asserts the tool-schema size budget and output shapes, and exercises the live JXA bridge when a browser is running (skips those checks otherwise).
+- **Single-file server, one runtime dependency.** Only `@modelcontextprotocol/sdk` plus Node built-ins at runtime, with no build step. `happy-dom` is a devDependency for tests only.
+- **No user values in code.** JXA goes to `osascript` as one argument or one REPL line; runtime arguments are JSON. Page scripts read arguments only from `A`. User JS for `eval_js` is embedded through the wrappers.
+- **The runtime stays self-contained ES2019.** It must not reference Node scope; `test/runtime.test.mjs` runs it under `node:vm` and compiles it with real osascript.
+- **Tools earn their slot.** Solve a real workflow; don't mirror CDP. Check both consumers (avis, trabAGItos) before changing the surface. Keep `tools/list` under `SCHEMA_BUDGET`, with shared guidance in `INSTRUCTIONS`.
+- **Background-friendly by default.** Only `activate_tab`, `screenshot {raise}` and trusted input with `raise` take focus. Trusted input fails loudly when the target isn't in front.
+- **TDD.** Write the failing test first. Then run `npm test` (unit, no browser) and `npm run smoke` (live) after any change, and `node scripts/bench.mjs --compare bench/before.json` for anything performance related.
 
-## Ceiling — what AppleScript can't do
+## Ceiling: what AppleScript can't do
 
-- **Network interception** (request/response capture, header injection). CDP or a real extension only. Passive `fetch` / `XHR` capture is achievable via in-page patching but not currently exposed.
-- **Pre-page-load instrumentation** (`run_at: document_start`). Both bridges run after navigation completes.
-- **Background-tab JS in Safari while not current.** Safari's `doJavaScript` requires the target tab to be the document's `currentTab`. Chrome's `execute` does not. Workaround: `activate_tab` first when Safari is the target.
-- **Headless / off-screen capture.** `screencapture -R` grabs whatever pixels are at the screen rect, so the target window has to be on top. `raise: true` handles this; `raise: false` is best-effort.
-- **True background trusted input.** Tier 1 (foreground) ships today as `click {trusted:true}` / `fill {trusted:true}` via `CGEventPostToPid`. Background dispatch (the cua "two cursors" approach) is NOT blocked by an FFI limit — `scripts/skylight-probe.js` proves `SLEventPostToPid` + `SLPSPostEventRecordTo` bind and call from pure JXA, no event tap, no C-callback, no compiled helper. It's unbuilt, not impossible: the open work is resolving a target window's PSN + CGWindowID and routing the click through SkyLight instead of `CGEventPostToPid`. (Earlier docs claimed this needed `CGEvent.tapCreateForPid` and a C-callback JXA can't construct — that was the wrong blocker.)
+- **Network interception** (request/response capture, header injection): CDP or an extension only.
+- **Pre-load instrumentation** (`document_start`): both bridges run after navigation.
+- **Safari background-tab JS:** `doJavaScript` needs the tab to be current, so call `activate_tab` first.
+- **Off-screen capture** of minimized windows or windows on another Space: the rect fallback needs the window on top.
+- **Background trusted input:** unbuilt, not impossible (see above).
