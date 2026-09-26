@@ -4,6 +4,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execFile, spawn } from "node:child_process";
 import { readFile, unlink } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
@@ -21,95 +23,44 @@ const BROWSERS = [
   { app: "Safari",               kind: "safari" },
 ];
 
-const PERMISSION_HINT =
-  "JavaScript-from-AppleEvents is off. Enable it: " +
-  "Chromium-family → View > Developer > Allow JavaScript from Apple Events. " +
-  "Safari → Preferences > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events. " +
-  "macOS may also prompt for Automation permission (System Settings > Privacy & Security > Automation) on first use.";
+const JXA_PRELUDE = "";
 
-// Default 30s. Tools that intentionally poll longer (wait, evalJs awaitPromise)
-// pass their own timeout + JXA_OVERHEAD so the outer process doesn't kill the inner loop.
-const JXA_DEFAULT_TIMEOUT = 30000;
-const JXA_OVERHEAD = 5000;
+export const ERR = {
+  jsOff: "JavaScript-from-AppleEvents is off. Enable it: Chromium-family → View > Developer > Allow JavaScript from Apple Events. " +
+    "Safari → Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.",
+  automation: "Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, " +
+    "ticking the target browser under the controlling app (Claude Code / Terminal / iTerm).",
+  timeout: (ms) => `osascript timed out after ${ms}ms: target tab unreachable (stale tabIndex, hung page, or Arc background tab). Re-run list_tabs.`,
+};
 
-function translatePermissionError(msg) {
-  if (/Allow JavaScript from Apple Events/i.test(msg) ||
-      /Executing JavaScript through AppleScript is turned off/i.test(msg) ||
-      /JavaScript from Apple events is turned off/i.test(msg)) {
-    return PERMISSION_HINT;
-  }
-  if (/Not authorized to send Apple events/i.test(msg) ||
-      /errAEEventNotPermitted/i.test(msg) ||
-      /-1743/.test(msg)) {
-    return "Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, " +
-           "then tick the target browser under the controlling app (Claude Code / Terminal / iTerm).";
-  }
+export function translatePermissionError(msg) {
+  if (/Allow JavaScript from Apple Events|JavaScript through AppleScript is turned off|JavaScript from Apple events is turned off/i.test(msg)) return ERR.jsOff;
+  if (/Not authorized to send Apple events|errAEEventNotPermitted|-1743/i.test(msg)) return ERR.automation;
   return null;
 }
 
-// One long-lived `osascript -i -l JavaScript` REPL across all tool calls. Realistic
-// perch scripts run ~90ms cold-spawn vs ~25ms in the warm REPL — the savings are
-// dominated by the JXA bridge's startup, not the fork. Serialize commands via a FIFO
-// queue; on any infrastructure failure (process exit, stdin write error, framing
-// timeout) the daemon is killed and the call falls back to the one-shot path.
+// One long-lived `osascript -i -l JavaScript` REPL per lane. A warm REPL runs a
+// realistic script in ~25ms vs ~90ms cold, dominated by JXA bridge startup.
+// Two lanes so a long `wait`/awaitPromise poll (slow) never blocks quick calls (fast).
 //
 // Framing: each script is URI-encoded (one ASCII line, no quotes, no newlines) and
-// sent as `eval(decodeURIComponent("..."))` inside an IIFE that catches errors and
-// prints a result marker. `<`, `>`, and `:` are always percent-encoded by
-// encodeURIComponent, so the markers can't appear inside the result payload.
+// sent as `eval(decodeURIComponent("..."))` inside an IIFE that prints a result
+// marker. encodeURIComponent always escapes `<`, `>` and `:`, so markers can't
+// appear inside the payload.
+//
+// Failure policy: only a script that never reached stdin (`notSent`) may be retried
+// one-shot. A timeout or mid-call exit may already have had side effects (a tab
+// opened, a click posted), so it rejects without retry; the next call respawns.
 //
 // Disable with PERCH_DAEMON=0.
-const DAEMON_DISABLED = process.env.PERCH_DAEMON === "0";
-
-class OsaDaemon {
-  constructor() {
+export class OsaDaemon {
+  constructor({ spawn: spawnFn = spawn, prelude = "" } = {}) {
+    this.spawnFn = spawnFn;
+    this.prelude = prelude;
     this.proc = null;
+    this.ready = null;
     this.queue = [];
     this.current = null;
-    this.starting = null;
-  }
-  async _spawn() {
-    const p = spawn("osascript", ["-i", "-l", "JavaScript"], { stdio: ["pipe", "pipe", "pipe"] });
-    p.stdout.on("data", d => this._onData(d.toString()));
-    p.stderr.on("data", d => this._onData(d.toString()));
-    p.stdin.on("error", () => this._onExit());
-    p.on("exit",  () => this._onExit());
-    p.on("error", () => this._onExit());
-    this.proc = p;
-    // No robust ready signal from `osascript -i`; a short settle lets the REPL print
-    // its initial prompt before we start writing.
-    await new Promise(r => setTimeout(r, 150));
-  }
-  async _ensure() {
-    if (this.proc) return;
-    if (!this.starting) this.starting = this._spawn().finally(() => { this.starting = null; });
-    await this.starting;
-  }
-  _onData(s) {
-    if (!this.current) return;
-    this.current.buffer += s;
-    const m = this.current.buffer.match(this.current.re);
-    if (!m) return;
-    const c = this.current;
-    this.current = null;
-    clearTimeout(c.timer);
-    if (m[1] === "O") c.resolve(decodeURIComponent(m[2]));
-    else              c.reject(new Error(decodeURIComponent(m[2])));
-    this._drain();
-  }
-  _onExit() {
-    if (!this.proc && !this.current && this.queue.length === 0) return;
-    const dying = [this.current, ...this.queue].filter(Boolean);
-    this.current = null;
-    this.queue = [];
-    this.proc = null;
-    for (const c of dying) {
-      if (c.timer) clearTimeout(c.timer);
-      c.reject(Object.assign(new Error("osa daemon exited"), { daemonFault: true }));
-    }
-  }
-  _kill() {
-    if (this.proc) { try { this.proc.kill("SIGKILL"); } catch (e) {} }
   }
   run(script, timeout) {
     return new Promise((resolve, reject) => {
@@ -117,98 +68,135 @@ class OsaDaemon {
       this._drain();
     });
   }
+  kill() {
+    const p = this.proc;
+    this.proc = null;
+    this.ready = null;
+    if (p) { try { p.kill("SIGKILL"); } catch {} }
+  }
+  _spawn() {
+    let p;
+    try { p = this.spawnFn("osascript", ["-i", "-l", "JavaScript"], { stdio: ["pipe", "pipe", "pipe"] }); }
+    catch (e) { return Promise.reject(e); }
+    this.proc = p;
+    // osascript's console.log goes to stderr; listen to both.
+    p.stdout.on("data", (d) => this._onData(d.toString()));
+    p.stderr.on("data", (d) => this._onData(d.toString()));
+    p.stdin.on("error", () => this._onExit(p));
+    p.on("exit", () => this._onExit(p));
+    p.on("error", () => this._onExit(p));
+    // Handshake instead of a fixed settle: the prelude (or a no-op) must round-trip first.
+    return new Promise((resolve, reject) => this._send({ script: this.prelude + ";1", timeout: 10000, resolve, reject }));
+  }
   async _drain() {
     if (this.current || this.queue.length === 0) return;
-    try { await this._ensure(); }
+    if (!this.proc) this.ready = this._spawn();
+    const ready = this.ready;
+    try { await ready; }
     catch (e) {
-      const err = Object.assign(new Error("osa daemon failed to start: " + (e.message || e)), { daemonFault: true });
+      if (this.ready === ready) this.kill();
+      const err = Object.assign(new Error("osascript failed to start: " + (e.message || e)), { notSent: true });
       while (this.queue.length) this.queue.shift().reject(err);
       return;
     }
-    const c = this.queue.shift();
+    if (this.current || this.queue.length === 0) return;
+    this._send(this.queue.shift());
+  }
+  _send(c) {
     const id = Math.random().toString(36).slice(2, 10);
-    const re = new RegExp(`<<P:${id}:(O|E):([^>]*)>>`);
-    const enc = encodeURIComponent(c.script);
-    const wrapped =
-      `(function(){var __r;try{__r=eval(decodeURIComponent("${enc}"))}` +
-      `catch(e){console.log("<<P:${id}:E:"+encodeURIComponent((e&&e.message)?e.message:String(e))+">>");return}` +
-      `var __s=__r===undefined||__r===null?"":(typeof __r==="string"?__r:JSON.stringify(__r));` +
-      `console.log("<<P:${id}:O:"+encodeURIComponent(__s)+">>")})();\n`;
     const job = {
-      buffer: "", re,
-      resolve: c.resolve, reject: c.reject,
+      ...c, prefix: `<<P:${id}:`, buffer: "", start: -1, scan: 0,
       timer: setTimeout(() => {
         if (this.current !== job) return;
         this.current = null;
-        this._kill();
-        job.reject(Object.assign(new Error(
-          `osascript timed out after ${c.timeout}ms. Target tab is unreachable — likely a stale ` +
-          `tabIndex, a hung page, or (Arc) a background tab the bridge can't reach. Run list_tabs ` +
-          `to recheck the tabIndex, then activate_tab on Arc background tabs before retrying. ` +
-          `(Real permission errors surface in <1s with their own message, so a 30s timeout is not ` +
-          `a permission issue.)`
-        ), { daemonFault: true }));
+        this.kill();
+        job.reject(new Error(ERR.timeout(c.timeout)));
+        this._drain();
       }, c.timeout),
     };
     this.current = job;
-    try { this.proc.stdin.write(wrapped); }
+    const line =
+      `(function(){var __r;try{__r=eval(decodeURIComponent("${encodeURIComponent(c.script)}"))}` +
+      `catch(e){console.log("<<P:${id}:E:"+encodeURIComponent((e&&e.message)?e.message:String(e))+">>");return}` +
+      `var __s=__r===undefined||__r===null?"":(typeof __r==="string"?__r:JSON.stringify(__r));` +
+      `console.log("<<P:${id}:O:"+encodeURIComponent(__s)+">>")})();\n`;
+    try { this.proc.stdin.write(line); }
     catch (e) {
       this.current = null;
       clearTimeout(job.timer);
-      this._kill();
-      job.reject(Object.assign(new Error("osa daemon stdin: " + (e.message || e)), { daemonFault: true }));
+      this.kill();
+      job.reject(Object.assign(new Error("osascript stdin: " + (e.message || e)), { notSent: true }));
     }
+  }
+  _onData(s) {
+    const c = this.current;
+    if (!c) return;
+    c.buffer += s;
+    // Incremental scan: never rescan bytes already searched.
+    if (c.start < 0) {
+      const i = c.buffer.indexOf(c.prefix, c.scan);
+      if (i < 0) { c.scan = Math.max(0, c.buffer.length - c.prefix.length); return; }
+      c.start = i;
+      c.scan = i + c.prefix.length + 2;
+    }
+    const end = c.buffer.indexOf(">>", c.scan);
+    if (end < 0) { c.scan = Math.max(c.scan, c.buffer.length - 1); return; }
+    this.current = null;
+    clearTimeout(c.timer);
+    const kind = c.buffer[c.start + c.prefix.length];
+    const payload = decodeURIComponent(c.buffer.slice(c.start + c.prefix.length + 2, end));
+    if (kind === "O") c.resolve(payload);
+    else c.reject(new Error(payload));
+    this._drain();
+  }
+  _onExit(p) {
+    if (p !== this.proc && p !== undefined && this.proc !== null) return;
+    this.proc = null;
+    this.ready = null;
+    const c = this.current;
+    this.current = null;
+    if (c) { clearTimeout(c.timer); c.reject(new Error("osascript exited mid-call")); }
+    if (this.queue.length) this._drain();
   }
 }
 
-const daemon = DAEMON_DISABLED ? null : new OsaDaemon();
+const JXA_DEFAULT_TIMEOUT = 30000;
+// Tools that poll inside one call (wait, awaitPromise) pass their own timeout plus
+// this margin so the outer kill never races the inner loop.
+const JXA_OVERHEAD = 5000;
 
-async function jxa(script, options = {}) {
-  const { timeout = JXA_DEFAULT_TIMEOUT } = options;
-  if (daemon) {
-    try {
-      return await daemon.run(script, timeout);
-    } catch (e) {
-      if (!e.daemonFault) {
-        // Real JS-side error from the script. Translate permission hints, rethrow.
-        const translated = translatePermissionError(String(e.message || e));
-        if (translated) throw new Error(translated);
-        throw e;
-      }
-      // Infrastructure failure: fall through to one-shot. Next call lazily respawns.
+const DAEMONS = process.env.PERCH_DAEMON === "0" ? {} : {
+  fast: new OsaDaemon({ prelude: JXA_PRELUDE }),
+  slow: new OsaDaemon({ prelude: JXA_PRELUDE }),
+};
+
+export async function jxa(script, { timeout = JXA_DEFAULT_TIMEOUT, lane = "fast", daemons = DAEMONS, oneShot = jxaOneShot } = {}) {
+  const d = daemons[lane] || daemons.fast;
+  if (d) {
+    try { return await d.run(script, timeout); }
+    catch (e) {
+      if (!e.notSent) throw new Error(translatePermissionError(e.message) || e.message);
     }
   }
-  return jxaOneShot(script, { timeout });
+  return oneShot(script, { timeout });
 }
 
-async function jxaOneShot(script, options = {}) {
-  const { timeout = JXA_DEFAULT_TIMEOUT } = options;
+export function formatOsaFailure(e, timeout) {
+  if (e.killed) return ERR.timeout(timeout);
+  const msg = String(e.stderr || e.message || e).trim();
+  const translated = translatePermissionError(msg);
+  if (translated) return translated;
+  if (e.code === 1 && !msg) return ERR.automation;
+  // "execution error: Error: <msg> (-2700)" → "<msg>"
+  return msg.replace(/^.*?execution error: (?:Error: )?/s, "").replace(/ \(-?\d+\)$/, "");
+}
+
+async function jxaOneShot(script, { timeout = JXA_DEFAULT_TIMEOUT } = {}) {
   try {
-    const { stdout } = await exec("osascript", ["-l", "JavaScript", "-e", script], { maxBuffer: 32 << 20, timeout });
+    const { stdout } = await exec("osascript", ["-l", "JavaScript", "-e", JXA_PRELUDE + ";\n" + script], { maxBuffer: 32 << 20, timeout });
     return stdout.replace(/\n$/, "");
   } catch (e) {
-    // execFile sets `killed: true` + `signal: 'SIGTERM'` (or whatever was sent) on timeout.
-    // We surface this as a clean error so a hung browser shows up in seconds instead of
-    // waiting the default 2-min Apple Events `-1712`.
-    if (e.killed && (e.signal === "SIGTERM" || e.code === null)) {
-      throw new Error(
-        `osascript timed out after ${timeout}ms. Target tab is unreachable — likely a stale ` +
-        `tabIndex, a hung page, or (Arc) a background tab the bridge can't reach. Run list_tabs ` +
-        `to recheck the tabIndex, then activate_tab on Arc background tabs before retrying. ` +
-        `(Real permission errors surface in <1s with their own message, so a 30s timeout is not ` +
-        `a permission issue.)`
-      );
-    }
-    const msg = String(e.stderr || e.message || e);
-    const translated = translatePermissionError(msg);
-    if (translated) throw new Error(translated);
-    if (e.code === 1 && !msg.trim()) {
-      throw new Error(
-        "Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, " +
-        "then tick the target browser under the controlling app (Claude Code / Terminal / iTerm)."
-      );
-    }
-    throw new Error(msg.trim());
+    throw new Error(formatOsaFailure(e, timeout));
   }
 }
 
@@ -321,7 +309,7 @@ function focusTabFragment() {
 }
 
 function buildEvalWrapper(userScript) {
-  return `(function(){ try { var __r = (function(){ ${userScript} })(); return JSON.stringify(__r === undefined ? null : __r); } catch(e) { return JSON.stringify({__perch_error: (e && e.message) ? e.message : String(e)}); } })()`;
+  return `(function(){ try { var __r = (function(){ ${userScript} })(); return JSON.stringify(__r === undefined ? null : __r); } catch(e) { return JSON.stringify({__perch_error: (e && e.message) ? e.message : String(e), __perch_error_name: (e && e.name) || 'Error', __perch_error_stack_head: (e && e.stack) ? String(e.stack).split('\\n').slice(0, 2).join(' | ').slice(0, 300) : null}); } })()`;
 }
 
 // Returns a JXA fragment that binds `geom`, `pid`, and `windowNumber` in scope.
@@ -489,7 +477,7 @@ async function evalJs(script, target, options = {}) {
           var __r = await (async () => { ${script} })();
           window[${JSON.stringify(key)}] = { ok: true, value: __r === undefined ? null : __r };
         } catch(e) {
-          window[${JSON.stringify(key)}] = { ok: false, error: (e && e.message) ? e.message : String(e) };
+          window[${JSON.stringify(key)}] = { ok: false, error: (e && e.message) ? e.message : String(e), name: (e && e.name) || 'Error', stack: (e && e.stack) ? String(e.stack).split('\\n').slice(0, 2).join(' | ').slice(0, 300) : null };
         }
       })();
     })()`;
@@ -531,12 +519,12 @@ async function evalJs(script, target, options = {}) {
       }
       outcome;
     `;
-    const raw = await jxa(src, { timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+    const raw = await jxa(src, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
     let parsed;
     try { parsed = JSON.parse(raw); } catch { return raw; }
     if (parsed && parsed.__perch_arc_bg) throw new Error("Arc cannot eval_js on background tabs; call activate_tab on this target first, or operate on Arc's current tab.");
     if (parsed && parsed.__perch_timeout) throw new Error(`eval_js (awaitPromise) timed out after ${timeout}ms`);
-    if (parsed && parsed.ok === false) return { __perch_error: parsed.error };
+    if (parsed && parsed.ok === false) return { __perch_error: parsed.error, __perch_error_name: parsed.name || 'Error', __perch_error_stack_head: parsed.stack || null };
     return parsed && Object.prototype.hasOwnProperty.call(parsed, "value") ? parsed.value : parsed;
   }
 
@@ -619,7 +607,7 @@ async function wait(args = {}, target) {
     }
     outcome;
   `;
-  const out = JSON.parse(await jxa(src, { timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD }));
+  const out = JSON.parse(await jxa(src, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD }));
   if (out.arc_background) throw new Error("Arc cannot wait on background tabs; call activate_tab on this target first, or operate on Arc's current tab.");
   if (!out.ok) throw new Error(`wait timed out after ${timeout}ms`);
   if (!expression) return { ok: true, waited: out.waited };
@@ -795,7 +783,32 @@ async function screenshot(args = {}) {
 
 async function pageState(target) {
   return evalJs(`
-    return {
+    function vis(el) {
+      if (!el || el.hidden) return false;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+      const r = el.getBoundingClientRect();
+      return !(r.width === 0 && r.height === 0);
+    }
+    function nm(el) {
+      const al = el.getAttribute && el.getAttribute('aria-label');
+      if (al) return al.trim().slice(0, 80);
+      const lb = el.getAttribute && el.getAttribute('aria-labelledby');
+      if (lb) { const t = lb.split(/\\s+/).map(id => { const n = document.getElementById(id); return n ? n.textContent : ''; }).join(' ').trim(); if (t) return t.slice(0, 80); }
+      if (el.labels && el.labels[0]) return (el.labels[0].textContent || '').trim().slice(0, 80);
+      if (el.placeholder) return el.placeholder.trim().slice(0, 80);
+      const tt = el.getAttribute && (el.getAttribute('title') || el.getAttribute('name'));
+      return (tt || '').trim().slice(0, 80);
+    }
+    function role(el) {
+      const ex = el.getAttribute && el.getAttribute('role'); if (ex) return ex;
+      if (el.isContentEditable) return 'textbox';
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'textarea' || tag === 'input') return 'textbox';
+      return tag;
+    }
+    const INPUT_SKIP = ['hidden','checkbox','radio','file','submit','button','image','reset','range','color'];
+    const out = {
       url: location.href,
       title: document.title,
       readyState: document.readyState,
@@ -804,14 +817,40 @@ async function pageState(target) {
       doc: { w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight },
       meta: (function() {
         const keep = ['description', 'og:title', 'og:description', 'og:image'];
-        const out = {};
+        const o = {};
         document.querySelectorAll('meta').forEach(m => {
           const k = m.getAttribute('name') || m.getAttribute('property');
-          if (k && keep.indexOf(k) >= 0 && !(k in out)) out[k] = m.getAttribute('content');
+          if (k && keep.indexOf(k) >= 0 && !(k in o)) o[k] = m.getAttribute('content');
         });
-        return out;
+        return o;
       })()
     };
+    const active = document.activeElement;
+    if (active && active !== document.body) out.focused = { tag: active.tagName.toLowerCase(), role: role(active), name: nm(active) };
+    const dialogs = Array.from(document.querySelectorAll('[role=dialog], [aria-modal=true], dialog[open]')).filter(vis).slice(0, 20).map(d => ({ name: nm(d) }));
+    if (dialogs.length) out.dialogs = dialogs;
+    const editors = Array.from(document.querySelectorAll('textarea, input, [contenteditable]')).filter(el => {
+      if (el.tagName === 'INPUT') return INPUT_SKIP.indexOf((el.type || 'text').toLowerCase()) < 0 && vis(el);
+      if (el.tagName === 'TEXTAREA') return vis(el);
+      return el.isContentEditable && vis(el);
+    }).slice(0, 20).map(el => {
+      const val = (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') ? (el.value || '') : (el.innerText || el.textContent || '');
+      return { role: role(el), name: nm(el), empty: !val.trim(), value: val.slice(0, 80), focused: el === active };
+    });
+    if (editors.length) out.editors = editors;
+    const openControls = Array.from(document.querySelectorAll('[aria-expanded=true], [role=listbox]')).filter(vis).slice(0, 20).map(el => ({
+      role: role(el), name: nm(el), optionCount: el.querySelectorAll ? el.querySelectorAll('[role=option]').length : 0
+    }));
+    if (openControls.length) out.openControls = openControls;
+    const forms = Array.from(document.querySelectorAll('form')).filter(vis);
+    if (forms.length) {
+      let big = forms[0], bigN = -1;
+      forms.forEach(f => { const n = f.querySelectorAll('input, textarea, select, [contenteditable=true]').length; if (n > bigN) { bigN = n; big = f; } });
+      const fields = Array.from(big.querySelectorAll('input, textarea, select, [contenteditable=true]')).filter(el => !(el.tagName === 'INPUT' && INPUT_SKIP.indexOf((el.type || 'text').toLowerCase()) >= 0));
+      const requiredEmpty = fields.filter(el => (el.required || (el.getAttribute && el.getAttribute('aria-required') === 'true')) && !((el.value || el.textContent || '').trim())).length;
+      out.form = { fields: fields.length, requiredEmpty: requiredEmpty };
+    }
+    return out;
   `, target);
 }
 
@@ -1293,6 +1332,31 @@ async function fill(args = {}) {
     // some structural transform shrunk the visible text.
     const richMinLen = Math.max(50, expectedLen);
 
+    function fVisible(el) {
+      if (!el || el.hidden) return false;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+      const r = el.getBoundingClientRect();
+      return !(r.width === 0 && r.height === 0);
+    }
+    function fRole(el) {
+      const ex = el.getAttribute && el.getAttribute('role'); if (ex) return ex;
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'textarea' || tag === 'input') return 'textbox';
+      if (el.isContentEditable) return 'textbox';
+      return 'generic';
+    }
+    function fName(el) {
+      return ((el.labels && el.labels[0] && el.labels[0].textContent) || (el.getAttribute && el.getAttribute('aria-label')) || el.placeholder || el.name || '').trim().replace(/\\s+/g, ' ').slice(0, 120);
+    }
+    function fIdentity(el, matchedBy) {
+      return { tag: el.tagName.toLowerCase(), role: fRole(el), name: fName(el), id: el.id || '', visible: fVisible(el), matchedBy: matchedBy };
+    }
+    function fReadback(el) {
+      const raw = (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') ? (el.value || '') : (el.innerText || el.textContent || '');
+      return raw.slice(0, 120);
+    }
+
     function setPlain(el) {
       const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
@@ -1302,7 +1366,18 @@ async function fill(args = {}) {
     }
     function setRich(root) {
       root.focus();
-      root.innerHTML = text.split(/\\n\\n+/).map(p => '<p>' + p.replace(/\\n/g, '<br>') + '</p>').join('');
+      // Build nodes rather than assigning innerHTML: an HTML-string sink trips
+      // Trusted Types (require-trusted-types-for 'script') on Gmail/strict-CSP pages.
+      while (root.firstChild) root.removeChild(root.firstChild);
+      text.split(/\\n\\n+/).forEach(para => {
+        const block = document.createElement('div');
+        para.split('\\n').forEach((line, i) => {
+          if (i) block.appendChild(document.createElement('br'));
+          block.appendChild(document.createTextNode(line));
+        });
+        if (!block.childNodes.length) block.appendChild(document.createElement('br'));
+        root.appendChild(block);
+      });
       ['input', 'change', 'blur'].forEach(t => root.dispatchEvent(new InputEvent(t, { bubbles: true, inputType: 'insertText', data: text })));
       return (root.innerText || root.textContent || '').trim().length >= richMinLen;
     }
@@ -1312,10 +1387,10 @@ async function fill(args = {}) {
     function tryFill(el, kindLabel) {
       if (!el) return null;
       if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
-        if (setPlain(el)) return { ok: true, kind: 'plain_' + kindLabel, len: el.value.length };
+        if (setPlain(el)) return { ok: true, kind: 'plain_' + kindLabel, len: el.value.length, matched: fIdentity(el, kindLabel), value: fReadback(el) };
       }
       if (isRich(el)) {
-        if (setRich(el)) return { ok: true, kind: 'rich_' + kindLabel, len: (el.innerText || '').length };
+        if (setRich(el)) return { ok: true, kind: 'rich_' + kindLabel, host: el.className || el.tagName, len: (el.innerText || '').length, matched: fIdentity(el, kindLabel), value: fReadback(el) };
       }
       return null;
     }
@@ -1329,28 +1404,60 @@ async function fill(args = {}) {
     }
 
     if (selector) {
+      const hits = Array.from(document.querySelectorAll(selector)).filter(fVisible);
       const r = tryFill(document.querySelector(selector), 'selector');
-      if (r) return r;
+      if (r) {
+        if (hits.length > 1) {
+          r.ambiguous = true;
+          r.candidates = hits.slice(0, 3).map(e => ({ tag: e.tagName.toLowerCase(), role: fRole(e), name: fName(e), visible: fVisible(e) }));
+        }
+        return r;
+      }
     }
 
     if (labelRe) {
-      const labelOf = (el) => (el.labels?.[0]?.textContent || el.getAttribute('aria-label') || el.placeholder || el.name || '').trim();
-      const ta = Array.from(document.querySelectorAll('textarea')).find(el => labelRe.test(labelOf(el)));
-      if (ta && setPlain(ta)) return { ok: true, kind: 'plain_label', len: ta.value.length };
-
-      // iframe editors (TinyMCE) expose their root via contentDocument, not the iframe element itself.
-      const editors = Array.from(document.querySelectorAll('[contenteditable=true], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe'));
-      for (const ed of editors) {
-        const root = ed.tagName === 'IFRAME' ? (ed.contentDocument && ed.contentDocument.body) : ed;
-        if (!root) continue;
-        // Walk up to a labeled wrapper so we don't drop the text into the wrong contenteditable.
-        let scope = ed;
-        for (let i = 0; i < 6 && scope; i++) {
-          if (labelRe.test(scope.textContent || '')) break;
-          scope = scope.parentElement;
+      // Unified, ranked candidate search across every editable surface (textarea, text
+      // input, contenteditable/rich editor) so a visible field outranks a hidden one and
+      // we never silently drop text into the wrong element.
+      const INPUT_SKIP = ['hidden', 'checkbox', 'radio', 'file', 'submit', 'button', 'image', 'reset', 'range', 'color'];
+      const roots = [];
+      document.querySelectorAll('textarea, input, [contenteditable=true], [contenteditable=""], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe').forEach(el => {
+        if (el.tagName === 'INPUT' && INPUT_SKIP.indexOf((el.type || 'text').toLowerCase()) >= 0) return;
+        const root = el.tagName === 'IFRAME' ? (el.contentDocument && el.contentDocument.body) : el;
+        if (root) roots.push({ el: el, root: root });
+      });
+      const strongLabel = (el) => ((el.labels && el.labels[0] && el.labels[0].textContent) || (el.getAttribute && el.getAttribute('aria-label')) || '').trim();
+      const weakLabel = (el) => (el.placeholder || el.name || (el.getAttribute && el.getAttribute('data-tooltip')) || el.title || '').trim();
+      const scored = [];
+      for (const cand of roots) {
+        const el = cand.el;
+        let s = 0;
+        if (labelRe.test(strongLabel(el))) s += 100;
+        else if (labelRe.test(weakLabel(el))) s += 40;
+        else {
+          // Loose fallback: a labeled wrapper within 6 ancestors (old behavior, low weight).
+          let scope = el, hit = false;
+          for (let i = 0; i < 6 && scope; i++) { if (labelRe.test(scope.textContent || '')) { hit = true; break; } scope = scope.parentElement; }
+          if (!hit) continue;
+          s += 10;
         }
-        if (!scope || !labelRe.test(scope.textContent || '')) continue;
-        if (setRich(root)) return { ok: true, kind: 'rich_label', host: ed.className || ed.tagName, len: (root.innerText || '').length };
+        if (fVisible(el)) s += 20;
+        if (!el.disabled && !el.readOnly) s += 10;
+        scored.push({ el: el, root: cand.root, s: s });
+      }
+      scored.sort((a, b) => b.s - a.s);
+      if (scored.length) {
+        const best = scored[0];
+        const target = (best.el.tagName === 'TEXTAREA' || best.el.tagName === 'INPUT') ? best.el : best.root;
+        const r = tryFill(target, 'label');
+        if (r) {
+          const rivals = scored.filter(c => (best.s - c.s) <= 10 && c.s >= 50);
+          if (rivals.length > 1) {
+            r.ambiguous = true;
+            r.candidates = rivals.slice(0, 3).map(c => ({ tag: c.el.tagName.toLowerCase(), role: fRole(c.el), name: fName(c.el), visible: fVisible(c.el) }));
+          }
+          return r;
+        }
       }
     }
 
@@ -1476,6 +1583,81 @@ async function trustedFill({ ref, selector, label_pattern, text, target }) {
 }
 
 // ---- MCP plumbing ----
+
+// Pick an option from a native <select>, a react-select, or an ARIA combobox/listbox in
+// one call: resolve the control, open it, filter if searchable, click the matching option,
+// and read back what got selected. Uses the async eval path so it can await the option list.
+async function select(args = {}) {
+  const { ref = null, selector = null, label_pattern = null, text = null, target } = args;
+  if (text == null) throw new Error("select requires `text` (the option to choose)");
+  if (!ref && !selector && !label_pattern) throw new Error("select requires `ref`, `selector`, or `label_pattern`");
+  const script = `
+    const refId = ${JSON.stringify(ref)};
+    const sel = ${JSON.stringify(selector)};
+    const labelRe = ${label_pattern ? `new RegExp(${JSON.stringify(label_pattern)}, 'i')` : "null"};
+    const want = ${JSON.stringify(String(text))};
+    const d = ms => new Promise(r => setTimeout(r, ms));
+    const norm = s => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    const wantN = norm(want);
+    function vis(el) {
+      if (!el || el.hidden) return false;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+      const r = el.getBoundingClientRect();
+      return !(r.width === 0 && r.height === 0);
+    }
+    function nm(el) {
+      return ((el.labels && el.labels[0] && el.labels[0].textContent) || (el.getAttribute && el.getAttribute('aria-label')) || (el.getAttribute && el.getAttribute('placeholder')) || el.name || '').trim().slice(0, 120);
+    }
+    function ident(el) { return { tag: el.tagName.toLowerCase(), role: (el.getAttribute && el.getAttribute('role')) || el.tagName.toLowerCase(), name: nm(el), visible: vis(el) }; }
+
+    let ctl = null;
+    if (refId) ctl = (window.__perch_refs || {})[refId];
+    else if (sel) ctl = document.querySelector(sel);
+    else if (labelRe) {
+      const cands = Array.from(document.querySelectorAll('select, [role=combobox], [aria-haspopup=listbox], [role=listbox]'));
+      ctl = cands.filter(vis).find(el => labelRe.test(nm(el)) || labelRe.test((el.closest('label') && el.closest('label').textContent) || '')) || cands.find(el => labelRe.test(nm(el)));
+    }
+    if (!ctl) return refId ? { __perch_ref_miss: true, ref: refId } : { ok: false, error: 'no select/combobox matched' };
+
+    // Native <select>
+    const nativeSel = ctl.tagName === 'SELECT' ? ctl : (ctl.querySelector && ctl.querySelector('select'));
+    if (nativeSel && nativeSel.tagName === 'SELECT') {
+      const opts = Array.from(nativeSel.options);
+      const opt = opts.find(o => norm(o.text) === wantN || norm(o.value) === wantN) || opts.find(o => norm(o.text).indexOf(wantN) >= 0);
+      if (!opt) return { ok: false, error: 'no matching option', candidates: opts.slice(0, 8).map(o => o.text.trim()) };
+      nativeSel.value = opt.value;
+      ['input', 'change'].forEach(t => nativeSel.dispatchEvent(new Event(t, { bubbles: true })));
+      return { ok: true, selected: opt.text.trim(), matched: ident(nativeSel) };
+    }
+
+    // Custom combobox / react-select / ARIA listbox
+    ctl.focus && ctl.focus();
+    ctl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    ctl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    ctl.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40, bubbles: true }));
+    const input = ctl.tagName === 'INPUT' ? ctl : (ctl.querySelector && ctl.querySelector('input'));
+    if (input) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(input, want);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    let opt = null;
+    for (let attempt = 0; attempt < 2 && !opt; attempt++) {
+      await d(attempt === 0 ? 400 : 300);
+      const opts = Array.from(document.querySelectorAll('[role=option]')).filter(vis);
+      opt = opts.find(o => norm(o.textContent) === wantN) || opts.find(o => norm(o.textContent).indexOf(wantN) >= 0);
+      if (!opt && attempt === 1) return { ok: false, error: 'no matching option after open', candidates: opts.slice(0, 8).map(o => (o.textContent || '').trim()) };
+    }
+    opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    opt.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    opt.click();
+    await d(200);
+    const shown = (ctl.innerText || ctl.textContent || (input && input.value) || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+    return { ok: true, selected: (opt.textContent || '').trim().slice(0, 80), matched: ident(ctl), value: shown };
+  `;
+  return await evalJs(script, target, { awaitPromise: true });
+}
 
 const TARGET_SCHEMA = {
   type: "object",
@@ -1694,56 +1876,79 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "select",
+    description: "Choose an option from a native <select>, a react-select, or an ARIA combobox/listbox in one call: resolves the control, opens it, filters if searchable, clicks the matching option, and reads back what got selected. Target priority: `ref` > `selector` > `label_pattern`. Returns { ok, selected, matched, value } or { ok:false, error, candidates }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The option text to choose (case-insensitive; exact match preferred, else substring)." },
+        ref: { type: "string", description: "Ref from a prior accessibility_snapshot." },
+        selector: { type: "string", description: "CSS selector for the select/combobox control." },
+        label_pattern: { type: "string", description: "Case-insensitive regex against the control's label/aria-label." },
+        target: TARGET_SCHEMA,
+      },
+      required: ["text"],
+    },
+  },
 ];
 
-const server = new Server(
-  { name: "perch", version: "0.1.0" },
-  { capabilities: { tools: {} } }
-);
+export const HANDLERS = {
+  list_tabs:     (a) => listTabs(a),
+  new_tab:       (a) => newTab(a.url, a.app),
+  activate_tab:  (a) => activateTab(a.target),
+  navigate:      (a) => navigate(a.url, a.target, a.wait !== false),
+  eval_js:       async (a) => {
+    let script = a.script;
+    if (a.script_path) {
+      if (script) throw new Error("eval_js: pass `script` OR `script_path`, not both");
+      ({ data: script } = await readUserFile(a.script_path, "utf8"));
+    }
+    if (!script) throw new Error("eval_js requires `script` or `script_path`");
+    return evalJs(script, a.target, { awaitPromise: a.awaitPromise, timeout: a.timeout });
+  },
+  wait:          (a) => wait(a, a.target),
+  screenshot:    (a) => screenshot(a),
+  page_state:    (a) => pageState(a.target),
+  get_text:      (a) => getText(a),
+  get_html:      (a) => getHtml(a),
+  accessibility_snapshot: (a) => accessibilitySnapshot(a),
+  console_capture:        (a) => consoleCapture(a),
+  notify:        (a) => notify(a),
+  file_upload:   (a) => fileUpload(a),
+  click:         (a) => click(a),
+  fill:          (a) => fill(a),
+  select:        (a) => select(a),
+};
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+export function formatResult(result) {
+  if (result && result.__image) {
+    const content = [{ type: "image", data: result.data, mimeType: result.mimeType }];
+    if (result.meta) content.push({ type: "text", text: JSON.stringify(result.meta) });
+    return { content };
+  }
+  if (result && typeof result === "object" && result.__perch_error !== undefined) {
+    return { content: [{ type: "text", text: JSON.stringify(result) }], isError: true };
+  }
+  return { content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }] };
+}
 
-server.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const { name, arguments: args = {} } = req.params;
+export async function handleCall(name, args = {}) {
+  const handler = Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : null;
   try {
-    let result;
-    switch (name) {
-      case "list_tabs":     result = await listTabs(args); break;
-      case "new_tab":       result = await newTab(args.url, args.app); break;
-      case "activate_tab":  result = await activateTab(args.target); break;
-      case "navigate":      result = await navigate(args.url, args.target, args.wait !== false); break;
-      case "eval_js": {
-        let script = args.script;
-        if (args.script_path) {
-          if (script) throw new Error("eval_js: pass `script` OR `script_path`, not both");
-          ({ data: script } = await readUserFile(args.script_path, "utf8"));
-        }
-        if (!script) throw new Error("eval_js requires `script` or `script_path`");
-        result = await evalJs(script, args.target, { awaitPromise: args.awaitPromise, timeout: args.timeout });
-        break;
-      }
-      case "wait":          result = await wait(args, args.target); break;
-      case "screenshot":    result = await screenshot(args); break;
-      case "page_state":    result = await pageState(args.target); break;
-      case "get_text":      result = await getText(args); break;
-      case "get_html":      result = await getHtml(args); break;
-      case "accessibility_snapshot": result = await accessibilitySnapshot(args); break;
-      case "console_capture":        result = await consoleCapture(args); break;
-      case "notify":        result = await notify(args); break;
-      case "file_upload":   result = await fileUpload(args); break;
-      case "click":         result = await click(args); break;
-      case "fill":          result = await fill(args); break;
-      default: throw new Error(`unknown tool: ${name}`);
-    }
-    if (result && result.__image) {
-      const content = [{ type: "image", data: result.data, mimeType: result.mimeType }];
-      if (result.meta) content.push({ type: "text", text: JSON.stringify(result.meta) });
-      return { content };
-    }
-    return { content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }] };
+    if (!handler) throw new Error(`unknown tool: ${name}`);
+    return formatResult(await handler(args));
   } catch (e) {
     return { content: [{ type: "text", text: `error: ${e.message}` }], isError: true };
   }
-});
+}
 
-await server.connect(new StdioServerTransport());
+export { TOOLS };
+
+// Start only when run as the entry point (realpath: npm's bin is a symlink), so tests can import.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const server = new Server({ name: "perch", version: "0.1.0" }, { capabilities: { tools: {} } });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+  server.setRequestHandler(CallToolRequestSchema, (req) => handleCall(req.params.name, req.params.arguments || {}));
+  await server.connect(new StdioServerTransport());
+}

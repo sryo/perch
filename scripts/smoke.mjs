@@ -120,6 +120,76 @@ try {
     for (const k of ["w", "h"]) if (typeof meta.image?.[k] !== "number") throw new Error(`image.${k} missing in ${metaText}`);
     return `window ${meta.window.w}x${meta.window.h}pt, image ${meta.image.w}x${meta.image.h}px`;
   });
+
+  // --- status-first changes (A–E). Run on a disposable scratch tab so real tabs
+  // are never navigated. Prefer a Chrome-family browser (Arc restricts bg-tab eval).
+  const chromeTab = Array.isArray(tabs) && tabs.find((t) => /chrome|chromium/i.test(t.app));
+  let scratch = null;
+  const body = "Hi there, this is a multi-line reply body.\nSecond line.\n\nA second paragraph that makes the text comfortably longer than fifty characters.";
+  // data: navigation via AppleScript doesn't load content in Chrome, so build test DOM
+  // in-page with eval_js instead (about:blank has no Trusted Types, so innerHTML is fine here).
+  const setDom = (html) => call("eval_js", { script: `document.body.innerHTML = ${JSON.stringify(html)}; return document.body.children.length;`, target: scratch });
+
+  await check("open scratch tab for status-first tests", async () => {
+    if (!haveBrowser) return skip("no browser running");
+    if (!chromeTab) return skip("no chrome-family browser for a safe scratch tab");
+    const out = JSON.parse(text(await call("new_tab", { app: chromeTab.app, url: "about:blank" })));
+    scratch = { app: out.app, windowId: out.windowId, tabIndex: out.tabIndex };
+    return `scratch in ${out.app} @${out.tabIndex}`;
+  });
+
+  await check("eval_js typed error sets isError + name", async () => {
+    if (!scratch) return skip("no scratch tab");
+    const res = await call("eval_js", { script: "throw new TypeError('boom')", target: scratch });
+    if (res.isError !== true) throw new Error(`isError not set: ${JSON.stringify(res).slice(0, 120)}`);
+    const o = JSON.parse(text(res));
+    if (o.__perch_error_name !== "TypeError") throw new Error(`name=${o.__perch_error_name}`);
+    if (!/boom/.test(o.__perch_error || "")) throw new Error("message missing");
+    return "isError + TypeError";
+  });
+
+  await check("fill skips hidden textarea, hits visible contenteditable", async () => {
+    if (!scratch) return skip("no scratch tab");
+    await setDom(`<textarea name="bodyHtml" style="display:none"></textarea><div contenteditable aria-label="Message Body"></div>`);
+    const o = JSON.parse(text(await call("fill", { label_pattern: "body", text: body, target: scratch })));
+    if (!o.ok) throw new Error(`not ok: ${JSON.stringify(o)}`);
+    if (!o.matched || o.matched.tag !== "div") throw new Error(`matched=${JSON.stringify(o.matched)}`);
+    if (!o.matched.visible) throw new Error("matched not visible");
+    if (!/^Hi there/.test(o.value || "")) throw new Error(`value=${JSON.stringify(o.value)}`);
+    return `matched ${o.matched.tag} "${o.matched.name}"`;
+  });
+
+  await check("page_state reports an open, empty editor", async () => {
+    if (!scratch) return skip("no scratch tab");
+    await setDom(`<div contenteditable aria-label="Reply"></div>`);
+    const o = JSON.parse(text(await call("page_state", { target: scratch })));
+    if (!Array.isArray(o.editors) || !o.editors.some((e) => e.name === "Reply" && e.empty)) throw new Error(`editors=${JSON.stringify(o.editors)}`);
+    return `${o.editors.length} editor(s)`;
+  });
+
+  await check("select picks from a native <select>", async () => {
+    if (!scratch) return skip("no scratch tab");
+    await setDom(`<label>Country <select><option>Pick</option><option>Argentina</option><option>Brazil</option></select></label>`);
+    const o = JSON.parse(text(await call("select", { label_pattern: "country", text: "Argentina", target: scratch })));
+    if (!o.ok || o.selected !== "Argentina") throw new Error(`select result ${JSON.stringify(o)}`);
+    return `selected ${o.selected}`;
+  });
+
+  await check("TT-safe rich fill under Trusted Types", async () => {
+    if (!haveBrowser || !chromeTab) return skip("no chrome-family browser");
+    // Trusted Types only engages when the page LOADS with the CSP, so set it at tab creation.
+    const ttHtml = `<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"><div contenteditable aria-label="Body"></div>`;
+    const out = JSON.parse(text(await call("new_tab", { app: chromeTab.app, url: "data:text/html," + encodeURIComponent(ttHtml) })));
+    const tt = { app: out.app, windowId: out.windowId, tabIndex: out.tabIndex };
+    const present = text(await call("eval_js", { script: "return !!document.querySelector('[contenteditable]')", target: tt }));
+    if (present !== "true") { try { await call("eval_js", { script: "location.href='about:blank'; return true", target: tt }); } catch { /* ignore */ } return skip("browser did not load data: URL for CSP test"); }
+    const o = JSON.parse(text(await call("fill", { label_pattern: "body", text: body, target: tt })));
+    try { await call("eval_js", { script: "location.href='about:blank'; return true", target: tt }); } catch { /* ignore */ }
+    if (!o.ok) throw new Error(`not ok under Trusted Types: ${JSON.stringify(o)}`);
+    return `ok under TT, kind ${o.kind}`;
+  });
+
+  if (scratch) { try { await call("eval_js", { script: "document.body.innerHTML=''; return true", target: scratch }); } catch { /* leave clean */ } }
 } catch (e) {
   report("FAIL", "harness", e.message);
 } finally {
