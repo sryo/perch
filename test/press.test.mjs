@@ -90,6 +90,16 @@ test("Escape reaches a document keydown listener with key, code and keyCode; key
   assert.deepEqual(seen, [["keydown", "Escape", "Escape", 27, true, true], ["keyup", "Escape", "Escape", 27, true, true]]);
 });
 
+test("keyCode and which go in the event init, the only route to handlers in the page's own world", () => {
+  // Chrome runs perch in an isolated world: a property defined on the event there is invisible to the page.
+  const w = page(`<input id=q>`);
+  const inits = [];
+  const Real = w.KeyboardEvent;
+  w.KeyboardEvent = class extends Real { constructor(type, init) { inits.push([type, init.keyCode, init.which]); super(type, init); } };
+  press(w, "Escape", { selector: "#q" });
+  assert.deepEqual(inits, [["keydown", 27, 27], ["keyup", 27, 27]]);
+});
+
 test("printable keys fire keypress; chords with cmd or ctrl do not", () => {
   const w = page(`<input id=q>`);
   const types = [];

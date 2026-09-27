@@ -1854,10 +1854,13 @@ if (r.out) return r.out;
 if (r.el) r.el.focus();
 const el = document.activeElement || document.body;
 function send(type, t) {
-  const e = new KeyboardEvent(type, { key: A.key, code: A.code, ctrlKey: A.ctrlKey, shiftKey: A.shiftKey, altKey: A.altKey, metaKey: A.metaKey, bubbles: true, cancelable: true, composed: true });
-  // The constructor leaves the legacy keyCode/which at 0; older handlers still read them.
-  Object.defineProperty(e, "keyCode", { get: function () { return A.keyCode; } });
-  Object.defineProperty(e, "which", { get: function () { return A.keyCode; } });
+  // Older handlers read the legacy keyCode/which. Chrome and Safari take them from the init, which
+  // reaches the page's world; a property defined here would not, so it is only a fallback.
+  const e = new KeyboardEvent(type, { key: A.key, code: A.code, keyCode: A.keyCode, which: A.keyCode, ctrlKey: A.ctrlKey, shiftKey: A.shiftKey, altKey: A.altKey, metaKey: A.metaKey, bubbles: true, cancelable: true, composed: true });
+  if (e.keyCode !== A.keyCode) {
+    Object.defineProperty(e, "keyCode", { get: function () { return A.keyCode; } });
+    Object.defineProperty(e, "which", { get: function () { return A.keyCode; } });
+  }
   return !t.dispatchEvent(e);
 }
 let prevented = send("keydown", el);

@@ -82,3 +82,14 @@ lives in AGENTS.md.
   apps are gone. Rejected: auto-activating a tab on `tab_not_visible` (goal 1).
 - **One-call workflows (2026-09).** `fill {fields}` and `click {readback}` do
   in one call what took five and two (goals 2 and 3).
+- **Reach and keys (2026-09): 15 tools to 17, budget 9000 to 9400.** New
+  `close_tab {tabId}` (a required handle, so omission can never close the
+  user's tab; never the window's last tab) and `press {key}` (synthetic keys
+  with Enter/Space/Tab defaults emulated, background-friendly). Folded in
+  rather than added: `click {hover}`, `console_capture` mode `network`
+  (Resource Timing, reading only), and open shadow roots plus a `query` regex
+  in `accessibility_snapshot`, perch's answer to a `find` tool (goals 3 and 4).
+  Deferred: fetch/XHR patching (close to interception), trusted press and
+  hover, drag, resize, dialogs and cross-origin iframes (each waits for a lab
+  result), GIF recording (no encoder without a dependency), scroll (`eval_js`
+  covers it) and same-origin iframe descent (next use of the shadow walker).

@@ -7,7 +7,6 @@
 // (a created tab is closed afterwards) and may focus the browser. Non-zero exit
 // on any FAIL.
 
-import { execFileSync } from "node:child_process";
 import { writeFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,7 +72,8 @@ try {
   // Page-mutating checks use a scratch about:blank tab. Some browsers run page JS
   // only in the tab its window shows (tab_not_visible); activating it takes focus,
   // so only --with-tab-creation does that. Never create a tab in the default run.
-  const app = appArg || active?.app;
+  // Rows name the app in full ("Google Chrome Canary"), so compare against a row, not --app.
+  const app = active?.app || appArg;
   let scratch = null;
   const created = [];
   const setDom = (html) => call("eval_js", { script: `document.body.innerHTML = ${JSON.stringify(html)}; return 1`, target: scratch });
@@ -88,14 +88,7 @@ try {
     expect(!again.isError, text(again));
     return null;
   }
-  // perch has no close-tab tool, so close a created tab straight through AppleScript.
-  function closeTab(t) {
-    const [key, raw] = [t.tabId.slice(0, t.tabId.indexOf(":")), t.tabId.slice(t.tabId.indexOf(":") + 1)];
-    const js = key === "safari"
-      ? `const w=Application(${JSON.stringify(t.app)}).windows.byId(${JSON.stringify(Number(raw.split(".")[0]))}); w.tabs[${Number(raw.split(".")[1])}].close()`
-      : `const a=Application(${JSON.stringify(t.app)}); for (let i=0;i<a.windows.length;i++){ const w=a.windows[i]; if (w.tabs.id().map(String).indexOf(${JSON.stringify(raw)})>=0){ w.tabs.byId(${JSON.stringify(raw)}).close(); break; } }`;
-    try { execFileSync("osascript", ["-l", "JavaScript", "-e", js]); return true; } catch { return false; }
-  }
+  const closeTab = (t) => call("close_tab", { tabId: t.tabId }).catch(() => {});
 
   await check("scratch tab", async () => {
     if (!haveBrowser) return skip("no browser running");
@@ -175,7 +168,7 @@ try {
     // Some handles follow the URL; re-read it once the page has loaded.
     const row = (await json("list_tabs", { app, urlContains: "data:text/html" })).tabs.find((t) => t.tabId.split(":")[0] === made.tabId.split(":")[0]);
     const tt = { tabId: (row || made).tabId };
-    const reset = async () => { closeTab({ app: made.app, tabId: tt.tabId }); };
+    const reset = () => closeTab(tt);
     const why = await reachable(tt).catch((e) => e.message);
     if (why) { await reset(); return skip(why); }
     const present = text(await call("eval_js", { script: "return !!document.querySelector('[contenteditable]')", target: tt }));
@@ -186,7 +179,7 @@ try {
   });
 
   if (scratch) await call("eval_js", { script: "document.body.innerHTML=''; return 1", target: scratch }).catch(() => {});
-  for (const t of created) closeTab(t);
+  for (const t of created) await closeTab(t);
 } catch (e) {
   failures++;
   console.log(`FAIL harness — ${e.message}`);
