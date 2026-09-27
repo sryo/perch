@@ -627,6 +627,20 @@ function jxaRuntime(BROWSERS) {
   // foreground a harmless mouse move at the estimate is posted and the page
   // reports where it landed; the point is corrected (twice at most). With neither,
   // the estimate is used as is and the result says so.
+  // A refusal when the screen point falls on one of the page's embedded frames,
+  // placed through Accessibility when it finds the page area, else by the page's
+  // estimate. A page that can't answer fails closed.
+  function pointOnFrame(T, a) {
+    const f = parseExec(T.t, a.frames);
+    if (!f || !f.rects) return { ok: false, error: "could not check the page for embedded frames at that point, so nothing was clicked" + (f && f.__perch_error ? ": " + f.__perch_error : "") };
+    if (!f.rects.length) return null;
+    let w = null;
+    try { w = axPageArea(T.I, f); } catch (e) {}
+    const x = w ? (a.x - w.x) / w.scale : a.x - f.ox, y = w ? (a.y - w.y) / w.scale : a.y - f.oy;
+    const hit = f.rects.some(function (r) { return x >= r[0] && x < r[2] && y >= r[1] && y < r[3]; });
+    return hit ? { ok: false, error: "point " + Math.round(a.x) + "," + Math.round(a.y) + " is on an embedded frame; reach frame controls through accessibility_snapshot {frames:true} and click an fN ref with trusted:true" } : null;
+  }
+
   function aim(T, a, tool) {
     if (!T.background) selectTab(T.t);
     visibleGuard(T.t, tool);
@@ -1375,6 +1389,8 @@ function jxaRuntime(BROWSERS) {
       let out;
       try {
         if (a.x != null) {
+          const framed = pointOnFrame(T, a);
+          if (framed) return framed;
           const bad = arm();
           if (bad && bad.ok === false) return bad;
           if (T.background) skyClick(T.I, { x: a.x, y: a.y });
@@ -2529,7 +2545,8 @@ return out;
   // point, and arm listeners: mousemove for calibration, mousedown for `hit`.
   // Estimate: screen origin + browser chrome (outer - inner, assumed left and top)
   // + the element's center. A hidden tab's screenX/outerWidth are stale, so it
-  // asks to retry until the tab is visible.
+  // asks to retry until the tab is visible. An element that is or sits under an
+  // embedded frame is refused: frame controls take an fN ref.
   trusted_probe: String.raw`
 if (document.visibilityState === "hidden") return { ok: false, retry: "hidden" };
 let el;
@@ -2547,9 +2564,14 @@ if (A.ref || A.selector) {
   if (!el) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
 }
 if (A.forFill && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, error: "fill {trusted:true} types into plain inputs/textareas only; rich editors work without trusted" };
+const FRAMED = " is or lies under an embedded frame; reach frame controls through accessibility_snapshot {frames:true} and click an fN ref with trusted:true";
+const inFrame = function (e) { return !!(e && e.closest && e.closest("iframe, frame, object, embed")); };
+if (inFrame(el)) return { ok: false, error: ident(el) + FRAMED };
 try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
 const r = el.getBoundingClientRect();
 if (!r.width || !r.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
+const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+if (inFrame(document.elementFromPoint && document.elementFromPoint(cx, cy))) return { ok: false, error: ident(el) + FRAMED };
 if (A.forFill && !A.background) { setNativeValue(el, ""); fire(el, ["input"]); }
 const prev = window.__perch_trusted;
 if (prev && prev.off) prev.off();
@@ -2559,7 +2581,6 @@ const onDown = function (e) { st.down = el === e.target || el.contains(e.target)
 window.addEventListener("mousemove", onMove, true);
 window.addEventListener("mousedown", onDown, true);
 st.off = function () { window.removeEventListener("mousemove", onMove, true); window.removeEventListener("mousedown", onDown, true); };
-const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
 return {
   ok: true,
   el: ident(el),
@@ -2570,6 +2591,17 @@ return {
   iw: window.innerWidth,
   ih: window.innerHeight,
 };`,
+
+  // A click by point has no element to probe, so it takes the viewport rects of
+  // the page's embedded frames, plus the page's own estimate of its screen origin
+  // for when Accessibility can't place the page.
+  trusted_frames: String.raw`
+const out = { iw: innerWidth, ih: innerHeight, ox: screenX + outerWidth - innerWidth, oy: screenY + outerHeight - innerHeight, rects: [] };
+deepAll("iframe, frame, object, embed").forEach(function (f) {
+  const r = f.getBoundingClientRect();
+  if (r.width && r.height) out.rects.push([r.left, r.top, r.right, r.bottom]);
+});
+return out;`,
 
   // Drains recorded mouse moves as [clientX, clientY, screenX, screenY]; null if none.
   // A.reset only clears them.
@@ -2860,6 +2892,7 @@ async function trustedClick({ ref, selector, x, y, raise, target, readback }) {
   return rt("trustedClick", {
     target, raise, x, y,
     probe: probing ? pageFn("trusted_probe", { ref, selector }) : null,
+    frames: probing ? null : pageFn("trusted_frames", {}),
     cal: probing ? pageFn("trusted_cal", {}) : null,
     calReset: probing ? pageFn("trusted_cal", { reset: true }) : null,
     check: probing ? pageFn("trusted_check", {}) : null,

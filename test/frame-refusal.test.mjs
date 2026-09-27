@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { page } from "./helpers/page.mjs";
+import { page, run } from "./helpers/page.mjs";
 
 const AREA = { x: 56, y: 157, w: 598, h: 500 };
 
@@ -31,6 +31,7 @@ function world(urls, extra = []) {
   DAEMONS.slow = w.daemon;
   w.reset();
   w.frames = frames;
+  w.dom = dom;
   return w;
 }
 
@@ -209,5 +210,106 @@ test("a row whose frame moved under a handoff frame since the snapshot is not cl
   const r = await handleCall("click", { ref: "f1", trusted: true });
   assert.equal(r.isError, true);
   assert.match(text(r), /ref/);
+  assert.deepEqual(w.posted, []);
+});
+
+// ---- trusted clicks aimed by selector or point never land on a frame element ----
+
+const FRAME_HINT = /accessibility_snapshot \{frames:true\}.*fN/;
+
+test("trusted_probe refuses a frame element as the target, arming nothing", () => {
+  for (const tag of ["iframe", "frame", "object", "embed"]) {
+    const w = page(`<${tag} id=f title="reCAPTCHA"></${tag}>`);
+    const o = run(w, "trusted_probe", { selector: "#f" });
+    assert.equal(o.ok, false, tag);
+    assert.match(o.error, FRAME_HINT, tag);
+    assert.equal(w.__perch_trusted, undefined, `${tag}: no listeners armed`);
+  }
+});
+
+test("trusted_probe refuses when a frame, or something inside one, is what sits at the aim point", () => {
+  const w = page(`<div id=cover>Verify</div><iframe id=f></iframe><object id=o><span id=inner>x</span></object>`);
+  for (const id of ["f", "inner"]) {
+    w.document.elementFromPoint = () => w.document.getElementById(id);
+    const o = run(w, "trusted_probe", { selector: "#cover" });
+    assert.equal(o.ok, false, id);
+    assert.match(o.error, FRAME_HINT, id);
+  }
+  assert.equal(w.__perch_trusted, undefined);
+});
+
+test("trusted_probe still aims at an ordinary button beside a frame", () => {
+  const w = page(`<button id=b>Go</button><iframe></iframe>`);
+  w.document.elementFromPoint = () => w.document.getElementById("b");
+  assert.equal(run(w, "trusted_probe", { selector: "#b" }).ok, true);
+  w.document.elementFromPoint = () => null;
+  assert.equal(run(w, "trusted_probe", { selector: "#b" }).ok, true, "nothing at the point (offscreen) is not a frame");
+});
+
+// The page area is AREA at scale 1, so client (cx, cy) is screen (56 + cx, 157 + cy).
+function framePage(html, rects = {}) {
+  const w = world([]);
+  w.dom.document.body.innerHTML = html;
+  for (const [id, [l, t, wd, h]] of Object.entries(rects)) {
+    w.dom.document.getElementById(id).getBoundingClientRect = () => ({ x: l, y: t, left: l, top: t, width: wd, height: h, right: l + wd, bottom: t + h });
+  }
+  return w;
+}
+const pointClick = (x, y, extra = {}) => handleCall("click", { trusted: true, x, y, ...extra });
+const downs = (w) => w.posted.filter((e) => e.type === 1 && e.pt.x >= 0).map((e) => e.pt);
+
+test("a trusted click by selector on an iframe is refused before anything is posted", async () => {
+  const w = framePage(`<iframe id=f title="reCAPTCHA"></iframe>`);
+  const o = JSON.parse(text(await handleCall("click", { selector: "iframe[title*=reCAPTCHA]", trusted: true })));
+  assert.equal(o.ok, false);
+  assert.match(o.error, FRAME_HINT);
+  assert.deepEqual(w.posted, []);
+});
+
+test("a trusted click by point on an embedded frame is refused, with nothing posted", async () => {
+  const w = framePage(`<button id=b>Go</button><iframe id=f></iframe>`, { b: [0, 0, 100, 20], f: [100, 100, 300, 80] });
+  for (const raise of [false, true]) {
+    const o = JSON.parse(text(await pointClick(56 + 250, 157 + 140, { raise })));
+    assert.equal(o.ok, false, `raise:${raise}`);
+    assert.match(o.error, FRAME_HINT);
+  }
+  assert.deepEqual(w.posted, []);
+});
+
+test("a point on a frame is refused under page zoom, and by the page's estimate when Accessibility can't place the page", async () => {
+  const set = (w, m) => { for (const [k, v] of Object.entries(m)) Object.defineProperty(w.dom, k, { value: v, configurable: true }); };
+  // Zoom 2: the 598x500 page area shows a 299x250 viewport.
+  let w = framePage(`<iframe id=f></iframe>`, { f: [50, 50, 100, 50] });
+  set(w, { innerWidth: 299, innerHeight: 250 });
+  let o = JSON.parse(text(await pointClick(250, 300)));
+  assert.equal(o.ok, false);
+  assert.match(o.error, FRAME_HINT);
+  // No web area has a 1000x1000 viewport's shape, so the page's own origin estimate places it.
+  w = framePage(`<iframe id=f></iframe>`, { f: [100, 100, 300, 80] });
+  set(w, { innerWidth: 1000, innerHeight: 1000, outerWidth: 1000, outerHeight: 1100, screenX: 0, screenY: 57 });
+  o = JSON.parse(text(await pointClick(250, 300)));
+  assert.equal(o.ok, false);
+  assert.match(o.error, FRAME_HINT);
+  assert.deepEqual(w.posted, []);
+});
+
+test("a trusted click by point beside a frame still posts", async () => {
+  const w = framePage(`<button id=b>Go</button><iframe id=f></iframe>`, { b: [0, 0, 100, 20], f: [100, 100, 300, 80] });
+  const o = JSON.parse(text(await pointClick(56 + 50, 157 + 10)));
+  assert.equal(o.ok, true);
+  assert.deepEqual(downs(w), [{ x: 106, y: 167 }]);
+  assert.equal(w.counts["tab.execute"], 1, "the frame check is the one page call");
+});
+
+test("a trusted click by point fails closed when the page can't be checked for frames", async () => {
+  const w = framePage(`<button id=b>Go</button>`);
+  w.state.jsOff = true;
+  const r = await pointClick(56 + 50, 157 + 10);
+  assert.equal(r.isError, true);
+  w.state.jsOff = false;
+  w.dom.document.querySelectorAll = () => { throw new Error("page broke"); };
+  const o = JSON.parse(text(await pointClick(56 + 50, 157 + 10)));
+  assert.equal(o.ok, false);
+  assert.match(o.error, /could not check the page for embedded frames.*page broke/);
   assert.deepEqual(w.posted, []);
 });
