@@ -60,6 +60,19 @@ test("trusted_key_arm refuses a Tab that would leave the page for the browser's 
   assert.equal(run(w, "trusted_key_arm", { selector: "#i", key: "Enter" }).ok, true);
 });
 
+test("trusted_key_arm refuses a frame or embed as the key's target", () => {
+  const w = page(`<input id=a aria-label="Name"><iframe id=f title="Check"></iframe><object id=o data="x.svg"></object><embed id=e src="x.svg">`);
+  for (const selector of ["iframe", "#o", "#e"]) {
+    const r = run(w, "trusted_key_arm", { selector, key: "Enter" });
+    assert.equal(r.ok, false, selector);
+    assert.match(r.error, /embedded frame.*click \{trusted:true\}/, selector);
+  }
+  w.document.getElementById("f").focus();
+  assert.equal(w.document.activeElement.id, "f");
+  assert.match(run(w, "trusted_key_arm", { key: "Enter" }).error, /embedded frame/);
+  assert.equal(w.__perch_key, undefined, "nothing armed");
+});
+
 test("trusted_key_arm focuses an element inside a shadow root", () => {
   const w = page(`<div id=host></div>`);
   w.document.getElementById("host").attachShadow({ mode: "open" }).innerHTML = `<input id=s aria-label="Inner">`;
@@ -222,14 +235,22 @@ test("trusted press refuses when the focused window can't be told apart", async 
   await refused({ focus: null }, onRaise);
 });
 
-test("trusted press accepts focus anywhere inside the page, frames included", async () => {
-  const frameFocus = { window: WIN, chain: [{ role: "AXTextField" }, { role: "AXWebArea", box: { x: 50, y: 300, w: 300, h: 150 } }, { role: "AXGroup" }, { role: "AXWebArea", box: AREA }, { role: "AXWindow", box: WIN }] };
-  for (const focus of [inPage, frameFocus, { window: WIN, chain: [{ role: "AXWebArea", box: AREA }, { role: "AXWindow", box: WIN }] }]) {
+const onFrame = /focus is inside an embedded frame; frames take only click \{trusted:true\}/;
+
+test("trusted press accepts focus anywhere inside the page's own web area", async () => {
+  for (const focus of [inPage, { window: WIN, chain: [{ role: "AXWebArea", box: AREA }, { role: "AXWindow", box: WIN }] }]) {
     const { world } = background({ focus });
     const r = await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target });
     assert.equal(JSON.parse(r.content[0].text).hit, true, r.content[0].text);
     assert.equal(keys(world).length, 2);
   }
+});
+
+test("trusted press refuses when focus is inside an embedded frame", async () => {
+  // The first web area up from the focus is the frame's, even though the page's sits above it.
+  const frame = { x: 50, y: 300, w: 300, h: 150 };
+  await refused({ focus: { window: WIN, chain: [{ role: "AXTextField" }, { role: "AXWebArea", box: frame }, { role: "AXGroup" }, { role: "AXWebArea", box: AREA }, { role: "AXWindow", box: WIN }] } }, onFrame);
+  await refused({ focus: { window: WIN, chain: [{ role: "AXCheckBox" }, { role: "AXGroup" }, { role: "AXWebArea", box: frame }, { role: "AXWebArea", box: AREA }, { role: "AXWindow", box: WIN }] } }, onFrame);
 });
 
 test("trusted press stops on a missed element without posting", async () => {
