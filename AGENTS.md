@@ -14,7 +14,7 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 │   └── helpers/     # happy-dom page runner for page scripts
 ├── scripts/
 │   ├── smoke.mjs    # live stdio smoke test (npm run smoke)
-│   ├── trusted-live.mjs  # live trusted click/fill check (--yes; --background)
+│   ├── trusted-live.mjs  # live trusted click/fill/press check (--yes; --background)
 │   ├── bench.mjs    # live latency/payload bench, compared against bench/baseline.json
 │   ├── compare.mjs  # perch side of the perch vs Claude in Chrome suite
 │   ├── mcp-client.mjs  # tiny MCP stdio client shared by the live scripts
@@ -102,6 +102,8 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 4. Background mouse events use `SLEventPostToPid` with target pid/window routing fields and `CGEventSetWindowLocation` set to the **window-local** point. The sequence includes a move primer and an off-screen click pair before the target pair. A Command flag on the down event lets WindowServer deliver to the background window; the up event has no Command flag, and Chrome receives an ordinary trusted click with `metaKey: false`. Passing a screen point to `CGEventSetWindowLocation` shifted the live Chrome click by the window's y-origin; the local point landed at the exact element center. Background fill instead uses `document.execCommand('insertText')` directly on the requested tab's field, including inactive or minimized Chrome tabs. It verifies the trusted event and exact value. The `raise:true` path uses `CGEventPost(kCGHIDEventTap)` for the click and the session tap for typing, then restores the cursor. `trusted_check` reports `hit` for routed clicks.
 
 The earlier bare `CGEventPostToPid` / `SLEventPostToPid` delivery probes did not reach Chrome's page. The routed SkyLight sequence is a separate path. `skyClick` and `mouse` both reject a target point outside the window frame.
+
+**Trusted press.** `press {trusted:true}` is for widgets that ignore synthetic keys (they check `isTrusted`, or rely on native defaults such as Tab focus, Enter in a combobox picker, Escape closing a native popup). `skyKey` posts a keyDown/keyUp pair with `SLEventPostToPid` to the browser pid only: no window fields, no Command flag (shift, 0x20000, is the only flag), and the key's Unicode string on both events (`\r`, `\u001b`, `\t`, `\u007f`, NS function-key characters for arrows, Home/End, PageUp/PageDown, forward Delete, F-keys). Only named keys are accepted; cmd/ctrl/alt chords are refused because real ones can fire browser menu shortcuts, and single characters stay with `fill`. The browser performs the key's real default, so nothing is emulated. `trusted_key_arm` focuses the element and records the first keydown and keyup on window; `trusted_key_check` is polled for up to 1s and gives `hit` (true: a trusted keydown with that key; false: untrusted or another key; null: none arrived). Like the click it needs the tab its window shows; in the lab, keys reached a covered window but not a minimized one. Live-proven in the lab on Chrome Canary; Safari and Arc are unverified.
 The background `mousedown` carries `metaKey: true` because of the WindowServer routing flag, while the resulting Chrome `click` carries `metaKey: false`. Pages that inspect modifiers on `mousedown` may behave differently; verify the resulting page state after critical actions.
 
 Foreground typing creates keyboard events with virtual key 0 and text attached via `CGEventKeyboardSetUnicodeString`, then posts at the session tap. Chunks are split in Node (`chunkUtf16`: at most 20 UTF-16 units, never splitting a surrogate pair). Two traps, both of which make Chrome type "a" (key 0) instead of the text:
@@ -143,7 +145,7 @@ Each blocked layer returns an actionable error.
   4. If the change made perch faster, replace `bench/baseline.json` with the new run (`bench/runs/bench.json`) in the same commit. For a change a user would notice in an agent's session (fewer calls, a flow that works now), rerun `scripts/compare.mjs` and add a row to `bench/compare/README.md`.
 
   Live steps need a browser the user isn't using; if none is free, say so and leave them for later rather than skipping silently. Runs land in `bench/runs/` (gitignored).
-- **Live focus checks.** `npm run smoke` reuses an existing scratch tab and skips tab creation; `--with-tab-creation` opts into checks that may focus the browser. `scripts/trusted-live.mjs --background` needs an active scratch tab behind another app for SkyLight click; `--background-fill` tests an inactive scratch tab even while minimized. If the preconditions are absent, defer; never create/select tabs or activate another app to create them. Preserve the user's foreground while testing.
+- **Live focus checks.** `npm run smoke` reuses an existing scratch tab and skips tab creation; `--with-tab-creation` opts into checks that may focus the browser. `scripts/trusted-live.mjs --background` needs an active scratch tab behind another app for SkyLight click; `--background-fill` tests an inactive scratch tab even while minimized; `--background-press` needs the same active scratch tab as `--background`. If the preconditions are absent, defer; never create/select tabs or activate another app to create them. Preserve the user's foreground while testing.
 
 ## Ceiling: what AppleScript can't do
 

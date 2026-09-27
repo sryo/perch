@@ -5,8 +5,10 @@
 //   node scripts/trusted-live.mjs --yes [--app "Google Chrome Canary"]
 //   node scripts/trusted-live.mjs --yes --background [--app "Google Chrome Canary"]
 //   node scripts/trusted-live.mjs --yes --background-fill [--app "Google Chrome Canary"]
+//   node scripts/trusted-live.mjs --yes --background-press [--app "Google Chrome Canary"]
 // Uses a scratch about:blank tab in a Chrome-family browser (reused like smoke's).
-// --background requires an existing scratch tab active in its Chrome window;
+// --background and --background-press require an existing scratch tab active in
+// its Chrome window;
 // --background-fill requires an inactive scratch tab and also works minimized.
 // Both require another app foreground. Never create/select tabs or switch apps
 // to satisfy these preconditions.
@@ -25,7 +27,8 @@ if (!argv.includes("--yes")) {
 }
 const appArg = argv.includes("--app") ? argv[argv.indexOf("--app") + 1] : null;
 const fillOnly = argv.includes("--background-fill");
-const background = argv.includes("--background") || fillOnly;
+const pressOnly = argv.includes("--background-press");
+const background = argv.includes("--background") || fillOnly || pressOnly;
 if (background && argv.includes("--delivery")) {
   console.error("--background and --delivery are separate probes; run one at a time.");
   process.exit(2);
@@ -81,12 +84,13 @@ const PAGE = `
   document.body.innerHTML = '<div style="height:200px"></div>' +
     '<button id=b style="margin-left:180px;width:220px;height:56px">Trusted target</button>' +
     '<p style="margin-left:180px"><input id=i aria-label="Name" value="Old value" style="width:320px;height:32px"></p>';
-  window.__rec = { downs: [], clicks: [], moves: [], inputs: [] };
+  window.__rec = { downs: [], clicks: [], moves: [], inputs: [], keys: [] };
   // The center is taken at press time: aiming scrolls the target into view first.
   document.onmousedown = e => window.__rec.downs.push({ id: e.target.id, trusted: e.isTrusted, x: e.clientX, y: e.clientY, center: c('b') });
   document.onclick = e => window.__rec.clicks.push({ id: e.target.id, trusted: e.isTrusted, meta: e.metaKey });
   document.onmousemove = e => { if (window.__rec.moves.length < 10) window.__rec.moves.push([e.clientX, e.clientY]); };
   document.oninput = e => window.__rec.inputs.push({ id: e.target.id, trusted: e.isTrusted });
+  document.onkeydown = e => window.__rec.keys.push({ id: e.target.id, key: e.key, trusted: e.isTrusted });
   return { b: c('b'), i: c('i') };`;
 
 const TEXT = "Ada Lovelace 😀 élan ok";
@@ -130,7 +134,7 @@ try {
   if (background && !tab) {
     throw new Error(fillOnly
       ? "background-fill probe needs an existing inactive about:blank tab; defer rather than creating or selecting a tab"
-      : "background click probe needs an existing about:blank tab already active in its Chrome window; defer rather than creating or selecting a tab");
+      : "background click/press probe needs an existing about:blank tab already active in its Chrome window; defer rather than creating or selecting a tab");
   }
   if (!tab) {
     const all = JSON.parse(text(await client.call("list_tabs", { limit: 500 }))).tabs.find(chrome);
@@ -191,14 +195,22 @@ try {
     }, 75);
   }
 
-  let clickRes, fillRes, inputError;
+  let clickRes, fillRes, tabRes, enterRes, inputError;
   try {
-    if (!fillOnly) {
+    if (pressOnly) {
+      // Tab and Enter-on-a-button have native defaults the page cannot fake.
+      tabRes = await client.call("press", { trusted: true, key: "Tab", selector: "#i", target });
+      foregroundSamples.push(frontApp());
+      enterRes = await client.call("press", { trusted: true, key: "Enter", selector: "#b", target });
+      foregroundSamples.push(frontApp());
+    } else if (!fillOnly) {
       clickRes = await client.call("click", { trusted: true, raise: !background, selector: "#b", target });
       if (background) foregroundSamples.push(frontApp());
     }
-    fillRes = await client.call("fill", { trusted: true, raise: !background, selector: "#i", text: TEXT, target });
-    if (background) foregroundSamples.push(frontApp());
+    if (!pressOnly) {
+      fillRes = await client.call("fill", { trusted: true, raise: !background, selector: "#i", text: TEXT, target });
+      if (background) foregroundSamples.push(frontApp());
+    }
   } catch (e) {
     inputError = e;
   } finally {
@@ -220,6 +232,16 @@ try {
     }
   }
   if (inputError) throw inputError;
+  if (pressOnly) {
+    const parse = (res) => JSON.parse(text(res).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
+    const tabR = parse(tabRes), enterR = parse(enterRes);
+    const got = JSON.parse(text(await client.call("eval_js", { target, script: "return window.__rec" })));
+    report(tabR.ok === true && /Trusted target/.test(tabR.focus || ""), "trusted Tab moves focus by the browser's own default", JSON.stringify({ result: tabR, pageSaw: got.keys[0] || null }));
+    const clicked = got.clicks.find((e) => e.id === "b");
+    report(enterR.ok === true && !!clicked?.trusted, "trusted Enter on a button fires its native click", JSON.stringify({ result: enterR, click: clicked || null }));
+    await client.call("eval_js", { target, script: "document.body.innerHTML=''; delete window.__rec; return 1" });
+    throw Object.assign(new Error("press probe done"), { done: true });
+  }
   const click = fillOnly ? null : JSON.parse(text(clickRes).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
   const fill = JSON.parse(text(fillRes).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
   const rec = JSON.parse(text(await client.call("eval_js", { target, script: "return { rec: window.__rec, value: document.getElementById('i').value }" })));

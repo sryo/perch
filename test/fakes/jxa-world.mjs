@@ -333,7 +333,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       memset: (bytes, value, len) => { bytes.fill(value, 0, len); return bytes; },
       CGEventCreateMouseEvent: (_s, type, pt) => ({ kind: "mouse", type, pt, fields: {} }),
       CGEventSourceCreate: () => ({}),
-      CGEventCreateKeyboardEvent: (_s, _k, down) => ({ kind: "key", down, fields: {} }),
+      CGEventCreateKeyboardEvent: (_s, vk, down) => ({ kind: "key", vk, down, fields: {} }),
       CGEventSetIntegerValueField: (e, f, v) => { e.fields[f] = v; },
       SLEventSetIntegerValueField: (e, f, v) => { e.fields[f] = v; },
       CGEventSetDoubleValueField: (e, f, v) => { e.fields[f] = v; },
