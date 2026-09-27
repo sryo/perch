@@ -234,6 +234,12 @@ test("parseArgs reads --app, --reps, --out with defaults", () => {
   assert.throws(() => parseArgs(["--app", "arc", "--reps", "0"]), /--reps/);
 });
 
+test("parseArgs lets a repeated flag's last value win, as bench.mjs does", () => {
+  const args = parseArgs(["--app", "canary", "--reps", "5", "--out", "a.json", "--app", "arc", "--reps", "2", "--out", "b.json"]);
+  assert.deepEqual(args, { app: "arc", reps: 2, out: "b.json", activate: false });
+  assert.throws(() => parseArgs(["--app", "arc", "--reps", "3", "--reps", "0"]), /--reps/);
+});
+
 test("importing compare.mjs does not start the CLI", async () => {
   // Reaching here means the import above neither spawned server.js nor exited.
   assert.equal(typeof runSuite, "function");
