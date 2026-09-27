@@ -27,13 +27,14 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     };
   };
 
-  function makePage(url) {
+  // `go` is the tab's navigation, reached from page JS by location.assign.
+  function makePage(url, go) {
     const page = { url, ticks: state.loadTicks };
     const win = {};
     page.ctx = vm.createContext(win, { microtaskMode: "afterEvaluate" });
     vm.runInContext("window = globalThis; document = { get readyState() { return __ready(); } };", page.ctx);
     page.ctx.__ready = () => (page.ticks-- > 0 ? "loading" : "complete");
-    page.ctx.location = { href: url };
+    page.ctx.location = { href: url, assign: (u) => go(/^[a-z]+:/i.test(u) ? u : new URL(u, page.url).href, "page") };
     page.ctx.URL = URL;
     return page;
   }
@@ -41,7 +42,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
   function makeTab(spec, b, w) {
     // The page lives on the spec, so one spec listed in several windows is one tab
     // shown in each, as Arc does for windows on the same space.
-    if (!spec._page) spec._page = makePage(spec.url || "about:blank");
+    const mk = (u) => makePage(u, (x, via) => go(x, via));
+    if (!spec._page) spec._page = mk(spec.url || "about:blank");
     const tab = {
       spec,
       get page() { return spec._page; },
@@ -56,7 +58,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     fn("index", () => { if (b.kind === "chrome") throw new Error("Can't get object."); return w.tabs.indexOf(tab) + 1; });
     // A navigation set with state.commitMs commits on the clock, not on executes.
     const settle = () => {
-      if (tab.pending && tab.pending.at != null && clock.t >= tab.pending.at) { tab.page = makePage(tab.pending.url); tab.pending = null; }
+      if (tab.pending && tab.pending.at != null && clock.t >= tab.pending.at) { tab.page = mk(tab.pending.url); tab.pending = null; }
     };
     fn("loading", () => { settle(); return !!tab.pending || tab.page.ticks > 0; });
     // Safari reports a blank tab's URL as null, not "about:blank".
@@ -68,26 +70,31 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         // keeps showing arc://newtab until `reads` more reads, then the set URL commits.
         if (tab.slow) {
           if (tab.slow.throws > 0) { tab.slow.throws--; throw new Error("Can't get object."); }
-          if (tab.slow.target != null && --tab.slow.reads <= 0) { tab.page = makePage(tab.slow.target); tab.slow = null; }
+          if (tab.slow.target != null && --tab.slow.reads <= 0) { tab.page = mk(tab.slow.target); tab.slow = null; }
         }
         return tab.shownUrl();
       },
       set: (u) => {
         bump("tab.url=");
         if (tab.slow) { tab.slow.target = u; return; }
-        log.push(["navigate", b.name, u]);
-        // A fragment-only change keeps the document, as browsers do.
-        const cur = new URL(tab.page.url), next = new URL(u, tab.page.url);
-        if (next.hash && next.href.split("#")[0] === cur.href.split("#")[0]) { tab.page.url = next.href; tab.page.ctx.location.href = next.href; return; }
-        // A download or a 204 never replaces the document, and loading settles.
-        if (state.noContent && state.noContent.test(u)) return;
-        // The old document keeps answering (readyState 'complete') for state.linger
-        // executes after the url is set, before the new one replaces it.
-        if (state.commitMs > 0) tab.pending = { url: u, n: Infinity, at: clock.t + state.commitMs };
-        else if (state.linger > 0) tab.pending = { url: u, n: state.linger };
-        else tab.page = makePage(u);
+        go(u, "url");
       },
     });
+    // Logs ["navigate", browser, url] for a url set through AppleScript and
+    // ["assign", browser, url] for one the page started.
+    function go(u, via) {
+      log.push([via === "page" ? "assign" : "navigate", b.name, u]);
+      // A fragment-only change keeps the document, as browsers do.
+      const cur = new URL(tab.page.url), next = new URL(u, tab.page.url);
+      if (next.hash && next.href.split("#")[0] === cur.href.split("#")[0]) { tab.page.url = next.href; tab.page.ctx.location.href = next.href; return; }
+      // A download or a 204 never replaces the document, and loading settles.
+      if (state.noContent && state.noContent.test(u)) return;
+      // The old document keeps answering (readyState 'complete') for state.linger
+      // executes after the url is set, before the new one replaces it.
+      if (state.commitMs > 0) tab.pending = { url: u, n: Infinity, at: clock.t + state.commitMs };
+      else if (state.linger > 0) tab.pending = { url: u, n: state.linger };
+      else tab.page = mk(u);
+    }
     // `ae.timeoutMs` is the caller's Apple Event timeout; plain JXA commands have
     // none, so an unanswered one blocks for the 2-minute default.
     tab.execute = ({ javascript }, ae = {}) => {
@@ -95,14 +102,14 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
       if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
       settle();
-      if (tab.pending && tab.pending.n-- <= 0) { tab.page = makePage(tab.pending.url); tab.pending = null; }
+      if (tab.pending && tab.pending.n-- <= 0) { tab.page = mk(tab.pending.url); tab.pending = null; }
       const unanswered = () => {
         clock.t += ae.timeoutMs ?? 120000;
         return Object.assign(new Error("AppleEvent timed out."), { errorNumber: -1712 });
       };
       // state.dropWhilePending: Chrome never replies to an execute that lands while
       // a navigation replaces the document; the navigation commits meanwhile.
-      if (state.dropWhilePending && tab.pending) { const e = unanswered(); tab.page = makePage(tab.pending.url); tab.pending = null; throw e; }
+      if (state.dropWhilePending && tab.pending) { const e = unanswered(); tab.page = mk(tab.pending.url); tab.pending = null; throw e; }
       // state.hung: the page never answers at all (a busy loop, a modal dialog).
       if (state.hung) throw unanswered();
       // state.jsOff: the browser's "Allow JavaScript from Apple Events" is off.
@@ -111,7 +118,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       // Browser prompts that only look like one (permission, FedCM, passkey) omit it.
       if (state.dialogs.some((d) => d.blocks != null && String(d.blocks) === String(spec.id))) throw unanswered();
       // spec.dom: a happy-dom Window standing in for the page.
+      const before = tab.pending;
       const r = spec.dom ? spec.dom.eval(javascript) : vm.runInContext(javascript, tab.page.ctx);
+      // state.dropAfterAssign: the reply to the execute that started a navigation is lost.
+      if (state.dropAfterAssign && tab.pending && tab.pending !== before) throw unanswered();
       return b.kind === "arc" ? JSON.stringify(r) : r;
     };
     tab.select = () => { bump("tab.select"); w.spec.active = w.tabs.indexOf(tab); };
