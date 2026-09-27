@@ -1812,6 +1812,55 @@ if (moved) out.url = location.href;
 return out;
 `,
 
+  // Synthetic key events trigger no browser defaults, so the ones pages rely on are emulated.
+  press: String.raw`
+const r = resolveEl(A);
+if (r.out) return r.out;
+if (r.el) r.el.focus();
+const el = document.activeElement || document.body;
+function send(type, t) {
+  const e = new KeyboardEvent(type, { key: A.key, code: A.code, ctrlKey: A.ctrlKey, shiftKey: A.shiftKey, altKey: A.altKey, metaKey: A.metaKey, bubbles: true, cancelable: true, composed: true });
+  // The constructor leaves the legacy keyCode/which at 0; older handlers still read them.
+  Object.defineProperty(e, "keyCode", { get: function () { return A.keyCode; } });
+  Object.defineProperty(e, "which", { get: function () { return A.keyCode; } });
+  return !t.dispatchEvent(e);
+}
+let prevented = send("keydown", el);
+if (!prevented && (A.key.length === 1 || A.key === "Enter") && !A.ctrlKey && !A.metaKey) prevented = send("keypress", el);
+if (!prevented && !A.ctrlKey && !A.metaKey && !A.altKey) {
+  const ro = role(el);
+  if (A.key === "Enter" && (ro === "button" || ro === "link")) el.click();
+  else if (A.key === " " && /^(button|checkbox|radio)$/.test(ro)) el.click();
+  else if (A.key === "Enter" && el.tagName === "INPUT" && el.form) {
+    // Implicit submission clicks the form's default button when it has one.
+    const b = el.form.querySelector("button:not([type]), [type=submit]");
+    if (b) b.click(); else el.form.requestSubmit();
+  } else if (A.key === "Tab") {
+    const all = Array.prototype.filter.call(document.querySelectorAll("a[href], button, input, select, textarea, summary, [tabindex], [contenteditable]"), function (n) {
+      return n.tabIndex >= 0 && !n.disabled && n.type !== "hidden" && vis(n);
+    });
+    const i = all.indexOf(el), n = all.length;
+    if (n) all[A.shiftKey ? (i <= 0 ? n - 1 : i - 1) : (i + 1) % n].focus();
+  }
+}
+const f = document.activeElement;
+send("keyup", f || el);
+return { ok: true, el: ident(el), prevented: prevented, focus: f && f !== document.body ? ident(f) : null };
+`,
+
+  // JS-driven hover menus listen for these; CSS :hover needs a real pointer.
+  hover: String.raw`
+const r = resolveEl(A);
+if (r.out) return r.out;
+const b = r.el.getBoundingClientRect();
+const at = { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, pointerType: "mouse", composed: true };
+const P = typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
+[["pointerover", P, true], ["pointerenter", P, false], ["mouseover", MouseEvent, true], ["mouseenter", MouseEvent, false], ["pointermove", P, true], ["mousemove", MouseEvent, true]].forEach(function (s) {
+  r.el.dispatchEvent(new s[1](s[0], Object.assign({ bubbles: s[2], cancelable: s[2] }, at)));
+});
+return { ok: true, el: ident(r.el) };
+`,
+
   file_upload: String.raw`
 const r = resolveEl(A, "input[type=file]");
 if (r.out) return r.out;
@@ -2160,12 +2209,44 @@ async function fileUpload(args = {}) {
 }
 
 async function click(args = {}) {
-  const { ref = null, selector = null, x = null, y = null, trusted = false, raise = false, target, readback = null } = args;
+  const { ref = null, selector = null, x = null, y = null, trusted = false, raise = false, hover = false, target, readback = null } = args;
   if (readback != null && (typeof readback !== "string" || !readback.trim())) throw new Error("click: `readback` must be a CSS selector");
+  if (hover && (trusted || readback || x != null || y != null)) throw new Error("click: hover is untrusted and element-only");
   if (trusted) return trustedClick({ ref, selector, x, y, raise, target, readback });
   if (!ref && !selector) throw new Error("click requires `ref` or `selector` (x/y is screen coords, trusted:true only)");
+  if (hover) return runPage("click", "hover", { ref, selector }, target);
   if (!readback) return runPage("click", "click", { ref, selector }, target);
   return rt("click", { target, click: pageFn("click", { ref, selector, readback }), ...readbackSteps(readback) }, { lane: "slow" });
+}
+
+const KEY_CODES = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, Delete: 46, Space: 32, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34 };
+for (let i = 1; i <= 12; i++) KEY_CODES["F" + i] = 111 + i;
+const MODIFIERS = { cmd: "metaKey", meta: "metaKey", ctrl: "ctrlKey", alt: "altKey", option: "altKey", shift: "shiftKey" };
+
+// "cmd+shift+k" -> KeyboardEvent init fields. A trailing "+" is the key itself ("cmd++").
+export function parseKey(chord) {
+  const parts = String(chord ?? "").split(/\+(?=.)/);
+  const name = parts.pop();
+  const bad = () => new Error(`press: unknown key ${chord}`);
+  const out = { ctrlKey: false, shiftKey: false, altKey: false, metaKey: false };
+  for (const m of parts) {
+    const k = MODIFIERS[m.toLowerCase()];
+    if (!k) throw bad();
+    out[k] = true;
+  }
+  const named = Object.keys(KEY_CODES).find((k) => k.toLowerCase() === name.toLowerCase());
+  if (named) return { key: named === "Space" ? " " : named, code: named, keyCode: KEY_CODES[named], ...out };
+  if (name.length !== 1) throw bad();
+  const up = name.toUpperCase();
+  const key = out.shiftKey ? up : name;
+  if (/[A-Z]/.test(up)) return { key, code: "Key" + up, keyCode: up.charCodeAt(0), ...out };
+  if (/[0-9]/.test(name)) return { key, code: "Digit" + name, keyCode: name.charCodeAt(0), ...out };
+  return { key, code: "", keyCode: 0, ...out };
+}
+
+async function press(args = {}) {
+  const { key, ref = null, selector = null, target } = args;
+  return runPage("press", "press", { ref, selector, ...parseKey(key) }, target);
 }
 
 const VALUE_KEYS = ["text", "checked", "option"];
@@ -2309,16 +2390,23 @@ const TOOLS = [
     selector: SEL,
     target: TARGET,
   }, ["path"]),
-  tool("click", "Click by ref/selector (el.click()). `trusted` targets a window through SkyLight (needs Accessibility); `raise:true` uses the foreground HID route. Check `hit` after trusted input. Only trusted accepts screen `x`/`y`.", {
+  tool("click", "Click by ref/selector (el.click()); `hover` fires hover events instead. `trusted`: SkyLight click (needs Accessibility), `raise:true` foreground HID; check `hit`. Only trusted takes screen `x`/`y`.", {
     ref: REF,
     selector: SEL,
     x: { type: "number" },
     y: { type: "number" },
     trusted: { type: "boolean" },
     raise: { type: "boolean" },
-    readback: { type: "string", description: "CSS; adds its text after the click (waits up to 2s for a change) as {readback,changed,url?}." },
+    readback: { type: "string", description: "CSS; its text after the click (waits up to 2s for a change): {readback,changed,url?}." },
+    hover: { type: "boolean" },
     target: TARGET,
   }),
+  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element. Untrusted; emulates Enter/Space/Tab defaults.", {
+    key: { type: "string" },
+    ref: REF,
+    selector: SEL,
+    target: TARGET,
+  }, ["key"]),
   tool("fill", "Set text in inputs, textareas, rich editors; verifies it landed: {ok,kind,el,len}. `fields`: many fields in one call. `trusted`: trusted input event, no key focus; `raise:true` types foreground keys.", {
     fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]" },
     text: { type: "string" },
@@ -2355,6 +2443,7 @@ export const HANDLERS = {
   notify:        (a) => notify(a),
   file_upload:   (a) => fileUpload(a),
   click:         (a) => click(a),
+  press:         (a) => press(a),
   fill:          (a) => fill(a),
   select:        (a) => select(a),
 };

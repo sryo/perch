@@ -80,6 +80,7 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Arguments:** every tool body reads its arguments from `A`; no user value is spliced into code.
 - **Refs:** `resolveEl` treats a missing or detached ref as `{__perch_ref_miss}`, which `formatResult` turns into an error with a re-snapshot hint.
 - **Snapshot:** `accessibility_snapshot` stores elements on `window.__perch_refs` (a plain object, since a Map breaks the JSON round trip). It emits a line format: a `# {header}` line, then `ref role "name" key=json... flags`.
+- **Keys and hover:** `press` (`parseKey` turns the chord into KeyboardEvent fields in Node) and `click {hover}` dispatch untrusted events, so they reach background tabs but get no browser defaults: no text is inserted and CSS `:hover` never matches. `press` emulates the defaults pages rely on unless keydown or keypress was prevented: Enter clicks a button or link, or submits a field's form (its default button if any, else `requestSubmit`); Space clicks buttons, checkboxes and radios; Tab moves focus through visible tabbables in DOM order. `keyCode` and `which` are defined on the event, since the constructor leaves them 0.
 
 **Tab indices are positional.** `tabIndex` is the tab's current position; opening or closing tabs shifts it. It is still accepted in `target` but no longer listed; rows carry only the handle.
 

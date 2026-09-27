@@ -22,7 +22,8 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `get_text` | innerText, or outerHTML with `html: true`. Paged by `offset` / `maxChars`. |
 | `accessibility_snapshot` | Page outline with refs (format below). Filter with `role`; `max: 0` for the header only. |
 | `console_capture` | `start`, then `read` drains `"level: text"` strings, `stop` restores. Navigation clears it. |
-| `click` | By `ref` / `selector`. `readback: css` adds `{readback, changed, url?}`: its text once changed (2s cap), no follow-up read. `trusted: true`: see below. |
+| `click` | By `ref` / `selector`. `readback: css` adds `{readback, changed, url?}`: its text once changed (2s cap), no follow-up read. `hover: true` fires hover events only (JS menus, not CSS `:hover`). `trusted: true`: see below. |
+| `press` | `key` (`Enter`, `Escape`, `Tab`, `ArrowDown`, `cmd+k`) on `ref` / `selector` or the focused element, in background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. |
 | `fill` | Inputs, textareas, rich editors; verifies the text landed. `text_path` for long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>`, react-select, ARIA combobox/listbox; reads back what's shown. |
 | `file_upload` | Put a local file on an `<input type=file>` without the bytes entering context. |
