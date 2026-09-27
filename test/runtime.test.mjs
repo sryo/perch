@@ -104,7 +104,7 @@ test("Arc background tab: every page tool refuses before calling execute", async
   for (const [tool, args] of [["eval_js", { script: "return 1" }], ["eval_js", { script: "return 1", awaitPromise: true }], ["wait", { readyState: "complete" }], ["get_text", {}]]) {
     const { r, t } = await call(tool, { ...args, target });
     assert.equal(r.isError, true, tool);
-    assert.match(t, /Arc cannot .* background tab/, tool);
+    assert.match(t, /^error: tab_not_visible: /, tool);
   }
   assert.equal(world.counts["tab.execute"] || 0, 0);
 });
@@ -186,7 +186,7 @@ test("new_tab creates a background tab without selecting it", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
   const { r, o } = await call("new_tab", { app: "Google Chrome", url: "about:blank" });
   assert.equal(r.isError, undefined);
-  assert.deepEqual(o, { app: "Google Chrome", windowId: 1, tabId: "new1", tabIndex: 1 });
+  assert.deepEqual(o, { app: "Google Chrome", tabId: "chrome:new1" });
   assert.equal(world.counts["win.activeTabIndex="], undefined);
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
 });
@@ -213,8 +213,8 @@ test("new_tab never selects the new Arc or Safari tab", async () => {
   const safariTab = await call("new_tab", { app: "Safari", url: "about:blank" });
   assert.equal(arcTab.r.isError, undefined);
   assert.equal(safariTab.r.isError, undefined);
-  assert.equal(arcTab.o.tabIndex, 1);
-  assert.equal(safariTab.o.tabIndex, 1);
+  assert.equal(arcTab.o.tabId, "arc:new1");
+  assert.match(safariTab.o.tabId, /^safari:2\.1\./);
   assert.equal(world.counts["tab.select"], undefined);
   assert.equal(world.counts["win.currentTab="], undefined);
   assert.equal(world.counts["activate(Arc)"], undefined);
@@ -245,7 +245,7 @@ test("raising a second window still switches the tab in THAT window", async () =
   assert.equal(r.isError, undefined, r.content[0].text);
   const { o } = await call("list_tabs", {});
   const active = o.tabs.filter((t) => t.active);
-  assert.deepEqual(active.map((t) => [t.windowId, t.tabIndex]), [[2, 3], [1, 0]]);
+  assert.deepEqual(active.map((t) => t.title), ["b3", "a0"]);
 });
 
 // ---- review fixes ----
@@ -272,27 +272,72 @@ test("navigate: a #hash change on a normalized URL is same-document (no load wai
   assert.ok(world.clock.t - t0 < 300, `waited ${world.clock.t - t0}ms`);
 });
 
-// ---- stable tab ids ----
+// ---- tab handles ----
 
-test("tabId survives tabs being inserted before it; it wins over a stale tabIndex", async () => {
+test("tabId is an opaque handle that alone targets the tab, even after tabs move", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(3, "c") }])], cg: [{ owner: "Google Chrome" }] });
   const { o } = await call("list_tabs", {});
   const row = o.tabs.find((t) => t.title === "c2");
-  assert.equal(row.tabId, "c2");
+  assert.deepEqual(Object.keys(row), ["app", "tabId", "url", "title"]);
+  assert.equal(row.tabId, "chrome:c2");
   const live = world.tabsOf("Google Chrome", 0);
   live.unshift(live.pop()); // c2 moves to position 0
-  await call("eval_js", { script: "window.hit = 1; return 1", target: { tabId: row.tabId, tabIndex: row.tabIndex } });
+  await call("eval_js", { script: "window.hit = 1; return 1", target: { tabId: row.tabId } });
   assert.equal(live[0].page.ctx.hit, 1);
   assert.equal(live[2].page.ctx.hit, undefined);
 });
 
-test("unknown tabId and tabId on Safari are clear errors", async () => {
-  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }]), safari([{ id: 2, active: 0, tabs: tabs(1, "s") }])], cg: [{ owner: "Google Chrome" }] });
-  const gone = await call("eval_js", { script: "return 1", target: { tabId: "nope" } });
-  assert.equal(gone.r.isError, true);
-  assert.match(gone.t, /tabId nope not found.*list_tabs/);
-  const saf = await call("eval_js", { script: "return 1", target: { app: "Safari", tabId: "s0" } });
-  assert.match(saf.t, /Safari tabs have no id/);
+test("the handle names its browser: equal raw ids in two Chromium apps don't collide", async () => {
+  const same = () => [{ url: "https://x.test/", title: "x", id: "5" }];
+  install({
+    browsers: [chrome([{ id: 1, active: 0, tabs: same() }]), { name: "Google Chrome Canary", kind: "chrome", windows: [{ id: 2, active: 0, tabs: same() }] }],
+    cg: [{ owner: "Google Chrome" }, { owner: "Google Chrome Canary" }],
+  });
+  await call("eval_js", { script: "window.hit = 1; return 1", target: { tabId: "canary:5" } });
+  assert.equal(world.page("Google Chrome Canary", 0, 0).hit, 1);
+  assert.equal(world.page("Google Chrome", 0, 0).hit, undefined);
+  // A bare id from before handles still resolves (first browser holding it).
+  const { o } = await call("eval_js", { script: "return 2", target: { tabId: "5" } });
+  assert.equal(o, 2);
+});
+
+test("Safari tabs get handles too: found again by URL after moving, stale after navigating away", async () => {
+  install({ browsers: [safari([{ id: 3, active: 1, tabs: tabs(3, "s") }])], cg: [{ owner: "Safari" }] });
+  const { o } = await call("list_tabs", {});
+  const row = o.tabs.find((t) => t.title === "s1");
+  assert.match(row.tabId, /^safari:3\.1\./);
+  const live = world.tabsOf("Safari", 0);
+  live.unshift(live.splice(1, 1)[0]); // s1 moves to position 0 and stays current
+  world.winSpec("Safari", 0).active = 0;
+  const { r } = await call("eval_js", { script: "window.hit = 1; return 1", target: { tabId: row.tabId } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(live[0].page.ctx.hit, 1);
+  live[0].page.url = "https://elsewhere.test/";
+  const gone = await call("eval_js", { script: "return 1", target: { tabId: row.tabId } });
+  assert.match(gone.t, /^error: stale_tab: /);
+});
+
+test("unknown tabId is stale_tab; unknown browser is no_browser; browser names match loosely", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }] });
+  assert.match((await call("eval_js", { script: "return 1", target: { tabId: "chrome:nope" } })).t, /^error: stale_tab: /);
+  assert.match((await call("list_tabs", { app: "Netscape" })).t, /^error: no_browser: unknown browser/);
+  const { o } = await call("list_tabs", { app: "chrome" });
+  assert.equal(o.total, 1);
+});
+
+test("new_tab without app opens in the browser the user is looking at", async () => {
+  install({
+    browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1, "c") }]), arc([{ id: "A", active: 0, tabs: tabs(1, "a") }])],
+    cg: [{ owner: "Terminal" }, { owner: "Arc" }, { owner: "Google Chrome" }],
+  });
+  const { o } = await call("new_tab", { url: "about:blank" });
+  assert.deepEqual(o, { app: "Arc", tabId: "arc:new1" });
+});
+
+test("tool descriptions and instructions never name a browser", async () => {
+  const { TOOLS, INSTRUCTIONS } = await import("../server.js");
+  const text = JSON.stringify(TOOLS) + INSTRUCTIONS;
+  assert.doesNotMatch(text, /\b(Chrome|Chromium|Arc|Safari|Brave|Edge|Vivaldi|Canary)\b/);
 });
 
 test("Arc list_tabs follows the sidebar, not win.tabs order; tabIndex means that row", async () => {
@@ -305,7 +350,7 @@ test("Arc list_tabs follows the sidebar, not win.tabs order; tabIndex means that
   ];
   install({ browsers: [arc([{ id: "A", active: 3, sidebar: ["p0", "u1", "u2"], tabs: raw }])], cg: [{ owner: "Arc" }] });
   const { o } = await call("list_tabs", {});
-  assert.deepEqual(o.tabs.map((t) => [t.tabIndex, t.tabId]), [[0, "f0"], [1, "p0"], [2, "u1"], [3, "u2"]]);
+  assert.deepEqual(o.tabs.map((t) => t.tabId), ["arc:f0", "arc:p0", "arc:u1", "arc:u2"]);
   assert.equal(o.tabs[0].favorite, true);
   assert.equal(o.tabs[1].pinned, true);
   assert.equal(o.tabs[2].active, true);
@@ -313,23 +358,23 @@ test("Arc list_tabs follows the sidebar, not win.tabs order; tabIndex means that
   assert.equal(world.page("Arc", 0, 3).hit, 1);
 });
 
-test("Arc windows sharing a space: each tab listed once, tabId runs through the window showing it", async () => {
+test("windows sharing tabs: each tab listed once, tabId runs through the window showing it", async () => {
   const shared = tabs(3, "a");
   install({
     browsers: [arc([{ id: "W1", active: 0, tabs: shared }, { id: "W2", active: 2, tabs: shared }])],
     cg: [{ owner: "Arc" }],
   });
   const { o } = await call("list_tabs", {});
-  assert.deepEqual(o.tabs.map((t) => [t.tabId, t.windowId, !!t.active]), [["a0", "W1", true], ["a1", "W1", false], ["a2", "W2", true]]);
+  assert.deepEqual(o.tabs.map((t) => [t.tabId, !!t.active]), [["arc:a0", true], ["arc:a1", false], ["arc:a2", true]]);
   assert.equal(world.counts["tabs.url()"], 1, "shared windows read urls once");
   // a2 is background in W1 (execute would hang there) but active in W2.
-  const { r, o: v } = await call("eval_js", { script: "window.hit = 1; return 7", target: { tabId: "a2" } });
+  const { r, o: v } = await call("eval_js", { script: "window.hit = 1; return 7", target: { tabId: "arc:a2" } });
   assert.equal(r.isError, undefined, r.content[0].text);
   assert.equal(v, 7);
   assert.equal(world.page("Arc", 1, 2).hit, 1);
 });
 
-test("a fresh Arc window with no tab shown is skipped, not read as tab 0", async () => {
+test("a window showing no tab is skipped, not read as tab 0", async () => {
   install({
     browsers: [arc([{ id: "NEW", active: null, tabs: tabs(2, "a") }, { id: "OLD", active: 1, tabs: tabs(2, "b") }])],
     cg: [{ owner: "Arc" }],
@@ -338,13 +383,7 @@ test("a fresh Arc window with no tab shown is skipped, not read as tab 0", async
   assert.equal(r.isError, undefined, r.content[0].text);
   assert.equal(world.page("Arc", 1, 1).hit, 1);
   const { o } = await call("list_tabs", {});
-  assert.deepEqual(o.tabs.filter((t) => t.active).map((t) => t.tabId), ["b1"]);
-});
-
-test("Arc new_tab returns the new tab's id and sidebar index", async () => {
-  install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(2, "a") }])], cg: [{ owner: "Terminal" }, { owner: "Arc" }] });
-  const { o } = await call("new_tab", { app: "Arc", url: "about:blank" });
-  assert.deepEqual(o, { app: "Arc", windowId: "A", tabId: "new2", tabIndex: 2 });
+  assert.deepEqual(o.tabs.filter((t) => t.active).map((t) => t.tabId), ["arc:b1"]);
 });
 
 test("Arc screenshot picks the CG window by title, pairing same-titled windows front to back", () => {

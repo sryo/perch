@@ -50,7 +50,10 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Stopping:** the walk stops at the first match.
 - **Window ids:** `win.id()` is read only when `windowId` was given.
 - **Default target:** with no target, the active tab of the first window. A window showing no tab (a fresh Arc window) is skipped.
-- **Tab ids:** `tabId` resolves with one bulk `win.tabs.id()` read per window, then `tabs.byId`. Chrome and Arc targets are pinned by id even when given by position, because `tabs[i]` is re-evaluated on every use and a long poll could drift to another tab. Chrome has no tab `select` verb, so selection re-reads the position from the id.
+- **Tab handles:** clients never branch on browser. `tabId` is an opaque handle `<key>:<raw>` (`key` from `BROWSERS`, e.g. `arc:<uuid>`, `canary:<id>`), so `{tabId}` alone targets a tab in any browser. The key matters: Chromium tab ids are per-process counters and collide across Chromium apps. Safari tabs have no id, so theirs is `safari:<windowId>.<index>.<url hash>`: `resolveSafari` re-finds it by URL (nearest index wins), and a navigation makes it stale, which is why `navigate` returns the tab's current handle. A bare id from before handles is still searched across browsers.
+- **Tab ids:** a handle resolves with one bulk `win.tabs.id()` read per window, then `tabs.byId`. Chrome and Arc targets are pinned by id even when given by position, because `tabs[i]` is re-evaluated on every use and a long poll could drift to another tab. Chrome has no tab `select` verb, so selection re-reads the position from the id.
+- **Browser names:** `matchApp` (Node, in `handleCall`) matches `app` loosely: case-insensitive name, key, or a unique substring.
+- **Errors:** thrown errors start with a browser-neutral code (`tab_not_visible`, `stale_tab`, `window_offscreen`, `no_browser`, `timeout`) that clients branch on. Tool descriptions and `INSTRUCTIONS` never name a browser; `test/runtime.test.mjs` enforces it. Permission messages are the exception, since the user needs the exact per-browser toggle.
 
 **JXA access patterns.** Read collections lazily (`app.windows[i]`, `win.tabs[i]`), never with the called form (`app.windows()`). The called form loses the bridge context on Arc, and later property chains throw "Can't convert types". Multi-tab reads use bulk property access (`win.tabs.url()`), about 30x faster than per-tab loops. That's the difference between working and timing out on Arc windows with hundreds of tabs.
 
@@ -75,9 +78,9 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Refs:** `resolveEl` treats a missing or detached ref as `{__perch_ref_miss}`, which `formatResult` turns into an error with a re-snapshot hint.
 - **Snapshot:** `accessibility_snapshot` stores elements on `window.__perch_refs` (a plain object, since a Map breaks the JSON round trip). It emits a line format: a `# {header}` line, then `ref role "name" key=json... flags`.
 
-**Tab indices are positional.** `tabIndex` is the tab's current position; opening or closing tabs shifts it. Pin by `tabId` instead (Chrome family and Arc); Safari tabs have no id, so re-list there.
+**Tab indices are positional.** `tabIndex` is the tab's current position; opening or closing tabs shifts it. It is still accepted in `target` but no longer listed; rows carry only the handle.
 
-**Tab creation.** `new_tab` requires a running browser with an existing window. It no longer calls `activate()` or selects the new tab, but the browser may still focus its window during creation. Chrome can evaluate JS in that background tab; trusted input and screenshots need a tab already active in its window. Do not create tabs while preserving the user's foreground.
+**Tab creation.** `new_tab` defaults to the browser in use (`defaultBrowser`: topmost on screen, else the system default browser if it runs, else any running one) and requires a running browser with an existing window. It no longer calls `activate()` or selects the new tab, but the browser may still focus its window during creation. Chrome can evaluate JS in that background tab; trusted input and screenshots need a tab already active in its window. Do not create tabs while preserving the user's foreground.
 
 **Screenshots.**
 - **Capture:** `screencapture -l <CGWindowID> -t png|jpg` reads a window's own pixels regardless of z-order.

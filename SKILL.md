@@ -6,16 +6,16 @@ allowed-tools: mcp__perch__*
 
 # perch: macOS browser bridge
 
-Every tool takes an optional `target` `{app, windowId, tabId, tabIndex}`. The default is the active tab of the topmost browser window. Pin a tab by `tabId` from `list_tabs` or `new_tab` (Chrome family and Arc); it stays valid while other tabs open and close. `tabIndex` is a position that shifts, so re-list before using it; Safari has only `tabIndex`. On Arc, `tabIndex` follows the sidebar (Favorites, pinned, then unpinned).
+Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `tabId` from `list_tabs` or `new_tab`: one opaque handle that works for every browser and stays valid while other tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loosely matched, e.g. `"canary"`) only filters `list_tabs` or picks the browser for `new_tab`.
 
 ## Tools
 
 | Tool | Use |
 |---|---|
-| `list_tabs` | `{tabs:[{app,windowId,tabId?,tabIndex,url,title,active?}], total}`, 50 rows by default. `active` marks the tab each window shows. Arc windows on one space share tabs, so each is listed once, under the window showing it. Filter with `app`, `urlContains`, `titleContains`. |
-| `new_tab` | Add an unselected tab to an already running browser window. Creation may focus the browser; defer while the user works. Returns `{app,windowId,tabId?,tabIndex}`. |
+| `list_tabs` | `{tabs:[{app,tabId,url,title,active?}], total}`, 50 rows by default, in the order the browser shows them. `active` marks the tab its window shows. Filter with `app`, `urlContains`, `titleContains`. |
+| `new_tab` | Add an unselected tab to an already running browser window, by default the browser in use. Creation may focus the browser; defer while the user works. Returns `{app,tabId}`. |
 | `activate_tab` | Bring a tab and its window to the front. |
-| `navigate` | Load a URL and wait for the new page to finish loading. |
+| `navigate` | Load a URL and wait for the new page to finish loading. Returns the tab's current `tabId`; use it from then on. |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path` loads a local file; with both, the file runs first, then `script`, in one call. `awaitPromise` for real async. |
 | `wait` | Until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`). |
 | `screenshot` | On-screen window image without raising it, plus `{window, image}` for mapping: `screenX = window.x + imageX * window.w / image.w`. Minimized windows cannot be captured. |
@@ -46,17 +46,17 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 - `fill` returns `{ok, kind: "plain"|"rich", el: 'textbox "Email"', len, ambiguous?}`. `ok: true` is proof; don't re-check.
 - `fill {trusted:true}` returns `{ok, trusted, value, el}` for background plain fields. Require both `ok` and `trusted`.
 - Page errors come back as `isError` with `__perch_error`, `__perch_error_name` and a stack head.
+- Other errors start with a code; branch on it, never on the browser. `tab_not_visible`: the action needs the tab its window shows (page JS on some browsers; screenshots and background trusted clicks always): `activate_tab` (takes focus) or retry later. `stale_tab`: the tab is gone; re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `no_browser`: not running or no window; perch never launches one. `timeout`: re-list, retry once.
 
 ## Gotchas
 
-- **Chrome runs eval in an isolated world.** The DOM is shared with the page, JS globals are not: read page state through the DOM, never through `window.*` values the page set.
-- **Don't sleep in page code.** Chrome throttles timers in background tabs to about one per second, so `awaitPromise` plus `setTimeout` crawls. Use `wait`, which polls from outside the page.
+- **Page globals may be invisible.** Some browsers run eval in an isolated world: the DOM is shared with the page, JS globals are not. Read page state through the DOM, never through `window.*` values the page set.
+- **Don't sleep in page code.** Background tabs throttle timers to about one per second, so `awaitPromise` plus `setTimeout` crawls. Use `wait`, which polls from outside the page.
 - **Return summaries, not state.** Results land in context verbatim.
-- **Arc** runs page JS only on a window's active tab: `activate_tab` first. **Safari** needs the tab current too.
 
 ## Trusted input
 
-`fill {trusted: true}` edits a plain input or textarea through Chrome's editing command and verifies a trusted `input` event and the exact value. It works in inactive Chrome tabs and minimized Chrome windows without changing the selected tab or taking the user's key focus. `click {trusted: true}` uses SkyLight to address an on-screen browser window without explicitly activating it or moving the shared cursor; its target tab must already be active in that window. A minimized Chrome window does not receive this SkyLight click in the live probe. Use ordinary `click` for inactive or minimized tabs and verify the page outcome; it produces an untrusted DOM click. SkyLight clicks require Accessibility permission. Pass `raise: true` for the foreground HID route, which takes focus briefly and restores the cursor. Rich editors usually work without trusted mode.
+`fill {trusted: true}` edits a plain input or textarea through the browser's editing command and verifies a trusted `input` event and the exact value. It works in background tabs and minimized windows wherever page JS runs (else `tab_not_visible`), without changing the selected tab or taking the user's key focus. `click {trusted: true}` uses SkyLight to address an on-screen browser window without explicitly activating it or moving the shared cursor; its tab must be the one its window shows (else `tab_not_visible`), and a minimized window does not receive it. Use ordinary `click` for background or minimized tabs and verify the page outcome; it produces an untrusted DOM click. SkyLight clicks require Accessibility permission. Pass `raise: true` for the foreground HID route, which takes focus briefly and restores the cursor. Rich editors usually work without trusted mode.
 
 ## Permissions
 

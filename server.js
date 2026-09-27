@@ -12,15 +12,16 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 
+// `key` prefixes tab handles; `bundle` maps the system default browser to an app.
 const BROWSERS = [
-  { app: "Google Chrome",        kind: "chrome" },
-  { app: "Google Chrome Beta",   kind: "chrome" },
-  { app: "Google Chrome Canary", kind: "chrome" },
-  { app: "Brave Browser",        kind: "chrome" },
-  { app: "Microsoft Edge",       kind: "chrome" },
-  { app: "Vivaldi",              kind: "chrome" },
-  { app: "Arc",                  kind: "arc" },
-  { app: "Safari",               kind: "safari" },
+  { app: "Google Chrome",        kind: "chrome", key: "chrome",      bundle: "com.google.Chrome" },
+  { app: "Google Chrome Beta",   kind: "chrome", key: "chrome-beta", bundle: "com.google.Chrome.beta" },
+  { app: "Google Chrome Canary", kind: "chrome", key: "canary",      bundle: "com.google.Chrome.canary" },
+  { app: "Brave Browser",        kind: "chrome", key: "brave",       bundle: "com.brave.Browser" },
+  { app: "Microsoft Edge",       kind: "chrome", key: "edge",        bundle: "com.microsoft.edgemac" },
+  { app: "Vivaldi",              kind: "chrome", key: "vivaldi",     bundle: "com.vivaldi.Vivaldi" },
+  { app: "Arc",                  kind: "arc",    key: "arc",         bundle: "company.thebrowser.Browser" },
+  { app: "Safari",               kind: "safari", key: "safari",      bundle: "com.apple.Safari" },
 ];
 
 // ---- JXA runtime ----
@@ -36,8 +37,36 @@ const BROWSERS = [
 function jxaRuntime(BROWSERS) {
   ObjC.import("CoreGraphics");
   ObjC.import("Foundation");
-  const KIND = {};
-  BROWSERS.forEach((b) => { KIND[b.app] = b.kind; });
+  const KIND = {}, KEY = {}, BY_KEY = {};
+  BROWSERS.forEach((b) => { KIND[b.app] = b.kind; KEY[b.app] = b.key; BY_KEY[b.key] = b.app; });
+
+  // Errors start with a stable, browser-neutral code that clients branch on.
+  const notVisible = (what) => "tab_not_visible: " + what + " needs the tab its window shows; activate_tab (takes focus) or retry later";
+  const OFFSCREEN = "window_offscreen: the browser window isn't on screen (minimized or on another Space)";
+
+  // Tab handles are opaque to clients: "<key>:<raw id>". Chromium ids are
+  // per-process counters, so the key keeps two Chromium apps from colliding.
+  // Safari tabs have no id, so theirs is "safari:<windowId>.<index>.<url hash>",
+  // re-found by URL when the index moved; a navigation makes it stale.
+  function fp(url) {
+    const str = String(url || "").split("#")[0];
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h.toString(36);
+  }
+  const handle = (name, raw) => KEY[name] + ":" + raw;
+  const safariHandle = (winId, i, url) => "safari:" + winId + "." + i + "." + fp(url);
+  function parseHandle(h) {
+    const m = /^([a-z-]+):(.+)$/.exec(String(h));
+    return m && BY_KEY[m[1]] ? { app: BY_KEY[m[1]], raw: m[2] } : null;
+  }
+  function handleOf(t) {
+    try {
+      if (t.kind === "safari") return safariHandle(t.win.id(), t.idx, t.tab.url());
+      if (t.tabId != null) return handle(t.app, t.tabId);
+    } catch (e) {}
+    return null;
+  }
   const apps = {};
   const app = (name) => apps[name] || (apps[name] = Application(name));
 
@@ -100,13 +129,10 @@ function jxaRuntime(BROWSERS) {
   // several windows at once. execute only works through a window where the tab is
   // active (it hangs through any other), so a tabId prefers such a window.
   function resolveById(want, P) {
-    const key = String(want.tabId);
+    const key = String(want.raw);
     for (const name of candidates(P, want.app)) {
       const a = app(name), kind = KIND[name];
-      if (kind === "safari") {
-        if (want.app) throw new Error("Safari tabs have no id; target them by tabIndex");
-        continue;
-      }
+      if (kind === "safari") continue;
       let n;
       try { n = a.windows.length; } catch (e) { continue; }
       let fallback = null;
@@ -126,7 +152,27 @@ function jxaRuntime(BROWSERS) {
       }
       if (fallback) return fallback;
     }
-    throw new Error("tabId " + want.tabId + " not found (tab closed?); re-run list_tabs");
+    throw new Error("stale_tab: tab " + want.tabId + " is gone; re-run list_tabs");
+  }
+
+  function resolveSafari(want, raw, P) {
+    const parts = raw.split("."), winId = parts[0], idx = Number(parts[1]), hash = parts.slice(2).join(".");
+    const a = app("Safari");
+    let n = 0; try { n = a.windows.length; } catch (e) {}
+    // The recorded window first, then the rest: the tab may have been dragged out.
+    const order = [];
+    for (let w = 0; w < n; w++) {
+      let id = null; try { id = String(a.windows[w].id()); } catch (e) {}
+      if (id === winId) order.unshift(w); else order.push(w);
+    }
+    for (const w of order) {
+      const win = a.windows[w];
+      let urls; try { urls = win.tabs.url(); } catch (e) { continue; }
+      let best = -1;
+      urls.forEach(function (u, i) { if (fp(u) === hash && (best < 0 || Math.abs(i - idx) < Math.abs(best - idx))) best = i; });
+      if (best >= 0) return { tab: win.tabs[best], idx: best, tabId: null, kind: "safari", app: "Safari", win, w, P };
+    }
+    throw new Error("stale_tab: tab " + want.tabId + " is gone (closed or navigated); re-run list_tabs");
   }
 
   // Tabs are pinned by id where the browser has one: `tabs[i]` is positional and
@@ -134,7 +180,12 @@ function jxaRuntime(BROWSERS) {
   function resolve(want) {
     want = want || {};
     const P = procs();
-    if (want.tabId != null) return resolveById(want, P);
+    if (want.tabId != null) {
+      const h = parseHandle(want.tabId);
+      if (h && KIND[h.app] === "safari") return resolveSafari(want, h.raw, P);
+      // A bare id (from before handles) is searched across browsers, narrowed by `app`.
+      return resolveById({ tabId: want.tabId, raw: h ? h.raw : String(want.tabId), app: h ? h.app : want.app, windowId: want.windowId }, P);
+    }
     for (const name of candidates(P, want.app)) {
       const a = app(name), kind = KIND[name];
       let n;
@@ -151,7 +202,7 @@ function jxaRuntime(BROWSERS) {
           let id;
           if (want.tabIndex != null) {
             const o = arcOrder(win);
-            if (want.tabIndex < 0 || want.tabIndex >= o.order.length) throw new Error("tabIndex " + want.tabIndex + " out of range; window has " + o.order.length + " tabs");
+            if (want.tabIndex < 0 || want.tabIndex >= o.order.length) throw new Error("stale_tab: tabIndex " + want.tabIndex + " out of range; window has " + o.order.length + " tabs");
             id = o.ids[o.order[want.tabIndex]];
           } else {
             try { id = win.activeTab.id(); } catch (e) { continue; }
@@ -160,7 +211,7 @@ function jxaRuntime(BROWSERS) {
         }
         const idx = want.tabIndex != null ? want.tabIndex : activeIndex(kind, win, tabs);
         if (idx < 0 || idx >= tabs.length) {
-          if (want.tabIndex != null) throw new Error("tabIndex " + want.tabIndex + " out of range; window has " + tabs.length + " tabs");
+          if (want.tabIndex != null) throw new Error("stale_tab: tabIndex " + want.tabIndex + " out of range; window has " + tabs.length + " tabs");
           continue;
         }
         let tab = tabs[idx], tabId = null;
@@ -168,7 +219,7 @@ function jxaRuntime(BROWSERS) {
         return { tab, idx, tabId, kind, app: name, win, w, P };
       }
     }
-    throw new Error(want.app && !KIND[want.app] ? "unknown browser " + want.app : "no matching tab");
+    throw new Error(want.app && !KIND[want.app] ? "no_browser: unknown browser " + want.app : "no_browser: no browser window with an open tab" + (want.app ? " in " + want.app : ""));
   }
 
   // Chrome tabs have no `index` property (it throws), so positions come from resolve.
@@ -209,12 +260,15 @@ function jxaRuntime(BROWSERS) {
   }
 
   // Arc's execute hangs (until timeout) on background tabs; refuse up front.
-  function arcGuard(t, tool) {
-    if (t.kind === "arc" && !isActive(t)) throw new Error("Arc cannot " + tool + " on background tabs; activate_tab first.");
+  function visibleGuard(t, tool) {
+    if (t.kind === "arc" && !isActive(t)) throw new Error(notVisible(tool));
   }
 
   function exec(t, js) {
-    if (t.kind === "safari") return app(t.app).doJavaScript(js, { in: t.tab });
+    if (t.kind === "safari") {
+      try { return app(t.app).doJavaScript(js, { in: t.tab }); }
+      catch (e) { if (!isActive(t)) throw new Error(notVisible("page JS")); throw e; }
+    }
     const x = t.tab.execute({ javascript: js });
     // Arc JSON.stringifies whatever execute returns; perch's wrappers already did.
     if (t.kind === "arc") { try { return JSON.parse(x); } catch (e) { return x; } }
@@ -254,7 +308,7 @@ function jxaRuntime(BROWSERS) {
       best = byTitle(t, cands) || cands[t.w] || cands[0] || null;
       if (best) geom = { x: best.x, y: best.y, w: best.w, h: best.h };
     }
-    if (!geom) throw new Error("cannot get window geometry for " + t.app + " (minimized or on another Space?)");
+    if (!geom) throw new Error(OFFSCREEN);
     return {
       geom: geom,
       pid: t.P.pid[t.app] == null ? null : t.P.pid[t.app],
@@ -290,9 +344,9 @@ function jxaRuntime(BROWSERS) {
     const t = resolve(a.target);
     requireAccessibility();
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
-    else if (!isActive(t)) throw new Error("background trusted click requires the target to already be the active tab in its browser window; select the tab explicitly when you can spare focus");
+    else if (!isActive(t)) throw new Error(notVisible("a background trusted click") + ", or pass raise:true");
     const I = ids(t);
-    if (I.windowNumber == null) throw new Error(t.app + "'s window isn't on screen (minimized or on another Space)");
+    if (I.windowNumber == null) throw new Error(OFFSCREEN);
     if (a.raise && t.P.front !== t.app) throw new Error("target did not become frontmost after raise");
     return { t: t, I: I, background: !a.raise };
   }
@@ -397,7 +451,7 @@ function jxaRuntime(BROWSERS) {
   // at most). If no move reaches the page, the estimate is used as is.
   function aim(T, a, tool) {
     if (!T.background) selectTab(T.t);
-    arcGuard(T.t, tool);
+    visibleGuard(T.t, tool);
     let probe;
     for (let i = 0; ; i++) {
       probe = parseExec(T.t, a.probe);
@@ -437,6 +491,22 @@ function jxaRuntime(BROWSERS) {
     return { pt: pt, el: probe.el, calibrated: trace.length > 0, calibration: trace };
   }
 
+  // The browser the user is using: topmost on screen, else the system default
+  // browser if it runs, else any running browser.
+  function defaultBrowser(P) {
+    if (P.z.length) return P.z[0];
+    try {
+      ObjC.import("AppKit");
+      const u = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL($.NSURL.URLWithString("https://example.com"));
+      const id = ObjC.unwrap($.NSBundle.bundleWithURL(u).bundleIdentifier);
+      const b = BROWSERS.filter(function (x) { return x.bundle === id; })[0];
+      if (b && app(b.app).running()) return b.app;
+    } catch (e) {}
+    const any = candidates(P)[0];
+    if (any) return any;
+    throw new Error("no_browser: no browser is running (new_tab never launches one)");
+  }
+
   // One row per Arc tab, in sidebar order. Windows on one space share their tabs,
   // so a shared tab is listed once, under the frontmost window showing it.
   function listArc(ap, name, n, out) {
@@ -467,7 +537,7 @@ function jxaRuntime(BROWSERS) {
         if (done[tabId]) return;
         done[tabId] = true;
         const home = owner[tabId] || x;
-        const row = { app: name, windowId: home.id, tabId: tabId, tabIndex: home.at[tabId], url: x.urls[i] || "", title: x.titles[i] || "" };
+        const row = { app: name, tabId: handle(name, tabId), url: x.urls[i] || "", title: x.titles[i] || "" };
         if (x.o.loc[i] === "pinned") row.pinned = true;
         else if (x.o.loc[i] === "topApp") row.favorite = true;
         if (owner[tabId]) row.active = true;
@@ -496,9 +566,11 @@ function jxaRuntime(BROWSERS) {
           // `active` marks the tab each window shows (one extra read per window).
           const act = activeIndex(kind, win, win.tabs);
           for (let i = 0; i < urls.length; i++) {
-            const row = { app: name, windowId: id };
-            if (tabIds[i] != null) row.tabId = tabIds[i];
-            row.tabIndex = i; row.url = urls[i] || ""; row.title = titles[i] || "";
+            const row = { app: name };
+            if (kind === "safari") row.tabId = safariHandle(id, i, urls[i]);
+            else if (tabIds[i] != null) row.tabId = handle(name, tabIds[i]);
+            else { row.windowId = id; row.tabIndex = i; }
+            row.url = urls[i] || ""; row.title = titles[i] || "";
             if (i === act) row.active = true;
             out.push(row);
           }
@@ -508,22 +580,22 @@ function jxaRuntime(BROWSERS) {
     },
     evalJs(a) {
       const t = resolve(a.target);
-      arcGuard(t, a.tool || "eval_js");
+      visibleGuard(t, a.tool || "eval_js");
       return exec(t, a.js);
     },
     evalAsync(a) {
       const t = resolve(a.target);
-      arcGuard(t, "eval_js");
+      visibleGuard(t, "eval_js");
       exec(t, a.kick);
       const r = poll(t, a.poll, a.timeout, 50);
-      if (!r) throw new Error("eval_js (awaitPromise) timed out after " + a.timeout + "ms");
+      if (!r) throw new Error("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms");
       return r.value;
     },
     wait(a) {
       const t = resolve(a.target);
-      arcGuard(t, "wait");
+      visibleGuard(t, "wait");
       const r = poll(t, a.js, a.timeout, a.interval || 150);
-      if (!r) throw new Error("wait timed out after " + a.timeout + "ms");
+      if (!r) throw new Error("timeout: wait timed out after " + a.timeout + "ms");
       if (r.value && r.value.__perch_error) throw new Error("wait: " + r.value.__perch_error);
       return r;
     },
@@ -546,28 +618,29 @@ function jxaRuntime(BROWSERS) {
         try { sameDoc = exec(t, stamp) === "same"; } catch (e) {}
       }
       t.tab.url = a.url;
-      if (!canEval || sameDoc) return { waited: false };
+      if (!canEval || sameDoc) return { waited: false, tabId: handleOf(t) };
       const check = "(function(){try{return JSON.stringify(window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete')}catch(e){return 'false'}})()";
       const start = Date.now();
       let idle = 0;
       while (Date.now() - start < a.timeout) {
         let done = false;
         try { done = JSON.parse(String(exec(t, check))) === true; } catch (e) {}
-        if (done) return { waited: true };
+        if (done) return { waited: true, tabId: handleOf(t) };
         // A download or 204 never replaces the document; Chrome's `loading` settles.
         if (t.kind !== "safari" && Date.now() - start > 300) {
           try { idle = t.tab.loading() ? 0 : idle + 1; } catch (e) {}
-          if (idle >= 2) return { waited: true };
+          if (idle >= 2) return { waited: true, tabId: handleOf(t) };
         }
         delay(0.1);
       }
-      return { waited: false };
+      return { waited: false, tabId: handleOf(t) };
     },
     newTab(a) {
-      const kind = KIND[a.app];
-      const ap = app(a.app);
-      if (!ap.running()) throw new Error(a.app + " must already be running for background new_tab");
-      if (!ap.windows.length) throw new Error(a.app + " needs an existing window for background new_tab");
+      const name = a.app || defaultBrowser(procs());
+      const kind = KIND[name];
+      const ap = app(name);
+      if (!ap.running()) throw new Error("no_browser: " + name + " must already be running (new_tab never launches it)");
+      if (!ap.windows.length) throw new Error("no_browser: " + name + " needs an existing window (new_tab never makes one)");
       let win, newId = null;
       if (kind === "chrome" || kind === "arc") {
         win = ap.windows[0];
@@ -584,18 +657,16 @@ function jxaRuntime(BROWSERS) {
         win = ap.windows[0];
         let created = false;
         try { win.tabs.push(ap.Tab({ url: a.url })); created = true; } catch (e) {}
-        if (!created) throw new Error("Safari could not create a background tab");
+        if (!created) throw new Error("no_browser: " + name + " could not create a background tab");
       }
-      let windowId = null; try { windowId = win.id(); } catch (e) {}
-      let tabIndex = null;
+      let tabId = null;
       try {
-        if (kind === "arc" && newId != null) {
-          const o = arcOrder(win);
-          const k = o.order.map(function (i) { return o.ids[i]; }).indexOf(newId);
-          tabIndex = k >= 0 ? k : null;
-        } else tabIndex = win.tabs.length - 1;
+        if (kind === "safari") {
+          const i = win.tabs.length - 1;
+          tabId = safariHandle(win.id(), i, win.tabs[i].url() || a.url);
+        } else if (newId != null) tabId = handle(name, newId);
       } catch (e) {}
-      return { windowId, tabId: newId, tabIndex };
+      return { app: name, tabId };
     },
     activate(a) {
       focus(resolve(a.target));
@@ -607,15 +678,15 @@ function jxaRuntime(BROWSERS) {
       const t = resolve(a.target);
       if (a.raise) { focus(t); delay(0.25); t.P = procs(); }
       else if (a.target && (a.target.tabIndex != null || a.target.tabId != null) && !isActive(t)) {
-        throw new Error("background screenshot requires the target to already be the active tab in its browser window; use raise:true only when focus is available");
+        throw new Error(notVisible("a background screenshot") + ", or pass raise:true");
       }
       const I = ids(t);
-      if (I.windowNumber == null) throw new Error(t.app + "'s window isn't on screen (minimized or on another Space); screenshot cannot capture its pixels");
+      if (I.windowNumber == null) throw new Error(OFFSCREEN);
       return I;
     },
     select(a) {
       const t = resolve(a.target);
-      arcGuard(t, "select");
+      visibleGuard(t, "select");
       const r = parseExec(t, a.start);
       if (!r || !r.pending) return r;
       const picked = poll(t, a.pick, 1500, 50);
@@ -669,7 +740,7 @@ export const ERR = {
     "Safari → Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.",
   automation: "Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, " +
     "ticking the target browser under the controlling app (Claude Code / Terminal / iTerm).",
-  timeout: (ms) => `osascript timed out after ${ms}ms: target tab unreachable (stale tabIndex, hung page, or Arc background tab). Target by tabId from list_tabs.`,
+  timeout: (ms) => `timeout: osascript gave up after ${ms}ms: the tab is unreachable (hung page, or a tab its window doesn't show). Re-run list_tabs.`,
 };
 
 export function translatePermissionError(msg) {
@@ -874,7 +945,6 @@ export function shapeTabs(rows, { urlContains, titleContains, limit = 50 } = {})
   const has = (v, q) => v.toLowerCase().includes(String(q).toLowerCase());
   if (urlContains) rows = rows.filter((t) => has(t.url, urlContains));
   if (titleContains) rows = rows.filter((t) => has(t.title, titleContains));
-  // tabIndex keeps each tab's real window position, so filtered rows stay addressable.
   return { tabs: rows.slice(0, Math.max(0, limit)), total: rows.length };
 }
 
@@ -901,17 +971,26 @@ async function wait(args = {}) {
 
 const NAV_TIMEOUT = 15000;
 
+// Some handles follow the page's URL, so navigate returns the tab's current one.
 async function navigate(url, target) {
-  await rt("navigate", { target, url, timeout: NAV_TIMEOUT }, { lane: "slow", timeout: NAV_TIMEOUT + JXA_OVERHEAD });
-  return { ok: true, url };
+  const r = await rt("navigate", { target, url, timeout: NAV_TIMEOUT }, { lane: "slow", timeout: NAV_TIMEOUT + JXA_OVERHEAD });
+  return r && r.tabId ? { ok: true, url, tabId: r.tabId } : { ok: true, url };
 }
 
-async function newTab(url, appName = "Google Chrome") {
-  const browser = BROWSERS.find(b => b.app === appName);
-  if (!browser) throw new Error(`unknown browser ${appName}; one of: ${BROWSERS.map(b => b.app).join(", ")}`);
-  const targetUrl = url || "about:blank";
-  const { windowId = null, tabId = null, tabIndex = null } = await rt("newTab", { app: browser.app, url: targetUrl });
-  return tabId == null ? { app: browser.app, windowId, tabIndex } : { app: browser.app, windowId, tabId, tabIndex };
+async function newTab(url, app) {
+  return rt("newTab", { app: app || null, url: url || "about:blank" });
+}
+
+// Browser names are matched loosely (case-insensitive app name, key such as
+// "canary", or a unique substring), so callers needn't spell them exactly.
+export function matchApp(name) {
+  if (name == null || name === "") return null;
+  const q = String(name).toLowerCase();
+  const b = BROWSERS.find((x) => x.app.toLowerCase() === q) || BROWSERS.find((x) => x.key === q);
+  if (b) return b.app;
+  const hits = BROWSERS.filter((x) => x.app.toLowerCase().includes(q));
+  if (hits.length === 1) return hits[0].app;
+  throw new Error(`no_browser: ${hits.length ? "ambiguous" : "unknown"} browser '${name}'; one of: ${BROWSERS.map((x) => x.app).join(", ")}`);
 }
 
 async function activateTab(target) {
@@ -1660,13 +1739,13 @@ async function select(args = {}) {
 }
 
 // Shared guidance lives here once instead of in every tool description.
-export const INSTRUCTIONS = `perch drives the user's own macOS browsers (Chrome family, Arc, Safari) over AppleScript.
-Targeting: tools take an optional \`target\` {app, windowId, tabId, tabIndex}; the default is the active tab of the topmost browser window. Pin tabs by tabId from list_tabs/new_tab (not Safari); it survives tabs opening and closing. tabIndex is a position (Arc: sidebar order). new_tab creates an unselected tab in an existing browser window but may focus the browser; defer it while the user works.
+export const INSTRUCTIONS = `perch drives the user's own macOS browsers over AppleScript. Which browser a tab lives in is perch's concern, not the caller's.
+Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab; it works for every browser and survives other tabs opening and closing. With no target, tools use the active tab of the topmost browser window. new_tab defaults to the browser in use and creates an unselected tab, but may focus the browser; defer it while the user works.
 Elements: prefer \`ref\` (from accessibility_snapshot) over \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
-Arc runs page JS only on a window's active tab (activate_tab first). Background screenshots and SkyLight trusted clicks require the target tab already active in its browser window; background trusted fills work on inactive Chrome tabs, including minimized windows. Only activate_tab, screenshot{raise} and trusted input with raise explicitly take focus.`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout. Only activate_tab and raise:true take focus.`;
 
-const TARGET = { type: "object", properties: { app: { type: "string" }, windowId: { type: ["string", "number"] }, tabId: { type: ["string", "number"] }, tabIndex: { type: "number" } } };
+const TARGET = { type: "object", properties: { tabId: { type: ["string", "number"] }, app: { type: "string" }, windowId: { type: ["string", "number"] }, tabIndex: { type: "number" } } };
 const REF = { type: "string", description: "From accessibility_snapshot." };
 const SEL = { type: "string", description: "CSS selector." };
 const LABEL = { type: "string", description: "Regex over the field's label." };
@@ -1674,15 +1753,15 @@ const tool = (name, description, properties = {}, required) =>
   ({ name, description, inputSchema: { type: "object", properties, ...(required ? { required } : {}) } });
 
 const TOOLS = [
-  tool("list_tabs", "List open tabs as {tabs:[{app,windowId,tabId?,tabIndex,url,title,active?}], total}. Arc lists each shared tab once, in sidebar order. Filter rather than dumping; `total` counts matches before `limit`.", {
+  tool("list_tabs", "List open tabs as {tabs:[{app,tabId,url,title,active?}], total}; pass a row's tabId as target. `active`: the tab its window shows. Filter rather than dumping; `total` counts matches before `limit`.", {
     app: { type: "string" },
     urlContains: { type: "string" },
     titleContains: { type: "string" },
     limit: { type: "number", description: "Default 50." },
   }),
-  tool("new_tab", "Create an unselected tab in an already running browser window. Creation may focus the browser; defer while the user works. Returns {app,windowId,tabId?,tabIndex}.", {
+  tool("new_tab", "Create an unselected tab in an already running browser window. Creation may focus the browser; defer while the user works. Returns {app,tabId}.", {
     url: { type: "string", description: "Default about:blank." },
-    app: { type: "string", description: "Default Google Chrome." },
+    app: { type: "string", description: "Default: the browser in use." },
   }),
   tool("activate_tab", "Bring the target tab and its window to the front.", { target: TARGET }),
   tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading.", { url: { type: "string" }, target: TARGET }, ["url"]),
@@ -1743,7 +1822,7 @@ const TOOLS = [
     raise: { type: "boolean" },
     target: TARGET,
   }),
-  tool("fill", "Set a field's text and verify it landed: inputs, textareas, and rich editors (contenteditable, ProseMirror, Quill…). Returns {ok,kind,el,len,ambiguous?}. `trusted` gives plain fields a trusted input event in inactive Chrome tabs without taking key focus; `raise:true` types foreground keys.", {
+  tool("fill", "Set a field's text and verify it landed: inputs, textareas, and rich editors (contenteditable, ProseMirror, Quill…). Returns {ok,kind,el,len,ambiguous?}. `trusted` gives plain fields a trusted input event in background tabs without taking key focus; `raise:true` types foreground keys.", {
     text: { type: "string" },
     text_path: { type: "string", description: "File with the text." },
     ref: REF,
@@ -1809,6 +1888,8 @@ export async function handleCall(name, args = {}) {
   const handler = Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : null;
   try {
     if (!handler) throw new Error(`unknown tool: ${name}`);
+    if (args.app != null) args = { ...args, app: matchApp(args.app) };
+    if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
     return formatResult(await handler(args));
   } catch (e) {
     return { content: [{ type: "text", text: `error: ${e.message}` }], isError: true };

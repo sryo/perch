@@ -89,3 +89,20 @@ needs background browser automation without installing anything in the browser.
   browser; `npm run smoke` and `scripts/bench.mjs` run against a live one.
 - ❌ Splitting server.js into modules. Rejected to keep the single-file rule;
   the test seams are exports plus a realpath start guard instead.
+
+### Browser-neutral clients (2026-09): perch figures out the browser
+- ✅ Clients ask for things; which browser a tab lives in is perch's concern.
+  `tabId` became an opaque handle that encodes the browser, so `target:
+  {tabId}` alone works everywhere, Safari included. It also fixed a real
+  collision: Chromium tab ids are per-process counters, so a bare id could
+  resolve in the wrong Chromium app.
+- ✅ `list_tabs` rows are `{app, tabId, url, title, active?}`; `new_tab`
+  defaults to the browser in use and returns `{app, tabId}`; `app` matches
+  loosely.
+- ✅ Real capability gaps (page JS only in a window's shown tab on some
+  browsers, never stealing focus) surface as neutral error codes
+  (`tab_not_visible`, `stale_tab`, `window_offscreen`, `no_browser`,
+  `timeout`) instead of browser-named advice. A test keeps browser names out
+  of tool descriptions and instructions.
+- ❌ Auto-activating a tab on `tab_not_visible`. Rejected: implicit selection
+  changed the user's foreground before (see above).

@@ -259,6 +259,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     ctx, counts, log, clock, apps, posted,
     // Reorder a window's tabs in place: tabs[w] is the live list the runtime reads.
     tabsOf: (name, w) => winsByApp[name][w].tabs,
+    winSpec: (name, w) => winsByApp[name][w].spec,
     reset() { for (const k of Object.keys(counts)) delete counts[k]; log.length = 0; },
     state,
     page: (name, w, t) => winsByApp[name][w].tabs[t].page.ctx,
