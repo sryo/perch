@@ -2649,12 +2649,13 @@ async function select(args = {}) {
 
 // Shared guidance lives here once instead of in every tool description.
 export const INSTRUCTIONS = `perch drives the user's own macOS browsers over AppleScript. Which browser a tab lives in is perch's concern, not the caller's.
-Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab; it works for every browser and survives other tabs opening and closing. With no target, tools use the active tab of the topmost browser window. new_tab defaults to the browser in use and creates an unselected tab, but may focus the browser; defer it while the user works.
+Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab; it works for every browser and survives other tabs opening and closing. With no target, tools use the active tab of the topmost browser window.
 Elements: prefer \`ref\` (from accessibility_snapshot) over \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
 Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first), dialog_open (a JS alert/confirm/prompt is open: press {dialog}). Only activate_tab and raise:true take focus.`;
 
-const TARGET = { type: "object", properties: { tabId: { type: ["string", "number"] }, app: { type: "string" }, windowId: { type: ["string", "number"] }, tabIndex: { type: "number" } } };
+// windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
+const TARGET = { type: "object", properties: { tabId: { type: ["string", "number"] }, app: { type: "string" } } };
 const REF = { type: "string", description: "From accessibility_snapshot." };
 const SEL = { type: "string", description: "CSS selector." };
 const LABEL = { type: "string", description: "Regex over the field's label." };
@@ -2662,20 +2663,20 @@ const tool = (name, description, properties = {}, required) =>
   ({ name, description, inputSchema: { type: "object", properties, ...(required ? { required } : {}) } });
 
 const TOOLS = [
-  tool("list_tabs", "List open tabs as {tabs:[{app,tabId,url,title,active?}], total}; pass a row's tabId as target. `active`: the tab its window shows. Filter rather than dumping; `total` counts matches before `limit`.", {
+  tool("list_tabs", "Open tabs as {tabs:[{app,tabId,url,title,active?}], total}. `active`: the tab its window shows; `total` counts matches before `limit`. Filter rather than dumping.", {
     app: { type: "string" },
     urlContains: { type: "string" },
     titleContains: { type: "string" },
     limit: { type: "number", description: "Default 50." },
   }),
-  tool("new_tab", "Create an unselected tab in an already running browser window. Creation may focus the browser; defer while the user works. Returns {app,tabId}.", {
+  tool("new_tab", "Create an unselected tab in a running browser's window (default: the browser in use). May focus the browser; defer while the user works. Returns {app,tabId}.", {
     url: { type: "string", description: "Default about:blank." },
-    app: { type: "string", description: "Default: the browser in use." },
+    app: { type: "string" },
   }),
   tool("activate_tab", "Bring the target tab and its window to the front.", { target: TARGET }),
   tool("close_tab", "Close the tab with this handle. Never closes a window's last tab and never changes focus.", { tabId: { type: "string" } }, ["tabId"]),
   tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading.", { url: { type: "string" }, target: TARGET }, ["url"]),
-  tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. With both `script_path` and `script`, the file runs first, then `script`, in one call.", {
+  tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. Given both, `script_path` runs before `script`.", {
     script: { type: "string" },
     script_path: { type: "string", description: "Local .js file." },
     awaitPromise: { type: "boolean", description: "Await async code (30s cap)." },
@@ -2688,7 +2689,7 @@ const TOOLS = [
     timeout: { type: "number", description: "ms, default 10000." },
     target: TARGET,
   }),
-  tool("screenshot", "Capture the target window without raising it; background mode requires an already active tab. Returns the image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w.", {
+  tool("screenshot", "Capture the target window without raising it; the tab must be the one its window shows. Returns the image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w.", {
     raise: { type: "boolean" },
     maxWidth: { type: "number", description: "Default 1568; 0 = full size." },
     format: { type: "string", enum: ["png", "jpeg"] },
@@ -2702,13 +2703,13 @@ const TOOLS = [
     offset: { type: "number" },
     target: TARGET,
   }),
-  tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`. Refs feed click/fill/select/get_text.", {
+  tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`.", {
     max: { type: "number", description: "Element cap, default 500; 0 = header only." },
-    role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles, e.g. textbox, combobox, button." },
-    query: { type: "string", description: "Regex over each line; others dropped." },
+    role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles (textbox, button…)." },
+    query: { type: "string", description: "Keep lines matching this regex." },
     target: TARGET,
   }),
-  tool("console_capture", "Patch console.* in the page: `start`, then `read` drains entries as \"level: text\" strings, `stop` restores. Navigation clears it. `network` drains finished requests as \"status type ms size url\" (Resource Timing, no start).", {
+  tool("console_capture", "`start` patches console.*, `read` drains \"level: text\" lines, `stop` restores; navigation clears it. `network` drains finished requests as \"status type ms size url\" (Resource Timing, no start).", {
     mode: { type: "string", enum: ["start", "read", "stop", "network"], description: "Default read." },
     target: TARGET,
   }),
@@ -2718,24 +2719,24 @@ const TOOLS = [
     subtitle: { type: "string" },
     sound: { type: "string", description: "Default Glass." },
   }, ["message"]),
-  tool("file_upload", "Put a local file on an <input type=file> (default the first one) without the bytes entering context. {ok:false} means it isn't a plain file input: hand off instead of retrying.", {
+  tool("file_upload", "Put a local file on an <input type=file> (default the first one) without the bytes entering context. {ok:false}: not a plain file input; hand off, don't retry.", {
     path: { type: "string" },
     ref: REF,
     selector: SEL,
     target: TARGET,
   }, ["path"]),
-  tool("click", "Click by ref/selector (el.click()); `hover` fires hover events instead. `trusted`: SkyLight click (needs Accessibility), `raise:true` foreground HID; check `hit`. Only trusted takes screen `x`/`y`.", {
+  tool("click", "Click by ref/selector (el.click()); `hover` fires hover events instead. `trusted`: real click without focus (needs Accessibility), `raise:true` in the foreground; check `hit`. Only trusted takes screen `x`/`y`.", {
     ref: REF,
     selector: SEL,
     x: { type: "number" },
     y: { type: "number" },
     trusted: { type: "boolean" },
     raise: { type: "boolean" },
-    readback: { type: "string", description: "CSS; its text after the click (waits up to 2s for a change): {readback,changed,url?}." },
+    readback: { type: "string", description: "CSS; its text once changed (2s cap): {readback,changed,url?}." },
     hover: { type: "boolean" },
     target: TARGET,
   }),
-  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element; emulates Enter/Space/Tab defaults. `trusted`: real key events in the shown tab; check `hit`. `dialog`: Enter/Escape answers an open alert/confirm/prompt; a string is the prompt text.", {
+  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element; emulates Enter/Space/Tab defaults. `trusted`: real key events in the shown tab; check `hit`. `dialog`: Enter/Escape answers the tab's own alert/confirm/prompt; a string is the prompt text.", {
     key: { type: "string" },
     ref: REF,
     selector: SEL,
@@ -2743,10 +2744,10 @@ const TOOLS = [
     dialog: { type: ["boolean", "string"] },
     target: TARGET,
   }, ["key"]),
-  tool("fill", "Set text in inputs, textareas, rich editors; verifies it landed: {ok,kind,el,len}. `fields`: many fields in one call. `trusted`: trusted input event, no key focus; `raise:true` types foreground keys.", {
+  tool("fill", "Set text in inputs, textareas, rich editors; verifies it landed: {ok,kind,el,len}. `fields`: many in one call. `trusted`: trusted input event, no key focus; `raise:true` types foreground keys.", {
     fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]" },
     text: { type: "string" },
-    text_path: { type: "string", description: "File with the text." },
+    text_path: { type: "string", description: "Local text file." },
     ref: REF,
     selector: SEL,
     label_pattern: LABEL,
