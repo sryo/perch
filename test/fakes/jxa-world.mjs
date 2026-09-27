@@ -54,7 +54,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     fn("name", () => spec.title || "");
     // Chrome's dictionary has no tab `index` (it throws); Safari's does.
     fn("index", () => { if (b.kind === "chrome") throw new Error("Can't get object."); return w.tabs.indexOf(tab) + 1; });
-    fn("loading", () => !!tab.pending || tab.page.ticks > 0);
+    // A navigation set with state.commitMs commits on the clock, not on executes.
+    const settle = () => {
+      if (tab.pending && tab.pending.at != null && clock.t >= tab.pending.at) { tab.page = makePage(tab.pending.url); tab.pending = null; }
+    };
+    fn("loading", () => { settle(); return !!tab.pending || tab.page.ticks > 0; });
     // Safari reports a blank tab's URL as null, not "about:blank".
     tab.shownUrl = () => { const u = tab.pending ? tab.pending.url : tab.page.url; return b.kind === "safari" && u === "about:blank" ? null : u; };
     Object.defineProperty(tab, "url", {
@@ -69,15 +73,28 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         if (state.noContent && state.noContent.test(u)) return;
         // The old document keeps answering (readyState 'complete') for state.linger
         // executes after the url is set, before the new one replaces it.
-        if (state.linger > 0) tab.pending = { url: u, n: state.linger };
+        if (state.commitMs > 0) tab.pending = { url: u, n: Infinity, at: clock.t + state.commitMs };
+        else if (state.linger > 0) tab.pending = { url: u, n: state.linger };
         else tab.page = makePage(u);
       },
     });
-    tab.execute = ({ javascript }) => {
+    // `ae.timeoutMs` is the caller's Apple Event timeout; plain JXA commands have
+    // none, so an unanswered one blocks for the 2-minute default.
+    tab.execute = ({ javascript }, ae = {}) => {
       bump("tab.execute");
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
       if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
+      settle();
       if (tab.pending && tab.pending.n-- <= 0) { tab.page = makePage(tab.pending.url); tab.pending = null; }
+      const unanswered = () => {
+        clock.t += ae.timeoutMs ?? 120000;
+        return Object.assign(new Error("AppleEvent timed out."), { errorNumber: -1712 });
+      };
+      // state.dropWhilePending: Chrome never replies to an execute that lands while
+      // a navigation replaces the document; the navigation commits meanwhile.
+      if (state.dropWhilePending && tab.pending) { const e = unanswered(); tab.page = makePage(tab.pending.url); tab.pending = null; throw e; }
+      // state.hung: the page never answers at all (a busy loop, a modal dialog).
+      if (state.hung) throw unanswered();
       // spec.dom: a happy-dom Window standing in for the page.
       const r = spec.dom ? spec.dom.eval(javascript) : vm.runInContext(javascript, tab.page.ctx);
       return b.kind === "arc" ? JSON.stringify(r) : r;
@@ -208,7 +225,36 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     apps[b.name] = a;
   }
 
+  // NSAppleScript understands one shape: the runtime's bounded execute,
+  // `with timeout of S seconds / tell application "A" to execute tab id "T" of
+  // window id "W" javascript "JS" / end timeout`.
+  const asString = String.raw`"((?:[^"\\]|\\.)*)"`;
+  const asExecute = new RegExp(String.raw`^with timeout of ([\d.]+) seconds\ntell application ${asString} to execute tab id ${asString} of window id ${asString} javascript ${asString}\nend timeout$`);
+  const unquote = (s) => s.replace(/\\(.)/g, "$1");
+  // A failure returns nil; the error Ref is left holding a value that throws when
+  // read, since live osascript segfaults reading it after a timeout.
+  function runAppleScript(src, err) {
+    bump("NSAppleScript");
+    const m = asExecute.exec(src);
+    if (!m) throw new Error("fake NSAppleScript: unsupported source " + JSON.stringify(src));
+    const [secs, appName, tabId, winId, js] = [Number(m[1]), ...m.slice(2).map(unquote)];
+    const nil = () => {
+      Object.defineProperty(err, 0, { get: () => { state.segv = true; throw new Error("SEGV: read a freed error Ref"); } });
+      return { isNil: () => true };
+    };
+    const w = (winsByApp[appName] || []).find((x) => String(x.spec.id) === winId);
+    const tab = w && w.tabs.find((x) => String(x.spec.id) === tabId);
+    if (!tab) return nil();
+    try {
+      const r = tab.execute({ javascript: js }, { timeoutMs: secs * 1000 });
+      return { isNil: () => false, stringValue: r == null ? r : String(r) };
+    } catch (e) {
+      return nil();
+    }
+  }
+
   const sandbox = {
+    Ref: () => [],
     Application: (name) => {
       bump(`Application(${name})`);
       if (name === "System Events") throw new Error("SE touched");
@@ -263,6 +309,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       CGEventGetLocation: () => ({ ...state.cursor }),
       CGWarpMouseCursorPosition: (pt) => { state.cursor = { x: pt.x, y: pt.y }; state.warps.push({ x: pt.x, y: pt.y }); },
       NSDictionary: { dictionaryWithObjectForKey: () => ({}) },
+      NSAppleScript: { alloc: { initWithSource: (src) => ({ executeAndReturnError: (err) => runAppleScript(src, err) }) } },
       NSString: { stringWithString: (str) => nsString(str) },
       AXIsProcessTrusted: () => state.ax,
       AXIsProcessTrustedWithOptions: () => state.ax,
