@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Latency + payload bench against a live browser. Read-only by default: every
 // scenario runs on the frontmost browser's active tab and changes nothing.
-//   node scripts/bench.mjs [--runs 20] [--out bench/after.json] [--compare bench/before.json]
+//   node scripts/bench.mjs [--app canary] [--runs 20] [--out bench/runs/bench.json] [--compare bench/baseline.json]
+// --app benches that browser's shown tab instead of the frontmost browser's.
+// Runs land in bench/runs/ (gitignored) and compare against bench/baseline.json.
+// Replacing the baseline is a deliberate copy: cp bench/runs/bench.json bench/baseline.json
 //   --navigate   also time navigate (opens a scratch about:blank tab first)
 
 import { writeFile, readFile, mkdir } from "node:fs/promises";
@@ -13,13 +16,15 @@ const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
 const RUNS = Number(opt("--runs", 20));
 const WARMUP = 3;
-const OUT = opt("--out");
-const COMPARE = opt("--compare");
+const OUT = opt("--out", "bench/runs/bench.json");
+const COMPARE = opt("--compare", "bench/baseline.json");
+const APP = opt("--app");
 
 const pct = (xs, p) => xs.slice().sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))];
 
 const client = await connect({ timeoutMs: 60000 });
 const results = {};
+let benched = null;
 
 async function time(name, fn) {
   const ms = [];
@@ -43,16 +48,18 @@ async function time(name, fn) {
 try {
   // Rows come frontmost browser first; past list_tabs' default limit of 50 the
   // active row can be missing, and falling back to another tab would read it.
-  const listed = JSON.parse(text(await client.call("list_tabs", { limit: 10000 })));
+  const listed = JSON.parse(text(await client.call("list_tabs", { limit: 10000, ...(APP ? { app: APP } : {}) })));
   const tabs = Array.isArray(listed) ? listed : listed.tabs;
   if (!tabs.length) throw new Error("no browser tabs; open a browser first");
   const active = tabs.find((t) => t.active);
   if (!active) throw new Error("no tab is shown in any browser window; refusing to bench a background tab");
+  benched = active.app;
   const target = { tabId: active.tabId };
 
   await time("list_tabs", () => client.call("list_tabs"));
   await time("list_tabs limit:1", () => client.call("list_tabs", { limit: 1 }));
-  await time("eval_js default target", () => client.call("eval_js", { script: "return 1" }));
+  // The default target is the frontmost browser's tab, which --app may not be.
+  if (!APP) await time("eval_js default target", () => client.call("eval_js", { script: "return 1" }));
   await time("eval_js explicit target", () => client.call("eval_js", { script: "return 1", target }));
   await time("eval_js awaitPromise", () => client.call("eval_js", { script: "return 1", awaitPromise: true, target }));
   await time("wait readyState", () => client.call("wait", { readyState: "complete", target }));
@@ -75,6 +82,8 @@ try {
 const report = {
   rev: execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT }).toString().trim(),
   date: new Date().toISOString(),
+  macos: execFileSync("sw_vers", ["-productVersion"]).toString().trim(),
+  browser: benched,
   runs: RUNS,
   results,
 };
@@ -83,8 +92,11 @@ if (OUT) {
   await mkdir(dirname(p), { recursive: true });
   await writeFile(p, JSON.stringify(report, null, 2) + "\n");
 }
-if (COMPARE) {
-  const before = JSON.parse(await readFile(resolve(ROOT, COMPARE), "utf8")).results;
+// No baseline, or one that isn't bench JSON: just print this run.
+const baseline = await readFile(resolve(ROOT, COMPARE), "utf8").then((s) => JSON.parse(s)).catch(() => null);
+if (baseline) {
+  const before = baseline.results;
+  console.log(`\nbaseline: ${baseline.rev} on macOS ${baseline.macos || "?"}, ${baseline.browser || "?"} (${baseline.date})`);
   console.log("\nscenario                     p50 before -> after      bytes before -> after");
   for (const [k, v] of Object.entries(results)) {
     const b = before[k];

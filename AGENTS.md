@@ -14,10 +14,12 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 │   └── helpers/     # happy-dom page runner for page scripts
 ├── scripts/
 │   ├── smoke.mjs    # live stdio smoke test (npm run smoke)
-│   ├── bench.mjs    # live latency/payload bench (node scripts/bench.mjs --compare bench/before.json)
-│   ├── mcp-client.mjs  # tiny MCP stdio client shared by smoke and bench
+│   ├── trusted-live.mjs  # live trusted click/fill check (--yes; --background)
+│   ├── bench.mjs    # live latency/payload bench, compared against bench/baseline.json
+│   ├── compare.mjs  # perch side of the perch vs Claude in Chrome suite
+│   ├── mcp-client.mjs  # tiny MCP stdio client shared by the live scripts
 │   └── skylight-probe.js  # proof that SkyLight event routing binds from pure JXA
-├── bench/           # recorded bench results
+├── bench/           # baseline.json (the number to beat), compare/ (fixture + history); runs/ is gitignored
 ├── install.sh       # macOS installer: clone, npm install, `claude mcp add`
 ├── GOALS.md         # goals, non-goals, decisions on record. Read before adding a tool.
 ├── SKILL.md         # usage reference for agents
@@ -33,7 +35,7 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 
 `server.js` has four layers, top to bottom:
 
-1. **Transport.** `OsaDaemon` keeps one `osascript -i -l JavaScript` REPL per lane. `jxa(script, {lane})` runs a script there, falling back to one-shot `execFile` only when the script never reached stdin.
+1. **Transport.** `OsaDaemon` keeps one `osascript -l JavaScript` process per lane, running `DAEMON_LOOP`, which reads stdin lines itself (`osascript -i` over a pipe evaluates nothing until EOF on macOS 27.2). `jxa(script, {lane})` runs a script there, falling back to one-shot `execFile` only when the script never reached stdin.
 2. **JXA runtime.** `jxaRuntime()` is a real function whose source is sent once per daemon as the prelude. It defines `globalThis.__perch` with the per-call entry points. Node calls `rt(fn, args)`, which sends one short line: `__perch.fn(<json>)`.
 3. **Page scripts.** `PAGE_PRELUDE` plus `PAGE_SCRIPTS[name]` are plain strings that run inside the tab. `pageScript(name, A)` prepends `const A = <json>`, and `buildEvalWrapper` wraps the result.
 4. **Tools.** Thin Node handlers (`HANDLERS`) validate arguments, call `rt` or `evalJs`, and shape results. `formatResult` maps them to MCP content.
@@ -131,7 +133,7 @@ Each blocked layer returns an actionable error.
 - **The runtime stays self-contained ES2019.** It must not reference Node scope; `test/runtime.test.mjs` runs it under `node:vm` and compiles it with real osascript.
 - **Tools earn their slot.** Solve a real workflow; don't mirror CDP. Check both consumers (avis, trabAGItos) before changing the surface. Keep `tools/list` under `SCHEMA_BUDGET`, with shared guidance in `INSTRUCTIONS`.
 - **Background-friendly by default.** Only `activate_tab`, `screenshot {raise}` and trusted input with `raise` take focus. Background trusted input must never change the user's AppKit key process or shared cursor.
-- **TDD.** Write the failing test first. Then run `npm test` (unit, no browser) and `npm run smoke` (live) after any change, and `node scripts/bench.mjs --compare bench/before.json` for anything performance related.
+- **TDD.** Write the failing test first. Then run `npm test` (unit, no browser) and `npm run smoke` (live) after any change, and `node scripts/bench.mjs --app canary` for anything performance related. Runs go to `bench/runs/` (gitignored); replace `bench/baseline.json` or add a row to `bench/compare/README.md` only on purpose.
 - **Live focus checks.** `npm run smoke` reuses an existing scratch tab and skips tab creation; `--with-tab-creation` opts into checks that may focus the browser. `scripts/trusted-live.mjs --background` needs an active scratch tab behind another app for SkyLight click; `--background-fill` tests an inactive scratch tab even while minimized. If the preconditions are absent, defer; never create/select tabs or activate another app to create them. Preserve the user's foreground while testing.
 
 ## Ceiling: what AppleScript can't do

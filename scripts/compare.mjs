@@ -3,7 +3,8 @@
 // (O1..O8, mirrored on the extension side) through perch's MCP stdio interface
 // against bench/compare/fixture.html served at FIXTURE_URL, and writes
 // {tool, app, date, node, macos, ops:{O1:{calls, chars, ms, ok_rate, notes}}}.
-//   node scripts/compare.mjs --app <browser> [--reps 10] [--out bench/compare/perch.json] [--activate]
+//   node scripts/compare.mjs --app <browser> [--reps 10] [--out bench/runs/compare.json] [--activate]
+// Runs land in bench/runs/ (gitignored); bench/compare/README.md keeps the history.
 // Opens one scratch tab (new_tab may focus the browser) and closes it at the end.
 // --activate selects that tab first (takes focus); without it, perch refuses
 // screenshots of the unselected tab, and Arc/Safari refuse its page JS too.
@@ -221,10 +222,10 @@ export function shapeReport(suite, { app, date, node, macos }) {
 export function parseArgs(argv) {
   const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
   const app = opt("--app");
-  if (!app) throw new Error("usage: compare.mjs --app <browser> [--reps 10] [--out bench/compare/perch.json] [--activate]; --app is required");
+  if (!app) throw new Error("usage: compare.mjs --app <browser> [--reps 10] [--out bench/runs/compare.json] [--activate]; --app is required");
   const reps = Number(opt("--reps", 10));
   if (!Number.isInteger(reps) || reps < 1) throw new Error("--reps must be a positive integer");
-  return { app, reps, out: opt("--out", "bench/compare/perch.json"), activate: argv.includes("--activate") };
+  return { app, reps, out: opt("--out", "bench/runs/compare.json"), activate: argv.includes("--activate") };
 }
 
 // ---- CLI ----
@@ -255,12 +256,13 @@ async function main() {
   } finally {
     client.close();
   }
-  const report = shapeReport(suite, {
+  const rev = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT }).toString().trim();
+  const report = { rev, ...shapeReport(suite, {
     app: suite.app,
     date: new Date().toISOString(),
     node: process.version,
     macos: execFileSync("sw_vers", ["-productVersion"]).toString().trim(),
-  });
+  }) };
   const p = resolve(ROOT, args.out);
   await mkdir(dirname(p), { recursive: true });
   await writeFile(p, JSON.stringify(report, null, 2) + "\n");

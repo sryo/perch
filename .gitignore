@@ -1,3 +1,5 @@
 node_modules
+bench/runs/
+.claude/
 *.log
 .DS_Store

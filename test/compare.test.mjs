@@ -228,7 +228,7 @@ test("shapeReport produces the shared comparison schema", async () => {
 });
 
 test("parseArgs reads --app, --reps, --out with defaults", () => {
-  assert.deepEqual(parseArgs(["--app", "canary"]), { app: "canary", reps: 10, out: "bench/compare/perch.json", activate: false });
+  assert.deepEqual(parseArgs(["--app", "canary"]), { app: "canary", reps: 10, out: "bench/runs/compare.json", activate: false });
   assert.deepEqual(parseArgs(["--app", "arc", "--reps", "3", "--out", "x.json", "--activate"]), { app: "arc", reps: 3, out: "x.json", activate: true });
   assert.throws(() => parseArgs([]), /--app/);
   assert.throws(() => parseArgs(["--app", "arc", "--reps", "0"]), /--reps/);
