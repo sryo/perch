@@ -263,6 +263,7 @@ test("accessibility_snapshot: the default does no Accessibility work; frames:tru
   // resolve (4), the tab's shown state (1) and the page script (1); the fake world
   // doesn't count window geometry reads (2 more live).
   assert.equal(events(), 6, breakdown());
-  // Window and page-area match, then role, name, flags and frame per node.
-  assert.equal(ax(), 34, breakdown());
+  // Window match (its geometry and CGWindowID) and page area, then role, name,
+  // flags and frame per node.
+  assert.equal(ax(), 35, breakdown());
 });

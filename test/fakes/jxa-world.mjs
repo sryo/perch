@@ -301,7 +301,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       return axList(cgEntries.filter((c) => c.pid === el.pid && c.ax).map((c) => ({ role: "AXWindow", subrole: "AXStandardWindow", c }))
         .concat(state.dialogs.filter((d) => d.pid === el.pid).map((d) => ({ role: "AXWindow", subrole: "AXUnknown", d }))));
     }
-    const box = el.role === "AXWindow" ? el.c || (el.d && !el.inner ? dialogFrame(el.d) : null) : el.box;
+    const box = el.role === "AXWindow" ? (el.c && (el.c.axFrame || el.c)) || (el.d && !el.inner ? dialogFrame(el.d) : null) : el.box;
     if (name === "AXRole") return el.role;
     if (name === "AXSubrole") return el.subrole;
     if (name === "AXTitle") return el.title;
@@ -442,6 +442,14 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       // Accessibility tree: a CG entry's `ax: { web: [{x,y,w,h}, ...] }` lists the
       // window's web areas (the page, and a side panel's). No `ax`: nothing matches.
       AXUIElementCreateApplication: (pid) => ({ role: "AXApplication", pid }),
+      // An entry's `axFrame` is its AX window's frame when it differs from CG's;
+      // `axWid` is the CGWindowID its AX window reports (unreadable without one).
+      _AXUIElementGetWindow: (el, out) => {
+        bump("AX");
+        if (!el.c || el.c.axWid == null) return -25205;
+        out[0] = el.c.axWid;
+        return 0;
+      },
       AXUIElementCopyAttributeValue: (el, name, out) => {
         bump("AX");
         // A closed dialog's elements are gone: kAXErrorInvalidUIElement.
@@ -503,7 +511,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
   };
   const ctx = vm.createContext(sandbox);
   return {
-    ctx, counts, log, clock, apps, posted,
+    ctx, counts, log, clock, apps, posted, cg: cgEntries,
     // Reorder a window's tabs in place: tabs[w] is the live list the runtime reads.
     tabsOf: (name, w) => winsByApp[name][w].tabs,
     winSpec: (name, w) => winsByApp[name][w].spec,

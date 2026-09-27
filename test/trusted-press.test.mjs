@@ -173,11 +173,11 @@ test("trusted press reports hit:null when no keydown reaches the page, and ok:fa
 
 // A key posted to the pid goes to the browser's key window and its focused
 // element, so the press refuses unless both are the target's page.
-async function refused(opts, hint) {
+async function refused(opts, hint, code = "tab_not_visible") {
   const { world, dom } = background(opts);
   const r = await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target });
   assert.equal(r.isError, true, r.content[0].text);
-  assert.match(r.content[0].text, /^error: tab_not_visible: /);
+  assert.match(r.content[0].text, new RegExp("^error: " + code + ": "));
   assert.match(r.content[0].text, hint);
   assert.equal(world.posted.length, 0, "nothing posted");
   assert.equal(dom.__perch_key, undefined, "the page was not armed");
@@ -213,8 +213,11 @@ test("trusted press refuses when focus is in a bubble, a child window or a side 
 });
 
 test("trusted press refuses when the focused window can't be told apart", async () => {
-  // Two browser windows share the target's frame: no unique match.
-  await refused({ extra: [{ owner: "Google Chrome", pid: 5, wid: 78, ...WIN }] }, onRaise);
+  // A twin of the target's frame is refused before focus is read.
+  await refused({ extra: [{ owner: "Google Chrome", pid: 5, wid: 78, ...WIN }] }, /same frame/, "window_ambiguous");
+  // One 3pt off is not a tie for the target, but the focused window's frame
+  // still matches two CG entries: no unique match.
+  await refused({ extra: [{ owner: "Google Chrome", pid: 5, wid: 78, ...WIN, x: WIN.x + 3 }] }, onRaise);
   // No focused window at all.
   await refused({ focus: null }, onRaise);
 });
