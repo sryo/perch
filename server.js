@@ -642,16 +642,9 @@ function jxaRuntime(BROWSERS) {
   // is the one whose shape matches the viewport the probe measured, and its width
   // over innerWidth is the page zoom. Web areas are not descended into. Null when
   // nothing matches, so the caller falls back.
-  let axReady = false;
   function axPageArea(I, probe) {
     if (I.pid == null || !probe.iw || !probe.ih) return null;
-    if (!axReady) {
-      ObjC.bindFunction("AXUIElementCreateApplication", ["id", ["int"]]);
-      ObjC.bindFunction("AXUIElementCopyAttributeValue", ["int", ["id", "id", "id *"]]);
-      axReady = true;
-    }
-    const attr = function (el, name) { const out = Ref(); return $.AXUIElementCopyAttributeValue(el, $(name), out) === 0 ? out[0] : null; };
-    const list = function (v) { const n = v ? Number(v.count) : 0, out = []; for (let i = 0; i < n; i++) out.push(v.objectAtIndex(i)); return out; };
+    const ax = axInit(), attr = ax.attr, list = ax.list;
     // AXValue has no JS bridge; its description reads "{value = x:917.000000 y:57.000000 ...}".
     const pair = function (el, name, a, b) {
       const v = attr(el, name);
@@ -679,6 +672,78 @@ function jxaRuntime(BROWSERS) {
       if (scale > 0.2 && scale < 5 && d <= 2 && d < miss) { miss = d; best = { x: p[0], y: p[1], scale: scale }; }
     }
     return best;
+  }
+
+  // Accessibility bindings, bound once per REPL. `attr` is null for a missing
+  // or unsupported attribute; `str` unwraps a string attribute ("" if absent).
+  let axKit = null;
+  function axInit() {
+    if (axKit) return axKit;
+    ObjC.import("ApplicationServices");
+    ObjC.bindFunction("AXUIElementCreateApplication", ["id", ["int"]]);
+    ObjC.bindFunction("AXUIElementCopyAttributeValue", ["int", ["id", "id", "id *"]]);
+    ObjC.bindFunction("AXUIElementPerformAction", ["int", ["id", "id"]]);
+    ObjC.bindFunction("AXUIElementSetAttributeValue", ["int", ["id", "id", "id"]]);
+    const attr = function (el, name) { const out = Ref(); return $.AXUIElementCopyAttributeValue(el, $(name), out) === 0 ? out[0] : null; };
+    const list = function (v) { const n = v ? Number(v.count) : 0, out = []; for (let i = 0; i < n; i++) out.push(v.objectAtIndex(i)); return out; };
+    const str = function (el, name) { const v = attr(el, name); return v == null ? "" : String(ObjC.unwrap(v)); };
+    axKit = { attr: attr, list: list, str: str };
+    return axKit;
+  }
+
+  // A page's alert/confirm/prompt is a window with subrole AXApplicationDialog.
+  // Its parts are read by position, never by localized title: a text field makes
+  // it a prompt, two or more buttons a confirm. Static texts in AX order are the
+  // origin line ("x.test says") and then the message. Window buttons (close,
+  // zoom) carry a subrole and are skipped; buttons and fields are not descended into.
+  function scanDialogs(only) {
+    ObjC.import("ApplicationServices");
+    if (!$.AXIsProcessTrusted()) return [];
+    const ax = axInit(), P = procs(), out = [];
+    P.z.filter(function (n) { return !only || n === only; }).forEach(function (name) {
+      ax.list(ax.attr($.AXUIElementCreateApplication(P.pid[name]), "AXWindows")).forEach(function (w) {
+        if (ax.str(w, "AXSubrole") !== "AXApplicationDialog") return;
+        const d = { app: name, buttons: [], field: null, texts: [] }, stack = [w];
+        let seen = 0;
+        while (stack.length && seen++ < 300) {
+          const el = stack.pop(), role = ax.str(el, "AXRole");
+          if (role === "AXButton") { if (!ax.str(el, "AXSubrole")) d.buttons.push(el); continue; }
+          if (role === "AXTextField") { d.field = d.field || el; continue; }
+          if (role === "AXStaticText") { const v = ax.str(el, "AXValue").trim(); if (v) d.texts.push(v); }
+          stack.push.apply(stack, ax.list(ax.attr(el, "AXChildren")).reverse());
+        }
+        d.kind = d.field ? "prompt" : d.buttons.length >= 2 ? "confirm" : "alert";
+        d.message = (d.texts.length >= 2 ? d.texts.slice(1) : d.texts).join(" ").slice(0, 200);
+        out.push(d);
+      });
+    });
+    return out;
+  }
+
+  // Answers the one open dialog like a user would: Enter presses the last button
+  // (OK), Escape the first (Cancel, or an alert's only one). No activate, no raise.
+  function answerDialog(a) {
+    requireAccessibility();
+    const found = scanDialogs(a.app);
+    if (!found.length) return { ok: false, error: "no open dialog" };
+    if (found.length > 1) return { ok: false, error: "several dialogs open in " + found.length + " windows; pass target" };
+    const d = found[0], ax = axInit();
+    if (a.text != null) {
+      if (!d.field) return { ok: false, error: "the open dialog is " + (d.kind === "alert" ? "an alert" : "a confirm") + ", not a prompt; answer it without text" };
+      $.AXUIElementSetAttributeValue(d.field, $("AXValue"), $(a.text));
+      if (ax.str(d.field, "AXValue") !== a.text) return { ok: false, error: "the prompt's text did not land" };
+    }
+    const btn = a.key === "Enter" ? d.buttons[d.buttons.length - 1] : d.buttons[0];
+    if (!btn) return { ok: false, error: "the dialog has no button" };
+    $.AXUIElementPerformAction(btn, $("AXPress"));
+    const start = Date.now();
+    while (scanDialogs(a.app).length) {
+      if (Date.now() - start >= 1000) return { ok: false, error: "the dialog is still open" };
+      delay(0.05);
+    }
+    const r = { ok: true, dialog: d.kind, message: d.message, answer: a.key === "Enter" ? "accept" : "dismiss" };
+    if (a.text != null) r.text = a.text;
+    return r;
   }
 
   // The browser the user is using: topmost on screen, else the system default
@@ -796,6 +861,10 @@ function jxaRuntime(BROWSERS) {
   }
 
   globalThis.__perch = {
+    dialogs(a) {
+      return scanDialogs(a.app).map(function (d) { return { app: d.app, kind: d.kind, message: d.message }; });
+    },
+    answerDialog: answerDialog,
     listTabs(a) {
       const P = procs();
       const out = [];
@@ -1111,12 +1180,25 @@ export class OsaDaemon {
     this.queue = [];
     this.current = null;
   }
-  run(script, timeout) {
+  // `token` names the job for a later abort().
+  run(script, timeout, token) {
     if (this.disabled) return Promise.reject(Object.assign(new Error(this.disabled), { notSent: true }));
     return new Promise((resolve, reject) => {
-      this.queue.push({ script, timeout, resolve, reject });
+      this.queue.push({ script, timeout, resolve, reject, token });
       this._drain();
     });
+  }
+  // Fails the running job with `err` as a timeout would, but only while the job
+  // `token` names is still the one running: a late abort must not hit the next call.
+  abort(err, token) {
+    const job = this.current;
+    if (!job || job.handshake || token === undefined || job.token !== token) return false;
+    this.current = null;
+    clearTimeout(job.timer);
+    this.kill();
+    job.reject(err);
+    this._drain();
+    return true;
   }
   kill() {
     const p = this.proc;
@@ -1226,10 +1308,10 @@ export const DAEMONS = process.env.PERCH_DAEMON === "0" ? {} : {
   slow: new OsaDaemon({ prelude: JXA_PRELUDE }),
 };
 
-export async function jxa(script, { timeout = JXA_DEFAULT_TIMEOUT, lane = "fast", daemons = DAEMONS, oneShot = jxaOneShot } = {}) {
+export async function jxa(script, { timeout = JXA_DEFAULT_TIMEOUT, lane = "fast", daemons = DAEMONS, oneShot = jxaOneShot, token } = {}) {
   const d = daemons[lane] || daemons.fast;
   if (d) {
-    try { return await d.run(script, timeout); }
+    try { return await d.run(script, timeout, token); }
     catch (e) {
       if (!e.notSent) throw new Error(translatePermissionError(e.message) || e.message);
     }
@@ -1263,8 +1345,54 @@ async function jxaOneShot(script, { timeout = JXA_DEFAULT_TIMEOUT } = {}) {
 // (page JSON from eval); otherwise the result is JSON round-tripped.
 async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   const call = `__perch.${fn}(${JSON.stringify(args)})`;
-  const out = await jxa(raw ? call : `JSON.stringify(${call})`, { lane, timeout });
+  const script = raw ? call : `JSON.stringify(${call})`;
+  const out = DIALOG_BLIND.has(fn)
+    ? await jxa(script, { lane, timeout })
+    : await watchDialogs(dialogApp(args && args.target), lane, (token) => jxa(script, { lane, timeout, token }));
   return raw ? out : JSON.parse(out);
+}
+
+// A page's alert/confirm/prompt blocks its JS, and with it our call, until the
+// timeout. Once a call has been in flight DIALOG_PROBE_MS, a one-shot osascript
+// (never queued behind the hung lane) looks for a dialog through Accessibility,
+// again every DIALOG_REPROBE_MS; a hit aborts the hung job with dialog_open.
+// Without the daemon it looks once, when the call times out. Entries that never
+// run page JS, and the dialog entries themselves, are not watched.
+const DIALOG_PROBE_MS = 1500, DIALOG_REPROBE_MS = 2000;
+const DIALOG_BLIND = new Set(["listTabs", "newTab", "closeTab", "activate", "shotGeom", "dialogs", "answerDialog"]);
+
+// The target's browser from its handle key or `app`; null means every browser on screen.
+function dialogApp(target) {
+  const m = target && target.tabId != null && /^([a-z-]+):/.exec(String(target.tabId));
+  const b = m && BROWSERS.find((x) => x.key === m[1]);
+  return b ? b.app : (target && target.app) || null;
+}
+
+const probeDialogs = async (app) => JSON.parse(await jxaOneShot(`JSON.stringify(__perch.dialogs(${JSON.stringify({ app })}))`, { timeout: 5000 }));
+
+const dialogOpen = (d) => new Error(`dialog_open: a ${d.kind} (${JSON.stringify(String(d.message).slice(0, 200))}) is open and pauses the page; answer it with press {key:"Enter"|"Escape", dialog:true} (a string answers a prompt). The page JS stopped at the dialog and its result is lost; check the page after answering.`);
+
+async function findDialog(app) {
+  try { return (await deps.dialogs(app))[0] || null; } catch { return null; }
+}
+
+async function watchDialogs(app, lane, run) {
+  const d = DAEMONS[lane] || DAEMONS.fast;
+  const token = {};
+  let timer = null, done = false;
+  const probe = async () => {
+    const hit = await findDialog(app);
+    if (done) return;
+    if (hit && d.abort(dialogOpen(hit), token)) return;
+    timer = setTimeout(probe, DIALOG_REPROBE_MS);
+  };
+  if (d && typeof d.abort === "function") timer = setTimeout(probe, DIALOG_PROBE_MS);
+  let err;
+  try { return await run(token); }
+  catch (e) { err = e; }
+  finally { done = true; clearTimeout(timer); }
+  const hit = /^timeout:/.test(err.message) && await findDialog(app);
+  throw hit ? dialogOpen(hit) : err;
 }
 
 // Page-side error shape, shared by the sync wrapper and the async kickoff.
@@ -1372,7 +1500,7 @@ export function imageDims(buf) {
 }
 
 // Process spawning behind a seam so tests can fake screencapture/sips.
-export const deps = { exec };
+export const deps = { exec, dialogs: probeDialogs };
 
 async function screenshot(args = {}) {
   const { raise = false, target, format = "png", maxWidth = 1568 } = args;
@@ -2309,7 +2437,18 @@ export function parseKey(chord) {
   return { key, code: "", keyCode: 0, ...out };
 }
 
+// Enter accepts, Escape dismisses; a string is typed into a prompt before Enter.
+async function answerDialog(args) {
+  const { key, dialog, target } = args;
+  if (key !== "Enter" && key !== "Escape") throw new Error('press {dialog}: key must be "Enter" (accept) or "Escape" (dismiss)');
+  if (dialog !== true && !(typeof dialog === "string" && dialog)) throw new Error("press {dialog}: pass true, or the prompt's answer as a non-empty string");
+  if (args.ref != null || args.selector != null || args.trusted) throw new Error("press {dialog} answers the browser's dialog; it takes no ref, selector or trusted");
+  if (typeof dialog === "string" && key === "Escape") throw new Error("press {dialog}: a prompt's text goes with Enter; Escape dismisses it without text");
+  return rt("answerDialog", { key, text: typeof dialog === "string" ? dialog : undefined, app: dialogApp(target) });
+}
+
 async function press(args = {}) {
+  if (args.dialog != null) return answerDialog(args);
   const { key, ref = null, selector = null, target } = args;
   return runPage("press", "press", { ref, selector, ...parseKey(key) }, target);
 }
@@ -2385,7 +2524,7 @@ export const INSTRUCTIONS = `perch drives the user's own macOS browsers over App
 Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab; it works for every browser and survives other tabs opening and closing. With no target, tools use the active tab of the topmost browser window. new_tab defaults to the browser in use and creates an unselected tab, but may focus the browser; defer it while the user works.
 Elements: prefer \`ref\` (from accessibility_snapshot) over \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
-Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first). Only activate_tab and raise:true take focus.`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first), dialog_open (a JS alert/confirm/prompt is open: press {dialog}). Only activate_tab and raise:true take focus.`;
 
 const TARGET = { type: "object", properties: { tabId: { type: ["string", "number"] }, app: { type: "string" }, windowId: { type: ["string", "number"] }, tabIndex: { type: "number" } } };
 const REF = { type: "string", description: "From accessibility_snapshot." };
@@ -2468,10 +2607,11 @@ const TOOLS = [
     hover: { type: "boolean" },
     target: TARGET,
   }),
-  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element. Untrusted; emulates Enter/Space/Tab defaults.", {
+  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element. Untrusted; emulates Enter/Space/Tab defaults. `dialog`: Enter/Escape answers an open alert/confirm/prompt; a string is the prompt text.", {
     key: { type: "string" },
     ref: REF,
     selector: SEL,
+    dialog: { type: ["boolean", "string"] },
     target: TARGET,
   }, ["key"]),
   tool("fill", "Set text in inputs, textareas, rich editors; verifies it landed: {ok,kind,el,len}. `fields`: many fields in one call. `trusted`: trusted input event, no key focus; `raise:true` types foreground keys.", {
@@ -2494,7 +2634,7 @@ const TOOLS = [
   }, ["text"]),
 ];
 
-export const SCHEMA_BUDGET = 9400;
+export const SCHEMA_BUDGET = 9600;
 
 export const HANDLERS = {
   list_tabs:     (a) => listTabs(a),

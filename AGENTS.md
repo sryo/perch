@@ -15,6 +15,7 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 ├── scripts/
 │   ├── smoke.mjs    # live stdio smoke test (npm run smoke)
 │   ├── trusted-live.mjs  # live trusted click/fill check (--yes; --background)
+│   ├── dialog-live.mjs   # live alert/confirm/prompt check (--yes)
 │   ├── bench.mjs    # live latency/payload bench, compared against bench/baseline.json
 │   ├── compare.mjs  # perch side of the perch vs Claude in Chrome suite
 │   ├── mcp-client.mjs  # tiny MCP stdio client shared by the live scripts
@@ -44,7 +45,7 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Lanes:** there are two, `fast` and `slow`, so a polling `wait`, `select`, `navigate` or `awaitPromise` never blocks quick calls.
 - **Framing:** each script is URI-encoded onto one line and evaluated inside an IIFE that prints a `<<P:<id>:O|E:...>>` marker. `encodeURIComponent` always escapes `<`, `>` and `:`, so markers can't collide with the payload. Output is scanned incrementally.
 - **Start-up:** the prelude round-trip is the ready handshake; there is no fixed settle delay.
-- **Failure policy:** a timeout or a mid-call exit rejects and kills the REPL, and the next call respawns it. Neither is retried, because the script may already have opened a tab or posted a click. Only a script that never reached stdin (`notSent`) falls back to one-shot.
+- **Failure policy:** a timeout or a mid-call exit rejects and kills the REPL, and the next call respawns it. So does `abort(err, token)`, which the dialog watchdog uses; it acts only while that job is still running. None is retried, because the script may already have opened a tab or posted a click. Only a script that never reached stdin (`notSent`) falls back to one-shot.
 - **Off switch:** disable the daemon with `PERCH_DAEMON=0`.
 
 **Targeting (`resolve`).** `procs()` does one `CGWindowListCopyWindowInfo` read, about 4ms. It gives the on-screen z-order of browsers, the frontmost app, and pids and CGWindowIDs. It replaces a System Events `frontmost` query, which took about 60ms per call and needed Automation permission for System Events.
@@ -56,7 +57,7 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Tab ids:** a handle resolves with one bulk `win.tabs.id()` read per window, then `tabs.byId`. Chrome and Arc targets are pinned by id even when given by position, because `tabs[i]` is re-evaluated on every use and a long poll could drift to another tab. Chrome has no tab `select` verb, so selection re-reads the position from the id.
 - **Apple Event budget:** live, each Apple Event to a browser costs about one display frame (~16.7ms), while `procs()` and `running()` cost under 3ms, so latency is the event count; `test/perf-budget.test.mjs` pins it. `evalJs` first tries `quickExec`, one event: a Chromium handle through its remembered window (`hints`, filled by list_tabs, new_tab and resolve; `windows[w].tabs.byId(id)` can only miss, never hit another tab), a Safari handle through `windows.byId(win).tabs[i]` with the page checking its own URL hash first, or the default target's active tab. It falls back to `resolve` only when the script cannot have run (errAENoSuchObject, or the hash sentinel). `list_tabs` reads all of an app's windows at once (`windows.tabs.url()` and friends: four events for Chromium and Safari, six for Arc), and a `urlContains` or `titleContains` no tab of a browser matches stops that browser after one read. Never touch a quit app's windows (`alive`): JXA relaunches it.
 - **Browser names:** `matchApp` (Node, in `handleCall`) matches `app` loosely: case-insensitive name, key, or a unique substring.
-- **Errors:** thrown errors start with a browser-neutral code (`tab_not_visible`, `stale_tab`, `window_offscreen`, `no_browser`, `timeout`) that clients branch on. Tool descriptions and `INSTRUCTIONS` never name a browser; `test/runtime.test.mjs` enforces it. Permission messages are the exception, since the user needs the exact per-browser toggle.
+- **Errors:** thrown errors start with a browser-neutral code (`tab_not_visible`, `stale_tab`, `window_offscreen`, `no_browser`, `timeout`, `dialog_open`) that clients branch on. Tool descriptions and `INSTRUCTIONS` never name a browser; `test/runtime.test.mjs` enforces it. Permission messages are the exception, since the user needs the exact per-browser toggle.
 
 **JXA access patterns.** Read collections lazily (`app.windows[i]`, `win.tabs[i]`), never with the called form (`app.windows()`). The called form loses the bridge context on Arc, and later property chains throw "Can't convert types". Multi-tab reads use bulk property access (`win.tabs.url()`), about 30x faster than per-tab loops. That's the difference between working and timing out on Arc windows with hundreds of tabs.
 
@@ -112,6 +113,8 @@ Mouse event fields use raw indices, because `$.kCG*` constants aren't reliably b
 
 `scripts/skylight-probe.js` proves SkyLight functions bind from pure JXA. `ObjC.bindFunction` registers the function on `$` (call `$.SLEventPostToPid(...)`) rather than returning it.
 
+**Dialogs.** A page's `alert`/`confirm`/`prompt` blocks its JS, so a call that runs page JS (often our own `el.click()` on a confirm button) hangs inside `execute` until the timeout. `rt()` watches every entry except `DIALOG_BLIND` (tab listing, creation, closing, activation, geometry and the dialog entries): after `DIALOG_PROBE_MS` (1500) in flight, and every `DIALOG_REPROBE_MS` (2000) after, a one-shot osascript (never queued behind the hung lane) runs the runtime's `dialogs({app})`. A hit calls `OsaDaemon.abort` with `dialog_open`; the next call respawns the REPL. With `PERCH_DAEMON=0` it looks once, when the call times out, and rewrites the error. The app comes from the target's handle key or `app`, else every on-screen browser. `dialogs` uses Accessibility only, no Apple Events: a dialog is a window with subrole `AXApplicationDialog`; a text field makes it a prompt, two or more buttons a confirm; the message is its static texts after the origin line. Without the grant (`AXIsProcessTrusted`, which never prompts) it finds nothing and the plain timeout stands. `press {dialog}` answers through the same tree: buttons by position, never by localized title (Enter the last, Escape the first), pressed with `AXPress`; a prompt's text is set as the field's `AXValue` and read back first. It never activates or raises, and it polls up to 1s until the dialog is gone. A background tab's dialog waits until its tab is shown, so the watchdog cannot see it. The page's own `confirm()` may bring the browser forward by itself (seen live in a background window); that is the page, not perch. The live check (`scripts/dialog-live.mjs`) targets Chrome Canary; Safari's and Arc's dialog trees are unverified.
+
 ## Browser support
 
 | Browser | JS eval | Navigation | New/activate tab | Notes |
@@ -143,7 +146,7 @@ Each blocked layer returns an actionable error.
   4. If the change made perch faster, replace `bench/baseline.json` with the new run (`bench/runs/bench.json`) in the same commit. For a change a user would notice in an agent's session (fewer calls, a flow that works now), rerun `scripts/compare.mjs` and add a row to `bench/compare/README.md`.
 
   Live steps need a browser the user isn't using; if none is free, say so and leave them for later rather than skipping silently. Runs land in `bench/runs/` (gitignored).
-- **Live focus checks.** `npm run smoke` reuses an existing scratch tab and skips tab creation; `--with-tab-creation` opts into checks that may focus the browser. `scripts/trusted-live.mjs --background` needs an active scratch tab behind another app for SkyLight click; `--background-fill` tests an inactive scratch tab even while minimized. If the preconditions are absent, defer; never create/select tabs or activate another app to create them. Preserve the user's foreground while testing.
+- **Live focus checks.** `npm run smoke` reuses an existing scratch tab and skips tab creation; `--with-tab-creation` opts into checks that may focus the browser. `scripts/trusted-live.mjs --background` needs an active scratch tab behind another app for SkyLight click; `--background-fill` tests an inactive scratch tab even while minimized. `scripts/dialog-live.mjs` needs an existing about:blank tab active in its window. If the preconditions are absent, defer; never create/select tabs or activate another app to create them. Preserve the user's foreground while testing.
 
 ## Ceiling: what AppleScript can't do
 
