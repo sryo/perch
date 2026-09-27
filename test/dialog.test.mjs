@@ -44,8 +44,9 @@ const call = async (name, args) => {
   const t = r.content.find((c) => c.type === "text")?.text;
   return { r, t, o: (() => { try { return JSON.parse(t); } catch { return t; } })() };
 };
-const confirmBox = (extra = {}) => ({ pid: 40, parent: 400, texts: ["a.test says", "Delete the draft?"], buttons: ["Cancel", "OK"], ...extra });
-const promptBox = (extra = {}) => ({ pid: 40, parent: 400, texts: ["a.test says", "Your name?"], buttons: ["Cancel", "OK"], field: "", ...extra });
+// `blocks: 5`: a JS dialog pauses its tab's page, so page JS gets no reply.
+const confirmBox = (extra = {}) => ({ pid: 40, parent: 400, blocks: 5, texts: ["a.test says", "Delete the draft?"], buttons: ["Cancel", "OK"], ...extra });
+const promptBox = (extra = {}) => ({ pid: 40, parent: 400, blocks: 5, texts: ["a.test says", "Your name?"], buttons: ["Cancel", "OK"], field: "", ...extra });
 const B = { x: 1075, y: 120, w: 450, h: 160 };
 const dialogsOf = (target) => JSON.parse(world.run(`JSON.stringify(__perch.dialogs(${JSON.stringify({ target })}))`));
 const A = { tabId: "canary:5" };
@@ -55,7 +56,7 @@ const A = { tabId: "canary:5" };
 test("dialogs() names kind and message of the target's own dialog, origin line dropped", () => {
   install([confirmBox()]);
   assert.deepEqual(dialogsOf(A), [{ kind: "confirm", message: "Delete the draft?" }]);
-  install([{ pid: 40, parent: 400, texts: ["a.test says", "Saved"], buttons: ["OK"] }]);
+  install([{ pid: 40, parent: 400, blocks: 5, texts: ["a.test says", "Saved"], buttons: ["OK"] }]);
   assert.deepEqual(dialogsOf(A), [{ kind: "alert", message: "Saved" }]);
   install([promptBox()]);
   assert.deepEqual(dialogsOf(A), [{ kind: "prompt", message: "Your name?" }]);
@@ -64,24 +65,24 @@ test("dialogs() names kind and message of the target's own dialog, origin line d
 test("dialogs() with no target reads the default target, the topmost window's shown tab", () => {
   install([confirmBox()]);
   assert.deepEqual(dialogsOf(undefined), [{ kind: "confirm", message: "Delete the draft?" }]);
-  install([confirmBox({ parent: 410, frame: B, texts: ["www.d.test says", "Hi"] })]);
+  install([confirmBox({ parent: 410, frame: B, blocks: 8, texts: ["www.d.test says", "Hi"] })]);
   assert.deepEqual(dialogsOf(undefined), []);
 });
 
 test("a dialog in another window of the same browser is not the target's", () => {
-  install([confirmBox({ parent: 410, frame: B, texts: ["www.d.test says", "Leave?"] })]);
+  install([confirmBox({ parent: 410, frame: B, blocks: 8, texts: ["www.d.test says", "Leave?"] })]);
   assert.deepEqual(dialogsOf(A), []);
   assert.deepEqual(dialogsOf({ tabId: "canary:8" }), [{ kind: "confirm", message: "Leave?" }]);
 });
 
 test("a dialog in another browser is not the target's", () => {
-  install([{ pid: 50, parent: 500, frame: { x: 1975, y: 120, w: 450, h: 160 }, texts: ["b.test says", "Hi"], buttons: ["OK"] }]);
+  install([{ pid: 50, parent: 500, blocks: 6, frame: { x: 1975, y: 120, w: 450, h: 160 }, texts: ["b.test says", "Hi"], buttons: ["OK"] }]);
   assert.deepEqual(dialogsOf(A), []);
   assert.deepEqual(dialogsOf({ tabId: "chrome:6" }), [{ kind: "alert", message: "Hi" }]);
 });
 
 test("a dialog over the target's window is not the target's while its window shows another tab", () => {
-  install([confirmBox({ texts: ["c.test says", "x"] })]);
+  install([confirmBox({ blocks: 7, texts: ["c.test says", "x"] })]);
   assert.deepEqual(dialogsOf({ tabId: "canary:7" }), []);
 });
 
@@ -135,7 +136,7 @@ test("dialogs() returns [] without an Accessibility grant, and never prompts", (
 
 test("press {dialog} Enter presses the last button and verifies the dialog closed", async () => {
   const w = install([confirmBox()]);
-  const { o } = await call("press", { key: "Enter", dialog: true });
+  const { o } = await call("press", { key: "Enter", dialog: true, target: A });
   assert.deepEqual(o, { ok: true, dialog: "confirm", message: "Delete the draft?", answer: "accept" });
   assert.deepEqual(w.state.axActions, [{ role: "AXButton", title: "OK", action: "AXPress" }]);
   assert.equal(w.state.dialogs.length, 0);
@@ -175,13 +176,13 @@ test("press {dialog: text} on a non-prompt presses nothing", async () => {
 
 test("press {dialog} never answers the dialog of another tab, window or browser", async () => {
   const other = [
-    confirmBox({ parent: 410, frame: B, texts: ["www.d.test says", "Leave?"] }),
-    { pid: 50, parent: 500, frame: { x: 1975, y: 120, w: 450, h: 160 }, texts: ["b.test says", "Hi"], buttons: ["OK"] },
+    confirmBox({ parent: 410, frame: B, blocks: 8, texts: ["www.d.test says", "Leave?"] }),
+    { pid: 50, parent: 500, blocks: 6, frame: { x: 1975, y: 120, w: 450, h: 160 }, texts: ["b.test says", "Hi"], buttons: ["OK"] },
   ];
   const w = install(other.slice());
   assert.deepEqual((await call("press", { key: "Enter", dialog: true, target: A })).o, { ok: false, error: "no open alert/confirm/prompt on the target tab" });
-  assert.deepEqual((await call("press", { key: "Enter", dialog: true })).o, { ok: false, error: "no open alert/confirm/prompt on the target tab" });
-  install([confirmBox({ texts: ["c.test says", "x"] })]);
+  assert.deepEqual((await call("press", { key: "Enter", dialog: true, target: { tabId: "canary:7" } })).o, { ok: false, error: "no open alert/confirm/prompt on the target tab" });
+  install([confirmBox({ blocks: 7, texts: ["c.test says", "x"] })]);
   assert.deepEqual((await call("press", { key: "Enter", dialog: true, target: { tabId: "canary:7" } })).o.error, "no open alert/confirm/prompt on the target tab");
   assert.deepEqual(w.state.axActions, []);
   assert.deepEqual(world.state.axActions, []);
@@ -209,7 +210,7 @@ test("press {dialog} answers only a dialog whose origin line names the tab's hos
   // A leading www. is optional on either side, and case does not matter.
   install([confirmBox({ texts: ["WWW.A.TEST says", "x"] })]);
   assert.equal((await call("press", { key: "Enter", dialog: true, target: A })).o.ok, true);
-  install([confirmBox({ parent: 410, frame: B, texts: ["d.test says", "x"] })]);
+  install([confirmBox({ parent: 410, frame: B, blocks: 8, texts: ["d.test says", "x"] })]);
   assert.equal((await call("press", { key: "Enter", dialog: true, target: { tabId: "canary:8" } })).o.ok, true);
   install([confirmBox({ texts: ["a.test:8080 says", "x"] })], { urls: { 5: "http://a.test:8080/p" } });
   assert.equal((await call("press", { key: "Enter", dialog: true, target: A })).o.ok, true);
@@ -252,14 +253,15 @@ test("press {dialog} never activates or raises the browser", async () => {
   assert.equal(Object.keys(w.counts).filter((k) => k.startsWith("activate(")).length, 0);
   assert.ok(w.state.axActions.every((a) => a.action === "AXPress"));
   assert.equal(w.log.filter((l) => l[0] === "activate").length, 0);
-  assert.equal(w.counts["tab.execute"], undefined, "no page JS");
+  assert.equal(w.counts["tab.execute"], 1, "no page JS but the bounded probe");
+  assert.equal(w.counts.NSAppleScript, 1);
   assert.equal(w.counts["win.activeTabIndex="], undefined, "no tab selection");
 });
 
 test("press {dialog} needs Accessibility", async () => {
   install([confirmBox()]);
   world.state.ax = false;
-  const { r, t } = await call("press", { key: "Enter", dialog: true });
+  const { r, t } = await call("press", { key: "Enter", dialog: true, target: A });
   assert.equal(r.isError, true);
   assert.match(t, /Accessibility permission required/);
 });
@@ -283,6 +285,113 @@ test("press {dialog} validates its arguments before touching anything", async ()
   assert.equal(w.counts.AX, undefined);
 });
 
+// ---- positive proof: browser prompts that mimic a JS dialog ----
+
+// Chrome's own prompts can carry a host-named heading and two buttons, the
+// confirm shape, but they leave the page running (no `blocks`).
+const lookalikes = {
+  permission: { pid: 40, parent: 400, texts: ["a.test wants to", "Know your location"], buttons: ["Block", "Allow"] },
+  downloads: { pid: 40, parent: 400, texts: ["a.test wants to", "Download multiple files"], buttons: ["Block", "Allow"] },
+  fedcm: { pid: 40, parent: 400, texts: ["Sign in to a.test with idp.test"], buttons: ["Cancel", "Continue as Ada"],
+    controls: [{ role: "AXImage", title: "Ada" }, { role: "AXLink", title: "Privacy policy" }] },
+  passkey: { pid: 40, parent: 400, texts: ["Use a passkey for a.test?"], buttons: ["Cancel", "Continue"],
+    controls: [{ role: "AXRadioButton", title: "ada@a.test" }] },
+};
+
+test("a host-headed prompt in the confirm shape is not reported while its page runs", () => {
+  for (const [name, d] of Object.entries(lookalikes)) {
+    install([d]);
+    assert.deepEqual(dialogsOf(A), [], name);
+    assert.deepEqual(dialogsOf(undefined), [], name);
+  }
+});
+
+test("press {dialog} refuses a host-headed confirm-shaped prompt whose page still runs", async () => {
+  for (const name of ["permission", "downloads"]) {
+    const w = install([lookalikes[name]]);
+    const { o } = await call("press", { key: "Enter", dialog: true, target: A });
+    assert.deepEqual(o, { ok: false, error: "the open dialog does not pause the page, so it is not the page's alert/confirm/prompt (a permission, download or sign-in prompt?); perch does not answer it, hand it to the user" }, name);
+    assert.deepEqual(w.state.axActions, [], name);
+    assert.equal(w.counts.NSAppleScript, 1, "one bounded probe");
+  }
+});
+
+test("any control besides buttons, a plain field, texts, headings and groups makes it another kind", async () => {
+  for (const name of ["fedcm", "passkey"]) {
+    const w = install([lookalikes[name]]);
+    const { o } = await call("press", { key: "Enter", dialog: true, target: A });
+    assert.equal(o.ok, false, name);
+    assert.match(o.error, /^the open dialog is not a page alert\/confirm\/prompt/, name);
+    assert.deepEqual(w.state.axActions, [], name);
+    assert.equal(w.counts.NSAppleScript, undefined, "refused before any page JS");
+  }
+  // Even on a page a JS dialog pauses, an extra control fails closed.
+  for (const role of ["AXCheckBox", "AXLink", "AXImage", "AXPopUpButton", "AXRadioButton", "AXList"]) {
+    install([confirmBox({ controls: [{ role, title: "x" }] })]);
+    assert.deepEqual(dialogsOf(A), [], role);
+    assert.match((await call("press", { key: "Enter", dialog: true, target: A })).o.error, /not a page alert/, role);
+  }
+  install([confirmBox({ controls: [{ role: "AXGroup", kids: [{ role: "AXStaticText", value: "more" }] }] })]);
+  assert.deepEqual(dialogsOf(A), [{ kind: "confirm", message: "Delete the draft? more" }]);
+  // A tree too big to walk whole might hide a control.
+  const big = { role: "AXGroup", kids: Array.from({ length: 400 }, () => ({ role: "AXStaticText", value: "x" })) };
+  install([confirmBox({ tail: [big, { role: "AXCheckBox", title: "Don't ask again" }] })]);
+  assert.deepEqual(dialogsOf(A), []);
+});
+
+test("the watchdog reports only a dialog whose origin line names the tab's host", () => {
+  install([confirmBox({ texts: ["evil.test says", "Allow?"] })]);
+  assert.deepEqual(dialogsOf(A), []);
+  install([confirmBox({ texts: ["Leave site?", "Changes you made may not be saved."], buttons: ["Cancel", "Leave"] })]);
+  assert.deepEqual(dialogsOf(A), []);
+  install([confirmBox()], { urls: { 5: "about:blank" } });
+  assert.deepEqual(dialogsOf(A), []);
+});
+
+test("without a bounded probe (a Safari tab) dialogs fail closed", async () => {
+  world = makeWorld({
+    browsers: [{ name: "Safari", kind: "safari", windows: [{ id: 1, active: 0, tabs: [{ url: "https://a.test/" }] }] }],
+    cg: [{ owner: "Safari", pid: 60, wid: 600, x: 0, y: 0, w: 800, h: 700 }],
+  });
+  world.run(JXA_PRELUDE);
+  world.state.dialogs = [confirmBox({ pid: 60, parent: 600, blocks: undefined })];
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  assert.deepEqual(dialogsOf(undefined), []);
+  const tabId = JSON.parse(world.run(`JSON.stringify(__perch.listTabs({}))`))[0].tabId;
+  const { o } = await call("press", { key: "Enter", dialog: true, target: { tabId } });
+  assert.deepEqual(o, { ok: false, error: "perch cannot confirm the dialog pauses the page in this browser; hand it to the user" });
+  assert.deepEqual(world.state.axActions, []);
+});
+
+test("a probe that fails outright proves nothing", async () => {
+  const w = install([confirmBox()]);
+  w.state.jsOff = true;
+  assert.deepEqual(dialogsOf(A), []);
+  assert.deepEqual((await call("press", { key: "Enter", dialog: true, target: A })).o, { ok: false, error: "perch cannot confirm the dialog pauses the page in this browser; hand it to the user" });
+  assert.deepEqual(w.state.axActions, []);
+});
+
+test("press {dialog} does not report a look-alike prompt that opens next as next", async () => {
+  install([confirmBox()]);
+  world.state.onAxPress = () => world.state.dialogs.push({ ...lookalikes.permission });
+  const { o } = await call("press", { key: "Enter", dialog: true, target: A });
+  assert.deepEqual(o, { ok: true, dialog: "confirm", message: "Delete the draft?", answer: "accept" });
+});
+
+test("press {dialog} needs target.tabId and touches nothing without it", async () => {
+  const w = install([confirmBox()]);
+  for (const target of [undefined, {}, { app: CANARY }, { windowId: 1, tabIndex: 0 }]) {
+    const { r, t } = await call("press", { key: "Enter", dialog: true, target });
+    assert.equal(r.isError, true, JSON.stringify(target));
+    assert.match(t, /press \{dialog\} requires `target\.tabId`/, JSON.stringify(target));
+  }
+  assert.equal(w.counts.AX, undefined);
+  assert.deepEqual(w.state.axActions, []);
+  assert.throws(() => world.run(`__perch.answerDialog({ key: "Enter" })`), /answerDialog requires `target\.tabId`/);
+  assert.deepEqual(w.state.axActions, []);
+});
+
 // ---- the watchdog ----
 
 const hung = () => {
@@ -300,7 +409,7 @@ test("a call stuck behind a dialog fails with dialog_open in about 1.5s, not at 
   const { r, t } = await call("eval_js", { script: "return 1", target: A });
   const ms = Date.now() - t0;
   assert.equal(r.isError, true);
-  assert.ok(t.startsWith('error: dialog_open: a confirm ("Delete the draft?") is open and pauses the page; answer it with press {key:"Enter"|"Escape", dialog:true}'), t);
+  assert.ok(t.startsWith('error: dialog_open: a confirm ("Delete the draft?") is open and pauses the page; answer it with press {key:"Enter"|"Escape", dialog:true, target:{tabId}}'), t);
   assert.ok(ms >= 1400 && ms < 3000, `${ms}ms`);
   assert.deepEqual(asked, [A], "the probe asks about the call's own target");
   assert.equal(f.spawned[0].killed, true, "the hung REPL is killed");
@@ -336,7 +445,7 @@ test("probeDialogs asks the runtime about the target, and any failure is no hit"
 });
 
 test("a fast call never probes for dialogs", async () => {
-  install([confirmBox()]);
+  install([confirmBox({ blocks: undefined })]);
   let n = 0;
   deps.dialogs = async () => { n++; return OPEN; };
   const { o } = await call("eval_js", { script: "return 2" });
