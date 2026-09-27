@@ -289,3 +289,38 @@ test("the trusted click's hit test adds Accessibility reads only, no Apple Event
   // reads are the window match and page area (13) plus the hit test (4).
   assert.deepEqual(cost, [[7, 17], [6, 17], [22, 17]]);
 });
+
+// Rows past `limit` are never returned, but `total` still counts them. A browser
+// reached once the limit is full only needs its tabs counted: one read per filter
+// (urls when there is none), plus Arc's tab ids, since its windows share tabs.
+test("list_tabs only counts the tabs of browsers reached past its limit", async () => {
+  const shared = tabs(4, "a");
+  const spec = () => ({
+    browsers: [
+      chrome([{ id: 1, active: 1, tabs: tabs(3, "c") }]),
+      arc([{ id: "W1", active: 0, tabs: shared }, { id: "W2", active: 1, tabs: shared }]),
+      safari([{ id: 3, active: 0, tabs: tabs(2, "s") }, { id: 4, active: 0, tabs: [{ url: "https://x.test/", title: "S0", id: "x" }] }]),
+    ],
+    cg: [{ owner: "Google Chrome" }, { owner: "Arc" }, { owner: "Safari" }],
+  });
+  for (const [args, budget] of [[{ limit: 2 }, 4 + 1 + 1], [{ limit: 1, urlContains: "0.test" }, 4 + 2 + 1], [{ limit: 0, titleContains: "s0" }, 1 + 2 + 1]]) {
+    install(spec());
+    const full = (await call("list_tabs", { ...args, limit: 1000 })).o;
+    world.reset();
+    const { o } = await call("list_tabs", args);
+    assert.deepEqual(o, { tabs: full.tabs.slice(0, args.limit), total: full.total }, JSON.stringify(args));
+    assert.ok(appleEvents() <= budget, JSON.stringify(args) + " " + breakdown());
+  }
+});
+
+// Window geometry: Chromium and Safari answer `bounds` and fail `position`, and
+// Arc answers neither (its frame comes from its CG entry). A failed read still
+// costs an Apple Event, so screenshots and trusted input ask once, or not at all.
+test("window geometry is one Apple Event, none on Arc", () => {
+  for (const [make, owner, reads] of [[chrome, "Google Chrome", { bounds: 1 }], [safari, "Safari", { bounds: 1 }], [arc, "Arc", {}]]) {
+    install({ browsers: [make([{ id: 1, active: 0, x: 10, y: 40, w: 700, h: 500, name: "t0", tabs: tabs(1) }])], cg: [{ owner, wid: 7, name: "t0", x: 10, y: 40, w: 700, h: 500 }] });
+    const g = JSON.parse(world.run(`JSON.stringify(__perch.shotGeom({}))`));
+    assert.deepEqual([g.windowNumber, g.geom], [7, { x: 10, y: 40, w: 700, h: 500 }], owner);
+    assert.deepEqual({ ...world.geom }, reads, owner);
+  }
+});

@@ -9,7 +9,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
   const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [] };
   const cgEntries = cg.map((entry) => ({ ...entry }));
   const posted = [];
-  const counts = {};
+  const counts = {}, geom = {};
   const bump = (k) => { counts[k] = (counts[k] || 0) + 1; };
   const log = [];
   // What JXA throws when a specifier resolves to nothing (errAENoSuchObject).
@@ -181,9 +181,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       spec.raised = v === 1;
       if (v === 1) { const all = winsByApp[b.name]; all.splice(all.indexOf(w), 1); all.unshift(w); }
     } });
-    win.position = () => { if (b.kind !== "chrome") throw new Error("no position"); return [spec.x ?? 0, spec.y ?? 0]; };
-    win.size = () => { if (b.kind !== "chrome") throw new Error("no size"); return [spec.w ?? 800, spec.h ?? 600]; };
-    win.bounds = () => { if (b.kind !== "safari") throw new Error("no bounds"); return { x: spec.x ?? 0, y: spec.y ?? 0, width: spec.w ?? 800, height: spec.h ?? 600 }; };
+    // Chrome Canary and Safari answer `bounds`; live, Canary fails `position`
+    // ("Can't convert types") and Arc has neither. Each read, failed or not, costs
+    // an Apple Event; `geom` counts them apart so other budgets stay as they are.
+    win.position = () => { geom.position = (geom.position || 0) + 1; throw new Error("Can't convert types."); };
+    win.size = () => { geom.size = (geom.size || 0) + 1; throw new Error("Can't convert types."); };
+    win.bounds = () => { geom.bounds = (geom.bounds || 0) + 1; if (b.kind === "arc") throw new Error("no bounds"); return { x: spec.x ?? 0, y: spec.y ?? 0, width: spec.w ?? 800, height: spec.h ?? 600 }; };
     Object.defineProperty(win, "activeTabIndex", {
       get: () => () => { bump("win.activeTabIndex()"); if (b.kind !== "chrome") throw new Error("Can't convert types"); return spec.active + 1; },
       set: (v) => { bump("win.activeTabIndex="); spec.active = v - 1; },
@@ -562,11 +565,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
   };
   const ctx = vm.createContext(sandbox);
   return {
-    ctx, counts, log, clock, apps, posted, cg: cgEntries,
+    ctx, counts, geom, log, clock, apps, posted, cg: cgEntries,
     // Reorder a window's tabs in place: tabs[w] is the live list the runtime reads.
     tabsOf: (name, w) => winsByApp[name][w].tabs,
     winSpec: (name, w) => winsByApp[name][w].spec,
-    reset() { for (const k of Object.keys(counts)) delete counts[k]; log.length = 0; },
+    reset() { for (const o of [counts, geom]) for (const k of Object.keys(o)) delete o[k]; log.length = 0; },
     state,
     page: (name, w, t) => winsByApp[name][w].tabs[t].page.ctx,
     run: (src) => vm.runInContext(src, ctx),
