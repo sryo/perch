@@ -150,7 +150,7 @@ function trustedTab(html, setup) {
   }
   const world = makeWorld({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "about:blank", id: "t", dom }] }] }],
-    cg: [{ owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600 }],
+    cg: [{ owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600, ax: { web: [{ x: 56, y: 157, w: 798, h: 500 }] } }],
   });
   world.run(JXA_PRELUDE);
   DAEMONS.fast = world.daemon;
@@ -171,7 +171,7 @@ test("trusted click by selector reads back after the posted click", async () => 
 
 test("trusted click by point reads back too", async () => {
   trustedTab(FORM);
-  const o = await click({ trusted: true, raise: true, x: 50, y: 167, readback: "#s" });
+  const o = await click({ trusted: true, raise: true, x: 60, y: 167, readback: "#s" });
   assert.equal(o.ok, true);
   assert.equal(o.readback, "Saved");
   assert.equal(o.changed, true);

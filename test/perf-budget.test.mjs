@@ -267,3 +267,25 @@ test("accessibility_snapshot: the default does no Accessibility work; frames:tru
   // flags and frame per node.
   assert.equal(ax(), 35, breakdown());
 });
+
+// A trusted page click checks its final point with Accessibility's hit test: a
+// few AX reads (the hit and an AXParent walk up to the first web area), no Apple
+// Events. Aim's page area is reused; a click by point reads it once.
+test("the trusted click's hit test adds Accessibility reads only, no Apple Events", async () => {
+  const dom = page(`<button id=b>Go</button>`, { url: "https://c0.test/" });
+  for (const [k, v] of Object.entries({ screenX: 0, screenY: 57, outerWidth: 654, innerWidth: 598, outerHeight: 600, innerHeight: 500 })) Object.defineProperty(dom, k, { value: v, configurable: true });
+  const cg = [{ owner: "Google Chrome", pid: 40, wid: 400, x: 0, y: 57, w: 854, h: 600, ax: { web: [{ x: 56, y: 157, w: 598, h: 500 }] } }];
+  install({ browsers: [chrome([{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg });
+  const events = () => Object.entries(world.counts).filter(([k]) => !NOT_AE.test(k) && !/^AX/.test(k)).reduce((s, [, n]) => s + n, 0);
+  const ax = () => world.counts.AX || 0;
+  const cost = [];
+  for (const args of [{ selector: "#b" }, { x: 120, y: 170 }, { selector: "#b", raise: true }]) {
+    await call("click", { trusted: true, ...args });
+    cost.push([events(), ax()]);
+    world.reset();
+  }
+  // [Apple Events, AX reads] for background selector, background point, raised
+  // selector. The Apple Events are what they were before the hit test; the AX
+  // reads are the window match and page area (13) plus the hit test (4).
+  assert.deepEqual(cost, [[7, 17], [6, 17], [22, 17]]);
+});

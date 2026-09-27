@@ -96,8 +96,14 @@ test("background trusted fill rejects a value change without a trusted input eve
 
 // ---- runtime (fake JXA world) ----
 
-// A click by point first asks the page for its embedded frames, so tabs carry a DOM.
-const tabs = (n) => Array.from({ length: n }, (_, i) => ({ url: `https://t${i}.test/`, id: `t${i}`, dom: page("", { url: `https://t${i}.test/` }) }));
+// A click by point first asks the page for its embedded frames, so tabs carry a
+// DOM, with an 800x600 viewport: the web area PAGE_AX gives windows at x 10, y 0.
+const tabs = (n) => Array.from({ length: n }, (_, i) => {
+  const dom = page("", { url: `https://t${i}.test/` });
+  withWindowMetrics(dom, { innerWidth: 800, innerHeight: 600 });
+  return { url: `https://t${i}.test/`, id: `t${i}`, dom };
+});
+const PAGE_AX = { web: [{ x: 10, y: 20, w: 800, h: 600 }] };
 function install(spec) {
   const world = makeWorld(spec);
   world.run(JXA_PRELUDE);
@@ -108,7 +114,7 @@ function install(spec) {
 }
 const chromeFront = () => install({
   browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(2) }] }],
-  cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
+  cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 10, y: 0, w: 800, h: 620, ax: PAGE_AX }],
 });
 
 // Live finding (macOS 27, Chrome Canary): CGEventPostToPid and SkyLight's
@@ -124,8 +130,8 @@ test("trusted click goes through the HID tap and puts the cursor back", async ()
 test("trusted input refuses a point outside the target window", async () => {
   const world = chromeFront();
   const r = await handleCall("click", { trusted: true, x: 5000, y: 200 });
-  assert.equal(r.isError, true);
-  assert.match(r.content[0].text, /outside the target window/);
+  // Accessibility's hit test finds no page there, before the window bounds check.
+  assert.match(r.content[0].text, /not on the page itself/);
   assert.equal(world.posted.length, 0);
   assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 0, "never borrow the user's key focus");
   assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
@@ -139,7 +145,7 @@ test("trusted input refuses a point outside the target window", async () => {
 test("trusted input reaches a background browser without changing app focus or cursor", async () => {
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(1) }] }],
-    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620, ax: PAGE_AX }],
   });
   const r = await handleCall("click", { trusted: true, x: 300, y: 200 });
   assert.equal(r.isError, undefined, r.content[0].text);
@@ -163,7 +169,7 @@ test("trusted input reaches a background browser without changing app focus or c
 test("background trusted clicks refuse to switch a browser window's active tab", async () => {
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(2) }] }],
-    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620, ax: PAGE_AX }],
   });
   const target = { app: "Google Chrome", windowId: 1, tabIndex: 1 };
   const click = await handleCall("click", { trusted: true, x: 300, y: 200, target });
@@ -234,7 +240,7 @@ test("trusted fills can target three inactive tabs without selecting any", async
 test("raise:true keeps the existing foreground HID path", async () => {
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(1) }] }],
-    cg: [{ owner: "Terminal", pid: 1 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
+    cg: [{ owner: "Terminal", pid: 1 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620, ax: PAGE_AX }],
   });
   const r = await handleCall("click", { trusted: true, x: 300, y: 200, raise: true });
   assert.equal(r.isError, undefined, r.content[0].text);
@@ -277,7 +283,7 @@ test("screenshot refuses a minimized window instead of capturing another app's p
 test("raise that doesn't bring the browser to the front refuses before posting", async () => {
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(2) }] }],
-    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 77, x: 10, y: 0, w: 800, h: 620, ax: PAGE_AX }],
   });
   world.state.activateFails = true;
   const r = await handleCall("click", { trusted: true, raise: true, x: 300, y: 200 });
@@ -311,12 +317,13 @@ test("a tab that never becomes visible is reported, not clicked", async () => {
 
 // ---- aiming: visibility + calibration, through the runtime against a happy-dom page ----
 
-function domTab(html, metrics) {
+// `area` is the page's web area in Accessibility (null: none).
+function domTab(html, metrics, area = { x: 56, y: 157, w: 798, h: 500 }) {
   const dom = page(html);
   withWindowMetrics(dom, metrics);
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "about:blank", id: "other" }, { url: "about:blank", id: "t", dom }] }] }],
-    cg: [{ owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600 }],
+    cg: [{ owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600, ...(area ? { ax: { web: [area] } } : {}) }],
   });
   return { dom, world };
 }
@@ -334,7 +341,7 @@ test("trusted click shows the target tab and waits until it's visible before mea
 });
 
 test("calibration: a mouse move reveals the real offset and the click lands on the element", async () => {
-  const { dom, world } = domTab(`<button id=b>Go</button>`, METRICS);
+  const { dom, world } = domTab(`<button id=b>Go</button>`, METRICS, { x: 0, y: 157, w: 798, h: 500 });
   // The real content area starts 56pt left of where outer-inner assumes (a right-side
   // panel, say): wherever a move is posted, the page sees it 56px further right.
   world.state.onPost = (e) => {
@@ -375,12 +382,14 @@ test("calibration ignores a mouse move recorded before its own post", async () =
   assert.deepEqual(downs(world), [{ x: 106, y: 167 }]);
 });
 
-test("no mouse move reaches the page: click at the estimate, uncalibrated", async () => {
-  const { world } = domTab(`<button id=b>Go</button>`, METRICS);
+test("no mouse move reaches the page and Accessibility finds no page area: nothing is clicked", async () => {
+  const { world } = domTab(`<button id=b>Go</button>`, METRICS, null);
   const r = await handleCall("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } });
   const o = JSON.parse(r.content[0].text);
-  assert.equal(o.calibrated, false);
-  assert.deepEqual(downs(world), [{ x: 0 + 56 + 50, y: 57 + 100 + 10 }]);
+  assert.equal(o.ok, false);
+  assert.match(o.error, /not on the page itself/);
+  assert.deepEqual(downs(world), []);
+  assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
 });
 
 test("trusted fill types the whole text, emoji included, in surrogate-safe chunks", async () => {
@@ -442,30 +451,6 @@ test("calibration ignores moves that aren't the one it posted (late events, the 
   assert.deepEqual(downs(world), [{ x: 106, y: 167 }]);
 });
 
-// Background aiming posts directed SkyLight moves. Blink may report their screenX/Y
-// window-relative, so calibration can't match on the screen point alone, but it
-// still has to tell its own move from the user's real mouse.
-test("background calibration ignores the user's real mouse moving after the posted move", async () => {
-  const dom = page(`<button id=b>Go</button>`);
-  withWindowMetrics(dom, METRICS);
-  const world = install({
-    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 1, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "about:blank", id: "other" }, { url: "about:blank", id: "t", dom }] }] }],
-    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600 }],
-  });
-  world.state.onPost = (e) => {
-    if (e.type !== 5 || e.pt.x < 0) return;
-    dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: e.pt.x - 56, clientY: e.pt.y - 157, screenX: e.windowPoint.x, screenY: e.windowPoint.y }));
-    // The user's own mouse, somewhere else entirely.
-    dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: 10, clientY: 50, screenX: 3, screenY: 900 }));
-  };
-  const r = await handleCall("click", { trusted: true, selector: "#b" });
-  assert.equal(r.isError, undefined, r.content[0].text);
-  const o = JSON.parse(r.content[0].text);
-  assert.deepEqual(o.calibration, [[0, 0]]);
-  assert.deepEqual(world.posted.filter((e) => e.type === 1 && e.pt.x >= 0).map((e) => e.pt), [{ x: 106, y: 167 }]);
-  assert.equal(world.counts["activate(Google Chrome)"], undefined);
-});
-
 // ---- aiming from the Accessibility tree ----
 
 // A background Canary window at x=0: 56px of chrome on the left, a 200px side panel
@@ -504,13 +489,12 @@ test("Accessibility aim scales by page zoom, which the estimate can't see", asyn
   assert.deepEqual(presses(world), [{ x: 56 + 50 * 1.25, y: 157 + 10 * 1.25 }]);
 });
 
-test("with neither Accessibility nor a mouse move, the press is at the estimate and says so", async () => {
+test("with no page area from Accessibility a background press is refused, not aimed by the estimate", async () => {
   const { world } = panelTab(null);
   const o = JSON.parse((await handleCall("click", { trusted: true, selector: "#b" })).content[0].text);
-  assert.equal(o.aim, "estimate");
-  assert.equal(o.calibrated, false);
-  assert.match(o.warning, /unconfirmed aim/);
-  assert.deepEqual(presses(world), [{ x: 306, y: 167 }]);
+  assert.equal(o.ok, false);
+  assert.match(o.error, /not on the page itself/);
+  assert.deepEqual(presses(world), []);
 });
 
 test("foreground aim still prefers the mouse move, and falls back to Accessibility", async () => {
