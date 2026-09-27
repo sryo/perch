@@ -225,7 +225,7 @@ test("new_tab creates a background tab without selecting it", async () => {
   const { r, o } = await call("new_tab", { app: "Google Chrome", url: "about:blank" });
   assert.equal(r.isError, undefined);
   assert.deepEqual(o, { app: "Google Chrome", tabId: "chrome:new1" });
-  assert.equal(world.counts["win.activeTabIndex="], undefined);
+  assert.equal(world.winSpec("Google Chrome", 0).active, 0, "the shown tab is unchanged");
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
 });
 
