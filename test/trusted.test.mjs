@@ -131,6 +131,10 @@ test("trusted input refuses a point outside the target window", async () => {
   assert.deepEqual(world.state.warps, []);
 });
 
+// Change detector, on purpose: the event count, fields 51/91/92, the Command flag
+// and the event types are what live probing found WindowServer needs to route a
+// background press into Chromium. A behavior-preserving change to that sequence
+// still has to be re-verified live (scripts/trusted-live.mjs --background).
 test("trusted input reaches a background browser without changing app focus or cursor", async () => {
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(1) }] }],
@@ -435,6 +439,30 @@ test("calibration ignores moves that aren't the one it posted (late events, the 
   const o = JSON.parse(r.content[0].text);
   assert.deepEqual(o.calibration, [[0, 0]]);
   assert.deepEqual(downs(world), [{ x: 106, y: 167 }]);
+});
+
+// Background aiming posts directed SkyLight moves. Blink may report their screenX/Y
+// window-relative, so calibration can't match on the screen point alone, but it
+// still has to tell its own move from the user's real mouse.
+test("background calibration ignores the user's real mouse moving after the posted move", async () => {
+  const dom = page(`<button id=b>Go</button>`);
+  withWindowMetrics(dom, METRICS);
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 1, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "about:blank", id: "other" }, { url: "about:blank", id: "t", dom }] }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600 }],
+  });
+  world.state.onPost = (e) => {
+    if (e.type !== 5 || e.pt.x < 0) return;
+    dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: e.pt.x - 56, clientY: e.pt.y - 157, screenX: e.windowPoint.x, screenY: e.windowPoint.y }));
+    // The user's own mouse, somewhere else entirely.
+    dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: 10, clientY: 50, screenX: 3, screenY: 900 }));
+  };
+  const r = await handleCall("click", { trusted: true, selector: "#b" });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.deepEqual(o.calibration, [[0, 0]]);
+  assert.deepEqual(world.posted.filter((e) => e.type === 1 && e.pt.x >= 0).map((e) => e.pt), [{ x: 106, y: 167 }]);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
 });
 
 test("screenshot: a failed downscale still returns the full-size capture", async () => {

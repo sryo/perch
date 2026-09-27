@@ -473,10 +473,13 @@ function jxaRuntime(BROWSERS) {
       for (let tries = 0; tries < 10; tries++) {
         let got = null;
         try { got = parseExec(T.t, a.cal); } catch (e) {}
-        // Directed SkyLight moves may report a window-local screenX/Y in Blink.
-        // The buffer was cleared immediately before the post and the target is
-        // behind another app, so use its latest directed move for calibration.
-        const m = got && (T.background ? got.moves.pop() : got.moves.filter(function (v) { return Math.abs(v[2] - at.x) < 2 && Math.abs(v[3] - at.y) < 2; }).pop());
+        // Directed SkyLight moves may report a window-local screenX/Y in Blink,
+        // so a background move also matches at the point relative to the window.
+        const near = function (v, x, y) { return Math.abs(v[2] - x) < 2 && Math.abs(v[3] - y) < 2; };
+        const r = T.I.cgBounds || T.I.geom;
+        const m = got && got.moves.filter(function (v) {
+          return near(v, at.x, at.y) || (T.background && near(v, at.x - r.x, at.y - r.y));
+        }).pop();
         if (m) return m;
         delay(0.025);
       }
@@ -623,7 +626,8 @@ function jxaRuntime(BROWSERS) {
         try { sameDoc = exec(t, stamp) === "same"; } catch (e) {}
       }
       t.tab.url = a.url;
-      if (!canEval || sameDoc) return { waited: false, tabId: handleOf(t) };
+      if (sameDoc) return { waited: true, tabId: handleOf(t) };
+      if (!canEval) return { waited: false, tabId: handleOf(t) };
       const check = "(function(){try{return JSON.stringify(window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete')}catch(e){return 'false'}})()";
       const start = Date.now();
       let idle = 0;
@@ -1025,7 +1029,11 @@ const NAV_TIMEOUT = 15000;
 // Some handles follow the page's URL, so navigate returns the tab's current one.
 async function navigate(url, target) {
   const r = await rt("navigate", { target, url, timeout: NAV_TIMEOUT }, { lane: "slow", timeout: NAV_TIMEOUT + JXA_OVERHEAD });
-  return r && r.tabId ? { ok: true, url, tabId: r.tabId } : { ok: true, url };
+  // waited:false: the new page wasn't confirmed loaded (the timeout ran out, or
+  // a background Arc tab can't be checked).
+  const out = { ok: true, url, waited: !!(r && r.waited) };
+  if (r && r.tabId) out.tabId = r.tabId;
+  return out;
 }
 
 async function newTab(url, app) {

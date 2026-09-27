@@ -91,7 +91,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         if (k === "length") { bump("tabs.length"); return w.tabs.length; }
         if (k === "url") return () => { bump("tabs.url()"); return w.tabs.map((t) => t.shownUrl()); };
         if (k === "title" || k === "name") return () => { bump("tabs.title()"); return w.tabs.map((t) => t.spec.title || ""); };
-        if (k === "id") return () => { bump("tabs.id()"); return w.tabs.map((t) => t.spec.id); };
+        if (k === "id") return () => { bump("tabs.id()"); if (state.tabIdsFail) throw new Error("Can't get object."); return w.tabs.map((t) => t.spec.id); };
         if (k === "location") return () => { bump("tabs.location()"); return w.tabs.map((t) => t.spec.location || "unpinned"); };
         if (k === "byId") return (id) => { bump("tabs.byId"); return w.tabs.find((t) => String(t.spec.id) === String(id)); };
         if (k === "index") return () => w.tabs.map((_, i) => i + 1);

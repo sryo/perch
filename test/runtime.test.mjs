@@ -158,6 +158,7 @@ test("navigate waits for the NEW document, not the old one's readyState", async 
   assert.deepEqual(world.log.filter((l) => l[0] === "navigate"), [["navigate", "Google Chrome", "https://next.test/"]]);
   // 1 stamp + 3 on the old document + 5 loading + 1 complete.
   assert.equal(world.counts["tab.execute"], 10);
+  assert.equal(o.waited, true);
   assert.equal(world.page("Google Chrome", 0, 0).location.href, "https://next.test/");
 });
 
@@ -167,6 +168,7 @@ test("navigate to a same-document #hash does not wait for a load", async () => {
   const { o } = await call("navigate", { url: "https://a.test/p#sec" });
   assert.equal(o.ok, true);
   assert.equal(world.counts["tab.execute"], 1);
+  assert.equal(o.waited, true);
   assert.ok(world.clock.t - t0 < 1000);
 });
 
@@ -191,7 +193,7 @@ test("navigate gives up at its timeout when the new document never arrives", asy
   assert.ok(took >= 15000 && took < 16000, `took ${took}ms`);
 });
 
-test("navigate tells the caller a load it gave up on didn't finish", { todo: "navigate() drops the runtime's waited:false, so a timed-out load reads as {ok:true}" }, async () => {
+test("navigate tells the caller a load it gave up on didn't finish", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }] });
   world.state.linger = 1e9;
   const { o } = await call("navigate", { url: "https://slow.test/" });
@@ -203,6 +205,7 @@ test("navigate on an Arc background tab sets the url without evaluating", async 
   const { r } = await call("navigate", { url: "https://n.test/", target: { tabIndex: 1 } });
   assert.equal(r.isError, undefined);
   assert.deepEqual(world.log.filter((l) => l[0] === "navigate"), [["navigate", "Arc", "https://n.test/"]]);
+  assert.equal(JSON.parse(r.content[0].text).waited, false);
   assert.equal(world.counts["tab.execute"] || 0, 0);
 });
 
@@ -502,6 +505,21 @@ test("new_tab on Arc accepts about: and data: URLs, which Arc refuses at creatio
   assert.equal(r.isError, undefined, r.content[0].text);
   assert.equal(world.tabsOf("Arc", 0)[1].page.url, "data:text/html,<p>x</p>");
   assert.equal(o.tabId, "arc:new1");
+  // Created on Arc's own new-tab page, then pointed at the url, in that order.
+  assert.deepEqual(world.log.filter((l) => l[0] === "newTab" || l[0] === "navigate"),
+    [["newTab", "Arc", "arc://newtab"], ["navigate", "Arc", "data:text/html,<p>x</p>"]]);
+  // Still a background tab: nothing selected, Arc not brought forward.
+  assert.equal(world.counts["tab.select"], undefined);
+  assert.equal(world.counts["activate(Arc)"], undefined);
+});
+
+test("new_tab on Arc says so when it can't find the tab it made for an about: url", async () => {
+  install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }])], cg: [{ owner: "Arc" }] });
+  world.state.tabIdsFail = true;
+  const { r, t } = await call("new_tab", { app: "arc", url: "about:blank" });
+  assert.equal(r.isError, true);
+  assert.match(t, /^error: no_browser: Arc created a tab perch could not find to load about:blank/);
+  assert.equal(world.log.filter((l) => l[0] === "navigate").length, 0);
 });
 
 test("page JS on a browser-internal page is refused at once, not left to hang", async () => {

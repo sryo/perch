@@ -187,6 +187,17 @@ test("fill: a React-controlled input sees onChange with the new value", () => {
   assert.deepEqual(runBody(w, "return window.__changes"), ["Rosario"]);
 });
 
+test("fill: a TinyMCE editor writes into its iframe body, not the outer page", () => {
+  const w = page(`<label for=x>Description</label><div class="tox-edit-area"><iframe id=x title="Description"></iframe></div><textarea id=raw style="display:none"></textarea>`);
+  const body = w.document.querySelector("iframe").contentDocument.body;
+  body.setAttribute("contenteditable", "true");
+  const o = run(w, "fill", { label_pattern: "description", text: "Hello rich world" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.kind, "rich");
+  assert.equal(body.textContent, "Hello rich world");
+  assert.equal(w.document.querySelector("#raw").value, "");
+});
+
 test("fill: Trusted-Types-style innerHTML ban does not break rich fill", () => {
   const w = page(`<div contenteditable aria-label="Body"></div>`);
   runBody(w, `Object.defineProperty(document.querySelector('[contenteditable]'), 'innerHTML', { set() { throw new TypeError('TrustedHTML required'); } }); return 1`);

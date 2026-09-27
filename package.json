@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server.js",
     "smoke": "node scripts/smoke.mjs",
-    "test": "node --test test/"
+    "test": "node --import ./test/helpers/isolate.mjs --test test/"
   },
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {

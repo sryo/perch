@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFile, mkdtemp } from "node:fs/promises";
+import { writeFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, composeEvalScript, shapeTabs, formatResult } from "../server.js";
@@ -19,8 +19,9 @@ test("tool surface is the agreed 15", () => {
   ]);
 });
 
-test("composeEvalScript: file then script, either alone, neither errors", async () => {
+test("composeEvalScript: file then script, either alone, neither errors", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "perch-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
   const f = join(dir, "lib.js");
   await writeFile(f, "(function(){ window.__x = 41 })()");
   assert.equal(await composeEvalScript({ script_path: f, script: "return window.__x + 1" }), "(function(){ window.__x = 41 })()\n;\nreturn window.__x + 1");
