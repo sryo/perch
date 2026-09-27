@@ -77,15 +77,16 @@ const cursorAt = () => JSON.parse(execFileSync("osascript", ["-l", "JavaScript",
   "ObjC.import('CoreGraphics');const p=$.CGEventGetLocation($.CGEventCreate($()));JSON.stringify({x:p.x,y:p.y})"]).toString().trim());
 
 const PAGE = `
+  const c = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
   document.body.innerHTML = '<div style="height:200px"></div>' +
     '<button id=b style="margin-left:180px;width:220px;height:56px">Trusted target</button>' +
     '<p style="margin-left:180px"><input id=i aria-label="Name" value="Old value" style="width:320px;height:32px"></p>';
   window.__rec = { downs: [], clicks: [], moves: [], inputs: [] };
-  document.onmousedown = e => window.__rec.downs.push({ id: e.target.id, trusted: e.isTrusted, x: e.clientX, y: e.clientY });
+  // The center is taken at press time: aiming scrolls the target into view first.
+  document.onmousedown = e => window.__rec.downs.push({ id: e.target.id, trusted: e.isTrusted, x: e.clientX, y: e.clientY, center: c('b') });
   document.onclick = e => window.__rec.clicks.push({ id: e.target.id, trusted: e.isTrusted, meta: e.metaKey });
   document.onmousemove = e => { if (window.__rec.moves.length < 10) window.__rec.moves.push([e.clientX, e.clientY]); };
   document.oninput = e => window.__rec.inputs.push({ id: e.target.id, trusted: e.isTrusted });
-  const c = (id) => { const r = document.getElementById(id).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
   return { b: c('b'), i: c('i') };`;
 
 const TEXT = "Ada Lovelace 😀 élan ok";
@@ -228,7 +229,7 @@ try {
     report(click.hit === true && !!down?.trusted, "trusted click lands on the button", JSON.stringify({ result: click, pageSaw: rec.rec.downs[0] || null }));
     const clicked = rec.rec.clicks.find((e) => e.id === "b");
     report(!!clicked?.trusted && !clicked.meta, "button receives an ordinary trusted click", JSON.stringify(clicked || null));
-    if (down) report(Math.abs(down.x - centers.b[0]) <= 3 && Math.abs(down.y - centers.b[1]) <= 3, "click point matches the element center", `center ${centers.b.map(Math.round)}, pressed ${[down.x, down.y]}`);
+    if (down) report(Math.abs(down.x - down.center[0]) <= 3 && Math.abs(down.y - down.center[1]) <= 3, "click point matches the element center", `center ${down.center.map(Math.round)}, pressed ${[down.x, down.y]}`);
     const firstMove = rec.rec.moves[0];
     if (!background && firstMove) console.log(`INFO estimate before calibration was off by ${[Math.round(centers.b[0] - firstMove[0]), Math.round(centers.b[1] - firstMove[1])]} (px)`);
     else if (!firstMove) console.log("INFO no mousemove reached the page (calibration unavailable)");
