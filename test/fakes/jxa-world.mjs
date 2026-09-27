@@ -110,6 +110,16 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       return b.kind === "arc" ? JSON.stringify(r) : r;
     };
     tab.select = () => { bump("tab.select"); w.spec.active = w.tabs.indexOf(tab); };
+    // Closing removes the tab; a window keeps showing the same tab, or its neighbour.
+    tab.close = () => {
+      bump("tab.close");
+      const i = w.tabs.indexOf(tab);
+      if (i < 0) throw gone();
+      const shown = w.tabs[w.spec.active];
+      w.tabs.splice(i, 1);
+      w.spec.active = shown && shown !== tab ? w.tabs.indexOf(shown) : Math.min(i, w.tabs.length - 1);
+      log.push(["close", b.name, spec.id ?? spec.url]);
+    };
     return tab;
   }
 

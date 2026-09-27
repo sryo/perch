@@ -85,7 +85,7 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 
 **Tab indices are positional.** `tabIndex` is the tab's current position; opening or closing tabs shifts it. It is still accepted in `target` but no longer listed; rows carry only the handle.
 
-**Tab creation.** `new_tab` defaults to the browser in use (`defaultBrowser`: topmost on screen, else the system default browser if it runs, else any running one) and requires a running browser with an existing window. It no longer calls `activate()` or selects the new tab, but the browser may still focus its window during creation. Chrome can evaluate JS in that background tab; trusted input and screenshots need a tab already active in its window. Do not create tabs while preserving the user's foreground.
+**Tab creation.** `new_tab` defaults to the browser in use (`defaultBrowser`: topmost on screen, else the system default browser if it runs, else any running one) and requires a running browser with an existing window. It no longer calls `activate()` or selects the new tab, but the browser may still focus its window during creation. Chrome can evaluate JS in that background tab; trusted input and screenshots need a tab already active in its window. Do not create tabs while preserving the user's foreground. `close_tab` is the cleanup: it takes only an explicit `tabId` (no default target, so it can never close the user's tab by omission), refuses a window's last tab (Arc: the space's last tab), and never selects or activates anything.
 
 **Screenshots.**
 - **Capture:** `screencapture -l <CGWindowID> -t png|jpg` reads a window's own pixels regardless of z-order.
