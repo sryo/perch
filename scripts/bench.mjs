@@ -41,10 +41,13 @@ async function time(name, fn) {
 }
 
 try {
-  const listed = JSON.parse(text(await client.call("list_tabs")));
+  // Rows come frontmost browser first; past list_tabs' default limit of 50 the
+  // active row can be missing, and falling back to another tab would read it.
+  const listed = JSON.parse(text(await client.call("list_tabs", { limit: 10000 })));
   const tabs = Array.isArray(listed) ? listed : listed.tabs;
   if (!tabs.length) throw new Error("no browser tabs; open a browser first");
-  const active = tabs.find((t) => t.active) || tabs[0];
+  const active = tabs.find((t) => t.active);
+  if (!active) throw new Error("no tab is shown in any browser window; refusing to bench a background tab");
   const target = { tabId: active.tabId };
 
   await time("list_tabs", () => client.call("list_tabs"));
