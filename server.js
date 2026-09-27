@@ -960,6 +960,18 @@ function jxaRuntime(BROWSERS) {
       focus(resolve(a.target));
       return true;
     },
+    // Only by explicit handle: a missing target would resolve to the user's active tab.
+    // Closing a window's last tab closes the window; Arc counts the space's tabs.
+    closeTab(a) {
+      if (!a.target || !a.target.tabId) throw new Error("close_tab requires `tabId`");
+      const t = resolve(a.target);
+      let n = 2;
+      try { n = t.kind === "arc" ? t.win.activeSpace.tabs.id().length : t.win.tabs.length; } catch (e) {}
+      if (n <= 1) return { ok: false, error: "last tab in its window; closing it would close the window" };
+      t.tab.close();
+      if (t.tabId != null) delete hints[handle(t.app, t.tabId)];
+      return { ok: true, closed: a.target.tabId };
+    },
     // Only the active tab of a window is rendered. Never switch tabs implicitly:
     // that can put Chrome's window into focus even without app.activate().
     shotGeom(a) {
@@ -1338,6 +1350,11 @@ export function matchApp(name) {
 async function activateTab(target) {
   await rt("activate", { target });
   return { ok: true };
+}
+
+async function closeTab({ tabId } = {}) {
+  if (typeof tabId !== "string" || !tabId) throw new Error("close_tab requires `tabId`");
+  return rt("closeTab", { target: { tabId } });
 }
 
 // Pixel size from the PNG IHDR or the JPEG SOFn header, so no `sips -g` spawn.
@@ -2260,6 +2277,7 @@ const TOOLS = [
     app: { type: "string", description: "Default: the browser in use." },
   }),
   tool("activate_tab", "Bring the target tab and its window to the front.", { target: TARGET }),
+  tool("close_tab", "Close the tab with this handle. Never closes a window's last tab and never changes focus.", { tabId: { type: "string" } }, ["tabId"]),
   tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading.", { url: { type: "string" }, target: TARGET }, ["url"]),
   tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. With both `script_path` and `script`, the file runs first, then `script`, in one call.", {
     script: { type: "string" },
@@ -2345,6 +2363,7 @@ export const HANDLERS = {
   list_tabs:     (a) => listTabs(a),
   new_tab:       (a) => newTab(a.url, a.app),
   activate_tab:  (a) => activateTab(a.target),
+  close_tab:     (a) => closeTab(a),
   navigate:      (a) => navigate(a.url, a.target),
   eval_js:       async (a) => evalJs(await composeEvalScript(a), a.target, { awaitPromise: a.awaitPromise }),
   wait:          (a) => wait(a),

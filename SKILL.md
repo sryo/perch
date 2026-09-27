@@ -15,6 +15,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `list_tabs` | `{tabs:[{app,tabId,url,title,active?}], total}`, 50 rows by default, in the order the browser shows them. `active` marks the tab its window shows. Filter with `app`, `urlContains`, `titleContains`. |
 | `new_tab` | Add an unselected tab to an already running browser window, by default the browser in use. Creation may focus the browser; defer while the user works. Returns `{app,tabId}`. |
 | `activate_tab` | Bring a tab and its window to the front. |
+| `close_tab` | Close a tab by its `tabId` (required; no default). Refuses a window's last tab; never changes focus. |
 | `navigate` | Load a URL and wait for the new page to finish loading. Returns the tab's current `tabId`; use it from then on. `waited:false`: load not confirmed. |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path` loads a local file; with both, the file runs first, then `script`, in one call. `awaitPromise` for real async. |
 | `wait` | Until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`). |
