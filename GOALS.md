@@ -179,3 +179,14 @@ lives in AGENTS.md.
   Diagnosed live: `navigate` raises Chrome through AppleScript `set URL`
   itself. Deferred: the page-JS navigation fix (unmeasured, and it changes
   referrer and `beforeunload` behavior), and every round-5 guard live.
+- **Round 6 (2026-09): frames stay the user's, navigate from the page.** A
+  background `press {trusted}` refuses when focus is inside an embedded frame
+  or on a frame element, since frames take only a trusted click. Frame rows
+  without an http(s) URL, or nested under a `handoff` frame, are `handoff`
+  (safety, failing closed). `navigate` starts the load with `location.assign`
+  from page JS when it can, because AppleScript `set URL` raised Chrome (goal
+  1); it warns when it has to set the url. Budgets unchanged: `tools/list`
+  8544 chars, SKILL.md 6792 bytes. Accepted: a page-started load has the old
+  page as referrer and may run `beforeunload`. Deferred: navigate with the
+  browser behind another app (Canary was frontmost in this run), Arc and
+  Safari, and the frame guards live.
