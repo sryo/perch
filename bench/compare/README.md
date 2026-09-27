@@ -60,3 +60,18 @@ These are the characters that land in context for each op.
 - **Apple Events per call:** most calls went from 3 to 5 events down to 1, because
   handles now remember their window. At about 16.6ms per event, that is the latency
   floor.
+
+## After the trusted-click calibration fix (39bf181)
+
+`perch-after2.json` reruns the suite on top of the Accessibility-tree aiming. It matches
+`perch-after.json` within noise (eval 17ms, fill with `fields` 15ms, click with readback
+51ms, 100% ok), because the suite only uses plain DOM clicks.
+
+The trusted path was measured separately on the same fixture, with Canary as the
+active tab. The call was `click {selector: "#submit", trusted: true, readback: "#status"}`,
+10 reps:
+
+- **Aim:** `ax` on 10 of 10. No reps fell back to the estimate.
+- **Result:** `hit: true` and the correct status read back on 10 of 10.
+- **Time:** median 311ms, range 295 to 349. That covers the whole call: probe, AX aim,
+  SkyLight click and readback.
