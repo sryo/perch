@@ -1390,10 +1390,11 @@ function jxaRuntime(BROWSERS) {
     },
     select(a) {
       const t = resolve(a.target);
-      visibleGuard(t, "select");
-      const r = parseExec(t, a.start);
+      visibleGuard(t, a.tool || "select");
+      // No start: the caller's own page call already opened the control.
+      const r = a.start ? parseExec(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
-      const picked = poll(t, a.pick, 1500, 50);
+      const picked = poll(t, a.pick, a.wait || 1500, 50);
       if (!picked) return parseExec(t, a.miss);
       if (picked.value.ok === false) return picked.value;
       const read = poll(t, a.read, 500, 50);
@@ -2094,13 +2095,57 @@ function checkOne(a) {
 }
 `;
 
-const FILL_LIB = String.raw`
+// A typeahead keeps only a picked suggestion, often mirrored into a hidden
+// input: typed text alone is cleared on blur or rejected on submit. fill types,
+// then fill_ta_pick / fill_ta_read run polled from JXA, as select's phases do.
+const TYPEAHEAD_LIB = String.raw`
+const taNorm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
+// The widget's own box: the highest ancestor (below the form) holding no other control.
+function taRoot(el) {
+  let root = el;
+  for (let p = el.parentElement, i = 0; p && i < 4 && p.tagName !== "FORM" && p !== document.body; p = p.parentElement, i++) {
+    const others = Array.from(p.querySelectorAll("input:not([type=hidden]), select, textarea, button, [role=combobox]")).filter(function (x) { return x !== el; });
+    if (others.length) break;
+    root = p;
+  }
+  return root;
+}
+const TA_POP = "[class*=dropdown], [class*=autocomplete], [class*=suggest], [class*=typeahead], [class*=menu], [role=listbox]";
+function taParts(el) {
+  const root = taRoot(el);
+  return { comp: root === el ? null : root.querySelector("input[type=hidden]"), pop: root === el ? null : root.querySelector(TA_POP) };
+}
+function isTypeahead(el) {
+  if (el.tagName !== "INPUT" || (el.type || "text").toLowerCase() !== "text" || /^(tel|numeric|decimal|email)$/.test(attr(el, "inputmode"))) return false;
+  if (el.closest("[role=search]") || el.name === "q" || /search|query/i.test(el.name + " " + el.id + " " + attr(el, "placeholder"))) return false;
+  if (role(el) === "combobox" || /^(list|both)$/.test(attr(el, "aria-autocomplete"))) return true;
+  const t = taParts(el);
+  return !!(t.comp && t.pop);
+}
+function taOptions(s) {
+  const ids = (attr(s.el, "aria-controls") + " " + attr(s.el, "aria-owns")).split(/\s+/).filter(Boolean);
+  const own = ids.map(function (id) { return document.getElementById(id); }).filter(Boolean)[0];
+  const scope = own || s.pop;
+  const ITEM = "[role=option], li, [class*=option], [class*=item], [class*=result]";
+  let opts = scope ? Array.from(scope.querySelectorAll("[role=option]")) : [];
+  if (!opts.length && scope) opts = Array.from(scope.querySelectorAll(ITEM)).filter(function (o) { return !o.querySelector(ITEM); });
+  if (!opts.length) opts = Array.from(document.querySelectorAll("[role=option]"));
+  return opts.filter(function (o) { return vis(o) && taNorm(o.textContent); });
+}
+`;
+
+const FILL_LIB = TYPEAHEAD_LIB + String.raw`
 // -> fill's result for one field {ref|selector|label_pattern, text}.
 function fillOne(a) {
   const text = a.text;
   // Compare non-whitespace counts: rich editors normalize whitespace on the way in.
   const want = Math.floor(text.replace(/\s/g, "").length * 0.9);
-  const landed = function (s) { return String(s || "").replace(/\s/g, "").length >= want; };
+  // Masks reformat or drop a country code, so digits also count when one ends the other.
+  const digits = function (s) { return String(s || "").replace(/\D/g, ""); };
+  const landed = function (s) {
+    const d = digits(s), t = digits(text);
+    return String(s || "").replace(/\s/g, "").length >= want || (d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t));
+  };
   const isField = function (el) { return el.tagName === "TEXTAREA" || el.tagName === "INPUT"; };
   function isRich(el) {
     return !!el && (editable(el) || !!(el.classList && (el.classList.contains("fr-element") || el.classList.contains("ql-editor") || el.classList.contains("ProseMirror"))));
@@ -2109,6 +2154,18 @@ function fillOne(a) {
     setNativeValue(el, text);
     fire(el, ["input", "change", "blur"]);
     return landed(el.value);
+  }
+  // Typed with input events and no blur, so the widget runs its own lookup.
+  function startTypeahead(el) {
+    const t = taParts(el);
+    window.__perch_ta = { el: el, comp: t.comp, pop: t.pop, text: text, prior: el.value };
+    if (el.focus) el.focus();
+    setNativeValue(el, text);
+    const key = text.slice(-1);
+    el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: key }));
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: key }));
+    return { pending: true };
   }
   function setRich(root) {
     root.focus();
@@ -2128,6 +2185,7 @@ function fillOne(a) {
     return landed(textOf(root));
   }
   function tryFill(el, host) {
+    if (isField(el) && isTypeahead(el)) return startTypeahead(el);
     if (isField(el)) return setPlain(el) ? { ok: true, kind: "plain", el: ident(el), len: el.value.length } : null;
     if (isRich(el)) return setRich(el) ? { ok: true, kind: "rich", el: ident(host || el), len: textOf(el).length } : null;
     return null;
@@ -2269,6 +2327,51 @@ return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "
 
   fill: FILL_LIB + "return fillOne(A);",
 
+  // null = keep polling; exact text first, then prefix.
+  fill_ta_pick: TYPEAHEAD_LIB + SELECT_LIB + String.raw`
+const s = window.__perch_ta;
+if (!s) return { ok: false, kind: "typeahead", error: "fill state lost (did the page navigate?)" };
+const w = taNorm(s.text);
+const opts = taOptions(s);
+const opt = opts.find(function (o) { return taNorm(o.textContent) === w; }) || opts.find(function (o) { return taNorm(o.textContent).indexOf(w) === 0; });
+if (!opt) return null;
+s.picked = clip(opt.textContent, 80);
+s.pickedN = taNorm(opt.textContent);
+press(opt);
+return { picked: true };
+`,
+
+  fill_ta_miss: TYPEAHEAD_LIB + String.raw`
+const s = window.__perch_ta;
+const c = taOptions(s).slice(0, 8).map(function (o) { return clip(o.textContent, 60); });
+setNativeValue(s.el, s.prior);
+fire(s.el, ["input", "change"]);
+const out = { ok: false, kind: "typeahead", el: ident(s.el), error: "no suggestion matched " + JSON.stringify(s.text) + "; the text was withdrawn" };
+if (c.length) out.candidates = c;
+return out;
+`,
+
+  // Once the pick shows (and any hidden companion holds it), blur once and
+  // re-check, since these widgets clear unpicked text on blur. A.final reports.
+  fill_ta_read: TYPEAHEAD_LIB + String.raw`
+const s = window.__perch_ta;
+const el = s.el;
+const ctl = el.closest('.select__control, [class*="-control"]');
+const shown = el.value || (ctl ? textOf(ctl) : "");
+const v = taNorm(shown);
+const seen = !!v && (v.indexOf(s.pickedN) >= 0 || v.indexOf(taNorm(s.text)) >= 0);
+const good = seen && (!s.comp || !!s.comp.value);
+if (!A.final && good && !s.blurred) {
+  s.blurred = true;
+  if (document.activeElement === el) el.blur(); else fire(el, ["blur"]);
+  return null;
+}
+if (!A.final && !good) return null;
+const out = { ok: good, kind: "typeahead", el: ident(el), selected: s.picked, value: clip(shown, 120) };
+if (!good) out.error = "picked " + JSON.stringify(s.picked) + " but " + (seen ? "the hidden field stayed empty" : "the field doesn't show it");
+return out;
+`,
+
   // One pass over A.fields from A.from. A custom combobox needs select's
   // JXA-polled phases, so the pass stops there with {defer: index} and Node
   // resumes after it.
@@ -2292,6 +2395,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
   } else {
     kind = "text";
     o = fillOne(f);
+    if (o.pending) return { results: results, defer: i };
   }
   if (o.__perch_ref_miss) o = { ok: false, error: "ref " + o.ref + " is stale or unknown; call accessibility_snapshot again" };
   if (!o.kind) o.kind = kind;
@@ -3056,10 +3160,11 @@ async function fillFields(fields, target) {
     if (!r || !Array.isArray(r.results)) return r;
     results.push(...r.results);
     if (r.defer == null) break;
-    const s = await select({ ...A[r.defer], text: A[r.defer].option, target });
+    const f = A[r.defer];
+    const s = f.text != null ? await pickSuggestion(target) : await select({ ...f, text: f.option, target });
     results.push(s && s.__perch_ref_miss
       ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
-      : { ...s, kind: "select" });
+      : { kind: "select", ...s });
     from = r.defer + 1;
   }
   return { ok: results.every((x) => x.ok === true), results };
@@ -3080,8 +3185,19 @@ async function fill(args = {}) {
   if (text_path) ({ data: body } = await readUserFile(text_path, "utf8"));
   if (!body || !body.trim()) throw new Error("fill: empty body");
   if (trusted) return trustedFill({ ref, selector, label_pattern, text: body, raise, target });
-  return runPage("fill", "fill", { ref, selector, label_pattern, text: body }, target);
+  const r = await runPage("fill", "fill", { ref, selector, label_pattern, text: body }, target);
+  if (!r || !r.pending) return r;
+  const out = await pickSuggestion(target);
+  return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
 }
+
+// The page has typed into a typeahead; its suggestions arrive asynchronously,
+// so they are polled JXA-side through select's phases rather than page timers.
+const pickSuggestion = (target) => rt("select", {
+  target, tool: "fill", wait: 3000,
+  pick: pageFn("fill_ta_pick", {}), miss: pageFn("fill_ta_miss", {}),
+  read: pageFn("fill_ta_read", {}), readFinal: pageFn("fill_ta_read", { final: true }),
+}, { lane: "slow" });
 
 async function select(args = {}) {
   const { ref = null, selector = null, label_pattern = null, text = null, target } = args;
@@ -3195,7 +3311,7 @@ const TOOLS = [
     dialog: { type: ["boolean", "string"] },
     target: TARGET,
   }, ["key"]),
-  tool("fill", "Set text in inputs, textareas, rich editors; verifies it landed: {ok,kind,el,len}. `fields`: many in one call. `trusted`: trusted input event, no key focus; `raise:true` types foreground keys.", {
+  tool("fill", "Set text in inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies it landed: {ok,kind,el,len}. `fields`: many in one call. `trusted`: trusted input event, no key focus; `raise:true` types foreground keys.", {
     fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]" },
     text: { type: "string" },
     text_path: { type: "string", description: "Local text file." },
