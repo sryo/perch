@@ -25,11 +25,12 @@ const select = async (args) => {
 
 const NATIVE = `<label>Country <select><option value="">Pick</option><option value=ar>Argentina</option><option value=br>Brazil</option></select></label>`;
 
-test("native select: exact text, value, substring; candidates on miss", async () => {
+test("native select: exact text, value, word prefix, never mid-word; candidates on miss", async () => {
   onPage(NATIVE);
   assert.deepEqual((await select({ label_pattern: "country", text: "Argentina" })).o, { ok: true, selected: "Argentina", el: `combobox "Country"` });
   assert.equal((await select({ label_pattern: "country", text: "br" })).o.selected, "Brazil");
-  assert.equal((await select({ label_pattern: "country", text: "razi" })).o.selected, "Brazil");
+  assert.equal((await select({ label_pattern: "country", text: "braz" })).o.selected, "Brazil");
+  assert.equal((await select({ label_pattern: "country", text: "razi" })).o.ok, false);
   const miss = (await select({ label_pattern: "country", text: "Chile" })).o;
   assert.equal(miss.ok, false);
   assert.deepEqual(miss.candidates, ["Pick", "Argentina", "Brazil"]);
