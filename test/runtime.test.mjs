@@ -155,7 +155,7 @@ test("navigate waits for the NEW document, not the old one's readyState", async 
   world.state.loadTicks = 5;
   const { o } = await call("navigate", { url: "https://next.test/" });
   assert.equal(o.ok, true);
-  assert.deepEqual(world.log.filter((l) => l[0] === "navigate"), [["navigate", "Google Chrome", "https://next.test/"]]);
+  assert.deepEqual(world.log.filter((l) => l[0] === "navigate" || l[0] === "assign"), [["assign", "Google Chrome", "https://next.test/"]]);
   // 1 stamp + 3 on the old document + 5 loading + 1 complete.
   assert.equal(world.counts["tab.execute"], 10);
   assert.equal(o.waited, true);

@@ -1172,9 +1172,9 @@ function jxaRuntime(BROWSERS) {
       if (r.value && r.value.__perch_error) throw new Error("wait: " + r.value.__perch_error);
       return r;
     },
-    // One round trip: stamp the current document, set the url, then wait until a
+    // One round trip: stamp the current document, start the load, then wait until a
     // document without the stamp reports readyState 'complete'. Checking readyState
-    // alone can read the OLD document's 'complete' right after the url is set.
+    // alone can read the OLD document's 'complete' right after the load starts.
     navigate(a) {
       const t = resolve(a.target);
       const deadline = Date.now() + a.timeout;
@@ -1185,16 +1185,33 @@ function jxaRuntime(BROWSERS) {
       const token = "n" + Date.now() + Math.random().toString(36).slice(2, 6);
       // The page resolves the url against its own location, so a #fragment change is
       // recognized as same-document even when the two spellings differ.
-      let sameDoc = false;
+      // Chrome raises its window when AppleScript sets a tab's url, so the page starts
+      // the load itself (the reply ends in '!') when it can; a page can't open data:,
+      // javascript: or browser URLs that way.
+      const fromPage = /^(https?:\/\/|about:blank$)/i.test(a.url);
+      let r = null;
       if (canEval) {
-        const stamp = "(function(){try{var u=new URL(" + JSON.stringify(a.url) + ",location.href);" +
-          "if(u.hash&&u.href.split('#')[0]===location.href.split('#')[0])return 'same'}catch(e){}" +
-          "window.__perch_nav=" + JSON.stringify(token) + ";return 'stamped'})()";
-        try { sameDoc = run(stamp) === "same"; } catch (e) {}
+        const q = JSON.stringify(a.url);
+        const stamp = "(function(){var s='stamped';try{var u=new URL(" + q + ",location.href);" +
+          "if(u.hash&&u.href.split('#')[0]===location.href.split('#')[0])s='same'}catch(e){}" +
+          "if(s==='stamped')window.__perch_nav=" + JSON.stringify(token) + ";" +
+          (fromPage ? "try{location.assign(" + q + ")}catch(e){return s}return s+'!'" : "return s") + "})()";
+        try { r = String(run(stamp)); } catch (e) {}
       }
-      t.tab.url = a.url;
-      if (sameDoc) return { waited: true, tabId: handleOf(t) };
-      if (!canEval) return { waited: false, tabId: handleOf(t) };
+      // A reply lost as the new document replaced the old one still started the load:
+      // the tab is loading, or a document without the stamp answers.
+      let viaPage = /!$/.test(r || "");
+      if (canEval && fromPage && r == null && t.kind !== "safari") {
+        try { viaPage = t.tab.loading() || String(run("String(window.__perch_nav===" + JSON.stringify(token) + ")")) === "false"; } catch (e) {}
+      }
+      const result = function (waited) {
+        const o = { waited: waited, tabId: handleOf(t) };
+        if (!viaPage && t.kind !== "safari") o.warning = "navigating from outside the page may bring the browser to the front";
+        return o;
+      };
+      if (!viaPage) t.tab.url = a.url;
+      if (/^same/.test(r || "")) return result(true);
+      if (!canEval) return result(false);
       const check = "(function(){try{return JSON.stringify(window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete')}catch(e){return 'false'}})()";
       const start = Date.now();
       // Page JS sent before the new document commits may never be answered, and
@@ -1213,15 +1230,15 @@ function jxaRuntime(BROWSERS) {
       while (Date.now() < deadline) {
         let done = false;
         try { done = JSON.parse(String(run(check))) === true; } catch (e) {}
-        if (done) return { waited: true, tabId: handleOf(t) };
+        if (done) return result(true);
         // A download or 204 never replaces the document; Chrome's `loading` settles.
         if (t.kind !== "safari" && Date.now() - start > 300) {
           try { idle = t.tab.loading() ? 0 : idle + 1; } catch (e) {}
-          if (idle >= 2) return { waited: true, tabId: handleOf(t) };
+          if (idle >= 2) return result(true);
         }
         delay(0.1);
       }
-      return { waited: false, tabId: handleOf(t) };
+      return result(false);
     },
     // Browsers may show the tab they just made; new_tab puts back the tab the window
     // showed. It can't undo a raise without activating an app, so it reports one.
@@ -1781,6 +1798,7 @@ async function navigate(url, target) {
   // a background Arc tab can't be checked).
   const out = { ok: true, url, waited: !!(r && r.waited) };
   if (r && r.tabId) out.tabId = r.tabId;
+  if (r && r.warning) out.warning = r.warning;
   return out;
 }
 
