@@ -116,6 +116,15 @@ lives in AGENTS.md.
   (credentials), leave-page and permission prompts (the user's call), and
   scoping by browser only (it aborted calls and answered dialogs in the user's
   other tabs).
+  Round 4 adds positive proof (goals 1 and 2): `press {dialog}` needs
+  `target.tabId`; any control but buttons, a plain field, texts, headings and
+  groups makes a dialog `other`; the watchdog also needs the host in the
+  heading; and both need the page's JS paused, shown by a 1s bounded no-op
+  execute getting no reply. Permission, multiple-downloads, FedCM and passkey
+  prompts can pass the shape and host tests but leave the page running.
+  Browsers without a bounded execute (Safari, Arc) fail closed. Rejected:
+  answering on a shape and host match alone, and a default target for
+  `press {dialog}`.
 - **Round 3 (2026-09): room back, Safari background tabs.** `target` lists
   only `tabId` and `app` (`windowId` and `tabIndex` still work) and
   descriptions and SKILL.md were tightened: `tools/list` 9511 to 8385 chars,

@@ -725,10 +725,11 @@ function jxaRuntime(BROWSERS) {
   // Browser windows are skipped: a page's role=dialog maps to that subrole too.
   // Parts are read by position, never by localized title, and only the recorded
   // shapes count, each with a heading origin line ("x.test says"): one button
-  // (alert), two (confirm), or two and one plain text field (prompt). Anything else,
-  // such as a sign-in sheet's secure field, is kind "other". The static texts are
-  // the message. Buttons that carry a subrole (close, zoom) are skipped; buttons and
-  // fields are not descended into.
+  // (alert), two (confirm), or two and one plain text field (prompt), with nothing
+  // but groups and static texts around them. Anything else, such as a sign-in
+  // sheet's secure field or a passkey prompt's account list, is kind "other". The
+  // static texts are the message. Buttons that carry a subrole (close, zoom) are
+  // skipped; buttons and fields are not descended into.
   function scanDialogs(only) {
     ObjC.import("ApplicationServices");
     if (!$.AXIsProcessTrusted()) return [];
@@ -745,7 +746,7 @@ function jxaRuntime(BROWSERS) {
         }
         if (!root) return;
         const buttons = [], fields = [], texts = [], stack = [root];
-        let origin = null, secure = false, seen = 0;
+        let origin = null, secure = false, stray = false, seen = 0;
         while (stack.length && seen++ < 300) {
           const el = stack.pop(), role = ax.str(el, "AXRole");
           if (role === "AXButton") { if (!ax.str(el, "AXSubrole")) buttons.push(el); continue; }
@@ -756,10 +757,11 @@ function jxaRuntime(BROWSERS) {
           }
           if (role === "AXHeading" && origin == null) { origin = text(el) || kids(el).map(text).join(" "); continue; }
           if (role === "AXStaticText") { const v = ax.str(el, "AXValue").trim(); if (v) texts.push(v); }
+          else if (role !== "AXGroup") stray = true;
           stack.push.apply(stack, kids(el).reverse());
         }
         const field = fields.length === 1 && !secure ? fields[0] : null, n = buttons.length;
-        const kind = origin == null || fields.length !== (field ? 1 : 0) || n < 1 || n > 2 || (field && n !== 2) ? "other"
+        const kind = stray || stack.length || origin == null || fields.length !== (field ? 1 : 0) || n < 1 || n > 2 || (field && n !== 2) ? "other"
           : field ? "prompt" : n === 2 ? "confirm" : "alert";
         out.push({
           app: name, pid: P.pid[name], kind: kind, origin: origin, root: root, buttons: buttons, field: field, frame: ax.frame(w),
@@ -791,7 +793,7 @@ function jxaRuntime(BROWSERS) {
       if (d.pid !== I.pid || !d.frame || I.windowNumber == null) return false;
       const at = [];
       wins.forEach(function (c, i) { if (near(c, d.frame)) at.push(i); });
-      d.tab = t.tab;
+      d.t = t;
       return at.length === 1 && !!wins[at[0] + 1] && wins[at[0] + 1].wid === I.windowNumber;
     });
   }
@@ -803,25 +805,54 @@ function jxaRuntime(BROWSERS) {
     return m && m[1] ? m[1].toLowerCase().replace(/^www\./, "") : null;
   }
 
+  // Why a dialog's origin line does not name its tab's host, or null when it does.
+  // This rules out leave-page prompts and other origins' and frames' dialogs.
+  function foreignOrigin(d) {
+    let url = "";
+    try { url = d.t.tab.url(); } catch (e) {}
+    const host = hostOf(url);
+    if (!host) return "cannot check the dialog's origin on a page without a host";
+    const named = new RegExp("(^|[^a-z0-9.-])(www\\.)?" + host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![a-z0-9-]|\\.[a-z0-9])", "i");
+    return named.test(d.origin) ? null : "the dialog is from " + d.origin + ", not this tab's origin " + host;
+  }
+
+  // A JS dialog pauses its page's JS; the browser's own prompts (permission,
+  // downloads, FedCM, passkey), which can share the shape and the host, do not.
+  // So a trivial bounded execute proves it: no reply within the bound means
+  // paused (true), a reply means running (false). null when there is no bounded
+  // execute (Safari, Arc, a tab without an id) or it failed outright: unproven.
+  const DIALOG_PROOF_SECS = 1;
+  function pagePaused(t) {
+    if (t.kind !== "chrome" || t.tabId == null) return null;
+    try { execWithin(t, "'ok'", DIALOG_PROOF_SECS); return false; }
+    catch (e) { return /^timeout:/.test(e && e.message) ? true : null; }
+  }
+
+  // The target's own dialogs with positive proof: the recorded shape, the tab's
+  // host in the origin line, and the page paused. Used for dialog_open reports.
+  function provenDialogs(target) {
+    const found = ownDialogs(target).filter(function (d) { return !foreignOrigin(d); });
+    return found.length && pagePaused(found[0].t) === true ? found : [];
+  }
+
   // Answers the target tab's one open dialog like a user would: Enter presses the
-  // last button (OK), Escape the first (Cancel, or an alert's only one). Only when
-  // its origin line names the tab's host, which rules out leave-page prompts and
-  // other origins' dialogs. No activate, no raise.
+  // last button (OK), Escape the first (Cancel, or an alert's only one). Only with
+  // positive proof (see provenDialogs). No activate, no raise.
   function answerDialog(a) {
+    if (!a.target || !a.target.tabId) throw new Error("answerDialog requires `target.tabId`");
     requireAccessibility();
     const found = ownDialogs(a.target, true);
     if (!found.length) return { ok: false, error: "no open alert/confirm/prompt on the target tab" };
     if (found.length > 1) return { ok: false, error: "several dialogs open on the target tab" };
     const d = found[0], ax = axInit();
     if (d.kind === "other") return { ok: false, error: "the open dialog is not a page alert/confirm/prompt (sign-in, leave-page or permission prompt); perch does not answer it, hand it to the user" };
-    let url = "";
-    try { url = d.tab.url(); } catch (e) {}
-    const host = hostOf(url);
-    if (!host) return { ok: false, error: "cannot check the dialog's origin on a page without a host" };
-    const named = new RegExp("(^|[^a-z0-9.-])(www\\.)?" + host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![a-z0-9-]|\\.[a-z0-9])", "i");
-    if (!named.test(d.origin)) return { ok: false, error: "the dialog is from " + d.origin + ", not this tab's origin " + host };
+    const foreign = foreignOrigin(d);
+    if (foreign) return { ok: false, error: foreign };
+    if (a.text != null && !d.field) return { ok: false, error: "the open dialog is " + (d.kind === "alert" ? "an alert" : "a confirm") + ", not a prompt; answer it without text" };
+    const paused = pagePaused(d.t);
+    if (paused === false) return { ok: false, error: "the open dialog does not pause the page, so it is not the page's alert/confirm/prompt (a permission, download or sign-in prompt?); perch does not answer it, hand it to the user" };
+    if (paused !== true) return { ok: false, error: "perch cannot confirm the dialog pauses the page in this browser; hand it to the user" };
     if (a.text != null) {
-      if (!d.field) return { ok: false, error: "the open dialog is " + (d.kind === "alert" ? "an alert" : "a confirm") + ", not a prompt; answer it without text" };
       $.AXUIElementSetAttributeValue(d.field, $("AXValue"), $(a.text));
       if (ax.str(d.field, "AXValue") !== a.text) return { ok: false, error: "the prompt's text did not land" };
     }
@@ -835,7 +866,7 @@ function jxaRuntime(BROWSERS) {
       delay(0.05);
     }
     const r = { ok: true, dialog: d.kind, message: d.message, answer: a.key === "Enter" ? "accept" : "dismiss" };
-    const next = ownDialogs(a.target)[0];
+    const next = provenDialogs(a.target)[0];
     if (next) r.next = next.kind;
     if (a.text != null) r.text = a.text;
     return r;
@@ -957,7 +988,7 @@ function jxaRuntime(BROWSERS) {
 
   globalThis.__perch = {
     dialogs(a) {
-      return ownDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
+      return provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
     },
     answerDialog: answerDialog,
     listTabs(a) {
@@ -1488,7 +1519,7 @@ const DIALOG_BLIND = new Set(["listTabs", "newTab", "closeTab", "activate", "sho
 
 const probeDialogs = async (target) => JSON.parse(await jxaOneShot(`JSON.stringify(__perch.dialogs(${JSON.stringify({ target })}))`, { timeout: 5000 }));
 
-const dialogOpen = (d) => new Error(`dialog_open: a ${d.kind} (${JSON.stringify(String(d.message).slice(0, 200))}) is open and pauses the page; answer it with press {key:"Enter"|"Escape", dialog:true} (a string answers a prompt). The page JS stopped at the dialog and its result is lost; check the page after answering.`);
+const dialogOpen = (d) => new Error(`dialog_open: a ${d.kind} (${JSON.stringify(String(d.message).slice(0, 200))}) is open and pauses the page; answer it with press {key:"Enter"|"Escape", dialog:true, target:{tabId}} (a string answers a prompt). The page JS stopped at the dialog and its result is lost; check the page after answering.`);
 
 async function findDialog(target) {
   try { return (await deps.dialogs(target))[0] || null; } catch { return null; }
@@ -2629,6 +2660,7 @@ async function answerDialog(args) {
   if (dialog !== true && !(typeof dialog === "string" && dialog)) throw new Error("press {dialog}: pass true, or the prompt's answer as a non-empty string");
   if (args.ref != null || args.selector != null || args.trusted) throw new Error("press {dialog} answers the browser's dialog; it takes no ref, selector or trusted");
   if (typeof dialog === "string" && key === "Escape") throw new Error("press {dialog}: a prompt's text goes with Enter; Escape dismisses it without text");
+  if (!target || typeof target.tabId !== "string" || !target.tabId) throw new Error("press {dialog} requires `target.tabId` (from list_tabs), so it can never answer a dialog on a tab it was not aimed at");
   return rt("answerDialog", { key, text: typeof dialog === "string" ? dialog : undefined, target });
 }
 
@@ -2794,7 +2826,7 @@ const TOOLS = [
     hover: { type: "boolean" },
     target: TARGET,
   }),
-  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element; emulates Enter/Space/Tab defaults. `trusted`: real key events in the shown tab; check `hit`. `dialog`: Enter/Escape answers the tab's own alert/confirm/prompt; a string is the prompt text.", {
+  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element; emulates Enter/Space/Tab defaults. `trusted`: real key events in the shown tab; check `hit`. `dialog`, with target.tabId: Enter/Escape answers its alert/confirm/prompt; a string fills it.", {
     key: { type: "string" },
     ref: REF,
     selector: SEL,

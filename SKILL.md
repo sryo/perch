@@ -56,7 +56,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 - **Page globals may be invisible.** Some browsers run eval in an isolated world that shares the DOM but not the page's JS globals. Read page state through the DOM, not `window.*`.
 - **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait`, which polls from outside.
 - **Return summaries, not state.** Results land in context verbatim.
-- **Dialogs.** A call stuck behind a page's alert/confirm/prompt fails in ~2s with `dialog_open`. Answer with `press {key:"Enter"|"Escape", dialog:true}` (a string fills a prompt), no raise, then re-read the page. `press {dialog}` answers only the target tab's own alert/confirm/prompt; sign-in or leave-page prompts go to the user.
+- **Dialogs.** A call stuck behind a page's alert/confirm/prompt fails in ~3s with `dialog_open`. Answer with `press {key:"Enter"|"Escape", dialog:true, target:{tabId}}` (a string fills a prompt), no raise, then re-read the page. Only the tab's own JS dialog is answered; sign-in, permission or passkey prompts go to the user.
 
 ## Trusted input
 

@@ -232,8 +232,10 @@ test("the dialog probe sends no Apple Events while no dialog is open, and few on
     assert.deepEqual(probe(target), []);
     assert.equal(events(), 0, breakdown());
   }
-  world.state.dialogs = [{ pid: 40, parent: 400, texts: ["c0.test says", "Sure?"], buttons: ["Cancel", "OK"] }];
+  world.state.dialogs = [{ pid: 40, parent: 400, blocks: "c0", texts: ["c0.test says", "Sure?"], buttons: ["Cancel", "OK"] }];
   world.reset();
   assert.deepEqual(probe({ tabId: "chrome:c0" }), [{ kind: "confirm", message: "Sure?" }]);
-  assert.ok(events() <= 4, breakdown());
+  // The proof adds the tab's url and one bounded execute (NSAppleScript, which
+  // the fake also counts as tab.execute).
+  assert.ok(events() <= 7, breakdown());
 });

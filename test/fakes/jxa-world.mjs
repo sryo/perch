@@ -105,6 +105,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       if (state.dropWhilePending && tab.pending) { const e = unanswered(); tab.page = makePage(tab.pending.url); tab.pending = null; throw e; }
       // state.hung: the page never answers at all (a busy loop, a modal dialog).
       if (state.hung) throw unanswered();
+      // state.jsOff: the browser's "Allow JavaScript from Apple Events" is off.
+      if (state.jsOff) throw new Error("Executing JavaScript through AppleScript is turned off.");
+      // A JS dialog pauses its own tab's page: a dialog's `blocks` is that tab's id.
+      // Browser prompts that only look like one (permission, FedCM, passkey) omit it.
+      if (state.dialogs.some((d) => d.blocks != null && String(d.blocks) === String(spec.id))) throw unanswered();
       // spec.dom: a happy-dom Window standing in for the page.
       const r = spec.dom ? spec.dom.eval(javascript) : vm.runInContext(javascript, tab.page.ctx);
       return b.kind === "arc" ? JSON.stringify(r) : r;
@@ -307,7 +312,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     // the message lines are static texts (a prompt's are its field's title), then
     // the prompt's field and the buttons. Other shapes: `secure` makes the field a
     // secure one, `fields: n` repeats it, `noHeading` turns the origin line into
-    // plain text. `parent` is the CGWindowID of the browser window the dialog is a
+    // plain text, `controls: [{role, subrole?, title?}]` adds other elements
+    // before the buttons, `tail` after them. `blocks` names the tab whose page it pauses. `parent` is the CGWindowID of the browser window the dialog is a
     // child of; without one it has no CG entry. `frame` is its AX frame, `cgFrame`
     // its CG one when they differ.
     if (el.d && el.role === "AXWindow" && name === "AXChildren") {
@@ -319,7 +325,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       if (d.field != null) {
         for (let i = 0; i < (d.fields || 1); i++) kids.push({ role: "AXTextField", subrole: d.secure ? "AXSecureTextField" : undefined, title: d.texts.slice(1).join(" "), d });
       }
+      (d.controls || []).forEach((c) => kids.push({ ...c }));
       d.buttons.forEach((title) => kids.push({ role: "AXButton", title, d, kids: [{ role: "AXStaticText", value: title }] }));
+      (d.tail || []).forEach((c) => kids.push({ ...c }));
       return axList([{ role: "AXGroup", subrole: "AXApplicationDialog", d, kids: [{ role: "AXGroup", kids }] }]);
     }
     if (name === "AXPosition") return box ? axPoint(box.x, box.y) : undefined;
