@@ -36,9 +36,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
   }
 
   function makeTab(spec, b, w) {
+    // The page lives on the spec, so one spec listed in several windows is one tab
+    // shown in each, as Arc does for windows on the same space.
+    if (!spec._page) spec._page = makePage(spec.url || "about:blank");
     const tab = {
       spec,
-      page: makePage(spec.url || "about:blank"),
+      get page() { return spec._page; },
+      set page(p) { spec._page = p; },
       get _active() { return w.spec.active === w.tabs.indexOf(tab); },
     };
     const fn = (name, get) => Object.defineProperty(tab, name, { get: () => { bump(`tab.${name}`); return get; }, configurable: true });
@@ -79,6 +83,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
         if (k === "url") return () => { bump("tabs.url()"); return w.tabs.map((t) => t.page.url); };
         if (k === "title" || k === "name") return () => { bump("tabs.title()"); return w.tabs.map((t) => t.spec.title || ""); };
         if (k === "id") return () => { bump("tabs.id()"); return w.tabs.map((t) => t.spec.id); };
+        if (k === "location") return () => { bump("tabs.location()"); return w.tabs.map((t) => t.spec.location || "unpinned"); };
+        if (k === "byId") return (id) => { bump("tabs.byId"); return w.tabs.find((t) => String(t.spec.id) === String(id)); };
         if (k === "index") return () => w.tabs.map((_, i) => i + 1);
         if (k === "push") return (t) => { const tab = makeTab({ url: t.url, id: "new" + w.tabs.length }, b, w); w.tabs.push(tab); log.push(["newTab", b.name, t.url]); };
         if (/^\d+$/.test(String(k))) return w.tabs[Number(k)];
@@ -88,6 +94,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     const win = {};
     Object.defineProperty(win, "tabs", { get: () => { bump("win.tabs"); return coll; } });
     Object.defineProperty(win, "id", { get: () => () => { bump("win.id()"); return spec.id; } });
+    win.name = () => spec.name ?? (w.tabs[spec.active]?.spec.title || "");
+    // Arc: the sidebar order of the active space (spec.sidebar ids), Favorites excluded.
+    Object.defineProperty(win, "activeSpace", { get: () => {
+      if (b.kind !== "arc") throw new Error("Can't get object.");
+      const side = spec.sidebar || w.tabs.filter((t) => t.spec.location !== "topApp").map((t) => t.spec.id);
+      return { tabs: { id: () => { bump("space.tabs.id()"); return side.slice(); } } };
+    } });
     // Raising a window reorders the app's window list, like the real `index = 1`.
     Object.defineProperty(win, "index", { set: (v) => {
       bump("win.index=");
@@ -102,7 +115,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
       set: (v) => { bump("win.activeTabIndex="); spec.active = v - 1; },
     });
     Object.defineProperty(win, "activeTab", {
-      get: () => { bump("win.activeTab"); if (b.kind !== "arc") throw new Error("no activeTab"); return w.tabs[spec.active]; },
+      get: () => {
+        bump("win.activeTab");
+        if (b.kind === "safari") throw new Error("no activeTab");
+        // A fresh Arc window shows no tab; its activeTab can't be read.
+        if (spec.active == null || !w.tabs[spec.active]) return { id: () => { throw new Error("Can't get object."); } };
+        return w.tabs[spec.active];
+      },
       set: () => { throw new Error("Access not authorized"); },
     });
     Object.defineProperty(win, "currentTab", {
@@ -150,6 +169,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
           return specifier(() => wins[Number(k)] && wins[Number(k)].win);
         }
         if (k === "byId") return (id) => specifier(() => { const w = wins.find((x) => String(x.spec.id) === String(id)); return w && w.win; });
+        if (k === "id") return () => wins.map((w) => w.spec.id);
+        if (k === "name") return () => wins.map((w) => w.win.name());
         return undefined;
       },
     });
@@ -223,6 +244,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
           kCGWindowOwnerName: e.owner,
           kCGWindowOwnerPID: e.pid ?? 100,
           kCGWindowNumber: e.wid ?? 1,
+          kCGWindowName: e.name ?? "",
           kCGWindowBounds: { X: e.x ?? 0, Y: e.y ?? 0, Width: e.w ?? 800, Height: e.h ?? 600 },
         }));
       },
@@ -235,6 +257,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
   const ctx = vm.createContext(sandbox);
   return {
     ctx, counts, log, clock, apps, posted,
+    // Reorder a window's tabs in place: tabs[w] is the live list the runtime reads.
+    tabsOf: (name, w) => winsByApp[name][w].tabs,
     reset() { for (const k of Object.keys(counts)) delete counts[k]; log.length = 0; },
     state,
     page: (name, w, t) => winsByApp[name][w].tabs[t].page.ctx,

@@ -186,7 +186,7 @@ test("new_tab creates a background tab without selecting it", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
   const { r, o } = await call("new_tab", { app: "Google Chrome", url: "about:blank" });
   assert.equal(r.isError, undefined);
-  assert.deepEqual(o, { app: "Google Chrome", windowId: 1, tabIndex: 1 });
+  assert.deepEqual(o, { app: "Google Chrome", windowId: 1, tabId: "new1", tabIndex: 1 });
   assert.equal(world.counts["win.activeTabIndex="], undefined);
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
 });
@@ -245,7 +245,7 @@ test("raising a second window still switches the tab in THAT window", async () =
   assert.equal(r.isError, undefined, r.content[0].text);
   const { o } = await call("list_tabs", {});
   const active = o.tabs.filter((t) => t.active);
-  assert.deepEqual(active.map((t) => [t.windowId, t.tabIndex]), [[2, 3]]);
+  assert.deepEqual(active.map((t) => [t.windowId, t.tabIndex]), [[2, 3], [1, 0]]);
 });
 
 // ---- review fixes ----
@@ -270,4 +270,96 @@ test("navigate: a #hash change on a normalized URL is same-document (no load wai
   const t0 = world.clock.t;
   await call("navigate", { url: "https://a.test#sec" });
   assert.ok(world.clock.t - t0 < 300, `waited ${world.clock.t - t0}ms`);
+});
+
+// ---- stable tab ids ----
+
+test("tabId survives tabs being inserted before it; it wins over a stale tabIndex", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(3, "c") }])], cg: [{ owner: "Google Chrome" }] });
+  const { o } = await call("list_tabs", {});
+  const row = o.tabs.find((t) => t.title === "c2");
+  assert.equal(row.tabId, "c2");
+  const live = world.tabsOf("Google Chrome", 0);
+  live.unshift(live.pop()); // c2 moves to position 0
+  await call("eval_js", { script: "window.hit = 1; return 1", target: { tabId: row.tabId, tabIndex: row.tabIndex } });
+  assert.equal(live[0].page.ctx.hit, 1);
+  assert.equal(live[2].page.ctx.hit, undefined);
+});
+
+test("unknown tabId and tabId on Safari are clear errors", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }]), safari([{ id: 2, active: 0, tabs: tabs(1, "s") }])], cg: [{ owner: "Google Chrome" }] });
+  const gone = await call("eval_js", { script: "return 1", target: { tabId: "nope" } });
+  assert.equal(gone.r.isError, true);
+  assert.match(gone.t, /tabId nope not found.*list_tabs/);
+  const saf = await call("eval_js", { script: "return 1", target: { app: "Safari", tabId: "s0" } });
+  assert.match(saf.t, /Safari tabs have no id/);
+});
+
+test("Arc list_tabs follows the sidebar, not win.tabs order; tabIndex means that row", async () => {
+  // Raw order is scrambled; Favorites (topApp) are mixed in, as in real Arc.
+  const raw = [
+    { id: "u2", url: "https://u2.test/", title: "u2" },
+    { id: "f0", url: "https://f0.test/", title: "f0", location: "topApp" },
+    { id: "p0", url: "https://p0.test/", title: "p0", location: "pinned" },
+    { id: "u1", url: "https://u1.test/", title: "u1" },
+  ];
+  install({ browsers: [arc([{ id: "A", active: 3, sidebar: ["p0", "u1", "u2"], tabs: raw }])], cg: [{ owner: "Arc" }] });
+  const { o } = await call("list_tabs", {});
+  assert.deepEqual(o.tabs.map((t) => [t.tabIndex, t.tabId]), [[0, "f0"], [1, "p0"], [2, "u1"], [3, "u2"]]);
+  assert.equal(o.tabs[0].favorite, true);
+  assert.equal(o.tabs[1].pinned, true);
+  assert.equal(o.tabs[2].active, true);
+  await call("eval_js", { script: "window.hit = 1; return 1", target: { tabIndex: 2 } });
+  assert.equal(world.page("Arc", 0, 3).hit, 1);
+});
+
+test("Arc windows sharing a space: each tab listed once, tabId runs through the window showing it", async () => {
+  const shared = tabs(3, "a");
+  install({
+    browsers: [arc([{ id: "W1", active: 0, tabs: shared }, { id: "W2", active: 2, tabs: shared }])],
+    cg: [{ owner: "Arc" }],
+  });
+  const { o } = await call("list_tabs", {});
+  assert.deepEqual(o.tabs.map((t) => [t.tabId, t.windowId, !!t.active]), [["a0", "W1", true], ["a1", "W1", false], ["a2", "W2", true]]);
+  assert.equal(world.counts["tabs.url()"], 1, "shared windows read urls once");
+  // a2 is background in W1 (execute would hang there) but active in W2.
+  const { r, o: v } = await call("eval_js", { script: "window.hit = 1; return 7", target: { tabId: "a2" } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(v, 7);
+  assert.equal(world.page("Arc", 1, 2).hit, 1);
+});
+
+test("a fresh Arc window with no tab shown is skipped, not read as tab 0", async () => {
+  install({
+    browsers: [arc([{ id: "NEW", active: null, tabs: tabs(2, "a") }, { id: "OLD", active: 1, tabs: tabs(2, "b") }])],
+    cg: [{ owner: "Arc" }],
+  });
+  const { r } = await call("eval_js", { script: "window.hit = 1; return 1" });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(world.page("Arc", 1, 1).hit, 1);
+  const { o } = await call("list_tabs", {});
+  assert.deepEqual(o.tabs.filter((t) => t.active).map((t) => t.tabId), ["b1"]);
+});
+
+test("Arc new_tab returns the new tab's id and sidebar index", async () => {
+  install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(2, "a") }])], cg: [{ owner: "Terminal" }, { owner: "Arc" }] });
+  const { o } = await call("new_tab", { app: "Arc", url: "about:blank" });
+  assert.deepEqual(o, { app: "Arc", windowId: "A", tabId: "new2", tabIndex: 2 });
+});
+
+test("Arc screenshot picks the CG window by title, pairing same-titled windows front to back", () => {
+  install({
+    browsers: [arc([
+      { id: "W1", active: 0, name: "Docs", tabs: tabs(1, "a") },
+      { id: "W2", active: 0, name: "Mail", tabs: tabs(1, "b") },
+      { id: "W3", active: 0, name: "Mail", tabs: tabs(1, "c") },
+    ])],
+    cg: [
+      { owner: "Arc", wid: 10, name: "Mail" },
+      { owner: "Arc", wid: 11, name: "Docs" },
+      { owner: "Arc", wid: 12, name: "Mail" },
+    ],
+  });
+  const wid = (id) => JSON.parse(world.run(`JSON.stringify(__perch.shotGeom({ target: { windowId: "${id}" } }))`)).windowNumber;
+  assert.deepEqual([wid("W1"), wid("W2"), wid("W3")], [11, 10, 12]);
 });

@@ -6,14 +6,14 @@ allowed-tools: mcp__perch__*
 
 # perch: macOS browser bridge
 
-Every tool takes an optional `target` `{app, windowId, tabIndex}`. The default is the active tab of the topmost browser window. `tabIndex` is a position, not an id: it shifts when tabs open or close, so re-list instead of caching it. `new_tab` returns a target for a newly created background tab.
+Every tool takes an optional `target` `{app, windowId, tabId, tabIndex}`. The default is the active tab of the topmost browser window. Pin a tab by `tabId` from `list_tabs` or `new_tab` (Chrome family and Arc); it stays valid while other tabs open and close. `tabIndex` is a position that shifts, so re-list before using it; Safari has only `tabIndex`. On Arc, `tabIndex` follows the sidebar (Favorites, pinned, then unpinned).
 
 ## Tools
 
 | Tool | Use |
 |---|---|
-| `list_tabs` | `{tabs:[{app,windowId,tabIndex,url,title,active?}], total}`, 50 rows by default. Filter with `app`, `urlContains`, `titleContains`. |
-| `new_tab` | Add an unselected tab to an already running browser window. Creation may focus the browser; defer while the user works. Returns `{app,windowId,tabIndex}`. |
+| `list_tabs` | `{tabs:[{app,windowId,tabId?,tabIndex,url,title,active?}], total}`, 50 rows by default. `active` marks the tab each window shows. Arc windows on one space share tabs, so each is listed once, under the window showing it. Filter with `app`, `urlContains`, `titleContains`. |
+| `new_tab` | Add an unselected tab to an already running browser window. Creation may focus the browser; defer while the user works. Returns `{app,windowId,tabId?,tabIndex}`. |
 | `activate_tab` | Bring a tab and its window to the front. |
 | `navigate` | Load a URL and wait for the new page to finish loading. |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path` loads a local file; with both, the file runs first, then `script`, in one call. `awaitPromise` for real async. |

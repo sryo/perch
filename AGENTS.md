@@ -49,16 +49,19 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Search order:** candidates are on-screen browsers topmost first, then the rest of `BROWSERS` in declared order, checked with `running()`.
 - **Stopping:** the walk stops at the first match.
 - **Window ids:** `win.id()` is read only when `windowId` was given.
-- **Default target:** with no target, the active tab of the first window.
+- **Default target:** with no target, the active tab of the first window. A window showing no tab (a fresh Arc window) is skipped.
+- **Tab ids:** `tabId` resolves with one bulk `win.tabs.id()` read per window, then `tabs.byId`. Chrome and Arc targets are pinned by id even when given by position, because `tabs[i]` is re-evaluated on every use and a long poll could drift to another tab. Chrome has no tab `select` verb, so selection re-reads the position from the id.
 
 **JXA access patterns.** Read collections lazily (`app.windows[i]`, `win.tabs[i]`), never with the called form (`app.windows()`). The called form loses the bridge context on Arc, and later property chains throw "Can't convert types". Multi-tab reads use bulk property access (`win.tabs.url()`), about 30x faster than per-tab loops. That's the difference between working and timing out on Arc windows with hundreds of tabs.
 
 **Arc quirks.**
 - **Double encoding:** Arc's `execute` JSON-stringifies whatever the page function returns, so `exec` unwraps one layer.
-- **Reading the active tab:** `win.activeTabIndex()` and `win.currentTab` both throw. `win.activeTab.id()` matched against `win.tabs.id()` works.
+- **Reading the active tab:** `win.activeTabIndex()` and `win.currentTab` both throw. `win.activeTab.id()` works; it throws on a window showing no tab.
+- **Tab order:** `win.tabs` order is unrelated to the sidebar (effectively random) and includes Favorites (`location` `topApp`). `win.activeSpace.tabs` is in sidebar order. `arcOrder` builds the display order (Favorites, then the active space's sidebar), and Arc's `tabIndex` means a row in it.
+- **Shared windows:** windows on the same space share the same tab set (same UUIDs), and one tab can be active in several windows. `execute` works only through a window where the tab is active and hangs through any other, so `resolveById` prefers such a window. `select` changes only the window it's called through. `list_tabs` lists each Arc tab once, under the frontmost window showing it, and reuses url/title reads across windows with identical tab sets.
 - **Switching tabs:** writing `activeTab`/`currentTab` is forbidden, but `tab.select()` switches without raising.
 - **Background tabs:** `execute` hangs until timeout on a background tab, so `arcGuard` refuses first.
-- **Geometry:** Arc has no window geometry verbs, so its frame comes from its own CGWindowList entry.
+- **Geometry:** Arc has no window geometry verbs, so its frame comes from its own CGWindowList entry, matched by window title (`byTitle`). AppleScript windows and CG entries both run front to back, so same-titled windows pair up in order.
 
 **Eval runs in an isolated world (Chrome family).** Chrome runs Apple Events JS in an isolated world. The DOM and `location` are shared with the page; JS globals are not.
 - **Persistence:** globals set by one eval persist for later evals; `window.__perch_refs` and `window.__perch_console` rely on this.
@@ -72,7 +75,7 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Refs:** `resolveEl` treats a missing or detached ref as `{__perch_ref_miss}`, which `formatResult` turns into an error with a re-snapshot hint.
 - **Snapshot:** `accessibility_snapshot` stores elements on `window.__perch_refs` (a plain object, since a Map breaks the JSON round trip). It emits a line format: a `# {header}` line, then `ref role "name" key=json... flags`.
 
-**Tab indices are positional.** `tabIndex` is the tab's current position; opening or closing tabs shifts it. Re-target by URL or re-list rather than caching.
+**Tab indices are positional.** `tabIndex` is the tab's current position; opening or closing tabs shifts it. Pin by `tabId` instead (Chrome family and Arc); Safari tabs have no id, so re-list there.
 
 **Tab creation.** `new_tab` requires a running browser with an existing window. It no longer calls `activate()` or selects the new tab, but the browser may still focus its window during creation. Chrome can evaluate JS in that background tab; trusted input and screenshots need a tab already active in its window. Do not create tabs while preserving the user's foreground.
 
@@ -80,7 +83,7 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Capture:** `screencapture -l <CGWindowID> -t png|jpg` reads a window's own pixels regardless of z-order.
 - **Downscaling:** `sips` runs only when the image is wider than `maxWidth`. Dimensions come from the PNG/JPEG header (`imageDims`).
 - **Missing CGWindowID:** minimized windows and windows on another Space cannot be captured; perch refuses instead of returning another app's pixels.
-- **Tab targeting:** only the active tab of a window is rendered. A background screenshot refuses an inactive `tabIndex`; `raise:true` is required to select it.
+- **Tab targeting:** only the active tab of a window is rendered. A background screenshot refuses an inactive `tabId` or `tabIndex`; `raise:true` is required to select it.
 
 **Trusted input.** `click {trusted:true}` and `fill {trusted:true}` default to background routes that do not explicitly activate the browser or move the cursor. Background fill directly uses Chrome's editing command in the targeted tab; the live scratch-page test verified a trusted input event and exact Unicode value in an inactive tab while its window was minimized, with no Canary key focus during continuous monitoring. Background SkyLight click needs an on-screen window and its active tab; its event did not reach a minimized window in the live probe. `raise:true` keeps the foreground HID route.
 

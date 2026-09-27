@@ -55,7 +55,7 @@ function jxaRuntime(BROWSERS) {
       if (out.front === null) { out.front = owner; out.frontPid = w.kCGWindowOwnerPID; out.frontWid = w.kCGWindowNumber; }
       if (!KIND[owner]) continue;
       if (!out.wins[owner]) { out.z.push(owner); out.pid[owner] = w.kCGWindowOwnerPID; out.wins[owner] = []; }
-      out.wins[owner].push({ wid: w.kCGWindowNumber, x: b.X, y: b.Y, w: b.Width, h: b.Height });
+      out.wins[owner].push({ wid: w.kCGWindowNumber, name: w.kCGWindowName || "", x: b.X, y: b.Y, w: b.Width, h: b.Height });
     }
     return out;
   }
@@ -70,18 +70,71 @@ function jxaRuntime(BROWSERS) {
     });
   }
 
+  // -1 when the window shows no tab (a fresh Arc window) or the read fails.
   function activeIndex(kind, win, tabs) {
     try {
       if (kind === "chrome") return win.activeTabIndex() - 1;
-      // Arc: activeTabIndex()/currentTab throw; activeTab's UUID is the only signal.
-      if (kind === "arc") return Math.max(0, tabs.id().indexOf(win.activeTab.id()));
-      return Math.max(0, tabs.index().indexOf(win.currentTab().index()));
-    } catch (e) { return 0; }
+      if (kind === "arc") return tabs.id().indexOf(win.activeTab.id());
+      return tabs.index().indexOf(win.currentTab().index());
+    } catch (e) { return -1; }
   }
 
+  // Arc's `win.tabs` order is unrelated to the sidebar (effectively random) and
+  // includes Favorites. Display order: Favorites, then the active space's sidebar,
+  // then anything left. order[k] is the raw `win.tabs` position of display row k.
+  function arcOrder(win) {
+    const ids = win.tabs.id();
+    let loc = [], side = [];
+    try { loc = win.tabs.location(); } catch (e) {}
+    try { side = win.activeSpace.tabs.id(); } catch (e) {}
+    const pos = {}, seen = {}, order = [];
+    ids.forEach(function (id, i) { pos[id] = i; });
+    const add = function (i) { if (i != null && !seen[ids[i]]) { seen[ids[i]] = true; order.push(i); } };
+    ids.forEach(function (id, i) { if (loc[i] === "topApp") add(i); });
+    side.forEach(function (id) { add(pos[id]); });
+    ids.forEach(function (id, i) { add(i); });
+    return { ids: ids, loc: loc, order: order };
+  }
+
+  // Arc windows on one space share the same tabs, and a tab can be active in
+  // several windows at once. execute only works through a window where the tab is
+  // active (it hangs through any other), so a tabId prefers such a window.
+  function resolveById(want, P) {
+    const key = String(want.tabId);
+    for (const name of candidates(P, want.app)) {
+      const a = app(name), kind = KIND[name];
+      if (kind === "safari") {
+        if (want.app) throw new Error("Safari tabs have no id; target them by tabIndex");
+        continue;
+      }
+      let n;
+      try { n = a.windows.length; } catch (e) { continue; }
+      let fallback = null;
+      for (let w = 0; w < n; w++) {
+        const win = a.windows[w];
+        if (want.windowId != null) {
+          let id; try { id = win.id(); } catch (e) { id = w; }
+          if (String(id) !== String(want.windowId)) continue;
+        }
+        let ids;
+        try { ids = win.tabs.id(); } catch (e) { continue; }
+        const i = ids.map(String).indexOf(key);
+        if (i < 0) continue;
+        const t = { tab: win.tabs.byId(ids[i]), idx: i, tabId: ids[i], kind, app: name, win, w, P };
+        if (kind !== "arc" || isActive(t)) return t;
+        if (!fallback) fallback = t;
+      }
+      if (fallback) return fallback;
+    }
+    throw new Error("tabId " + want.tabId + " not found (tab closed?); re-run list_tabs");
+  }
+
+  // Tabs are pinned by id where the browser has one: `tabs[i]` is positional and
+  // re-evaluated on every use, so a long poll could drift to another tab.
   function resolve(want) {
     want = want || {};
     const P = procs();
+    if (want.tabId != null) return resolveById(want, P);
     for (const name of candidates(P, want.app)) {
       const a = app(name), kind = KIND[name];
       let n;
@@ -94,12 +147,25 @@ function jxaRuntime(BROWSERS) {
         }
         let tabs;
         try { tabs = win.tabs; if (!tabs.length) continue; } catch (e) { continue; }
+        if (kind === "arc") {
+          let id;
+          if (want.tabIndex != null) {
+            const o = arcOrder(win);
+            if (want.tabIndex < 0 || want.tabIndex >= o.order.length) throw new Error("tabIndex " + want.tabIndex + " out of range; window has " + o.order.length + " tabs");
+            id = o.ids[o.order[want.tabIndex]];
+          } else {
+            try { id = win.activeTab.id(); } catch (e) { continue; }
+          }
+          return { tab: tabs.byId(id), idx: want.tabIndex, tabId: id, kind, app: name, win, w, P };
+        }
         const idx = want.tabIndex != null ? want.tabIndex : activeIndex(kind, win, tabs);
         if (idx < 0 || idx >= tabs.length) {
           if (want.tabIndex != null) throw new Error("tabIndex " + want.tabIndex + " out of range; window has " + tabs.length + " tabs");
           continue;
         }
-        return { tab: tabs[idx], idx, kind, app: name, win, w, P };
+        let tab = tabs[idx], tabId = null;
+        if (kind === "chrome") { try { tabId = tab.id(); tab = tabs.byId(tabId); } catch (e) {} }
+        return { tab, idx, tabId, kind, app: name, win, w, P };
       }
     }
     throw new Error(want.app && !KIND[want.app] ? "unknown browser " + want.app : "no matching tab");
@@ -108,8 +174,11 @@ function jxaRuntime(BROWSERS) {
   // Chrome tabs have no `index` property (it throws), so positions come from resolve.
   function isActive(t) {
     try {
-      if (t.kind === "chrome") return t.win.activeTabIndex() === t.idx + 1;
-      if (t.kind === "arc") return t.tab.id() === t.win.activeTab.id();
+      if (t.kind === "chrome") {
+        if (t.tabId != null) return String(t.win.activeTab.id()) === String(t.tabId);
+        return t.win.activeTabIndex() === t.idx + 1;
+      }
+      if (t.kind === "arc") return String(t.win.activeTab.id()) === String(t.tabId);
       return t.win.currentTab().index() === t.idx + 1;
     } catch (e) { return false; }
   }
@@ -118,7 +187,8 @@ function jxaRuntime(BROWSERS) {
   function selectTab(t) {
     if (isActive(t)) return false;
     try {
-      if (t.kind === "chrome") t.win.activeTabIndex = t.idx + 1;
+      // Chrome has no tab `select` verb; re-read the position, since it may have moved.
+      if (t.kind === "chrome") t.win.activeTabIndex = (t.tabId != null ? t.win.tabs.id().map(String).indexOf(String(t.tabId)) : t.idx) + 1;
       // Arc forbids writing activeTab/currentTab; its `select` verb works.
       else if (t.kind === "arc") t.tab.select();
       else t.win.currentTab = t.tab;
@@ -131,7 +201,7 @@ function jxaRuntime(BROWSERS) {
   function focus(t) {
     try {
       t.win = app(t.app).windows.byId(t.win.id());
-      t.tab = t.win.tabs[t.idx];
+      t.tab = t.tabId != null ? t.win.tabs.byId(t.tabId) : t.win.tabs[t.idx];
     } catch (e) {}
     try { t.win.index = 1; t.w = 0; } catch (e) {}
     selectTab(t);
@@ -181,7 +251,7 @@ function jxaRuntime(BROWSERS) {
         if (score < bestScore) { bestScore = score; best = c; }
       });
     } else {
-      best = cands[t.w] || cands[0] || null;
+      best = byTitle(t, cands) || cands[t.w] || cands[0] || null;
       if (best) geom = { x: best.x, y: best.y, w: best.w, h: best.h };
     }
     if (!geom) throw new Error("cannot get window geometry for " + t.app + " (minimized or on another Space?)");
@@ -191,6 +261,20 @@ function jxaRuntime(BROWSERS) {
       windowNumber: best ? best.wid : null,
       cgBounds: best ? { x: best.x, y: best.y, w: best.w, h: best.h } : null,
     };
+  }
+
+  // Arc has no geometry verbs, so its window is matched to a CG entry by title.
+  // Both lists run front to back, so same-titled windows pair up in order.
+  function byTitle(t, cands) {
+    try {
+      const wins = app(t.app).windows;
+      const pos = wins.id().map(String).indexOf(String(t.win.id()));
+      const names = wins.name();
+      if (pos < 0 || !names[pos]) return null;
+      const rank = names.slice(0, pos).filter(function (n) { return n === names[pos]; }).length;
+      const same = cands.filter(function (c) { return c.name === names[pos]; });
+      return same[rank] || same[0] || null;
+    } catch (e) { return null; }
   }
 
   function requireAccessibility() {
@@ -353,6 +437,45 @@ function jxaRuntime(BROWSERS) {
     return { pt: pt, el: probe.el, calibrated: trace.length > 0, calibration: trace };
   }
 
+  // One row per Arc tab, in sidebar order. Windows on one space share their tabs,
+  // so a shared tab is listed once, under the frontmost window showing it.
+  function listArc(ap, name, n, out) {
+    const wins = [];
+    for (let w = 0; w < n; w++) {
+      const win = ap.windows[w];
+      let id; try { id = win.id(); } catch (e) { id = w; }
+      let o;
+      try { o = arcOrder(win); } catch (e) { continue; }
+      let act = null; try { act = win.activeTab.id(); } catch (e) {}
+      const same = wins.filter(function (x) { return x.o.ids.join() === o.ids.join(); })[0];
+      let urls = [], titles = [];
+      if (same) { urls = same.urls; titles = same.titles; }
+      else {
+        try { urls = win.tabs.url(); } catch (e) { continue; }
+        try { titles = win.tabs.title(); } catch (e) {}
+      }
+      const at = {};
+      o.order.forEach(function (i, k) { at[o.ids[i]] = k; });
+      wins.push({ id: id, o: o, act: act, urls: urls, titles: titles, at: at });
+    }
+    const owner = {};
+    wins.forEach(function (x) { if (x.act != null && !owner[x.act]) owner[x.act] = x; });
+    const done = {};
+    wins.forEach(function (x) {
+      x.o.order.forEach(function (i) {
+        const tabId = x.o.ids[i];
+        if (done[tabId]) return;
+        done[tabId] = true;
+        const home = owner[tabId] || x;
+        const row = { app: name, windowId: home.id, tabId: tabId, tabIndex: home.at[tabId], url: x.urls[i] || "", title: x.titles[i] || "" };
+        if (x.o.loc[i] === "pinned") row.pinned = true;
+        else if (x.o.loc[i] === "topApp") row.favorite = true;
+        if (owner[tabId]) row.active = true;
+        out.push(row);
+      });
+    });
+  }
+
   globalThis.__perch = {
     listTabs(a) {
       const P = procs();
@@ -362,16 +485,20 @@ function jxaRuntime(BROWSERS) {
         const ap = app(name), kind = KIND[name];
         let n;
         try { n = ap.windows.length; } catch (e) { continue; }
+        if (kind === "arc") { listArc(ap, name, n, out); continue; }
         for (let w = 0; w < n; w++) {
           const win = ap.windows[w];
           let id; try { id = win.id(); } catch (e) { id = w; }
-          let urls, titles = [];
+          let urls, titles = [], tabIds = [];
           try { urls = win.tabs.url(); } catch (e) { continue; }
           try { titles = kind === "safari" ? win.tabs.name() : win.tabs.title(); } catch (e) {}
-          // `active` marks each browser's front-window tab (one extra read per browser).
-          const act = w === 0 ? activeIndex(kind, win, win.tabs) : -1;
+          if (kind === "chrome") { try { tabIds = win.tabs.id(); } catch (e) {} }
+          // `active` marks the tab each window shows (one extra read per window).
+          const act = activeIndex(kind, win, win.tabs);
           for (let i = 0; i < urls.length; i++) {
-            const row = { app: name, windowId: id, tabIndex: i, url: urls[i] || "", title: titles[i] || "" };
+            const row = { app: name, windowId: id };
+            if (tabIds[i] != null) row.tabId = tabIds[i];
+            row.tabIndex = i; row.url = urls[i] || ""; row.title = titles[i] || "";
             if (i === act) row.active = true;
             out.push(row);
           }
@@ -445,14 +572,12 @@ function jxaRuntime(BROWSERS) {
       if (kind === "chrome" || kind === "arc") {
         win = ap.windows[0];
         let beforeIds = null;
-        if (kind === "arc") { try { beforeIds = win.tabs.id(); } catch (e) {} }
+        try { beforeIds = win.tabs.id(); } catch (e) {}
         const tab = ap.Tab({ url: a.url });
         win.tabs.push(tab);
-        if (kind === "arc") {
-          try { newId = tab.id(); } catch (e) {}
-          if (newId == null && beforeIds) {
-            try { newId = win.tabs.id().find(function (id) { return beforeIds.indexOf(id) < 0; }); } catch (e) {}
-          }
+        try { newId = tab.id(); } catch (e) {}
+        if (newId == null && beforeIds) {
+          try { newId = win.tabs.id().find(function (id) { return beforeIds.indexOf(id) < 0; }); } catch (e) {}
         }
       } else {
         // Safari: documents[0].tabs throws under JXA; windows[0].tabs works.
@@ -462,13 +587,15 @@ function jxaRuntime(BROWSERS) {
         if (!created) throw new Error("Safari could not create a background tab");
       }
       let windowId = null; try { windowId = win.id(); } catch (e) {}
-      // Arc inserts new tabs mid-collection (sidebar "Today"), so resolve by UUID.
       let tabIndex = null;
       try {
-        if (kind === "arc" && newId != null) { const i = win.tabs.id().indexOf(newId); tabIndex = i >= 0 ? i : null; }
-        else tabIndex = win.tabs.length - 1;
+        if (kind === "arc" && newId != null) {
+          const o = arcOrder(win);
+          const k = o.order.map(function (i) { return o.ids[i]; }).indexOf(newId);
+          tabIndex = k >= 0 ? k : null;
+        } else tabIndex = win.tabs.length - 1;
       } catch (e) {}
-      return { windowId, tabIndex };
+      return { windowId, tabId: newId, tabIndex };
     },
     activate(a) {
       focus(resolve(a.target));
@@ -479,7 +606,7 @@ function jxaRuntime(BROWSERS) {
     shotGeom(a) {
       const t = resolve(a.target);
       if (a.raise) { focus(t); delay(0.25); t.P = procs(); }
-      else if (a.target && a.target.tabIndex != null && !isActive(t)) {
+      else if (a.target && (a.target.tabIndex != null || a.target.tabId != null) && !isActive(t)) {
         throw new Error("background screenshot requires the target to already be the active tab in its browser window; use raise:true only when focus is available");
       }
       const I = ids(t);
@@ -542,7 +669,7 @@ export const ERR = {
     "Safari → Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.",
   automation: "Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, " +
     "ticking the target browser under the controlling app (Claude Code / Terminal / iTerm).",
-  timeout: (ms) => `osascript timed out after ${ms}ms: target tab unreachable (stale tabIndex, hung page, or Arc background tab). Re-run list_tabs.`,
+  timeout: (ms) => `osascript timed out after ${ms}ms: target tab unreachable (stale tabIndex, hung page, or Arc background tab). Target by tabId from list_tabs.`,
 };
 
 export function translatePermissionError(msg) {
@@ -783,8 +910,8 @@ async function newTab(url, appName = "Google Chrome") {
   const browser = BROWSERS.find(b => b.app === appName);
   if (!browser) throw new Error(`unknown browser ${appName}; one of: ${BROWSERS.map(b => b.app).join(", ")}`);
   const targetUrl = url || "about:blank";
-  const { windowId = null, tabIndex = null } = await rt("newTab", { app: browser.app, url: targetUrl });
-  return { app: browser.app, windowId, tabIndex };
+  const { windowId = null, tabId = null, tabIndex = null } = await rt("newTab", { app: browser.app, url: targetUrl });
+  return tabId == null ? { app: browser.app, windowId, tabIndex } : { app: browser.app, windowId, tabId, tabIndex };
 }
 
 async function activateTab(target) {
@@ -1534,12 +1661,12 @@ async function select(args = {}) {
 
 // Shared guidance lives here once instead of in every tool description.
 export const INSTRUCTIONS = `perch drives the user's own macOS browsers (Chrome family, Arc, Safari) over AppleScript.
-Targeting: tools take an optional \`target\` {app, windowId, tabIndex}; the default is the active tab of the topmost browser window. tabIndex is a position, not an id: it shifts as tabs open and close, so re-list instead of caching it. new_tab creates an unselected tab in an existing browser window but may focus the browser; defer it while the user works.
+Targeting: tools take an optional \`target\` {app, windowId, tabId, tabIndex}; the default is the active tab of the topmost browser window. Pin tabs by tabId from list_tabs/new_tab (not Safari); it survives tabs opening and closing. tabIndex is a position (Arc: sidebar order). new_tab creates an unselected tab in an existing browser window but may focus the browser; defer it while the user works.
 Elements: prefer \`ref\` (from accessibility_snapshot) over \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
 Arc runs page JS only on a window's active tab (activate_tab first). Background screenshots and SkyLight trusted clicks require the target tab already active in its browser window; background trusted fills work on inactive Chrome tabs, including minimized windows. Only activate_tab, screenshot{raise} and trusted input with raise explicitly take focus.`;
 
-const TARGET = { type: "object", properties: { app: { type: "string" }, windowId: { type: ["string", "number"] }, tabIndex: { type: "number" } } };
+const TARGET = { type: "object", properties: { app: { type: "string" }, windowId: { type: ["string", "number"] }, tabId: { type: ["string", "number"] }, tabIndex: { type: "number" } } };
 const REF = { type: "string", description: "From accessibility_snapshot." };
 const SEL = { type: "string", description: "CSS selector." };
 const LABEL = { type: "string", description: "Regex over the field's label." };
@@ -1547,13 +1674,13 @@ const tool = (name, description, properties = {}, required) =>
   ({ name, description, inputSchema: { type: "object", properties, ...(required ? { required } : {}) } });
 
 const TOOLS = [
-  tool("list_tabs", "List open tabs as {tabs:[{app,windowId,tabIndex,url,title,active?}], total}. Filter rather than dumping; `total` counts matches before `limit`.", {
+  tool("list_tabs", "List open tabs as {tabs:[{app,windowId,tabId?,tabIndex,url,title,active?}], total}. Arc lists each shared tab once, in sidebar order. Filter rather than dumping; `total` counts matches before `limit`.", {
     app: { type: "string" },
     urlContains: { type: "string" },
     titleContains: { type: "string" },
     limit: { type: "number", description: "Default 50." },
   }),
-  tool("new_tab", "Create an unselected tab in an already running browser window. Creation may focus the browser; defer while the user works. Returns {app,windowId,tabIndex}.", {
+  tool("new_tab", "Create an unselected tab in an already running browser window. Creation may focus the browser; defer while the user works. Returns {app,windowId,tabId?,tabIndex}.", {
     url: { type: "string", description: "Default about:blank." },
     app: { type: "string", description: "Default Google Chrome." },
   }),
