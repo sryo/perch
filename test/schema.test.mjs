@@ -12,10 +12,10 @@ test("tool schemas stay within the token budget", () => {
   assert.ok(INSTRUCTIONS.length < 1200, `instructions ${INSTRUCTIONS.length}`);
 });
 
-test("tool surface is the agreed 16", () => {
+test("tool surface is the agreed 17", () => {
   assert.deepEqual(TOOLS.map((t) => t.name), [
     "list_tabs", "new_tab", "activate_tab", "close_tab", "navigate", "eval_js", "wait", "screenshot", "get_text",
-    "accessibility_snapshot", "console_capture", "notify", "file_upload", "click", "fill", "select",
+    "accessibility_snapshot", "console_capture", "notify", "file_upload", "click", "press", "fill", "select",
   ]);
 });
 
