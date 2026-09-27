@@ -93,3 +93,21 @@ test("navigate: page JS reaches the tab through AppleScript with its ids and JS 
   assert.equal(r.waited, true);
   assert.equal(world.page("Google Chrome", 0, 0).location.href, url);
 });
+
+// Live on Safari (macOS 27.2), doJavaScript runs in a tab the window isn't
+// showing, and a url set on that tab loads it in place.
+const safari = (windows) => ({ name: "Safari", kind: "safari", windows });
+const safariFixture = () => ({
+  browsers: [safari([{ id: 3, active: 0, tabs: [{ url: "https://shown.test/" }, { url: "https://bg.test/" }] }])],
+  cg: [{ owner: "Safari" }],
+});
+
+test("navigate on Safari: loads a background tab in place and never changes the tab its window shows", () => {
+  install(safariFixture());
+  const r = world.run(`__perch.navigate(${JSON.stringify({ target: { app: "Safari", tabIndex: 1 }, url: "https://next.test/", timeout: NAV_TIMEOUT })})`);
+  assert.equal(r.waited, true);
+  assert.equal(world.counts["win.currentTab="], undefined);
+  assert.equal(world.winSpec("Safari", 0).active, 0);
+  assert.equal(world.page("Safari", 0, 1).location.href, "https://next.test/");
+  assert.equal(world.page("Safari", 0, 0).location.href, "https://shown.test/");
+});

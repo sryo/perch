@@ -1025,8 +1025,6 @@ function jxaRuntime(BROWSERS) {
       // Each page-JS call gets at most NAV_EXEC_SECS, and never more than the time
       // left, so one unanswered execute can't carry navigate past its timeout.
       const run = function (js) { return execWithin(t, js, Math.max(0.1, Math.min(NAV_EXEC_SECS, (deadline - Date.now()) / 1000))); };
-      // Safari only runs JS in, and applies url to, the window's current tab.
-      if (t.kind === "safari") { try { t.win.currentTab = t.tab; } catch (e) {} }
       const canEval = t.kind !== "arc" || isActive(t);
       const token = "n" + Date.now() + Math.random().toString(36).slice(2, 6);
       // The page resolves the url against its own location, so a #fragment change is
