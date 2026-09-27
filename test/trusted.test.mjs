@@ -38,7 +38,7 @@ test("trusted_probe estimates the screen point including browser chrome", () => 
   withWindowMetrics(w, { screenX: 100, screenY: 50, outerWidth: 1200, innerWidth: 1000, outerHeight: 900, innerHeight: 820 });
   const o = run(w, "trusted_probe", { selector: "#b" });
   // rect is stubbed at 0,0 100x20: center (50,10); chrome = 200 left (sidebar), 80 top (toolbar).
-  assert.deepEqual(o, { ok: true, el: `button "Go"`, x: 100 + 200 + 50, y: 50 + 80 + 10, cx: 50, cy: 10 });
+  assert.deepEqual(o, { ok: true, el: `button "Go"`, x: 100 + 200 + 50, y: 50 + 80 + 10, cx: 50, cy: 10, iw: 1000, ih: 820 });
 });
 
 test("trusted_probe asks to retry while the tab is hidden (its screen metrics are stale)", () => {
@@ -463,6 +463,68 @@ test("background calibration ignores the user's real mouse moving after the post
   assert.deepEqual(o.calibration, [[0, 0]]);
   assert.deepEqual(world.posted.filter((e) => e.type === 1 && e.pt.x >= 0).map((e) => e.pt), [{ x: 106, y: 167 }]);
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
+});
+
+// ---- aiming from the Accessibility tree ----
+
+// A background Canary window at x=0: 56px of chrome on the left, a 200px side panel
+// on the right. The page's estimate puts all 256px of chrome on the left.
+function panelTab(web, metrics = { screenX: 0, screenY: 57, outerWidth: 854, innerWidth: 598, outerHeight: 600, innerHeight: 500 }) {
+  const dom = page(`<button id=b>Go</button>`);
+  withWindowMetrics(dom, metrics);
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "about:blank", id: "t", dom }] }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600, ...(web ? { ax: { web } } : {}) }],
+  });
+  return { dom, world };
+}
+const presses = (world) => world.posted.filter((e) => e.type === 1 && e.pt.x >= 0).map((e) => e.pt);
+
+test("background aim reads the page area from Accessibility, past a right-side panel", async () => {
+  // The panel is a web area too; the page's is the one its viewport fills.
+  const { world } = panelTab([{ x: 654, y: 157, w: 200, h: 500 }, { x: 56, y: 157, w: 598, h: 500 }]);
+  const r = await handleCall("click", { trusted: true, selector: "#b" });
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.aim, "ax");
+  assert.equal(o.calibrated, true);
+  assert.equal(o.warning, undefined);
+  // Estimate 0 + 256 + 50 = 306; the page really starts at 56, so the press is at 106.
+  assert.deepEqual(o.calibration, [[-200, 0]]);
+  assert.deepEqual(presses(world), [{ x: 106, y: 167 }]);
+  // Only the click's own primer move: no calibration moves, which never reach a background page.
+  assert.equal(world.posted.filter((e) => e.type === 5 && e.pt.x >= 0).length, 1);
+});
+
+test("Accessibility aim scales by page zoom, which the estimate can't see", async () => {
+  // 125% zoom: a 478-CSS-px viewport fills 598 screen points.
+  const { world } = panelTab([{ x: 56, y: 157, w: 598, h: 500 }], { screenX: 0, screenY: 57, outerWidth: 854, innerWidth: 478.4, outerHeight: 600, innerHeight: 400 });
+  const o = JSON.parse((await handleCall("click", { trusted: true, selector: "#b" })).content[0].text);
+  assert.equal(o.aim, "ax");
+  assert.deepEqual(presses(world), [{ x: 56 + 50 * 1.25, y: 157 + 10 * 1.25 }]);
+});
+
+test("with neither Accessibility nor a mouse move, the press is at the estimate and says so", async () => {
+  const { world } = panelTab(null);
+  const o = JSON.parse((await handleCall("click", { trusted: true, selector: "#b" })).content[0].text);
+  assert.equal(o.aim, "estimate");
+  assert.equal(o.calibrated, false);
+  assert.match(o.warning, /unconfirmed aim/);
+  assert.deepEqual(presses(world), [{ x: 306, y: 167 }]);
+});
+
+test("foreground aim still prefers the mouse move, and falls back to Accessibility", async () => {
+  const { dom, world } = panelTab([{ x: 56, y: 157, w: 598, h: 500 }]);
+  const withMove = (on) => { world.state.onPost = on ? (e) => {
+    if (e.type !== 5) return;
+    dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: e.pt.x - 56, clientY: e.pt.y - 157, screenX: e.pt.x, screenY: e.pt.y }));
+  } : undefined; };
+  withMove(true);
+  let o = JSON.parse((await handleCall("click", { trusted: true, raise: true, selector: "#b" })).content[0].text);
+  assert.equal(o.aim, "mouse");
+  withMove(false);
+  o = JSON.parse((await handleCall("click", { trusted: true, raise: true, selector: "#b" })).content[0].text);
+  assert.equal(o.aim, "ax");
+  assert.deepEqual(o.point, { x: 106, y: 167 });
 });
 
 test("screenshot: a failed downscale still returns the full-size capture", async () => {

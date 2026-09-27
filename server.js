@@ -563,9 +563,12 @@ function jxaRuntime(BROWSERS) {
 
   // Finds the screen point for a trusted press. The target tab is shown first: a
   // background tab's screenX/outerWidth are stale. The page's estimate can't tell
-  // which side a panel is on, or the zoom, so a harmless mouse move at the estimate
-  // is posted and the page reports where it landed; the point is corrected (twice
-  // at most). If no move reaches the page, the estimate is used as is.
+  // which side a panel is on, or the zoom. The Accessibility tree knows both: its
+  // page area is exact, and it answers for background windows, where directed
+  // mouse moves never reach the page (seen live on Chrome Canary). In the
+  // foreground a harmless mouse move at the estimate is posted and the page
+  // reports where it landed; the point is corrected (twice at most). With neither,
+  // the estimate is used as is and the result says so.
   function aim(T, a, tool) {
     if (!T.background) selectTab(T.t);
     visibleGuard(T.t, tool);
@@ -579,6 +582,18 @@ function jxaRuntime(BROWSERS) {
     if (!probe.ok) return { out: probe };
     let pt = { x: probe.x, y: probe.y };
     const trace = [];
+    let via = "estimate";
+    const fromAx = function () {
+      let w = null;
+      try { w = axPageArea(T.I, probe); } catch (e) {}
+      if (!w) return false;
+      const p = { x: w.x + probe.cx * w.scale, y: w.y + probe.cy * w.scale };
+      trace.push([Math.round(p.x - pt.x), Math.round(p.y - pt.y)]);
+      pt = p;
+      via = "ax";
+      return true;
+    };
+    if (T.background && fromAx()) return aimed();
     // Only the move this loop posted counts: late events and the user's real mouse
     // also reach the page, so match on the screen point the move was posted at.
     const ours = function (at) {
@@ -603,12 +618,64 @@ function jxaRuntime(BROWSERS) {
       else mouse(T.I, pt, 5, 0, 0.0); // kCGEventMouseMoved
       const m = ours(pt);
       if (!m) break;
+      via = "mouse";
       const dx = Math.round(probe.cx - m[0]), dy = Math.round(probe.cy - m[1]);
       trace.push([dx, dy]);
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) break;
       pt = { x: pt.x + dx, y: pt.y + dy };
     }
-    return { pt: pt, el: probe.el, calibrated: trace.length > 0, calibration: trace };
+    if (via === "estimate" && !T.background) fromAx();
+    return aimed();
+
+    function aimed() {
+      const A = { pt: pt, el: probe.el, calibrated: via !== "estimate", calibration: trace, aim: via };
+      if (via === "estimate") A.warning = "unconfirmed aim: no mouse move reached the page and Accessibility found no matching page area, so the press used the page's own estimate";
+      return A;
+    }
+  }
+
+  // The page's screen rect from the Accessibility tree, in the target window.
+  // Chrome can show more than one web area (a side panel's is one too); the page's
+  // is the one whose shape matches the viewport the probe measured, and its width
+  // over innerWidth is the page zoom. Web areas are not descended into. Null when
+  // nothing matches, so the caller falls back.
+  let axReady = false;
+  function axPageArea(I, probe) {
+    if (I.pid == null || !probe.iw || !probe.ih) return null;
+    if (!axReady) {
+      ObjC.bindFunction("AXUIElementCreateApplication", ["id", ["int"]]);
+      ObjC.bindFunction("AXUIElementCopyAttributeValue", ["int", ["id", "id", "id *"]]);
+      axReady = true;
+    }
+    const attr = function (el, name) { const out = Ref(); return $.AXUIElementCopyAttributeValue(el, $(name), out) === 0 ? out[0] : null; };
+    const list = function (v) { const n = v ? Number(v.count) : 0, out = []; for (let i = 0; i < n; i++) out.push(v.objectAtIndex(i)); return out; };
+    // AXValue has no JS bridge; its description reads "{value = x:917.000000 y:57.000000 ...}".
+    const pair = function (el, name, a, b) {
+      const v = attr(el, name);
+      const m = v && new RegExp(a + ":(-?[\\d.]+) " + b + ":(-?[\\d.]+)").exec(String(ObjC.unwrap(v.description)));
+      return m ? [Number(m[1]), Number(m[2])] : null;
+    };
+    const r = I.cgBounds || I.geom;
+    let win = null, off = Infinity;
+    list(attr($.AXUIElementCreateApplication(I.pid), "AXWindows")).forEach(function (w) {
+      const p = pair(w, "AXPosition", "x", "y"), s = pair(w, "AXSize", "w", "h");
+      if (!p || !s) return;
+      const d = Math.abs(p[0] - r.x) + Math.abs(p[1] - r.y) + Math.abs(s[0] - r.w) + Math.abs(s[1] - r.h);
+      if (d < off) { off = d; win = w; }
+    });
+    if (!win || off > 8) return null;
+    let best = null, miss = Infinity, seen = 0;
+    const queue = [win];
+    while (queue.length && seen < 600) {
+      const el = queue.shift();
+      seen++;
+      if (String(ObjC.unwrap(attr(el, "AXRole"))) !== "AXWebArea") { queue.push.apply(queue, list(attr(el, "AXChildren"))); continue; }
+      const p = pair(el, "AXPosition", "x", "y"), s = pair(el, "AXSize", "w", "h");
+      if (!p || !s || !s[0]) continue;
+      const scale = s[0] / probe.iw, d = Math.abs(s[1] - probe.ih * scale);
+      if (scale > 0.2 && scale < 5 && d <= 2 && d < miss) { miss = d; best = { x: p[0], y: p[1], scale: scale }; }
+    }
+    return best;
   }
 
   // The browser the user is using: topmost on screen, else the system default
@@ -915,7 +982,7 @@ function jxaRuntime(BROWSERS) {
           else leftClick(T.I, A.pt);
           delay(0.05);
           const check = parseExec(T.t, a.check);
-          out = Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, delivery: T.background ? "skylight" : "hid" }, check);
+          out = Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim }, A.warning ? { warning: A.warning } : {}, { delivery: T.background ? "skylight" : "hid" }, check);
         }
       } finally {
         if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
@@ -933,7 +1000,7 @@ function jxaRuntime(BROWSERS) {
         delay(0.05); // let focus settle before typing
         typeChunks(a.chunks);
         delay(0.05);
-        return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, delivery: "hid" }, parseExec(T.t, a.check));
+        return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim }, A.warning ? { warning: A.warning } : {}, { delivery: "hid" }, parseExec(T.t, a.check));
       } finally {
         $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
       }
@@ -1867,6 +1934,8 @@ return {
   y: window.screenY + (window.outerHeight - window.innerHeight) + cy,
   cx: cx,
   cy: cy,
+  iw: window.innerWidth,
+  ih: window.innerHeight,
 };`,
 
   // Drains recorded mouse moves as [clientX, clientY, screenX, screenY]; null if none.

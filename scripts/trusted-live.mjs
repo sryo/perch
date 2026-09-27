@@ -232,7 +232,7 @@ try {
     if (down) report(Math.abs(down.x - down.center[0]) <= 3 && Math.abs(down.y - down.center[1]) <= 3, "click point matches the element center", `center ${down.center.map(Math.round)}, pressed ${[down.x, down.y]}`);
     const firstMove = rec.rec.moves[0];
     if (!background && firstMove) console.log(`INFO estimate before calibration was off by ${[Math.round(centers.b[0] - firstMove[0]), Math.round(centers.b[1] - firstMove[1])]} (px)`);
-    else if (!firstMove) console.log("INFO no mousemove reached the page (calibration unavailable)");
+    else if (!firstMove) console.log(`INFO no mousemove reached the page; aimed by ${click.aim || "estimate"}`);
   }
   report(fill.ok === true && (background ? fill.trusted === true : fill.hit === true) && rec.value === TEXT, "trusted fill replaces old text with the full text", JSON.stringify({ result: fill, value: rec.value }));
   const trustedInputs = rec.rec.inputs.filter((e) => e.id === "i" && e.trusted);

@@ -181,7 +181,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
 
   const apps = {};
   const winsByApp = {};
-  const nsString = (str) => ({ dataUsingEncoding: (enc) => (enc === 0x94000100 ? { length: str.length * 2, bytes: str } : null) });
+  const nsString = (str) => ({ js: str, dataUsingEncoding: (enc) => (enc === 0x94000100 ? { length: str.length * 2, bytes: str } : null) });
   const specifier = (resolveWin) => new Proxy({}, {
     get: (_, k) => { const w = resolveWin(); if (!w) throw gone(); const v = w[k]; return typeof v === "function" && !v.__specifier ? v.bind(w) : v; },
     set: (_, k, v) => { resolveWin()[k] = v; return true; },
@@ -264,6 +264,27 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     }
   }
 
+  const axList = (items) => ({ count: items.length, objectAtIndex: (i) => items[i] });
+  // AXValue's bridge only offers its description, e.g. "{value = x:917.000000 y:57.000000 ...}".
+  const axPoint = (x, y) => ({ description: `<AXValue 0x1> {value = x:${x.toFixed(6)} y:${y.toFixed(6)} type = kAXValueCGPointType}` });
+  const axSize = (w, h) => ({ description: `<AXValue 0x2> {value = w:${w.toFixed(6)} h:${h.toFixed(6)} type = kAXValueCGSizeType}` });
+  function axAttr(el, name) {
+    if (el.role === "AXApplication") {
+      if (name !== "AXWindows") return undefined;
+      return axList(cgEntries.filter((c) => c.pid === el.pid && c.ax).map((c) => ({ role: "AXWindow", c })));
+    }
+    const box = el.role === "AXWindow" ? el.c : el.box;
+    if (name === "AXRole") return el.role;
+    if (name === "AXPosition") return box ? axPoint(box.x, box.y) : undefined;
+    if (name === "AXSize") return box ? axSize(box.w, box.h) : undefined;
+    if (name === "AXChildren") {
+      if (el.role === "AXWindow") return axList([{ role: "AXToolbar" }, { role: "AXGroup", kids: el.c.ax.web.map((box) => ({ role: "AXWebArea", box })) }]);
+      if (el.role === "AXWebArea") return axList([{ role: "AXStaticText" }]);
+      return axList(el.kids || []);
+    }
+    return undefined;
+  }
+
   const sandbox = {
     Ref: () => [],
     Application: (name) => {
@@ -323,6 +344,16 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       NSAppleScript: { alloc: { initWithSource: (src) => ({ executeAndReturnError: (err) => runAppleScript(src, err) }) } },
       NSString: { stringWithString: (str) => nsString(str) },
       AXIsProcessTrusted: () => state.ax,
+      // Accessibility tree: a CG entry's `ax: { web: [{x,y,w,h}, ...] }` lists the
+      // window's web areas (the page, and a side panel's). No `ax`: nothing matches.
+      AXUIElementCreateApplication: (pid) => ({ role: "AXApplication", pid }),
+      AXUIElementCopyAttributeValue: (el, name, out) => {
+        bump("AX");
+        const v = axAttr(el, name.js);
+        if (v === undefined) return -25205; // kAXErrorAttributeUnsupported
+        out[0] = v;
+        return 0;
+      },
       AXIsProcessTrustedWithOptions: () => state.ax,
       kCFBooleanFalse: false,
       kAXTrustedCheckOptionPrompt: "prompt",
