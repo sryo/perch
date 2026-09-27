@@ -2640,9 +2640,34 @@ return { ok: true, el: ident(r.el) };
 `,
 
   file_upload: String.raw`
-const r = resolveEl(A, "input[type=file]");
-if (r.out) return r.out;
-const input = r.el;
+const isFile = function (el) { return el.tagName === "INPUT" && (el.type || "").toLowerCase() === "file"; };
+const ext = "." + A.name.split(".").pop().toLowerCase(), mime = A.mime.toLowerCase();
+function fits(el) {
+  const acc = attr(el, "accept").toLowerCase().split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  return !acc.length || acc.some(function (a) { return a === ext || a === mime || (/\/\*$/.test(a) && mime.indexOf(a.slice(0, -1)) === 0); });
+}
+// Accept fit first, then a resume/CV name; an autofill/parser input is someone else's field.
+function score(el) {
+  const w = [labelText(el), attr(el, "aria-label"), attr(el, "name"), el.id].join(" ").replace(/[_-]/g, " ");
+  return (fits(el) ? 4 : 0) + (/resume|résumé|\bcv\b|curriculum/i.test(w) ? 2 : 0) - (/auto ?fill|pars(e|er|ing)|import/i.test(w) ? 3 : 0);
+}
+let input, many = false;
+if (A.ref) {
+  const r = resolveEl(A);
+  if (r.out) return r.out;
+  input = r.el;
+} else {
+  const sel = A.selector || "input[type=file]";
+  let all;
+  try { all = deepAll(sel); } catch (e) { return { ok: false, error: "bad selector: " + sel }; }
+  if (!all.length) return { ok: false, error: "no element for selector " + sel };
+  const files = all.filter(isFile);
+  if (!files.length) return { ok: false, error: "not an <input type=file>: " + ident(all[0]) };
+  many = files.length > 1;
+  input = files.map(function (el, i) { return { el: el, s: score(el), i: i }; }).sort(function (a, b) { return b.s - a.s || a.i - b.i; })[0].el;
+}
+if (!isFile(input)) return { ok: false, error: "not an <input type=file>: " + ident(input) };
+const who = ident(input) + (input.id ? " #" + input.id : "");
 const bin = atob(A.b64);
 const arr = new Uint8Array(bin.length);
 for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
@@ -2654,10 +2679,21 @@ const orig = { display: input.style.display, visibility: input.style.visibility,
 input.hidden = false;
 input.style.setProperty("display", "block", "important");
 input.style.setProperty("visibility", "visible", "important");
+const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
 input.files = dt.files;
+const set = has(input);
+let changed = false;
+input.addEventListener("change", function () { changed = true; }, { once: true });
 fire(input, ["change", "input", "blur"]);
 setTimeout(function () { input.hidden = orig.hidden; input.style.display = orig.display; input.style.visibility = orig.visibility; }, 150);
-return { ok: !!input.files && input.files.length === 1, name: file.name, size: file.size, type: file.type };
+const out = { ok: true, name: file.name, size: file.size, type: file.type };
+if (many) { out.ambiguous = true; out.el = who; }
+if (input.isConnected && has(input)) return out;
+if (!set || !changed) return Object.assign(out, { ok: false, error: "the input did not take the file: " + who });
+// Sites often swap or empty the input once their change handler has the file.
+if (!input.isConnected) out.detached = true; else out.cleared = true;
+out.shown = deepAll("input[type=file]").some(has) || textOf(document.body).indexOf(A.name) >= 0;
+return out;
 `,
 
   // Chrome runs this in an isolated world, whose console the page never calls. A
@@ -3391,7 +3427,7 @@ const TOOLS = [
     subtitle: { type: "string" },
     sound: { type: "string", description: "Default Glass." },
   }, ["message"]),
-  tool("file_upload", "Put a local file on an <input type=file> (default the first one) without the bytes entering context. {ok:false}: not a plain file input; hand off, don't retry.", {
+  tool("file_upload", "Put a local file on an <input type=file> without the bytes entering context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). detached/cleared: the site took the file. {ok:false}: hand off, don't retry.", {
     path: { type: "string" },
     ref: REF,
     selector: SEL,
