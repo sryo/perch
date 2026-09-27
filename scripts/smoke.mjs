@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { writeFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connect, text } from "./mcp-client.mjs";
+import { connect, text, sameTab } from "./mcp-client.mjs";
 import { SCHEMA_BUDGET } from "../server.js";
 
 const withTabCreation = process.argv.includes("--with-tab-creation");
@@ -198,7 +198,7 @@ try {
     const made = await json("new_tab", { app, url: "data:text/html," + encodeURIComponent(ttHtml) });
     await call("wait", { readyState: "complete", timeout: 5000, target: { tabId: made.tabId } }).catch(() => {});
     // Some handles follow the URL; re-read it once the page has loaded.
-    const row = (await json("list_tabs", { app, urlContains: "data:text/html" })).tabs.find((t) => t.tabId.split(":")[0] === made.tabId.split(":")[0]);
+    const row = (await json("list_tabs", { app, urlContains: "data:text/html" })).tabs.find((t) => sameTab(t.tabId, made.tabId));
     const tt = { tabId: (row || made).tabId };
     const reset = () => closeTab(tt);
     const why = await reachable(tt).catch((e) => e.message);

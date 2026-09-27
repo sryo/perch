@@ -50,6 +50,11 @@ export async function connect({ timeoutMs = 20000, env = process.env } = {}) {
   return { rpc, call, init: init.result, close: () => child.kill() };
 }
 
+// Whether two tab handles name the same tab. A Safari handle ends in a hash of
+// the tab's URL, which a load changes, so that part is left out.
+const stripHash = (h) => (/^safari:/.test(h) ? h.replace(/\.[^.]*$/, "") : h);
+export const sameTab = (a, b) => a === b || stripHash(String(a)) === stripHash(String(b));
+
 export function text(result) {
   return result.content.find((c) => c.type === "text")?.text;
 }
