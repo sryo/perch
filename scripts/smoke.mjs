@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Live smoke test: boots server.js over stdio and exercises the real bridge.
-// Browser-dependent checks SKIP when no browser runs. Page-mutating checks run
-// on an existing scratch about:blank tab in a Chrome-family browser. The default
-// never creates or closes a tab; --with-tab-creation opts into those checks and
-// may focus the browser. Non-zero exit on any FAIL.
+// Browser-dependent checks SKIP when no browser runs. `--app <name>` picks the
+// browser (loosely matched, e.g. arc, safari, canary); otherwise perch picks.
+// Page-mutating checks run on an existing scratch about:blank tab. The default
+// never creates, closes or activates a tab; --with-tab-creation opts into that
+// (a created tab is closed afterwards) and may focus the browser. Non-zero exit
+// on any FAIL.
 
 import { execFileSync } from "node:child_process";
 import { writeFile, mkdtemp } from "node:fs/promises";
@@ -13,6 +15,7 @@ import { connect, text } from "./mcp-client.mjs";
 import { SCHEMA_BUDGET } from "../server.js";
 
 const withTabCreation = process.argv.includes("--with-tab-creation");
+const appArg = process.argv.includes("--app") ? process.argv[process.argv.indexOf("--app") + 1] : null;
 const client = await connect();
 const call = client.call;
 const json = async (name, args) => JSON.parse(text(await call(name, args)));
@@ -42,7 +45,7 @@ try {
 
   let tabs = [];
   await check("list_tabs returns {tabs, total}", async () => {
-    const out = await json("list_tabs", { limit: 500 });
+    const out = await json("list_tabs", { limit: 500, ...(appArg ? { app: appArg } : {}) });
     expect(Array.isArray(out.tabs) && typeof out.total === "number", `got ${JSON.stringify(out).slice(0, 80)}`);
     tabs = out.tabs;
     return `${out.total} tabs`;
@@ -52,32 +55,57 @@ try {
 
   await check("eval_js round-trip on the active tab", async () => {
     if (!haveBrowser) return skip("no browser running");
-    const out = text(await call("eval_js", { script: "return 1+1", target: { app: active.app, windowId: active.windowId, tabIndex: active.tabIndex } }));
+    const out = text(await call("eval_js", { script: "return 1+1", target: { tabId: active.tabId } }));
     expect(out === "2", `expected "2", got ${JSON.stringify(out)}`);
   });
 
   await check("screenshot image + metadata block", async () => {
     if (!haveBrowser) return skip("no browser running");
-    const res = await call("screenshot", { target: { app: active.app, windowId: active.windowId } });
-    if (res.isError && /isn't on screen/.test(text(res))) return skip("target browser window is minimized or on another Space");
+    const res = await call("screenshot", { target: { tabId: active.tabId } });
+    if (res.isError && /window_offscreen/.test(text(res))) return skip("target browser window is minimized or on another Space");
+    expect(!res.isError, text(res));
     expect(res.content.find((c) => c.type === "image"), "no image block");
     const meta = JSON.parse(text(res));
     for (const k of ["x", "y", "w", "h"]) expect(typeof meta.window?.[k] === "number", `window.${k} missing`);
     return `window ${meta.window.w}x${meta.window.h}pt, image ${meta.image.w}x${meta.image.h}px`;
   });
 
-  // Page-mutating checks use a scratch about:blank tab in a Chrome-family browser
-  // (Arc can't eval background tabs). Never create a tab in the default run.
-  const chromeTabs = tabs.filter((t) => /chrome|chromium|brave|edge|vivaldi/i.test(t.app));
+  // Page-mutating checks use a scratch about:blank tab. Some browsers run page JS
+  // only in the tab its window shows (tab_not_visible); activating it takes focus,
+  // so only --with-tab-creation does that. Never create a tab in the default run.
+  const app = appArg || active?.app;
   let scratch = null;
+  const created = [];
   const setDom = (html) => call("eval_js", { script: `document.body.innerHTML = ${JSON.stringify(html)}; return 1`, target: scratch });
+  // Makes `target` evaluable; returns a skip reason, or null when ready.
+  async function reachable(target) {
+    const probe = await call("eval_js", { script: "return 1", target });
+    if (!probe.isError) return null;
+    if (!/tab_not_visible/.test(text(probe))) throw new Error(text(probe));
+    if (!withTabCreation) return "tab isn't the one its window shows; --with-tab-creation activates it (takes focus)";
+    await call("activate_tab", { target });
+    const again = await call("eval_js", { script: "return 1", target });
+    expect(!again.isError, text(again));
+    return null;
+  }
+  // perch has no close-tab tool, so close a created tab straight through AppleScript.
+  function closeTab(t) {
+    const [key, raw] = [t.tabId.slice(0, t.tabId.indexOf(":")), t.tabId.slice(t.tabId.indexOf(":") + 1)];
+    const js = key === "safari"
+      ? `const w=Application(${JSON.stringify(t.app)}).windows.byId(${JSON.stringify(Number(raw.split(".")[0]))}); w.tabs[${Number(raw.split(".")[1])}].close()`
+      : `const a=Application(${JSON.stringify(t.app)}); for (let i=0;i<a.windows.length;i++){ const w=a.windows[i]; if (w.tabs.id().map(String).indexOf(${JSON.stringify(raw)})>=0){ w.tabs.byId(${JSON.stringify(raw)}).close(); break; } }`;
+    try { execFileSync("osascript", ["-l", "JavaScript", "-e", js]); return true; } catch { return false; }
+  }
 
   await check("scratch tab", async () => {
-    if (!chromeTabs.length) return skip("no chrome-family browser");
-    const blank = chromeTabs.find((t) => t.url === "about:blank");
+    if (!haveBrowser) return skip("no browser running");
+    const blank = tabs.find((t) => t.app === app && t.url === "about:blank");
     if (!blank && !withTabCreation) return skip("no existing scratch tab; --with-tab-creation may focus the browser");
-    scratch = blank ? { app: blank.app, windowId: blank.windowId, tabIndex: blank.tabIndex } : await json("new_tab", { app: chromeTabs[0].app, url: "about:blank" });
-    return `${blank ? "reused" : "opened"} ${scratch.app} @${scratch.tabIndex}`;
+    scratch = blank ? { tabId: blank.tabId } : { tabId: (await json("new_tab", { app, url: "about:blank" })).tabId };
+    if (!blank) created.push({ app, tabId: scratch.tabId });
+    const why = await reachable(scratch);
+    if (why) { scratch = null; return skip(why); }
+    return `${blank ? "reused" : "opened"} ${app} ${scratch.tabId}`;
   });
 
   await check("eval_js typed error sets isError + name", async () => {
@@ -139,15 +167,17 @@ try {
 
   await check("TT-safe rich fill under Trusted Types", async () => {
     if (!withTabCreation) return skip("requires tab creation, which may focus the browser");
-    if (!chromeTabs.length) return skip("no chrome-family browser");
+    if (!haveBrowser) return skip("no browser running");
     // Trusted Types only engages when the page LOADS with the CSP, so set it at tab creation.
     const ttHtml = `<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"><div contenteditable aria-label="Body"></div>`;
-    const tt = await json("new_tab", { app: chromeTabs[0].app, url: "data:text/html," + encodeURIComponent(ttHtml) });
-    // perch has no close-tab tool, so close the throwaway tab straight through AppleScript.
-    const reset = async () => {
-      try { execFileSync("osascript", ["-l", "JavaScript", "-e", `Application(${JSON.stringify(tt.app)}).windows.byId(${JSON.stringify(String(tt.windowId))}).tabs[${tt.tabIndex}].close()`]); }
-      catch { await call("eval_js", { script: "location.href='about:blank'; return 1", target: tt }).catch(() => {}); }
-    };
+    const made = await json("new_tab", { app, url: "data:text/html," + encodeURIComponent(ttHtml) });
+    await call("wait", { readyState: "complete", timeout: 5000, target: { tabId: made.tabId } }).catch(() => {});
+    // Some handles follow the URL; re-read it once the page has loaded.
+    const row = (await json("list_tabs", { app, urlContains: "data:text/html" })).tabs.find((t) => t.tabId.split(":")[0] === made.tabId.split(":")[0]);
+    const tt = { tabId: (row || made).tabId };
+    const reset = async () => { closeTab({ app: made.app, tabId: tt.tabId }); };
+    const why = await reachable(tt).catch((e) => e.message);
+    if (why) { await reset(); return skip(why); }
     const present = text(await call("eval_js", { script: "return !!document.querySelector('[contenteditable]')", target: tt }));
     if (present !== "true") { await reset(); return skip("browser did not load the data: URL"); }
     const o = await json("fill", { label_pattern: "body", text: body, target: tt });
@@ -156,6 +186,7 @@ try {
   });
 
   if (scratch) await call("eval_js", { script: "document.body.innerHTML=''; return 1", target: scratch }).catch(() => {});
+  for (const t of created) closeTab(t);
 } catch (e) {
   failures++;
   console.log(`FAIL harness — ${e.message}`);

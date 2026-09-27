@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
+import { page } from "./helpers/page.mjs";
 
 const chrome = (windows, extra = {}) => ({ name: "Google Chrome", kind: "chrome", windows, ...extra });
 const arc = (windows, extra = {}) => ({ name: "Arc", kind: "arc", windows, ...extra });
@@ -31,7 +32,7 @@ test("prelude defines __perch without touching Node scope", () => {
   assert.equal(typeof world.ctx.__perch, "object");
 });
 
-test("prelude compiles in real JXA", { skip: process.platform !== "darwin" }, () => {
+test("prelude compiles in real JXA", { skip: process.platform !== "darwin" || process.env.PERCH_LIVE === "0" }, () => {
   const out = execFileSync("osascript", ["-l", "JavaScript", "-e", JXA_PRELUDE + ";typeof __perch"]).toString().trim();
   assert.equal(out, "object");
 });
@@ -93,7 +94,7 @@ test("list_tabs reads urls/titles in bulk, never per tab", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(50) }])], cg: [{ owner: "Google Chrome" }] });
   const { o } = await call("list_tabs", {});
   const rows = Array.isArray(o) ? o : o.tabs;
-  assert.equal(rows.length >= 1, true);
+  assert.equal(rows.length, 50);
   assert.equal(world.counts["tabs.url()"], 1);
   assert.equal(world.counts["tab.url"] || 0, 0);
 });
@@ -149,11 +150,15 @@ test("wait expression returns its value; timeout is an error", async () => {
 
 test("navigate waits for the NEW document, not the old one's readyState", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }] });
-  world.state.loadTicks = 5; // old page is 'complete'; the next one loads for 5 checks
+  // The old 'complete' document answers 3 more checks, then the next one loads for 5.
+  world.state.linger = 3;
+  world.state.loadTicks = 5;
   const { o } = await call("navigate", { url: "https://next.test/" });
   assert.equal(o.ok, true);
   assert.deepEqual(world.log.filter((l) => l[0] === "navigate"), [["navigate", "Google Chrome", "https://next.test/"]]);
-  assert.ok(world.counts["tab.execute"] >= 7, `only ${world.counts["tab.execute"]} executes`);
+  // 1 stamp + 3 on the old document + 5 loading + 1 complete.
+  assert.equal(world.counts["tab.execute"], 10);
+  assert.equal(world.page("Google Chrome", 0, 0).location.href, "https://next.test/");
 });
 
 test("navigate to a same-document #hash does not wait for a load", async () => {
@@ -161,13 +166,43 @@ test("navigate to a same-document #hash does not wait for a load", async () => {
   const t0 = world.clock.t;
   const { o } = await call("navigate", { url: "https://a.test/p#sec" });
   assert.equal(o.ok, true);
+  assert.equal(world.counts["tab.execute"], 1);
   assert.ok(world.clock.t - t0 < 1000);
+});
+
+test("navigate to a download or 204 returns once loading settles, not at the timeout", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }] });
+  world.state.noContent = /\.zip$/;
+  const t0 = world.clock.t;
+  const { o } = await call("navigate", { url: "https://t0.test/file.zip" });
+  assert.equal(o.ok, true);
+  // Past the 300ms grace, two idle loading() reads in a row end the wait.
+  assert.ok(world.clock.t - t0 >= 300 && world.clock.t - t0 < 1000, `took ${world.clock.t - t0}ms`);
+  assert.equal(world.page("Google Chrome", 0, 0).location.href, "https://t0.test/");
+});
+
+test("navigate gives up at its timeout when the new document never arrives", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }] });
+  world.state.linger = 1e9;
+  const t0 = world.clock.t;
+  const { r } = await call("navigate", { url: "https://slow.test/" });
+  assert.equal(r.isError, undefined);
+  const took = world.clock.t - t0;
+  assert.ok(took >= 15000 && took < 16000, `took ${took}ms`);
+});
+
+test("navigate tells the caller a load it gave up on didn't finish", { todo: "navigate() drops the runtime's waited:false, so a timed-out load reads as {ok:true}" }, async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }] });
+  world.state.linger = 1e9;
+  const { o } = await call("navigate", { url: "https://slow.test/" });
+  assert.equal(o.waited, false);
 });
 
 test("navigate on an Arc background tab sets the url without evaluating", async () => {
   install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(2, "a") }])], cg: [{ owner: "Arc" }] });
   const { r } = await call("navigate", { url: "https://n.test/", target: { tabIndex: 1 } });
   assert.equal(r.isError, undefined);
+  assert.deepEqual(world.log.filter((l) => l[0] === "navigate"), [["navigate", "Arc", "https://n.test/"]]);
   assert.equal(world.counts["tab.execute"] || 0, 0);
 });
 
@@ -236,6 +271,30 @@ test("activate_tab selects via each browser's working verb", async () => {
   assert.equal(world.counts["activate(Arc)"], 1);
 });
 
+// Many tests prove a focus change or a window walk never happened by checking that
+// its counter is undefined. That only means something while the server still goes
+// through those accessors and the fake still counts them under those names.
+test("counter canary: the keys never-happened checks rely on are live", async () => {
+  install({
+    browsers: [
+      chrome([{ id: 1, active: 0, tabs: tabs(2, "c") }, { id: 2, active: 0, tabs: tabs(2, "d") }]),
+      arc([{ id: "A", active: 0, tabs: tabs(2, "a") }]),
+      safari([{ id: 3, active: 0, tabs: tabs(2, "s") }]),
+    ],
+    cg: [{ owner: "Google Chrome" }],
+  });
+  await call("list_tabs", {});
+  for (const target of [{ app: "Google Chrome", windowId: 2, tabIndex: 1 }, { app: "Arc", tabIndex: 1 }, { app: "Safari", tabIndex: 1 }]) {
+    const { r } = await call("activate_tab", { target });
+    assert.equal(r.isError, undefined, target.app);
+  }
+  for (const key of [
+    "windows[0](Google Chrome)", "windows[1](Google Chrome)", "win.id()", "win.index=",
+    "win.activeTabIndex=", "win.currentTab=", "tab.select",
+    "activate(Google Chrome)", "activate(Arc)", "activate(Safari)",
+  ]) assert.ok(world.counts[key] > 0, key);
+});
+
 test("raising a second window still switches the tab in THAT window", async () => {
   install({
     browsers: [chrome([{ id: 1, active: 0, tabs: tabs(4, "a") }, { id: 2, active: 0, tabs: tabs(4, "b") }])],
@@ -251,10 +310,14 @@ test("raising a second window still switches the tab in THAT window", async () =
 // ---- review fixes ----
 
 test("wait with an invalid selector is an error, not an instant success", async () => {
-  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }] });
+  const dom = page(`<div id="x"></div>`);
+  Object.defineProperty(dom.document, "readyState", { value: "complete", configurable: true });
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://a.test/p", id: "d", dom }] }])], cg: [{ owner: "Google Chrome" }] });
+  const ok = await call("wait", { selector: "#x" });
+  assert.equal(ok.o.ok, true);
   const { r, t } = await call("wait", { selector: "##" });
   assert.equal(r.isError, true);
-  assert.match(t, /wait:.*(selector|##)/i);
+  assert.match(t, /^error: wait: .*##/);
 });
 
 test("Safari navigate makes the tab current before stamping the old document", async () => {
@@ -374,6 +437,36 @@ test("windows sharing tabs: each tab listed once, tabId runs through the window 
   assert.equal(world.page("Arc", 1, 2).hit, 1);
 });
 
+test("an Arc tabId active in no window is refused as not visible, never executed", async () => {
+  const shared = tabs(3, "a");
+  install({ browsers: [arc([{ id: "W1", active: 0, tabs: shared }, { id: "W2", active: 0, tabs: shared }])], cg: [{ owner: "Arc" }] });
+  const { r, t } = await call("eval_js", { script: "return 1", target: { tabId: "arc:a1" } });
+  assert.equal(r.isError, true);
+  assert.match(t, /^error: tab_not_visible: /);
+  assert.equal(world.counts["tab.execute"] || 0, 0);
+});
+
+test("tabId plus windowId only looks in that window", async () => {
+  const shared = tabs(3, "a");
+  install({ browsers: [arc([{ id: "W1", active: 0, tabs: shared }, { id: "W2", active: 2, tabs: shared }])], cg: [{ owner: "Arc" }] });
+  // a2 is shown in W2, but the caller pinned W1, where it is in the background.
+  const pinned = await call("eval_js", { script: "return 1", target: { tabId: "arc:a2", windowId: "W1" } });
+  assert.match(pinned.t, /^error: tab_not_visible: /);
+  const other = await call("eval_js", { script: "return 2", target: { tabId: "arc:a2", windowId: "W2" } });
+  assert.equal(other.o, 2);
+  const none = await call("eval_js", { script: "return 3", target: { tabId: "arc:a2", windowId: "W9" } });
+  assert.match(none.t, /^error: stale_tab: /);
+});
+
+test("Chrome windows whose tabs report no ids list windowId/tabIndex rows that still target", async () => {
+  const noIds = tabs(2, "n").map(({ id, ...t }) => t);
+  install({ browsers: [chrome([{ id: 5, active: 1, tabs: noIds }])], cg: [{ owner: "Google Chrome" }] });
+  const { o } = await call("list_tabs", {});
+  assert.deepEqual(o.tabs.map((r) => [r.windowId, r.tabIndex, r.tabId, !!r.active]), [[5, 0, undefined, false], [5, 1, undefined, true]]);
+  await call("eval_js", { script: "window.hit = 1; return 1", target: { app: "Google Chrome", windowId: 5, tabIndex: 0 } });
+  assert.equal(world.page("Google Chrome", 0, 0).hit, 1);
+});
+
 test("a window showing no tab is skipped, not read as tab 0", async () => {
   install({
     browsers: [arc([{ id: "NEW", active: null, tabs: tabs(2, "a") }, { id: "OLD", active: 1, tabs: tabs(2, "b") }])],
@@ -401,4 +494,30 @@ test("Arc screenshot picks the CG window by title, pairing same-titled windows f
   });
   const wid = (id) => JSON.parse(world.run(`JSON.stringify(__perch.shotGeom({ target: { windowId: "${id}" } }))`)).windowNumber;
   assert.deepEqual([wid("W1"), wid("W2"), wid("W3")], [11, 10, 12]);
+});
+
+test("new_tab on Arc accepts about: and data: URLs, which Arc refuses at creation", async () => {
+  install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }])], cg: [{ owner: "Arc" }] });
+  const { r, o } = await call("new_tab", { app: "arc", url: "data:text/html,<p>x</p>" });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(world.tabsOf("Arc", 0)[1].page.url, "data:text/html,<p>x</p>");
+  assert.equal(o.tabId, "arc:new1");
+});
+
+test("page JS on a browser-internal page is refused at once, not left to hang", async () => {
+  install({ browsers: [arc([{ id: "A", active: 0, tabs: [{ id: "n", url: "arc://newtab/", title: "New Tab" }] }])], cg: [{ owner: "Arc" }] });
+  const { r, t } = await call("eval_js", { script: "return 1" });
+  assert.equal(r.isError, true);
+  assert.match(t, /^error: tab_not_scriptable: /);
+  assert.equal(world.counts["tab.execute"] || 0, 0);
+});
+
+test("a new blank Safari tab's handle matches what list_tabs reports and resolves", async () => {
+  install({ browsers: [safari([{ id: 7, active: 0, tabs: tabs(1, "s") }])], cg: [{ owner: "Safari" }] });
+  const { o } = await call("new_tab", { app: "safari", url: "about:blank" });
+  const { o: listed } = await call("list_tabs", { app: "safari" });
+  assert.ok(listed.tabs.some((t) => t.tabId === o.tabId), `${o.tabId} not in ${listed.tabs.map((t) => t.tabId)}`);
+  world.winSpec("Safari", 0).active = 1;
+  const { r } = await call("eval_js", { script: "return 1", target: { tabId: o.tabId } });
+  assert.equal(r.isError, undefined, r.content[0].text);
 });

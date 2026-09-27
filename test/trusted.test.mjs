@@ -267,6 +267,43 @@ test("screenshot refuses a minimized window instead of capturing another app's p
   assert.throws(() => world.run(`__perch.shotGeom({ target: { app: "Google Chrome", windowId: 1 } })`), /window_offscreen: /);
 });
 
+// ---- guards: trusted input that can't be sure of its window posts nothing ----
+
+test("raise that doesn't bring the browser to the front refuses before posting", async () => {
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(2) }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
+  });
+  world.state.activateFails = true;
+  const r = await handleCall("click", { trusted: true, raise: true, x: 300, y: 200 });
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /^error: target did not become frontmost after raise/);
+  assert.equal(world.posted.length, 0);
+});
+
+test("trusted input to a window with no on-screen CG entry is window_offscreen and posts nothing", async () => {
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(2) }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }],
+  });
+  for (const raise of [true, false]) {
+    const r = await handleCall("click", { trusted: true, raise, x: 300, y: 200 });
+    assert.equal(r.isError, true, `raise:${raise}`);
+    assert.match(r.content[0].text, /^error: window_offscreen: /, `raise:${raise}`);
+  }
+  assert.equal(world.posted.length, 0);
+});
+
+test("a tab that never becomes visible is reported, not clicked", async () => {
+  const { dom, world } = domTab(`<button id=b>Go</button>`, METRICS);
+  Object.defineProperty(dom.document, "visibilityState", { value: "hidden", configurable: true });
+  const r = await handleCall("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } });
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.ok, false);
+  assert.match(o.error, /never became visible/);
+  assert.equal(world.posted.length, 0);
+});
+
 // ---- aiming: visibility + calibration, through the runtime against a happy-dom page ----
 
 function domTab(html, metrics) {
@@ -309,16 +346,22 @@ test("calibration: a mouse move reveals the real offset and the click lands on t
 
 test("calibration ignores a mouse move recorded before its own post", async () => {
   const { dom, world } = domTab(`<button id=b>Go</button>`, METRICS);
-  // A stale move (the user's cursor, say) sits in the page before calibration posts.
-  world.state.onPost = (e) => {
-    if (e.type !== 5) return;
-    dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: e.pt.x - 56, clientY: e.pt.y - 157, screenX: e.pt.x, screenY: e.pt.y }));
-  };
-  // Right after the probe arms its listeners, a stray move (31px off) reaches the page.
+  // The posted move reaches the page one read late, so the first read after the
+  // post sees only what was already buffered.
+  let pending = null, evalsSincePost = 0;
+  world.state.onPost = (e) => { if (e.type === 5) { pending = e.pt; evalsSincePost = 0; } };
   const evalPage = dom.eval.bind(dom);
+  let evals = 0;
   dom.eval = (js) => {
+    if (pending && ++evalsSincePost === 2) {
+      dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: pending.x - 56, clientY: pending.y - 157, screenX: pending.x, screenY: pending.y }));
+      pending = null;
+    }
     const out = evalPage(js);
-    if (js.includes('retry: "hidden"')) dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: 50, clientY: 41, screenX: 106, screenY: 198 }));
+    // Right after the first page script (the probe) arms its listeners, a stray move
+    // lands within 1px of the point calibration will post at, with a client point
+    // 20px off. Only clearing the buffer before the post keeps it out.
+    if (++evals === 1) dom.document.dispatchEvent(new dom.MouseEvent("mousemove", { bubbles: true, clientX: 30, clientY: 30, screenX: 107, screenY: 168 }));
     return out;
   };
   const r = await handleCall("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } });

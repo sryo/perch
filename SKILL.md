@@ -46,7 +46,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 - `fill` returns `{ok, kind: "plain"|"rich", el: 'textbox "Email"', len, ambiguous?}`. `ok: true` is proof; don't re-check.
 - `fill {trusted:true}` returns `{ok, trusted, value, el}` for background plain fields. Require both `ok` and `trusted`.
 - Page errors come back as `isError` with `__perch_error`, `__perch_error_name` and a stack head.
-- Other errors start with a code; branch on it, never on the browser. `tab_not_visible`: the action needs the tab its window shows (page JS on some browsers; screenshots and background trusted clicks always): `activate_tab` (takes focus) or retry later. `stale_tab`: the tab is gone; re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `no_browser`: not running or no window; perch never launches one. `timeout`: re-list, retry once.
+- Other errors start with a code; branch on it, never on the browser. `tab_not_visible`: needs the tab its window shows: `activate_tab` (takes focus) or retry later. `stale_tab`: tab gone; re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `no_browser`: none running or no window (never launched). `timeout`: re-list, retry once. `tab_not_scriptable`: internal page; `navigate` first.
 
 ## Gotchas
 

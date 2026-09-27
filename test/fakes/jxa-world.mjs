@@ -4,9 +4,9 @@
 // Apple Event traffic. System Events throws: the runtime must never touch it.
 import vm from "node:vm";
 
-export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
+export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } = {}) {
   const clock = { t: 1_000_000 };
-  const state = { loadTicks, ax: true, cursor: { x: 1, y: 2 }, warps: [] };
+  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [] };
   const cgEntries = cg.map((entry) => ({ ...entry }));
   const posted = [];
   const counts = {};
@@ -51,21 +51,30 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     fn("name", () => spec.title || "");
     // Chrome's dictionary has no tab `index` (it throws); Safari's does.
     fn("index", () => { if (b.kind === "chrome") throw new Error("Can't get object."); return w.tabs.indexOf(tab) + 1; });
-    fn("loading", () => false);
+    fn("loading", () => !!tab.pending || tab.page.ticks > 0);
+    // Safari reports a blank tab's URL as null, not "about:blank".
+    tab.shownUrl = () => { const u = tab.pending ? tab.pending.url : tab.page.url; return b.kind === "safari" && u === "about:blank" ? null : u; };
     Object.defineProperty(tab, "url", {
-      get: () => () => tab.page.url,
+      get: () => () => { bump("tab.url"); return tab.shownUrl(); },
       set: (u) => {
         bump("tab.url=");
         log.push(["navigate", b.name, u]);
         // A fragment-only change keeps the document, as browsers do.
         const cur = new URL(tab.page.url), next = new URL(u, tab.page.url);
         if (next.hash && next.href.split("#")[0] === cur.href.split("#")[0]) { tab.page.url = next.href; tab.page.ctx.location.href = next.href; return; }
-        tab.page = makePage(u);
+        // A download or a 204 never replaces the document, and loading settles.
+        if (state.noContent && state.noContent.test(u)) return;
+        // The old document keeps answering (readyState 'complete') for state.linger
+        // executes after the url is set, before the new one replaces it.
+        if (state.linger > 0) tab.pending = { url: u, n: state.linger };
+        else tab.page = makePage(u);
       },
     });
     tab.execute = ({ javascript }) => {
       bump("tab.execute");
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
+      if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
+      if (tab.pending && tab.pending.n-- <= 0) { tab.page = makePage(tab.pending.url); tab.pending = null; }
       // spec.dom: a happy-dom Window standing in for the page.
       const r = spec.dom ? spec.dom.eval(javascript) : vm.runInContext(javascript, tab.page.ctx);
       return b.kind === "arc" ? JSON.stringify(r) : r;
@@ -80,13 +89,16 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
     const coll = new Proxy([], {
       get(_, k) {
         if (k === "length") { bump("tabs.length"); return w.tabs.length; }
-        if (k === "url") return () => { bump("tabs.url()"); return w.tabs.map((t) => t.page.url); };
+        if (k === "url") return () => { bump("tabs.url()"); return w.tabs.map((t) => t.shownUrl()); };
         if (k === "title" || k === "name") return () => { bump("tabs.title()"); return w.tabs.map((t) => t.spec.title || ""); };
         if (k === "id") return () => { bump("tabs.id()"); return w.tabs.map((t) => t.spec.id); };
         if (k === "location") return () => { bump("tabs.location()"); return w.tabs.map((t) => t.spec.location || "unpinned"); };
         if (k === "byId") return (id) => { bump("tabs.byId"); return w.tabs.find((t) => String(t.spec.id) === String(id)); };
         if (k === "index") return () => w.tabs.map((_, i) => i + 1);
-        if (k === "push") return (t) => { const tab = makeTab({ url: t.url, id: "new" + w.tabs.length }, b, w); w.tabs.push(tab); log.push(["newTab", b.name, t.url]); };
+        if (k === "push") return (t) => {
+          // Arc's `make new tab` rejects about: and data: URLs (they can be set afterwards).
+          if (b.kind === "arc" && /^(about|data):/.test(t.url)) throw new Error("Please provide a valid URL property for the make new tab command.");
+          const tab = makeTab({ url: t.url, id: "new" + w.tabs.length }, b, w); w.tabs.push(tab); log.push(["newTab", b.name, t.url]); };
         if (/^\d+$/.test(String(k))) return w.tabs[Number(k)];
         return undefined;
       },
@@ -146,6 +158,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0 } = {}) {
       running: () => { bump(`running(${b.name})`); return b.running !== false; },
       activate: () => {
         bump(`activate(${b.name})`); log.push(["activate", b.name]);
+        // Another app can keep the front (a modal, a full-screen space).
+        if (state.activateFails) return;
         const i = cgEntries.findIndex((entry) => entry.owner === b.name);
         if (i > 0) cgEntries.unshift(cgEntries.splice(i, 1)[0]);
       },

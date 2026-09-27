@@ -49,7 +49,8 @@ function jxaRuntime(BROWSERS) {
   // Safari tabs have no id, so theirs is "safari:<windowId>.<index>.<url hash>",
   // re-found by URL when the index moved; a navigation makes it stale.
   function fp(url) {
-    const str = String(url || "").split("#")[0];
+    // Safari reports a blank tab's URL as null; treat null, "" and about:blank alike.
+    const str = !url || url === "about:blank" ? "" : String(url).split("#")[0];
     let h = 0x811c9dc5;
     for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
     return h.toString(36);
@@ -259,9 +260,13 @@ function jxaRuntime(BROWSERS) {
     app(t.app).activate();
   }
 
-  // Arc's execute hangs (until timeout) on background tabs; refuse up front.
+  // Arc's execute hangs (until timeout) on background tabs and on its own arc://
+  // pages (a new tab sits on arc://newtab until its URL commits); refuse up front.
   function visibleGuard(t, tool) {
-    if (t.kind === "arc" && !isActive(t)) throw new Error(notVisible(tool));
+    if (t.kind !== "arc") return;
+    if (!isActive(t)) throw new Error(notVisible(tool));
+    let url = ""; try { url = t.tab.url(); } catch (e) {}
+    if (/^arc:/i.test(url)) throw new Error("tab_not_scriptable: " + tool + " can't run on the browser's own pages (new tab, settings); navigate the tab to a web page first");
   }
 
   function exec(t, js) {
@@ -646,11 +651,25 @@ function jxaRuntime(BROWSERS) {
         win = ap.windows[0];
         let beforeIds = null;
         try { beforeIds = win.tabs.id(); } catch (e) {}
-        const tab = ap.Tab({ url: a.url });
+        // Arc's `make new tab` rejects about: and data: URLs but accepts them set
+        // afterwards, so such tabs start on its own new-tab page.
+        const later = kind === "arc" && /^(about|data):/i.test(a.url);
+        const tab = ap.Tab({ url: later ? "arc://newtab" : a.url });
         win.tabs.push(tab);
         try { newId = tab.id(); } catch (e) {}
         if (newId == null && beforeIds) {
           try { newId = win.tabs.id().find(function (id) { return beforeIds.indexOf(id) < 0; }); } catch (e) {}
+        }
+        if (later) {
+          if (newId == null) throw new Error("no_browser: " + name + " created a tab perch could not find to load " + a.url);
+          const nt = win.tabs.byId(newId);
+          nt.url = a.url;
+          // Until the URL commits the tab still shows arc://newtab, where page JS hangs.
+          for (let i = 0; i < 40; i++) {
+            let u = ""; try { u = nt.url(); } catch (e) {}
+            if (!/^arc:/i.test(u)) break;
+            delay(0.05);
+          }
         }
       } else {
         // Safari: documents[0].tabs throws under JXA; windows[0].tabs works.
@@ -763,16 +782,39 @@ export function translatePermissionError(msg) {
 // opened, a click posted), so it rejects without retry; the next call respawns.
 //
 // Disable with PERCH_DAEMON=0.
+// The daemon's own read-eval loop. `osascript -i` over a pipe evaluates nothing
+// until stdin hits EOF (seen on macOS 27.2), so perch reads lines itself.
+// Indirect eval keeps the prelude's globals across lines. NSData.length comes
+// back as a string in JXA, hence Number().
+const DAEMON_LOOP = `ObjC.import("Foundation");
+var __in = $.NSFileHandle.fileHandleWithStandardInput, __buf = "";
+for (;;) {
+  var __d = __in.availableData;
+  if (!__d || Number(__d.length) === 0) break;
+  __buf += $.NSString.alloc.initWithDataEncoding(__d, 4).js;
+  var __nl;
+  while ((__nl = __buf.indexOf("\\n")) >= 0) {
+    var __line = __buf.slice(0, __nl);
+    __buf = __buf.slice(__nl + 1);
+    try { (0, eval)(__line); } catch (e) { console.log("!! " + e); }
+  }
+}`;
+
 export class OsaDaemon {
-  constructor({ spawn: spawnFn = spawn, prelude = "" } = {}) {
+  constructor({ spawn: spawnFn = spawn, prelude = "", handshakeTimeout = 10000 } = {}) {
     this.spawnFn = spawnFn;
     this.prelude = prelude;
+    this.handshakeTimeout = handshakeTimeout;
+    // Set when a REPL never answered its handshake: later calls go one-shot
+    // at once instead of each waiting the handshake out.
+    this.disabled = null;
     this.proc = null;
     this.ready = null;
     this.queue = [];
     this.current = null;
   }
   run(script, timeout) {
+    if (this.disabled) return Promise.reject(Object.assign(new Error(this.disabled), { notSent: true }));
     return new Promise((resolve, reject) => {
       this.queue.push({ script, timeout, resolve, reject });
       this._drain();
@@ -786,7 +828,7 @@ export class OsaDaemon {
   }
   _spawn() {
     let p;
-    try { p = this.spawnFn("osascript", ["-i", "-l", "JavaScript"], { stdio: ["pipe", "pipe", "pipe"] }); }
+    try { p = this.spawnFn("osascript", ["-l", "JavaScript", "-e", DAEMON_LOOP], { stdio: ["pipe", "pipe", "pipe"] }); }
     catch (e) { return Promise.reject(e); }
     this.proc = p;
     // osascript's console.log goes to stderr; listen to both.
@@ -796,7 +838,7 @@ export class OsaDaemon {
     p.on("exit", () => this._onExit(p));
     p.on("error", () => this._onExit(p));
     // Handshake instead of a fixed settle: the prelude (or a no-op) must round-trip first.
-    return new Promise((resolve, reject) => this._send({ script: this.prelude + ";1", timeout: 10000, resolve, reject }));
+    return new Promise((resolve, reject) => this._send({ script: this.prelude + ";1", timeout: this.handshakeTimeout, resolve, reject, handshake: true }));
   }
   async _drain() {
     if (this.current || this.queue.length === 0) return;
@@ -805,7 +847,12 @@ export class OsaDaemon {
     try { await ready; }
     catch (e) {
       if (this.ready === ready) this.kill();
-      const err = Object.assign(new Error("osascript failed to start: " + (e.message || e)), { notSent: true });
+      const msg = "osascript failed to start: " + (e.message || e);
+      if (e.handshake && !this.disabled) {
+        this.disabled = msg;
+        process.stderr.write(`perch: osascript daemon disabled (${msg}); using one-shot calls\n`);
+      }
+      const err = Object.assign(new Error(msg), { notSent: true });
       while (this.queue.length) this.queue.shift().reject(err);
       return;
     }
@@ -820,8 +867,9 @@ export class OsaDaemon {
         if (this.current !== job) return;
         this.current = null;
         this.kill();
-        job.reject(new Error(ERR.timeout(c.timeout)));
-        this._drain();
+        job.reject(Object.assign(new Error(ERR.timeout(c.timeout)), { handshake: !!c.handshake }));
+        // A failed handshake is settled by the _drain awaiting it; draining here would respawn.
+        if (!c.handshake) this._drain();
       }, c.timeout),
     };
     this.current = job;
@@ -893,7 +941,10 @@ export async function jxa(script, { timeout = JXA_DEFAULT_TIMEOUT, lane = "fast"
 
 export function formatOsaFailure(e, timeout) {
   if (e.killed) return ERR.timeout(timeout);
-  const msg = String(e.stderr || e.message || e).trim();
+  // stderr is osascript's own report. execFile's message is "Command failed: <cmd>",
+  // and a one-shot cmd embeds the whole prelude, so it is used only without stderr
+  // (a spawn failure).
+  const msg = (e.stderr != null ? String(e.stderr) : String(e.message || e)).trim();
   const translated = translatePermissionError(msg);
   if (translated) return translated;
   if (e.code === 1 && !msg) return ERR.automation;
@@ -903,7 +954,7 @@ export function formatOsaFailure(e, timeout) {
 
 async function jxaOneShot(script, { timeout = JXA_DEFAULT_TIMEOUT } = {}) {
   try {
-    const { stdout } = await exec("osascript", ["-l", "JavaScript", "-e", JXA_PRELUDE + ";\n" + script], { maxBuffer: 32 << 20, timeout });
+    const { stdout } = await deps.exec("osascript", ["-l", "JavaScript", "-e", JXA_PRELUDE + ";\n" + script], { maxBuffer: 32 << 20, timeout });
     return stdout.replace(/\n$/, "");
   } catch (e) {
     throw new Error(formatOsaFailure(e, timeout));
@@ -1743,7 +1794,7 @@ export const INSTRUCTIONS = `perch drives the user's own macOS browsers over App
 Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab; it works for every browser and survives other tabs opening and closing. With no target, tools use the active tab of the topmost browser window. new_tab defaults to the browser in use and creates an unselected tab, but may focus the browser; defer it while the user works.
 Elements: prefer \`ref\` (from accessibility_snapshot) over \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
-Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout. Only activate_tab and raise:true take focus.`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first). Only activate_tab and raise:true take focus.`;
 
 const TARGET = { type: "object", properties: { tabId: { type: ["string", "number"] }, app: { type: "string" }, windowId: { type: ["string", "number"] }, tabIndex: { type: "number" } } };
 const REF = { type: "string", description: "From accessibility_snapshot." };

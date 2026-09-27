@@ -6,13 +6,14 @@ import vm from "node:vm";
 
 export function fakeSpawner({ mode = "ok", chunk = 0, globals = {} } = {}) {
   const spawned = [];
-  const spawnFn = () => {
+  const spawnFn = (cmd, args) => {
     const proc = new EventEmitter();
     proc.stdout = new EventEmitter();
     proc.stderr = new EventEmitter();
     proc.stdin = new EventEmitter();
     proc.killed = false;
     proc.lines = [];
+    proc.cmd = cmd; proc.args = args;
     const out = (s) => {
       if (!chunk) return setImmediate(() => proc.stdout.emit("data", Buffer.from(s)));
       for (let i = 0; i < s.length; i += chunk) {
@@ -23,6 +24,9 @@ export function fakeSpawner({ mode = "ok", chunk = 0, globals = {} } = {}) {
     const ctx = vm.createContext({ console: { log: (s) => out(String(s) + "\n") }, ...globals });
     proc.stdin.write = (line) => {
       if (mode === "throwOnWrite") throw new Error("EPIPE");
+      // "deaf": the REPL takes input but never evaluates it, like `osascript -i`
+      // over a pipe on macOS 27, which waits for EOF before running anything.
+      if (mode === "deaf") { proc.lines.push(line); return true; }
       proc.lines.push(line);
       const isHandshake = proc.lines.length === 1;
       if (mode === "silent" && !isHandshake) return true;

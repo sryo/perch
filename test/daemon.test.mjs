@@ -84,3 +84,46 @@ test("a hung slow-lane call does not block the fast lane", async () => {
   slow.kill(); fast.kill();
   await hung;
 });
+
+test("the daemon runs its own stdin loop, not `osascript -i`", async () => {
+  const { d, f } = daemonWith();
+  assert.equal(await d.run("1", 1000), "1");
+  assert.equal(f.spawned[0].cmd, "osascript");
+  assert.ok(!f.spawned[0].args.includes("-i"), f.spawned[0].args.join(" "));
+  d.kill();
+});
+
+test("a REPL that never answers the handshake disables the daemon after one wait", async () => {
+  const { d, f } = daemonWith({ mode: "deaf" }, { handshakeTimeout: 50 });
+  const t0 = performance.now();
+  await assert.rejects(d.run("1", 1000), (e) => e.notSent === true);
+  const t1 = performance.now();
+  await assert.rejects(d.run("1", 1000), (e) => e.notSent === true);
+  assert.ok(performance.now() - t1 < 20, `second call waited ${performance.now() - t1}ms`);
+  assert.ok(t1 - t0 >= 45, "first call waits the handshake out");
+  assert.equal(f.spawned.length, 1, "no respawn per call");
+  d.kill();
+});
+
+test("jxa falls back to one-shot at once when the daemon is disabled", async () => {
+  const { d } = daemonWith({ mode: "deaf" }, { handshakeTimeout: 50 });
+  let shots = 0;
+  const oneShot = async () => { shots++; return "ok"; };
+  assert.equal(await jxa("1", { daemons: { fast: d }, oneShot }), "ok");
+  const t = performance.now();
+  assert.equal(await jxa("1", { daemons: { fast: d }, oneShot }), "ok");
+  assert.ok(performance.now() - t < 20);
+  assert.equal(shots, 2);
+  d.kill();
+});
+
+// Runs by default on macOS: it's the only guard against a REPL that stops answering.
+// PERCH_LIVE=0 opts out (hermetic runs).
+test("real osascript daemon answers line by line", { skip: process.platform !== "darwin" || process.env.PERCH_LIVE === "0" }, async () => {
+  const d = new OsaDaemon({ prelude: "globalThis.__t = 41" });
+  const t0 = performance.now();
+  assert.equal(await d.run("__t + 1", 5000), "42");
+  assert.equal(await d.run("'<<:>>'", 5000), "<<:>>");
+  assert.ok(performance.now() - t0 < 4000, `took ${performance.now() - t0}ms`);
+  d.kill();
+});

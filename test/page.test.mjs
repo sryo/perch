@@ -125,9 +125,24 @@ test("snapshot values survive quotes and newlines", () => {
   assert.equal(line, `1 textbox "Say \\"hi\\"" type="textarea" value="a \\"b\\" c"`);
 });
 
+test("snapshot leaves out elements inside a hidden container", () => {
+  const w = page(`<div style="display:none"><button>Ghost</button></div><button>Real</button>`);
+  const lines = run(w, "snapshot", { max: 500 }).split("\n").slice(1);
+  assert.deepEqual(lines, [`1 button "Real"`]);
+});
+
 // ---- fill ----
 
 const BODY = "Hi there, this is a multi-line reply body.\nSecond line.\n\nA second paragraph that makes the text comfortably longer than fifty characters.";
+
+test("fill by label skips a field whose container is hidden", () => {
+  const w = page(`<div style="display:none"><textarea aria-label="Message"></textarea></div><textarea aria-label="Message body"></textarea>`);
+  const o = run(w, "fill", { label_pattern: "message", text: "hi" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  const [hidden, shown] = w.document.querySelectorAll("textarea");
+  assert.equal(hidden.value, "");
+  assert.equal(shown.value, "hi");
+});
 
 test("fill by label skips a hidden textarea and lands in the visible editor", () => {
   const w = page(`<textarea name="bodyHtml" style="display:none"></textarea><div contenteditable aria-label="Message Body"></div>`);
@@ -148,6 +163,28 @@ test("fill: plain input via ref, bypassing an instance value override", () => {
   runBody(w, `const i = document.querySelector('input'); Object.defineProperty(i, 'value', { set() {}, get() { return Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').get.call(this); } }); window.__perch_refs = { '1': i }; return 1`);
   const o = run(w, "fill", { ref: "1", text: "Ada" });
   assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "Name"`, len: 3 });
+});
+
+// React tracks the last value it saw through an instance property. A write through
+// that property updates the tracker too, so the following input event looks like no
+// change and onChange never fires. Only a prototype-setter write followed by an input
+// event reaches the component.
+test("fill: a React-controlled input sees onChange with the new value", () => {
+  const w = page(`<input aria-label="City">`);
+  const changes = runBody(w, `
+    const i = document.querySelector('input');
+    const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    let tracked = '';
+    Object.defineProperty(i, 'value', { configurable: true,
+      get() { return proto.get.call(this); },
+      set(v) { tracked = String(v); proto.set.call(this, v); } });
+    window.__changes = [];
+    i.addEventListener('input', () => { const now = proto.get.call(i); if (now !== tracked) { tracked = now; window.__changes.push(now); } });
+    return 1`);
+  assert.equal(changes, 1);
+  const o = run(w, "fill", { label_pattern: "city", text: "Rosario" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(runBody(w, "return window.__changes"), ["Rosario"]);
 });
 
 test("fill: Trusted-Types-style innerHTML ban does not break rich fill", () => {

@@ -45,7 +45,7 @@ try {
   const tabs = Array.isArray(listed) ? listed : listed.tabs;
   if (!tabs.length) throw new Error("no browser tabs; open a browser first");
   const active = tabs.find((t) => t.active) || tabs[0];
-  const target = { app: active.app, windowId: active.windowId, tabIndex: active.tabIndex };
+  const target = { tabId: active.tabId };
 
   await time("list_tabs", () => client.call("list_tabs"));
   await time("list_tabs limit:1", () => client.call("list_tabs", { limit: 1 }));
@@ -59,7 +59,7 @@ try {
   await time("screenshot jpeg", () => client.call("screenshot", { target, format: "jpeg" }));
   if (argv.includes("--navigate")) {
     const out = JSON.parse(text(await client.call("new_tab", { app: active.app, url: "about:blank" })));
-    const scratch = { app: out.app, windowId: out.windowId, tabIndex: out.tabIndex };
+    const scratch = { tabId: out.tabId };
     await time("navigate about:blank", () => client.call("navigate", { url: "about:blank", target: scratch }));
   }
   const tools = (await client.rpc("tools/list", {})).result.tools;

@@ -136,7 +136,7 @@ try {
     if (!all) throw new Error("no Chrome-family browser running");
     tab = JSON.parse(text(await client.call("new_tab", { app: all.app, url: "about:blank" })));
   }
-  const target = { app: tab.app, windowId: tab.windowId, tabIndex: tab.tabIndex };
+  const target = { tabId: tab.tabId };
   if (argv.includes("--delivery")) {
     await client.call("eval_js", { target, script: DELIVERY_PAGE });
     await client.call("activate_tab", { target });
