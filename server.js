@@ -2164,7 +2164,21 @@ function linkedLists(s) {
   [s.ctl, s.input, s.box].forEach(function (el) { if (el) ids = ids.concat((attr(el, "aria-controls") + " " + attr(el, "aria-owns")).split(/\s+/)); });
   const rs = s.input && /^(react-select-.+)-input$/.exec(s.input.id);
   if (rs) ids.push(rs[1] + "-listbox");
-  return ids.map(function (id, i) { return id && ids.indexOf(id) === i && document.getElementById(id); }).filter(function (m) { return m && !mine(s, m); });
+  return ids.map(function (id, i) { return id && ids.indexOf(id) === i && byIdNear(id, s.input || s.ctl); }).filter(function (m) { return m && !mine(s, m); });
+}
+// Separate React roots can repeat an id; take the copy that shares the deepest
+// ancestor with the control.
+function byIdNear(id, near) {
+  const all = document.querySelectorAll('[id="' + id.replace(/["\\]/g, "\\$&") + '"]');
+  if (all.length < 2 || !near) return document.getElementById(id);
+  let best = null, depth = -1;
+  Array.prototype.forEach.call(all, function (m) {
+    let a = m.parentElement, d = 0;
+    while (a && !a.contains(near)) a = a.parentElement;
+    for (let p = a; p; p = p.parentElement) d++;
+    if (d > depth) { depth = d; best = m; }
+  });
+  return best;
 }
 // The control's own options: its linked lists, else a list beside it in a wrapper
 // that holds no other control, else options that appeared after select opened it.
@@ -2226,6 +2240,12 @@ function checkOne(a) {
 // then fill_ta_pick / fill_ta_read run polled from JXA, as select's phases do.
 const TYPEAHEAD_LIB = String.raw`
 const taNorm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
+// A background tab's blur() fires no events, so send them when the page lacks focus.
+function taBlur(el) {
+  const had = document.activeElement === el;
+  if (had) el.blur();
+  if (!had || !document.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
+}
 // The widget's own box: the highest ancestor (below the form) holding no other control.
 function taRoot(el) {
   let root = el;
@@ -2484,7 +2504,7 @@ const el = s.el;
 const c = taOptions(s).slice(0, 8).map(function (o) { return clip(o.textContent, 60); });
 let out;
 if (!s.comp) {
-  if (document.activeElement === el) el.blur(); else fire(el, ["blur"]);
+  taBlur(el);
   if (taNorm(el.value) === taNorm(s.text)) out = { ok: true, kind: "plain", el: ident(el), len: el.value.length, note: "no suggestion was picked; the typed text stays" };
 }
 if (!out) {
@@ -2509,7 +2529,7 @@ const seen = !!v && (v.indexOf(s.pickedN) >= 0 || v.indexOf(taNorm(s.text)) >= 0
 const good = seen && (!s.comp || !!s.comp.value);
 if (!A.final && good && !s.blurred) {
   s.blurred = true;
-  if (document.activeElement === el) el.blur(); else fire(el, ["blur"]);
+  taBlur(el);
   return null;
 }
 if (!A.final && !good) return null;

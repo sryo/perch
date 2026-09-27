@@ -173,6 +173,50 @@ test("typeahead: a combobox that clears unpicked text on blur is withdrawn", asy
   assert.equal($(dom, "#t").value, "");
 });
 
+// A background tab: focus() and blur() move activeElement but fire no focus
+// events, and the document never has focus.
+const BACKGROUND_JS = `
+  document.hasFocus = () => false;
+  const blur = HTMLElement.prototype.blur;
+  HTMLElement.prototype.blur = function () {
+    const stop = (e) => e.stopPropagation();
+    window.addEventListener('blur', stop, true); window.addEventListener('focusout', stop, true);
+    blur.call(this);
+    window.removeEventListener('blur', stop, true); window.removeEventListener('focusout', stop, true);
+  };`;
+
+test("typeahead: in a background tab, text cleared on blur or focusout is still withdrawn", async () => {
+  for (const ev of ["blur", "focusout"]) {
+    const { dom } = onPage(`<label for=t>Team</label><input id=t role=combobox aria-autocomplete=list>`,
+      BACKGROUND_JS + `const t = document.getElementById('t'); t.addEventListener('${ev}', () => { t.value = ''; });`);
+    const o = await fill({ label_pattern: "team", text: "Platform" });
+    assert.equal(o.ok, false, ev + " " + JSON.stringify(o));
+    assert.match(o.error, /withdrawn/);
+  }
+});
+
+// Two widgets from separate React roots can share an instance id, so both
+// inputs name the same listbox id. The typeahead's own list is the one beside it.
+const TWIN_IDS = `<div class=a><input role=combobox aria-label=Country aria-controls=rs-2-listbox>
+    <div id=rs-2-listbox role=listbox><div role=option id=wrong>Toronto Country</div></div></div>
+  <div class=b><label for=c>City</label><input id=c role=combobox aria-autocomplete=list aria-controls=rs-2-listbox>
+    <div id=rs-2-listbox role=listbox class=mine></div><input type=hidden name=city></div>`;
+const TWIN_IDS_JS = `
+  window.wrong = 0; document.getElementById('wrong').addEventListener('click', () => window.wrong++);
+  const inp = document.getElementById('c'), mine = document.querySelector('.mine');
+  inp.addEventListener('input', () => { later(() => {
+    mine.innerHTML = '<div role=option>Toronto, ON, Canada</div>';
+    mine.firstChild.addEventListener('click', () => { inp.value = 'Toronto, ON, Canada'; document.querySelector('[name=city]').value = 'to'; });
+  }, 3); });`;
+
+test("typeahead: a duplicated list id resolves to the list beside the input", async () => {
+  const { dom } = onPage(TWIN_IDS, TWIN_IDS_JS);
+  const o = await fill({ label_pattern: "^city", text: "Toronto" });
+  assert.equal(dom.wrong, 0);
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Toronto, ON, Canada");
+});
+
 // react-select with async loadOptions: role=combobox on an inner input that is
 // emptied after a pick; the choice shows in the control and a hidden input.
 const ASYNC_SELECT = `<label id=l>City</label>
