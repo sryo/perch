@@ -9,6 +9,7 @@ import { makeWorld } from "./fakes/jxa-world.mjs";
 
 const chrome = (windows, extra = {}) => ({ name: "Google Chrome", kind: "chrome", windows, ...extra });
 const safari = (windows, extra = {}) => ({ name: "Safari", kind: "safari", windows, ...extra });
+const arc = (windows, extra = {}) => ({ name: "Arc", kind: "arc", windows, ...extra });
 const tabs = (n, p = "t") => Array.from({ length: n }, (_, i) => ({ url: `https://${p}${i}.test/`, title: `${p}${i}`, id: `${p}${i}` }));
 
 let world;
@@ -148,13 +149,43 @@ test("default-target eval_js is one Apple Event on Chrome and on Safari", async 
 
 test("list_tabs reads every window of a browser in bulk", async () => {
   const wins = (p) => [{ id: 1, active: 1, tabs: tabs(2, p + "a") }, { id: 2, active: 0, tabs: tabs(3, p + "b") }, { id: 3, active: 2, tabs: tabs(4, p + "c") }];
-  for (const [spec, budget] of [[chrome(wins("c")), 5], [safari(wins("s")), 4]]) {
+  for (const [spec, budget] of [[chrome(wins("c")), 4], [safari(wins("s")), 4]]) {
     install({ browsers: [spec], cg: [{ owner: spec.name }] });
     const { o } = await call("list_tabs", { app: spec.name });
     assert.equal(o.total, 9);
     assert.deepEqual(o.tabs.filter((t) => t.active).map((t) => t.url), [`https://${spec.name === "Safari" ? "s" : "c"}a1.test/`, `https://${spec.name === "Safari" ? "s" : "c"}b0.test/`, `https://${spec.name === "Safari" ? "s" : "c"}c2.test/`]);
     assert.ok(appleEvents() <= budget, spec.name + " " + breakdown());
   }
+});
+
+test("list_tabs reads every Arc window in bulk, in sidebar order", async () => {
+  const shared = tabs(3, "b");
+  install({
+    browsers: [arc([
+      { id: "W1", active: 1, sidebar: ["a1", "a0"], tabs: [...tabs(2, "a"), { url: "https://f.test/", title: "f", id: "f", location: "topApp" }] },
+      { id: "W2", active: 0, tabs: shared },
+      { id: "W3", active: 2, tabs: shared },
+      { id: "W4", active: null, tabs: [] },
+    ])],
+    cg: [{ owner: "Arc" }],
+  });
+  const { o } = await call("list_tabs", { app: "Arc" });
+  assert.deepEqual(o.tabs.map((t) => [t.tabId, !!t.active, !!t.favorite]), [
+    ["arc:f", false, true], ["arc:a1", true, false], ["arc:a0", false, false],
+    ["arc:b0", true, false], ["arc:b1", false, false], ["arc:b2", true, false],
+  ]);
+  assert.ok(appleEvents() <= 6, breakdown());
+});
+
+test("list_tabs with urlContains stops at one read for a browser with no match", async () => {
+  install({
+    browsers: [chrome([{ id: 1, active: 0, tabs: tabs(3, "c") }]), arc([{ id: "A", active: 0, tabs: tabs(3, "a") }]), safari([{ id: 3, active: 1, tabs: tabs(2, "s") }])],
+    cg: [{ owner: "Google Chrome" }, { owner: "Arc" }, { owner: "Safari" }],
+  });
+  const { o } = await call("list_tabs", { urlContains: "S1.test" });
+  assert.deepEqual(o.tabs.map((t) => [t.app, t.url, !!t.active]), [["Safari", "https://s1.test/", true]]);
+  assert.equal(o.total, 1);
+  assert.ok(appleEvents() <= 1 + 1 + 4, breakdown());
 });
 
 // JXA launches an app whose windows are touched, so a remembered tab must not

@@ -227,7 +227,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
           title: () => { bump("tabs.title()"); return wins.map((w) => w.tabs.map((t) => t.spec.title || "")); },
           name: () => { bump("tabs.title()"); return wins.map((w) => w.tabs.map((t) => t.spec.title || "")); },
           id: () => { bump("tabs.id()"); return wins.map((w) => w.tabs.map((t) => t.spec.id)); },
+          location: () => { bump("tabs.location()"); return wins.map((w) => w.tabs.map((t) => t.spec.location || "unpinned")); },
         };
+        // Arc: a window showing no tab reads as null here, though its own activeTab.id() throws.
+        if (k === "activeTab") return { id: () => { bump(`windows.activeTab.id()(${b.name})`); if (b.kind !== "arc" || state.arcBulkFails) throw new Error("Can't convert types"); return wins.map((w) => (w.tabs[w.spec.active] ? w.tabs[w.spec.active].spec.id : null)); } };
+        if (k === "activeSpace") return { tabs: { id: () => { bump("space.tabs.id()"); if (b.kind !== "arc") throw new Error("Can't get object."); return wins.map((w) => w.spec.sidebar || w.tabs.filter((t) => t.spec.location !== "topApp").map((t) => t.spec.id)); } } };
         if (k === "activeTabIndex") return () => { bump(`windows.activeTabIndex()(${b.name})`); if (b.kind !== "chrome") throw new Error("Can't convert types"); return wins.map((w) => w.spec.active + 1); };
         if (k === "currentTab") return { index: () => { bump(`windows.currentTab.index()(${b.name})`); if (b.kind !== "safari") throw new Error("Can't convert types"); return wins.map((w) => w.spec.active + 1); } };
         return undefined;

@@ -440,6 +440,17 @@ test("windows sharing tabs: each tab listed once, tabId runs through the window 
   assert.equal(world.page("Arc", 1, 2).hit, 1);
 });
 
+test("Arc list_tabs gives the same rows when the all-windows read fails", async () => {
+  const shared = tabs(3, "a");
+  const spec = () => [{ id: "W1", active: 0, tabs: shared }, { id: "W2", active: 2, tabs: shared }, { id: "W3", active: 1, sidebar: ["b1", "b0"], tabs: tabs(2, "b") }];
+  install({ browsers: [arc(spec())], cg: [{ owner: "Arc" }] });
+  const bulk = (await call("list_tabs", {})).o;
+  install({ browsers: [arc(spec())], cg: [{ owner: "Arc" }] });
+  world.state.arcBulkFails = true;
+  assert.deepEqual((await call("list_tabs", {})).o, bulk);
+  assert.deepEqual(bulk.tabs.map((t) => [t.tabId, !!t.active]), [["arc:a0", true], ["arc:a1", false], ["arc:a2", true], ["arc:b1", true], ["arc:b0", false]]);
+});
+
 test("an Arc tabId active in no window is refused as not visible, never executed", async () => {
   const shared = tabs(3, "a");
   install({ browsers: [arc([{ id: "W1", active: 0, tabs: shared }, { id: "W2", active: 0, tabs: shared }])], cg: [{ owner: "Arc" }] });
