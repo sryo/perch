@@ -190,3 +190,15 @@ lives in AGENTS.md.
   page as referrer and may run `beforeunload`. Deferred: navigate with the
   browser behind another app (Canary was frontmost in this run), Arc and
   Safari, and the frame guards live.
+- **Round 7 (2026-09): navigate reports only real loads, clicks stay out
+  of frames.** A page-started `navigate` counts as waited only when the tab's
+  URL moved, and a lost stamp reply infers a started load only when the tab
+  was idle before it (goal 2: a download, 204 or dropped load no longer reads
+  `waited:true`). A page that cancels the load through the Navigation API gets
+  the url set with the `warning`. A trusted click by selector, ref or point
+  refuses when it would land on an IFRAME, FRAME, OBJECT or EMBED, so frames
+  take only `fN` refs (safety, failing closed; a click by point now needs page
+  JS). Budgets unchanged: `tools/list` 8544 chars, SKILL.md 6792 bytes.
+  Accepted: `raise:true` has already raised the window when a point click is
+  refused. Deferred: every round-7 path live, navigate with the browser behind
+  another app (Canary was frontmost again), Arc and Safari.
