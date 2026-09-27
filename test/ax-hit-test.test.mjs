@@ -201,3 +201,30 @@ test("an element that is itself a frame is refused before the page scrolls", () 
   assert.match(o.error, /embedded frame/);
   assert.equal(scrolled, 0);
 });
+
+// Another window of the same browser, in front of the target and over the point.
+const COVER = /another of the browser's windows covers the point/;
+function covered(extra = {}) {
+  const w = world();
+  w.cg.splice(1, 0, { owner: "Google Chrome", pid: 4242, wid: 51, x: 0, y: 57, w: 400, h: 300, ax: { web: [{ x: 0, y: 120, w: 400, h: 237 }] }, ...extra });
+  return w;
+}
+
+test("a point under another window of the browser says so, and posts nothing", async () => {
+  for (const extra of [{}, { axWid: 51 }]) {
+    const w = covered(extra);
+    for (const args of [{ selector: "#b" }, { x: 106, y: 167 }]) {
+      const o = await click(args);
+      assert.equal(o.ok, false, JSON.stringify(o));
+      assert.match(o.error, COVER);
+    }
+    assert.deepEqual(clicks(w), []);
+  }
+});
+
+test("a point on the target window's own toolbar is still browser UI, not another window", async () => {
+  covered();
+  const o = await click({ x: 600, y: 100 });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, OFF);
+});
