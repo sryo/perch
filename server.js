@@ -1391,12 +1391,14 @@ function jxaRuntime(BROWSERS) {
       const tabId = handleOf(T.t), want = a.rows[tabId];
       const miss = { __perch_ref_miss: true, ref: a.ref };
       if (!want) return miss;
+      const w = want.row, refuse = { ok: false, tabId: tabId, error: w.role + " " + JSON.stringify(w.name) + " is sign-in, challenge or password UI; hand it to the user" };
+      if (w.handoff) return refuse;
       visibleGuard(T.t, "click");
       const vp = parseExec(T.t, a.probe);
       if (!vp || String(vp.url).split("#")[0] !== String(want.url).split("#")[0]) return miss;
-      const w = want.row;
       const row = frameWalk(T.I, vp).rows.filter(function (r) { return r.url === w.url && r.role === w.role && r.name === w.name && r.ord === w.ord; })[0];
       if (!row) return miss;
+      if (row.flags.indexOf("secure") >= 0) return refuse;
       if (row.flags.indexOf("offscreen") >= 0) return { ok: false, tabId: tabId, error: w.role + " " + JSON.stringify(w.name) + " is outside the visible page; scroll it into view and snapshot again" };
       const pt = { x: row.box.x + row.box.w / 2, y: row.box.y + row.box.h / 2 };
       const before = frameState(row);
@@ -2677,6 +2679,17 @@ function frameHost(url) {
   try { const u = new URL(url); return u.host || (u.protocol + u.pathname).slice(0, 60); } catch { return String(url).slice(0, 60); }
 }
 
+// Sign-in and challenge frames are the user's. The path matters only for
+// google.com, which serves reCAPTCHA under /recaptcha beside ordinary embeds.
+const HANDOFF_HOST = /^(accounts\.google\.com|(www\.)?recaptcha\.net|([^.]+\.)*hcaptcha\.com|challenges\.cloudflare\.com|appleid\.apple\.com|idmsa\.apple\.com|([^.]+\.)*arkoselabs\.com|login\.microsoftonline\.com|login\.live\.com)$/;
+function handoffFrame(url) {
+  let u;
+  try { u = new URL(url); } catch { return false; }
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  return HANDOFF_HOST.test(host) || (/^(www\.)?google\.com$/.test(host) && /^\/recaptcha(\/|$)/.test(u.pathname));
+}
+const handoffError = (w) => `${w.role} ${JSON.stringify(w.name)} is sign-in, challenge or password UI; hand it to the user`;
+
 // Frame refs reach nothing but click {trusted:true}: no typing, reading or
 // uploading into embedded frames.
 function guardFrameRefs(name, args) {
@@ -2708,11 +2721,12 @@ async function accessibilitySnapshot(args = {}) {
     let truncated = !!r.truncated;
     for (const row of r.frames || []) {
       if (roles && !roles.includes(row.role)) continue;
-      const line = `${row.role} ${JSON.stringify(row.name)} frame=${JSON.stringify(frameHost(row.url))}${row.flags.map((f) => " " + f).join("")}`;
+      const flags = handoffFrame(row.url) ? row.flags.concat("handoff") : row.flags;
+      const line = `${row.role} ${JSON.stringify(row.name)} frame=${JSON.stringify(frameHost(row.url))}${flags.map((f) => " " + f).join("")}`;
       if (re && !re.test(line)) continue;
       if (lines.length >= max) { truncated = true; break; }
       const ref = "f" + (lines.length + 1);
-      rows[ref] = { url: row.url, role: row.role, name: row.name, ord: row.ord };
+      rows[ref] = { url: row.url, role: row.role, name: row.name, ord: row.ord, handoff: flags.includes("handoff") || flags.includes("secure") };
       lines.push(ref + " " + line);
     }
     head.frames = truncated ? { count: lines.length, truncated: true } : { count: lines.length };
@@ -2730,6 +2744,10 @@ async function frameClick({ ref, raise, target }) {
   const rows = {};
   for (const [h, e] of frameRefs) if (e.rows[ref]) rows[h] = { url: e.url, row: e.rows[ref] };
   if (!Object.keys(rows).length) return { __perch_ref_miss: true, ref };
+  // Refused before the runtime raises anything; the runtime checks again for
+  // a ref that also names an ordinary row in another tab.
+  const all = Object.values(rows);
+  if (all.every((e) => e.row.handoff)) return { ok: false, ref, frame: frameHost(all[0].row.url), error: handoffError(all[0].row) };
   const r = await rt("frameClick", { target, raise, ref, rows, probe: pageFn("viewport", {}) });
   if (!r || !rows[r.tabId]) return r;
   const { tabId, ...rest } = r;
