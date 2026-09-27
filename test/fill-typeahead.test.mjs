@@ -251,6 +251,71 @@ test("typeahead: async react-select picks after the debounced lookup and reads t
   assert.equal($(dom, "input[name=city]").value, "Toronto, ON, Canada");
 });
 
+// React 18 applies an onBlur state change after the blurring script ends: in a
+// microtask (or a 0ms timer), which here runs before the next execute.
+const DEFERRED = { microtask: "queueMicrotask", timeout: "setTimeout" };
+const deferJS = (kind) => `window.${DEFERRED[kind]} = (fn) => later(fn, 1);`;
+
+// react-select with no hidden input: blur resets the typed text.
+const RS_NO_HIDDEN = `<label id=l>Team</label><div class="select__container"><div class="select__control">
+  <input role=combobox aria-autocomplete=list aria-labelledby=l id=react-select-3-input></div></div>`;
+const RS_NO_HIDDEN_JS = (kind) => deferJS(kind) + `
+  const inp = document.getElementById('react-select-3-input');
+  inp.addEventListener('blur', () => ${DEFERRED[kind]}(() => { inp.value = ''; }));`;
+
+test("typeahead: text a React widget clears after the blur script ends is withdrawn", async () => {
+  for (const kind of Object.keys(DEFERRED)) {
+    const { dom } = onPage(RS_NO_HIDDEN, RS_NO_HIDDEN_JS(kind));
+    const o = await fill({ label_pattern: "team", text: "Zzz" });
+    assert.equal(o.ok, false, kind + " " + JSON.stringify(o));
+    assert.equal(o.kind, "typeahead");
+    assert.match(o.error, /withdrawn/);
+    assert.equal($(dom, "#react-select-3-input").value, "");
+  }
+});
+
+// Downshift's useCombobox: its own listbox filters the items, and blur with
+// nothing selected resets the input to the selected item's text ("").
+const DOWNSHIFT = `<label id=downshift-0-label for=downshift-0-input>Fruit</label>
+  <div><input id=downshift-0-input role=combobox aria-autocomplete=list aria-controls=downshift-0-menu aria-expanded=false></div>
+  <ul id=downshift-0-menu role=listbox aria-labelledby=downshift-0-label></ul>`;
+const DOWNSHIFT_JS = deferJS("microtask") + `
+  const inp = document.getElementById('downshift-0-input'), menu = document.getElementById('downshift-0-menu');
+  inp.addEventListener('input', () => { const q = inp.value.toLowerCase();
+    menu.innerHTML = ['Apple', 'Banana'].filter((f) => f.toLowerCase().includes(q)).map((f) => '<li role=option>' + f + '</li>').join(''); });
+  inp.addEventListener('blur', () => queueMicrotask(() => { inp.value = ''; menu.innerHTML = ''; }));`;
+
+test("typeahead: Downshift with no matching item withdraws the text", async () => {
+  const { dom } = onPage(DOWNSHIFT, DOWNSHIFT_JS);
+  const o = await fill({ label_pattern: "fruit", text: "Zzz" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /withdrawn/);
+  assert.equal($(dom, "#downshift-0-input").value, "");
+});
+
+// Its own list showed suggestions, none of them the text: the widget expects a
+// pick even though it keeps the typed text on blur.
+test("typeahead: own suggestions that never matched are ok:false with the candidates", async () => {
+  for (const hideAt of [0, 6]) {
+    const { dom } = onPage(`<label for=c>City</label><input id=c role=combobox aria-autocomplete=list aria-controls=c-list><ul id=c-list role=listbox></ul>`,
+      `const inp = document.getElementById('c'), ul = document.getElementById('c-list');
+      inp.addEventListener('input', () => { later(() => { ul.innerHTML = '<li role=option>Zurich</li><li role=option>Zagreb</li>'; }, 2);
+        if (${hideAt}) later(() => { ul.innerHTML = ''; }, ${hideAt}); });`);
+    const o = await fill({ label_pattern: "city", text: "Zzz" });
+    assert.equal(o.ok, false, hideAt + " " + JSON.stringify(o));
+    assert.deepEqual(o.candidates, ["Zurich", "Zagreb"]);
+    assert.equal($(dom, "#c").value, "");
+  }
+});
+
+test("typeahead: a list id with a quote or backslash still resolves to the list beside the input", async () => {
+  const { dom } = onPage(TWIN_IDS.replaceAll("rs-2-listbox", `'rs"2\\-listbox'`), TWIN_IDS_JS);
+  const o = await fill({ label_pattern: "^city", text: "Toronto" });
+  assert.equal(dom.wrong, 0);
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Toronto, ON, Canada");
+});
+
 test("fill {fields}: a typeahead in the middle is resolved in order", async () => {
   const { dom } = onPage(LOCATION, LOCATION_JS());
   const o = await fill({ fields: [{ selector: "#loc", text: "Rosario del" }, { label_pattern: "name", text: "Ada" }] });
