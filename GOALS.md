@@ -216,3 +216,26 @@ lives in AGENTS.md.
   leave its field cleared; `raise:true` has already raised the window when
   it refuses. Deferred: the hit test and `CFEqual` binding live, a real
   challenge widget in a closed shadow root, Arc and Safari.
+- **Round 9 (2026-09): pick from the control's own list, and believe the
+  site.** `select` reads only the target control's own options (a text like
+  "UX" can no longer pick another control's "Luxembourg"), and a miss or
+  `text:""` returns them as `candidates` (goal 2). Plain `fill` on a typeahead
+  types, waits for the widget's own suggestion, picks it and checks the
+  hidden companion, since typed text alone is cleared or rejected; phone
+  masks pass on a digits match. `file_upload` ranks file inputs by `accept`
+  and a resume/CV name, and reports a site that swaps or empties its input as
+  `detached`/`cleared` instead of `ok:false`. A frame click must hit its own
+  row at its center (safety, failing closed). `list_tabs` counts browsers
+  past `limit` instead of listing them and geometry is one read (goal 4:
+  list_tabs p50 150.9 -> 66.3ms on Canary). new_tab fails with `no_browser`
+  when no tab appears. Live on a local fixture with real react-select,
+  Downshift, Radix+cmdk and plain widgets, in Canary's and Safari's
+  background tabs and Arc's shown tab, every select, fill and upload landed
+  after two fixes: a background tab's `focus()` fires no focus event, so
+  react-select never opened (select now presses first and sends one), and
+  cmdk's own search box got the Escape meant for other menus. `tools/list`
+  8796 chars, SKILL.md 6791 bytes, budgets unchanged. Accepted: a typeahead
+  with no matching suggestion fails with its text withdrawn; a miss can take
+  2.5s (select) or 3s (fill). Deferred: every trusted path live (Canary was
+  frontmost), the frame hit test and covering-window message, and real
+  sites' async uploads.
