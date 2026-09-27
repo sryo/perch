@@ -158,3 +158,11 @@ lives in AGENTS.md.
   activates (goal 1). Deferred: why, and a fix; the dialog proof and the
   whitelist against the real dialog tree (no live dialog tests while the user
   may type); frame links, `raise:true` frame clicks, Safari and Arc frames.
+- **Frame hand-off (2026-09): sign-in and challenge frames refuse clicks.**
+  Frame rows from a short fixed list of sign-in and challenge hosts (Google,
+  Apple and Microsoft sign-in, reCAPTCHA, hCaptcha, Turnstile, Arkose) are
+  flagged `handoff`, and a trusted click on a `handoff` or `secure` row
+  returns `{ok:false}` with a hand-to-user message before anything is raised
+  or posted (safety; goal 3: the snapshot shows it before the agent tries).
+  Rejected: leaving it to SKILL.md, a configurable list, and guessing
+  challenges from control names. Unverified live.
