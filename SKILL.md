@@ -20,8 +20,8 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `wait` | Until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`). |
 | `screenshot` | On-screen window image without raising it, plus `{window, image}` for mapping: `screenX = window.x + imageX * window.w / image.w`. Minimized windows cannot be captured. |
 | `get_text` | innerText, or outerHTML with `html: true`. Paged by `offset` / `maxChars`. |
-| `accessibility_snapshot` | Page outline with refs (format below). Filter with `role`; `max: 0` for the header only. |
-| `console_capture` | `start`, `read` drains `"level: text"`, `stop` restores; navigation clears it. `network` drains finished requests. |
+| `accessibility_snapshot` | Page outline with refs (format below), open shadow roots included. Filter with `role`, or `query` (a regex over each line); `max: 0` for the header only. |
+| `console_capture` | `start`, `read` drains `"level: text"`, `stop` restores; navigation clears it. `network` drains finished requests as `"status type ms size url"`. |
 | `click` | By `ref` / `selector`. `readback: css` adds `{readback, changed, url?}`: its text once changed (2s cap), no follow-up read. `trusted: true`: see below. |
 | `fill` | Inputs, textareas, rich editors; verifies the text landed. `text_path` for long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>`, react-select, ARIA combobox/listbox; reads back what's shown. |

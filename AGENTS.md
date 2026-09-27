@@ -80,7 +80,8 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 **Page scripts.** One prelude defines `vis`, `labelText`/`hintText`/`accName` (accessible-name precedence), `role`, `ident` (`role "name"`), `setNativeValue` (the prototype setter, which reaches React-controlled fields), `fire` and `resolveEl`.
 - **Arguments:** every tool body reads its arguments from `A`; no user value is spliced into code.
 - **Refs:** `resolveEl` treats a missing or detached ref as `{__perch_ref_miss}`, which `formatResult` turns into an error with a re-snapshot hint.
-- **Snapshot:** `accessibility_snapshot` stores elements on `window.__perch_refs` (a plain object, since a Map breaks the JSON round trip). It emits a line format: a `# {header}` line, then `ref role "name" key=json... flags`.
+- **Snapshot:** `accessibility_snapshot` stores elements on `window.__perch_refs` (a plain object, since a Map breaks the JSON round trip). It emits a line format: a `# {header}` line, then `ref role "name" key=json... flags`. `query` tests each line without its ref; refs number only the kept lines, and the header adds `matched` (all matches, even past `max`).
+- **Shadow DOM:** the prelude's `deepAll` walks open shadow roots in document order. The snapshot, fill's label search, and the selector fallback in `resolveEl` use it; aria-labelledby resolves in the element's own root, and the focus header descends into shadow roots. Closed roots and iframes stay out of reach.
 
 **Tab indices are positional.** `tabIndex` is the tab's current position; opening or closing tabs shifts it. It is still accepted in `target` but no longer listed; rows carry only the handle.
 
