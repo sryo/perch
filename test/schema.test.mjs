@@ -3,13 +3,35 @@ import assert from "node:assert/strict";
 import { writeFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, composeEvalScript, shapeTabs, formatResult } from "../server.js";
+import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, composeEvalScript, shapeTabs, formatResult, JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
+import { makeWorld } from "./fakes/jxa-world.mjs";
 
 test("tool schemas stay within the token budget", () => {
   const size = JSON.stringify(TOOLS).length;
   assert.ok(size < SCHEMA_BUDGET, `${size} chars >= ${SCHEMA_BUDGET}`);
   for (const t of TOOLS) assert.ok(JSON.stringify(t).length < 900, `${t.name} is ${JSON.stringify(t).length} chars`);
   assert.ok(INSTRUCTIONS.length < 1200, `instructions ${INSTRUCTIONS.length}`);
+});
+
+test("target lists only tabId and app; windowId and tabIndex are still accepted", async () => {
+  const targeted = TOOLS.filter((t) => t.inputSchema.properties.target);
+  assert.equal(targeted.length, 13);
+  for (const t of targeted) {
+    const target = t.inputSchema.properties.target;
+    assert.deepEqual(Object.keys(target.properties), ["tabId", "app"], t.name);
+    assert.notEqual(target.additionalProperties, false, t.name);
+  }
+  const world = makeWorld({ browsers: [{ name: "Google Chrome", kind: "chrome", windows: [
+    { id: 1, active: 0, tabs: [{ url: "https://a.test/", title: "a", id: "a" }] },
+    { id: 2, active: 0, tabs: [{ url: "https://b.test/", title: "b", id: "b" }, { url: "https://c.test/", title: "c", id: "c" }] },
+  ] }], cg: [{ owner: "Google Chrome" }] });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  world.reset();
+  const r = await handleCall("eval_js", { script: "window.hit = 1; return location.href", target: { app: "chrome", windowId: 2, tabIndex: 1 } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(world.page("Google Chrome", 1, 1).hit, 1);
 });
 
 test("tool surface is the agreed 17", () => {
