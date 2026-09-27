@@ -915,7 +915,7 @@ function jxaRuntime(BROWSERS) {
     const wins = t.P.byPid[I.pid] || [];
     const near = function (a, b) { return Math.abs(a.x - b.x) <= 4 && Math.abs(a.y - b.y) <= 4 && Math.abs(a.w - b.w) <= 4 && Math.abs(a.h - b.h) <= 4; };
     return found.filter(function (d) {
-      if (d.pid !== I.pid || !d.frame || I.windowNumber == null) return false;
+      if (d.pid !== I.pid || !d.frame || I.windowNumber == null || I.ambiguous) return false;
       const at = [];
       wins.forEach(function (c, i) { if (near(c, d.frame)) at.push(i); });
       d.t = t;

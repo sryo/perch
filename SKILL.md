@@ -24,7 +24,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `accessibility_snapshot` | Page outline with refs (below), open shadow roots included. Filter with `role` or `query` (regex per line); `max: 0`: header only. |
 | `console_capture` | `start`, `read` drains `"level: text"`, `stop` restores; navigation clears it. `network` drains finished requests as `"status type ms size url"`. |
 | `click` | By `ref` / `selector`. `readback: css` adds `{readback, changed, url?}`: its text once changed (2s cap). `hover: true` fires hover events only (JS menus, not CSS `:hover`). `trusted`: below. |
-| `press` | `key` (`Enter`, `Escape`, `Tab`, `ArrowDown`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if its page has the keyboard, else `tab_not_visible` (trusted click it first); check `hit`. |
+| `press` | `key` (`Enter`, `Escape`, `Tab`, `ArrowDown`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | Inputs, textareas, rich editors; verifies it landed. `text_path` for long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>`, react-select, ARIA combobox/listbox; reads back what's shown. |
 | `file_upload` | Put a local file on an `<input type=file>` without the bytes entering context. |
@@ -48,21 +48,21 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 - `fill` returns `{ok, kind: "plain"|"rich", el: 'textbox "Email"', len, ambiguous?}`. `ok: true` is proof; don't re-check.
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change.
 - `fill {trusted:true}` returns `{ok, trusted, value, el}`. Require both `ok` and `trusted`.
-- Page errors come back as `isError` with `__perch_error`, `__perch_error_name`, a stack head.
+- Page errors: `isError` with `__perch_error`, `__perch_error_name`, a stack head.
 - Other errors start with a code; branch on it, not on the browser. `tab_not_visible`: not the tab its window shows; `activate_tab` (takes focus) or retry later. `stale_tab`: re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `window_ambiguous`: move or resize a same-frame window. `no_browser`: none running or no window (never launched). `timeout`: re-list, retry once. `tab_not_scriptable`: internal page; `navigate` first. `dialog_open`: see Dialogs.
 
 ## Gotchas
 
-- **Page globals may be invisible.** Some browsers run eval in an isolated world that shares the DOM but not the page's JS globals. Read page state through the DOM, not `window.*`.
+- **Page globals may be invisible.** Some browsers eval in an isolated world: the DOM is shared, the page's JS globals aren't. Read page state through the DOM.
 - **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait`, which polls from outside.
 - **Return summaries, not state.** Results land in context verbatim.
 - **Dialogs.** A call stuck behind a page's alert/confirm/prompt fails in ~3s with `dialog_open`. Answer with `press {key:"Enter"|"Escape", dialog:true, target:{tabId}}` (a string fills a prompt), no raise, then re-read the page. Only the tab's own JS dialog is answered; sign-in, permission or passkey prompts go to the user.
 
 ## Trusted input
 
-`fill {trusted: true}` edits a plain input or textarea through the browser's editing command, verifying a trusted `input` event and the exact value. It works wherever page JS runs, minimized windows included, without selecting the tab or taking key focus. `click {trusted: true}` uses SkyLight to reach an on-screen, unminimized window without activating it or moving the cursor; its tab must be the one its window shows (else `tab_not_visible`). Plain `click` works in any tab; verify the outcome. `raise: true` uses the foreground HID route: brief focus, cursor restored. Rich editors rarely need trusted mode.
+`fill {trusted: true}` edits a plain input or textarea through the browser's editing command, verifying a trusted `input` event and the exact value. It works wherever page JS runs, minimized windows included, without selecting the tab or taking key focus. `click {trusted: true}` reaches an on-screen, unminimized window without activating it or moving the cursor; its tab must be the one its window shows (else `tab_not_visible`). Plain `click` works in any tab; verify the outcome. `raise: true` takes focus briefly (HID route), cursor restored. Rich editors rarely need trusted mode.
 
-`accessibility_snapshot {frames:true}` adds iframe controls (payment, widgets) as `fN` rows, never values. `fN` takes only `click {trusted:true}`; read its `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's.
+`accessibility_snapshot {frames:true}` adds iframe controls as `fN` rows, never values. `fN` takes only `click {trusted:true}`; read its `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's.
 
 ## Permissions
 

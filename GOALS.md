@@ -166,3 +166,13 @@ lives in AGENTS.md.
   or posted (safety; goal 3: the snapshot shows it before the agent tries).
   Rejected: leaving it to SKILL.md, a configurable list, and guessing
   challenges from control names. Unverified live.
+- **Round 5 (2026-09): fail closed on focus and window identity.** A
+  background `press {trusted}` refuses unless Accessibility shows the target's
+  window as the browser's key window and focus inside its page (goal 2: a key
+  in the address bar reloaded the tab). A target window whose frame another of
+  the browser's windows shares is `window_ambiguous` for trusted input and
+  frame reads, and its dialogs are not attributed (goal 1 over reach).
+  `tools/list` 8544 chars, SKILL.md 6792 bytes, budgets unchanged (goal 4).
+  Diagnosed live: `navigate` raises Chrome through AppleScript `set URL`
+  itself. Deferred: the page-JS navigation fix (unmeasured, and it changes
+  referrer and `beforeunload` behavior), and every round-5 guard live.

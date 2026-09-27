@@ -16,7 +16,7 @@ afterEach(() => {
 // c.test (tab 7) behind it, window 3 (410) shows www.d.test (tab 8). Chrome's
 // window 2 (500) shows b.test. A dialog's `parent` is the window it is a child of.
 let world;
-function install(dialogs = [], { urls = {} } = {}) {
+function install(dialogs = [], { urls = {}, cg = [] } = {}) {
   world = makeWorld({
     browsers: [
       { name: CANARY, kind: "chrome", windows: [
@@ -30,6 +30,7 @@ function install(dialogs = [], { urls = {} } = {}) {
       { owner: CANARY, pid: 40, wid: 400, x: 0, y: 0, w: 800, h: 700, ax: { web: [{ x: 0, y: 80, w: 800, h: 620 }] } },
       { owner: CANARY, pid: 40, wid: 410, x: 900, y: 0, w: 800, h: 600 },
       { owner: "Google Chrome", pid: 50, wid: 500, x: 1800, y: 0, w: 800, h: 600 },
+      ...cg,
     ],
   });
   world.run(JXA_PRELUDE);
@@ -95,6 +96,12 @@ test("a dialog without a matching CG child entry, or with two, is not attributed
   assert.equal(dialogsOf(A).length, 1, "within 4px");
   // Two identical children of window 400: the upper one's next entry is the other dialog.
   install([confirmBox(), confirmBox()]);
+  assert.deepEqual(dialogsOf(A), []);
+});
+
+test("a dialog over a window that shares its frame with another is not attributed", () => {
+  // Window 420 sits exactly where window 400 does: geometry can't say which is the target's.
+  install([confirmBox()], { cg: [{ owner: CANARY, pid: 40, wid: 420, x: 0, y: 0, w: 800, h: 700 }] });
   assert.deepEqual(dialogsOf(A), []);
 });
 
