@@ -1397,6 +1397,16 @@ const INPUT_SKIP = ["hidden", "checkbox", "radio", "file", "submit", "button", "
 function attr(el, k) { return (el && el.getAttribute && el.getAttribute(k)) || ""; }
 function clip(s, n) { s = String(s == null ? "" : s).replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; }
 function textOf(n) { return n ? (n.innerText || n.textContent || "") : ""; }
+// querySelectorAll over the document and every open shadow root, in document
+// order: a shadow tree's matches follow its host. Closed roots stay unreachable.
+function deepAll(sel, root) {
+  const out = [];
+  for (const el of (root || document).querySelectorAll("*")) {
+    if (el.matches(sel)) out.push(el);
+    if (el.shadowRoot) out.push.apply(out, deepAll(sel, el.shadowRoot));
+  }
+  return out;
+}
 // A <label>'s own words, without the text of the control(s) it wraps.
 function labelWords(l) {
   const c = l.cloneNode(true);
@@ -1415,7 +1425,8 @@ function vis(el) {
 function labelText(el) {
   const ids = attr(el, "aria-labelledby");
   if (ids) {
-    const t = ids.split(/\s+/).map(function (id) { return textOf(document.getElementById(id)); }).join(" ");
+    const root = el.getRootNode().getElementById ? el.getRootNode() : document;
+    const t = ids.split(/\s+/).map(function (id) { return textOf(root.getElementById(id)); }).join(" ");
     if (t.trim()) return clip(t, 120);
   }
   const al = attr(el, "aria-label");
@@ -1470,7 +1481,7 @@ function resolveEl(a, dflt) {
   const sel = a.selector || dflt;
   if (!sel) return { el: null };
   let el;
-  try { el = document.querySelector(sel); } catch (e) { return { out: { ok: false, error: "bad selector: " + sel } }; }
+  try { el = document.querySelector(sel) || deepAll(sel)[0]; } catch (e) { return { out: { ok: false, error: "bad selector: " + sel } }; }
   return el ? { el: el } : { out: { ok: false, error: "no element for selector " + sel } };
 }
 `;
@@ -1588,7 +1599,7 @@ function fillOne(a) {
   // hidden one and text never lands silently in the wrong element.
   const re = new RegExp(a.label_pattern, "i");
   const scored = [];
-  document.querySelectorAll("textarea, input, [contenteditable], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe").forEach(function (el) {
+  deepAll("textarea, input, [contenteditable], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe").forEach(function (el) {
     if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return;
     if (el.hasAttribute("contenteditable") && !editable(el)) return;
     const root = el.tagName === "IFRAME" ? el.contentDocument && el.contentDocument.body : el;
@@ -1644,17 +1655,17 @@ const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role]
 const roles = A.role == null ? null : [].concat(A.role);
 const q = JSON.stringify;
 const origin = location.origin;
+// A query tests each line without its ref and keeps counting matches past max.
+const re = A.query == null ? null : new RegExp(A.query, "i");
 const lines = [];
-let n = 0, truncated = false;
-for (const el of document.querySelectorAll(SEL)) {
+let n = 0, matched = 0, truncated = false;
+for (const el of deepAll(SEL)) {
   const r = role(el);
   if (roles && roles.indexOf(r) < 0) continue;
   if (!vis(el)) continue;
-  if (n >= A.max) { truncated = true; break; }
-  const ref = String(++n);
-  refs[ref] = el;
+  if (!re && n >= A.max) { truncated = true; break; }
   const tag = el.tagName;
-  let line = ref + " " + r + " " + q(accName(el));
+  let line = r + " " + q(accName(el));
   const kv = function (k, v) { line += " " + k + "=" + q(v); };
   if (r === "heading") { const m = /^H([1-6])$/.exec(tag); kv("level", m ? Number(m[1]) : Number(attr(el, "aria-level")) || 0); }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) && el.name) kv("name", el.name);
@@ -1675,11 +1686,18 @@ for (const el of document.querySelectorAll(SEL)) {
   if (el.checked) line += " checked";
   if (el.disabled) line += " disabled";
   if (attr(el, "aria-expanded") === "true") line += " expanded";
-  lines.push(line);
+  if (re && !re.test(line)) continue;
+  matched++;
+  if (n >= A.max) { truncated = true; continue; }
+  const ref = String(++n);
+  refs[ref] = el;
+  lines.push(ref + " " + line);
 }
 const head = { url: location.href, title: document.title, ready: document.readyState, count: n };
+if (re) head.matched = matched;
 if (truncated) head.truncated = true;
-const act = document.activeElement;
+let act = document.activeElement;
+while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
 if (act && act !== document.body && act !== document.documentElement) {
   let fr = null;
   for (const k in refs) if (refs[k] === act) { fr = k; break; }
@@ -2038,8 +2056,8 @@ export function pageScript(name, A) {
   return PAGE_PRELUDE + "\nconst A = " + JSON.stringify(A) + ";\n" + (name ? PAGE_SCRIPTS[name] : "");
 }
 
-export function validateLabelPattern(tool, p) {
-  try { new RegExp(p, "i"); } catch (e) { throw new Error(`${tool}: invalid label_pattern: ${e.message}`); }
+export function validateLabelPattern(tool, p, param = "label_pattern") {
+  try { new RegExp(p, "i"); } catch (e) { throw new Error(`${tool}: invalid ${param}: ${e.message}`); }
 }
 
 const runPage = (tool, name, A, target, opts = {}) => evalJs(pageScript(name, A), target, { tool, ...opts });
@@ -2054,9 +2072,10 @@ async function getText(args = {}) {
 }
 
 async function accessibilitySnapshot(args = {}) {
-  const { role = null, target } = args;
+  const { role = null, query = null, target } = args;
   const max = args.max == null ? 500 : Math.max(0, Number(args.max) || 0);
-  return runPage("accessibility_snapshot", "snapshot", { max, role }, target);
+  if (query != null) validateLabelPattern("accessibility_snapshot", query, "query");
+  return runPage("accessibility_snapshot", "snapshot", { max, role, query }, target);
 }
 
 async function consoleCapture(args = {}) {
@@ -2291,6 +2310,7 @@ const TOOLS = [
   tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`. Refs feed click/fill/select/get_text.", {
     max: { type: "number", description: "Element cap, default 500; 0 = header only." },
     role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles, e.g. textbox, combobox, button." },
+    query: { type: "string", description: "Regex over each line; others dropped." },
     target: TARGET,
   }),
   tool("console_capture", "Patch console.* in the page: `start`, then `read` drains entries as \"level: text\" strings, `stop` restores. Navigation clears it.", {
