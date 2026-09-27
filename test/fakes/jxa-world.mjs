@@ -390,6 +390,32 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     return v == null ? null : v;
   }
 
+  // Hit testing: the element Accessibility finds at a screen point in the pid's
+  // windows, front to back. A dialog's child window comes first, then each CG
+  // entry with `ax`: inside a web area box the deepest frame holding the point,
+  // and in it a kid holding it; elsewhere in the window, its toolbar. Each hit
+  // carries its `parent` chain up to the window. `state.hitFail` makes the hit
+  // test itself fail (kAXErrorCannotComplete); `state.unbound` lists symbols
+  // bindFunction can't bind.
+  function hitAt(pid, x, y) {
+    const inBox = (b) => !!b && x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h;
+    const link = (chain) => { chain.forEach((el, i) => { el.parent = chain[i + 1] || null; }); return chain[0]; };
+    const d = state.dialogs.find((d) => d.pid === pid && inBox(dialogFrame(d)));
+    if (d) return link([{ role: "AXButton", title: d.buttons[0] }, { role: "AXGroup" }, { role: "AXWindow", subrole: "AXUnknown" }]);
+    for (const c of cgEntries) {
+      if (c.pid !== pid || !c.ax || !inBox(c.axFrame || c)) continue;
+      const win = { role: "AXWindow", subrole: "AXStandardWindow", c };
+      const web = c.ax.web.find(inBox);
+      if (!web) return link([{ role: "AXButton", title: "Reload" }, { role: "AXToolbar" }, win]);
+      const chain = [{ role: "AXWebArea", box: web }, { role: "AXGroup" }, win];
+      for (let fs = web.frames || [], f; (f = fs.filter((g) => inBox(g.box)).pop()); fs = f.frames || []) chain.unshift({ role: "AXWebArea", fr: f, box: f.box });
+      const kid = ((chain[0].fr && chain[0].fr.kids) || []).filter((k) => inBox(k.box)).pop();
+      chain.unshift(kid ? frameKid(kid) : { role: "AXStaticText" });
+      return link(chain);
+    }
+    return null;
+  }
+
   const sandbox = {
     Ref: () => [],
     Application: (name) => {
@@ -405,7 +431,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       castRefToObject: (x) => x,
       deepUnwrap: (x) => { bump("deepUnwrap"); return x; },
       unwrap: (x) => x,
-      bindFunction: () => {},
+      bindFunction: (name) => { if ((state.unbound || []).includes(name)) throw new Error("symbol not found: " + name); },
     },
     // JXA's `$` is callable (`$()` is a nil pointer) and carries the bridged symbols.
     // $(jsString) bridges to an NSString; only real UTF-16LE (0x94000100) encodes.
@@ -466,6 +492,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         if (el.d && !state.dialogs.includes(el.d)) return -25202;
         // A kid removed from its frame is gone, like a closed dialog's elements.
         if (el.fk && el.fk.gone) return -25202;
+        if (name.js === "AXParent" && el.parent !== undefined) {
+          if (!el.parent) return -25205;
+          out[0] = el.parent;
+          return 0;
+        }
         let f = focusAttr(el, name.js);
         if (f === undefined) f = frameAttr(el, name.js);
         const v = f === undefined ? axAttr(el, name.js) : f === null ? undefined : f;
@@ -491,6 +522,16 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         el.d.value = value.js;
         return 0;
       },
+      AXUIElementCopyElementAtPosition: (el, x, y, out) => {
+        bump("AX");
+        if (state.hitFail) return -25204; // kAXErrorCannotComplete
+        const hit = el.role === "AXApplication" ? hitAt(el.pid, x, y) : null;
+        if (!hit) return -25212; // kAXErrorNoValue
+        out[0] = hit;
+        return 0;
+      },
+      // Two element refs are equal when they name the same window or web area.
+      CFEqual: (a, b) => a === b || (!!a && !!b && a.role === b.role && ((!!a.box && a.box === b.box) || (!!a.c && a.c === b.c))),
       AXIsProcessTrustedWithOptions: () => state.ax,
       kCFBooleanFalse: false,
       kAXTrustedCheckOptionPrompt: "prompt",

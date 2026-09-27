@@ -619,19 +619,10 @@ function jxaRuntime(BROWSERS) {
     return r ? r.value : parseExec(t, a.readFinal);
   }
 
-  // Finds the screen point for a trusted press. The target tab is shown first: a
-  // background tab's screenX/outerWidth are stale. The page's estimate can't tell
-  // which side a panel is on, or the zoom. The Accessibility tree knows both: its
-  // page area is exact, and it answers for background windows, where directed
-  // mouse moves never reach the page (seen live on Chrome Canary). In the
-  // foreground a harmless mouse move at the estimate is posted and the page
-  // reports where it landed; the point is corrected (twice at most). With neither,
-  // the estimate is used as is and the result says so.
   // A refusal when the screen point falls on one of the page's embedded frames,
   // placed through Accessibility when it finds the page area, else by the page's
   // estimate. A page that can't answer fails closed.
-  function pointOnFrame(T, a) {
-    const f = parseExec(T.t, a.frames);
+  function pointOnFrame(T, a, f) {
     if (!f || !f.rects) return { ok: false, error: "could not check the page for embedded frames at that point, so nothing was clicked" + (f && f.__perch_error ? ": " + f.__perch_error : "") };
     if (!f.rects.length) return null;
     let w = null;
@@ -641,6 +632,31 @@ function jxaRuntime(BROWSERS) {
     return hit ? { ok: false, error: "point " + Math.round(a.x) + "," + Math.round(a.y) + " is on an embedded frame; reach frame controls through accessibility_snapshot {frames:true} and click an fN ref with trusted:true" } : null;
   }
 
+  // The last check before a trusted click posts, at its final screen point: the
+  // first web area up from Accessibility's hit there must be the page's own. Page
+  // JS misses a frame in a closed shadow root (elementFromPoint gives its host);
+  // another web area first is such a frame, none at all is browser UI, a bubble
+  // or a child window. A hit test that fails, or no page area, refuses too.
+  // `area` is the page area aim already read, if any.
+  function offPage(T, probe, pt, area) {
+    const ax = axInit();
+    if (area === undefined) try { area = axPageArea(T.I, probe); } catch (e) {}
+    let el = area ? ax.hit(T.I.pid, pt) : null;
+    for (let i = 0; el && i < 64; i++, el = ax.attr(el, "AXParent")) {
+      if (ax.str(el, "AXRole") === "AXWebArea") { if (ax.same(el, area.el)) return null; break; }
+    }
+    return { ok: false, error: "the point is not on the page itself (embedded frame or browser UI); frame controls need accessibility_snapshot {frames:true} and an fN ref" };
+  }
+
+  // Finds the screen point for a trusted press. The target tab is shown first: a
+  // background tab's screenX/outerWidth are stale. The page's estimate can't tell
+  // which side a panel is on, or the zoom. The Accessibility tree knows both: its
+  // page area is exact, and it answers for background windows, where directed
+  // mouse moves never reach the page (seen live on Chrome Canary). In the
+  // foreground a harmless mouse move at the estimate is posted and the page
+  // reports where it landed; the point is corrected (twice at most). The final
+  // point must then pass offPage, which needs the page area, so the estimate alone
+  // never clicks.
   function aim(T, a, tool) {
     if (!T.background) selectTab(T.t);
     visibleGuard(T.t, tool);
@@ -654,10 +670,11 @@ function jxaRuntime(BROWSERS) {
     if (!probe.ok) return { out: probe };
     let pt = { x: probe.x, y: probe.y };
     const trace = [];
-    let via = "estimate";
+    let via = "estimate", area;
     const fromAx = function () {
       let w = null;
       try { w = axPageArea(T.I, probe); } catch (e) {}
+      area = w;
       if (!w) return false;
       const p = { x: w.x + probe.cx * w.scale, y: w.y + probe.cy * w.scale };
       trace.push([Math.round(p.x - pt.x), Math.round(p.y - pt.y)]);
@@ -665,20 +682,14 @@ function jxaRuntime(BROWSERS) {
       via = "ax";
       return true;
     };
-    if (T.background && fromAx()) return aimed();
+    if (T.background) { fromAx(); return aimed(); }
     // Only the move this loop posted counts: late events and the user's real mouse
     // also reach the page, so match on the screen point the move was posted at.
     const ours = function (at) {
       for (let tries = 0; tries < 10; tries++) {
         let got = null;
         try { got = parseExec(T.t, a.cal); } catch (e) {}
-        // Directed SkyLight moves may report a window-local screenX/Y in Blink,
-        // so a background move also matches at the point relative to the window.
-        const near = function (v, x, y) { return Math.abs(v[2] - x) < 2 && Math.abs(v[3] - y) < 2; };
-        const r = T.I.cgBounds || T.I.geom;
-        const m = got && got.moves.filter(function (v) {
-          return near(v, at.x, at.y) || (T.background && near(v, at.x - r.x, at.y - r.y));
-        }).pop();
+        const m = got && got.moves.filter(function (v) { return Math.abs(v[2] - at.x) < 2 && Math.abs(v[3] - at.y) < 2; }).pop();
         if (m) return m;
         delay(0.025);
       }
@@ -686,8 +697,7 @@ function jxaRuntime(BROWSERS) {
     };
     for (let i = 0; i < 3; i++) {
       exec(T.t, a.calReset);
-      if (T.background) skyMouse(T.I, pt, 5, 2, 0, Date.now() % 1000000000);
-      else mouse(T.I, pt, 5, 0, 0.0); // kCGEventMouseMoved
+      mouse(T.I, pt, 5, 0, 0.0); // kCGEventMouseMoved
       const m = ours(pt);
       if (!m) break;
       via = "mouse";
@@ -696,13 +706,12 @@ function jxaRuntime(BROWSERS) {
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) break;
       pt = { x: pt.x + dx, y: pt.y + dy };
     }
-    if (via === "estimate" && !T.background) fromAx();
+    if (via === "estimate") fromAx();
     return aimed();
 
     function aimed() {
-      const A = { pt: pt, el: probe.el, calibrated: via !== "estimate", calibration: trace, aim: via };
-      if (via === "estimate") A.warning = "unconfirmed aim: no mouse move reached the page and Accessibility found no matching page area, so the press used the page's own estimate";
-      return A;
+      const off = offPage(T, probe, pt, area);
+      return off ? { out: off } : { pt: pt, el: probe.el, calibrated: true, calibration: trace, aim: via };
     }
   }
 
@@ -775,7 +784,23 @@ function jxaRuntime(BROWSERS) {
       const p = pair(el, "AXPosition", "x", "y"), s = pair(el, "AXSize", "w", "h");
       return p && s ? { x: p[0], y: p[1], w: s[0], h: s[1] } : null;
     };
-    axKit = { attr: attr, list: list, str: str, frame: frame, wid: wid };
+    // The element at a screen point in the pid's windows; null when the hit test
+    // fails or can't be bound.
+    let hitOk = false;
+    try { ObjC.bindFunction("AXUIElementCopyElementAtPosition", ["int", ["id", "float", "float", "id *"]]); hitOk = true; } catch (e) {}
+    const hit = function (pid, pt) {
+      if (!hitOk) return null;
+      try { const out = Ref(); return $.AXUIElementCopyElementAtPosition($.AXUIElementCreateApplication(pid), pt.x, pt.y, out) === 0 ? out[0] : null; } catch (e) { return null; }
+    };
+    // Whether two refs name one element: CFEqual, else the same frame within 1pt.
+    let eqOk = false;
+    try { ObjC.bindFunction("CFEqual", ["bool", ["id", "id"]]); eqOk = true; } catch (e) {}
+    const same = function (a, b) {
+      if (eqOk) return !!$.CFEqual(a, b);
+      const f = frame(a), g = frame(b);
+      return !!f && !!g && Math.abs(f.x - g.x) <= 1 && Math.abs(f.y - g.y) <= 1 && Math.abs(f.w - g.w) <= 1 && Math.abs(f.h - g.h) <= 1;
+    };
+    axKit = { attr: attr, list: list, str: str, frame: frame, wid: wid, hit: hit, same: same };
     return axKit;
   }
 
@@ -1389,7 +1414,8 @@ function jxaRuntime(BROWSERS) {
       let out;
       try {
         if (a.x != null) {
-          const framed = pointOnFrame(T, a);
+          const f = parseExec(T.t, a.frames);
+          const framed = pointOnFrame(T, a, f) || offPage(T, f, { x: a.x, y: a.y });
           if (framed) return framed;
           const bad = arm();
           if (bad && bad.ok === false) return bad;
@@ -1405,7 +1431,7 @@ function jxaRuntime(BROWSERS) {
           else leftClick(T.I, A.pt);
           delay(0.05);
           const check = parseExec(T.t, a.check);
-          out = Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim }, A.warning ? { warning: A.warning } : {}, { delivery: T.background ? "skylight" : "hid" }, check);
+          out = Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" }, check);
         }
       } finally {
         if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
@@ -1472,7 +1498,7 @@ function jxaRuntime(BROWSERS) {
         delay(0.05); // let focus settle before typing
         typeChunks(a.chunks);
         delay(0.05);
-        return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim }, A.warning ? { warning: A.warning } : {}, { delivery: "hid" }, parseExec(T.t, a.check));
+        return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: "hid" }, parseExec(T.t, a.check));
       } finally {
         $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
       }
