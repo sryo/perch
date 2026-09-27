@@ -153,6 +153,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         if (k === "push") return (t) => {
           // Arc's `make new tab` rejects about: and data: URLs (they can be set afterwards).
           if (b.kind === "arc" && /^(about|data):/.test(t.url)) throw new Error("Please provide a valid URL property for the make new tab command.");
+          // b.dropOnCreate: the browser accepts `make new tab` and silently makes nothing.
+          if (b.dropOnCreate) return;
           const tab = makeTab({ url: t.url, id: "new" + w.tabs.length }, b, w);
           if (b.kind === "arc" && state.arcSlowUrl && /^arc:/.test(t.url)) tab.slow = { ...state.arcSlowUrl, target: null }; w.tabs.push(tab); log.push(["newTab", b.name, t.url]);
           // b.selectOnCreate: the browser shows the tab it just made. b.raiseOnCreate:

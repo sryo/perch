@@ -1206,7 +1206,7 @@ function jxaRuntime(BROWSERS) {
       visibleGuard(t, "eval_js");
       exec(t, a.kick);
       const r = poll(t, a.poll, a.timeout, 50);
-      if (!r) throw new Error("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms");
+      if (!r) throw new Error("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms; background tabs throttle timers, so avoid page sleeps or activate the tab");
       return r.value;
     },
     wait(a) {
@@ -1320,8 +1320,9 @@ function jxaRuntime(BROWSERS) {
         if (newId == null && beforeIds) {
           try { newId = win.tabs.id().find(function (id) { return beforeIds.indexOf(id) < 0; }); } catch (e) {}
         }
+        // Arc can accept `make new tab` and silently make nothing.
+        if (newId == null) throw new Error("no_browser: " + name + " made no tab perch could find for " + a.url + "; retry, or use another browser");
         if (later) {
-          if (newId == null) throw new Error("no_browser: " + name + " created a tab perch could not find to load " + a.url);
           const nt = win.tabs.byId(newId);
           nt.url = a.url;
           // Until the URL commits the tab still shows arc://newtab, where page JS hangs.
@@ -2166,7 +2167,7 @@ function fillOne(a) {
     scored.push({ el: el, root: root, s: s });
   });
   scored.sort(function (a, b) { return b.s - a.s; });
-  if (!scored.length) return { ok: false, error: "no fillable field matched /" + a.label_pattern + "/i" };
+  if (!scored.length) return { ok: false, error: "no fillable field matched /" + a.label_pattern + "/i; it may appear only after clicking a button" };
   const best = scored[0];
   const out = tryFill(isField(best.el) ? best.el : best.root, best.el);
   if (!out) return { ok: false, error: ident(best.el) + " did not accept the text" };

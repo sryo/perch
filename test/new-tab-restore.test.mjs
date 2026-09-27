@@ -76,3 +76,13 @@ test("new_tab in an Arc window that shows no tab creates the tab and selects not
   assert.equal(o.tabId, "arc:new1");
   assert.equal(world.counts["tab.select"], undefined);
 });
+
+for (const [label, make, app, url] of [["Chrome", chrome, "Google Chrome", "https://n.test/"], ["Arc", arc, "Arc", "https://n.test/"], ["Arc about:", arc, "Arc", "about:blank"]]) {
+  test(`new_tab fails with no_browser when ${label} silently makes no tab`, async () => {
+    install({ browsers: [make([{ id: 1, active: 0, tabs: tabs(2) }], { dropOnCreate: true })], cg: [{ owner: "Terminal" }, { owner: app }] });
+    const { r, t } = await call("new_tab", { app, url });
+    assert.equal(r.isError, true, t);
+    assert.match(t, /^error: no_browser: /);
+    assert.equal(world.tabsOf(app, 0).length, 2);
+  });
+}
