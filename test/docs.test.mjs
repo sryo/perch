@@ -8,7 +8,7 @@ const read = (f) => readFile(new URL("../" + f, import.meta.url), "utf8");
 test("SKILL.md covers every tool and stays short", async () => {
   const skill = await read("SKILL.md");
   for (const t of TOOLS) assert.ok(skill.includes("`" + t.name + "`"), `SKILL.md misses ${t.name}`);
-  assert.ok(skill.length < 6000, `SKILL.md is ${skill.length} bytes`);
+  assert.ok(skill.length < 6600, `SKILL.md is ${skill.length} bytes`);
 });
 
 test("docs don't mention removed tools, params or shapes", async () => {

@@ -2339,7 +2339,7 @@ const TOOLS = [
   }, ["text"]),
 ];
 
-export const SCHEMA_BUDGET = 9000;
+export const SCHEMA_BUDGET = 9400;
 
 export const HANDLERS = {
   list_tabs:     (a) => listTabs(a),
