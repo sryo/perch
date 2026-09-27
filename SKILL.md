@@ -14,7 +14,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 |---|---|
 | `list_tabs` | `{tabs:[{app,tabId,url,title,active?}], total}`, 50 rows by default, in browser order. `active`: the tab its window shows. Filter with `app`, `urlContains`, `titleContains`. |
 | `new_tab` | Unselected tab in a running browser, default the one in use. May focus the browser; defer while the user works. Returns `{app,tabId}`. |
-| `activate_tab` | Bring a tab and its window to the front. |
+| `activate_tab` | Raise a tab and its window. |
 | `close_tab` | Close a tab by its required `tabId`. Refuses a window's last tab; never changes focus. |
 | `navigate` | Load a URL and wait for the new page. Returns the tab's current `tabId`; use it from then on. `waited:false`: load not confirmed. |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path`: a local file, run before `script` if both. `awaitPromise` for real async. |
@@ -27,7 +27,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `press` | `key` (`Enter`, `Escape`, `Tab`, `ArrowDown`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | Inputs, textareas, rich editors; verifies it landed. `text_path` for long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>` or custom combobox, own list only; reads back. Miss or `text:""`: `candidates`. |
-| `file_upload` | Put a local file on an `<input type=file>` without the bytes entering context. |
+| `file_upload` | Put a local file on an `<input type=file>`; the bytes skip context. |
 | `notify` | macOS notification for the user. |
 
 ## Snapshot format
@@ -45,7 +45,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 ## Results
 
 - `{ok: false, error}` is an outcome (no match, value didn't land), not a crash. Read it before retrying.
-- `fill` returns `{ok, kind: "plain"|"rich"|"typeahead", el, len, ambiguous?}`. A typeahead takes its best suggestion (`selected`) or fails. `ok: true` is proof.
+- `fill` returns `{ok, kind: "plain"|"rich"|"typeahead", el, len, ambiguous?}`. A typeahead picks a suggestion (`selected`) or fails; free text stays (`note`). `ok: true` is proof.
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change.
 - `fill {trusted:true}` returns `{ok, trusted, value, el}`. Require both `ok` and `trusted`.
 - Page errors: `isError` with `__perch_error`, `__perch_error_name`, a stack head.
