@@ -131,7 +131,7 @@ Each blocked layer returns an actionable error.
 - **Single-file server, one runtime dependency.** Only `@modelcontextprotocol/sdk` plus Node built-ins at runtime, with no build step. `happy-dom` is a devDependency for tests only.
 - **No user values in code.** JXA goes to `osascript` as one argument or one REPL line; runtime arguments are JSON. Page scripts read arguments only from `A`. User JS for `eval_js` is embedded through the wrappers.
 - **The runtime stays self-contained ES2019.** It must not reference Node scope; `test/runtime.test.mjs` runs it under `node:vm` and compiles it with real osascript.
-- **Tools earn their slot.** Solve a real workflow; don't mirror CDP. Check both consumers (avis, trabAGItos) before changing the surface. Keep `tools/list` under `SCHEMA_BUDGET`, with shared guidance in `INSTRUCTIONS`.
+- **Tools earn their slot.** Solve a real workflow; don't mirror CDP. Check the known consumers (see GOALS.md) before changing the surface; GOALS.md has the admission test. Keep `tools/list` under `SCHEMA_BUDGET`, with shared guidance in `INSTRUCTIONS`.
 - **Background-friendly by default.** Only `activate_tab`, `screenshot {raise}` and trusted input with `raise` take focus. Background trusted input must never change the user's AppKit key process or shared cursor.
 - **Every improvement is measured.** Before committing a change to perch:
   1. Write the failing test first, then make it pass. `npm test` (unit, no browser) must be green.

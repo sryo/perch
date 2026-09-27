@@ -1,7 +1,6 @@
-// What perch's two dependents rely on, pinned so a change here fails in perch
-// rather than in them. avis: ~/Documents/avis (SKILL.md, references/setup.md).
-// trabAGItos: ~/Documents/trabAGItos (skills/browser.md, apply.md, vision.md,
-// common.py parse_snapshot). Each test names who depends on it.
+// What perch's dependents rely on, pinned so a change here fails in perch
+// rather than in them: avis (SKILL.md, references/setup.md) and an unattended
+// form-filling agent. Each test names who depends on it.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
@@ -30,18 +29,18 @@ const json = (r) => JSON.parse(text(r));
 
 // ---- tab handles ----
 
-test("list_tabs: {tabs,total}; rows carry the full app name and a tabId (avis, trabAGItos)", async () => {
+test("list_tabs: {tabs,total}; rows carry the full app name and a tabId (avis, form agent)", async () => {
   canary(tabs(3));
   const o = json(await handleCall("list_tabs", { app: "canary", urlContains: "t1" }));
   assert.equal(o.total, 1);
   assert.deepEqual(Object.keys(o.tabs[0]).sort(), ["app", "tabId", "title", "url"].sort().concat(o.tabs[0].active ? ["active"] : []).sort());
-  // trabAGItos find_matching_tab compares tab['app'] == 'Google Chrome Canary'.
+  // The form agent matches tabs by comparing app to the full name.
   assert.equal(o.tabs[0].app, "Google Chrome Canary");
   assert.equal(o.tabs[0].url, "https://t1.test/");
   assert.equal(typeof o.tabs[0].tabId, "string");
 });
 
-test("new_tab returns {app,tabId}, and that tabId targets the new tab (trabAGItos)", async () => {
+test("new_tab returns {app,tabId}, and that tabId targets the new tab (form agent)", async () => {
   const world = canary(tabs(1));
   const o = json(await handleCall("new_tab", { app: "Google Chrome Canary", url: "https://n.test/" }));
   assert.deepEqual(Object.keys(o).sort(), ["app", "tabId"]);
@@ -50,7 +49,7 @@ test("new_tab returns {app,tabId}, and that tabId targets the new tab (trabAGIto
   assert.equal(world.page("Google Chrome Canary", 0, 1).mark, 1);
 });
 
-test("navigate returns {ok,url,tabId}; the tabId keeps targeting the tab (avis, trabAGItos)", async () => {
+test("navigate returns {ok,url,tabId}; the tabId keeps targeting the tab (avis, form agent)", async () => {
   const world = canary(tabs(2));
   const o = json(await handleCall("navigate", { url: "https://next.test/", target: { tabId: json(await handleCall("list_tabs", {})).tabs[1].tabId } }));
   assert.equal(o.ok, true);
@@ -92,7 +91,7 @@ test("script_path expands ~ and runs before script in one body (avis toolbar mou
   });
 });
 
-test("fill text_path resolves a relative path against the server's cwd (trabAGItos cover letters)", async () => {
+test("fill text_path resolves a relative path against the server's cwd (form agent cover letters)", async () => {
   const dom = page(`<textarea aria-label="Cover letter"></textarea>`);
   canary([{ url: "https://a.test/p", id: "d", dom }]);
   await inFakeHome(async () => {
@@ -103,7 +102,7 @@ test("fill text_path resolves a relative path against the server's cwd (trabAGIt
   });
 });
 
-test("file_upload expands ~ and names the file by its basename (trabAGItos)", async () => {
+test("file_upload expands ~ and names the file by its basename (form agent)", async () => {
   const dom = page(`<input type="file" id="cv">`);
   canary([{ url: "https://a.test/p", id: "d", dom }]);
   await inFakeHome(async () => {
@@ -132,7 +131,7 @@ async function shoot(args, width = 3000) {
   try { return { r: await handleCall("screenshot", args), calls }; } finally { deps.exec = real; }
 }
 
-test("screenshot: image block then {window,image} meta; 1568 default, maxWidth:0 keeps full size, jpeg (trabAGItos vision)", async () => {
+test("screenshot: image block then {window,image} meta; 1568 default, maxWidth:0 keeps full size, jpeg (form agent vision)", async () => {
   canary(tabs(1));
   let { r, calls } = await shoot({});
   assert.equal(r.content.length, 2);
@@ -152,9 +151,9 @@ test("screenshot: image block then {window,image} meta; 1568 default, maxWidth:0
   assert.ok(calls[0].includes("jpg"), calls[0].join(" "));
 });
 
-// ---- accessibility_snapshot, read by trabAGItos common.parse_snapshot ----
+// ---- accessibility_snapshot, read by the form agent's line parser ----
 
-// A port of trabAGItos common.py parse_snapshot (keys name -> attr_name, type -> subtype).
+// A port of the form agent's snapshot parser (keys name -> attr_name, type -> subtype).
 function parseSnapshot(snap) {
   const KEYS = { name: "attr_name", type: "subtype" };
   const out = [];
@@ -182,7 +181,7 @@ function parseSnapshot(snap) {
   return out;
 }
 
-test("snapshot lines parse cleanly with trabAGItos's parser, flags and all", () => {
+test("snapshot lines parse cleanly with the form agent's parser, flags and all", () => {
   const w = page(`
     <h1>Apply</h1>
     <input name="email" type="email" aria-label="Email" value="a@b.c" required>
@@ -204,9 +203,9 @@ c</textarea>`);
   for (const e of els) assert.match(e.ref, /^\d+$/);
 });
 
-// ---- tools trabAGItos calls that only page tests covered ----
+// ---- tools the form agent calls that only page tests covered ----
 
-test("accessibility_snapshot and console_capture through the tool layer (trabAGItos)", async () => {
+test("accessibility_snapshot and console_capture through the tool layer (form agent)", async () => {
   const dom = page(`<button>Go</button><input aria-label="Email">`);
   canary([{ url: "https://a.test/p", id: "d", dom }]);
   const snap = text(await handleCall("accessibility_snapshot", {}));
@@ -220,7 +219,7 @@ test("accessibility_snapshot and console_capture through the tool layer (trabAGI
   assert.ok(read.entries.some((e) => /^warn: .*careful/.test(e)), JSON.stringify(read));
 });
 
-test("notify shows the message verbatim, quotes and newlines included (trabAGItos CAPTCHA rule)", async () => {
+test("notify shows the message verbatim, quotes and newlines included (form agent CAPTCHA handoff)", async () => {
   const vm = await import("node:vm");
   const fast = DAEMONS.fast;
   let script;

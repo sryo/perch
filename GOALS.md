@@ -1,108 +1,84 @@
-# perch — goals
+# perch: goals
 
-## What perch is
-A macOS MCP server that drives the browser the user already has open.
-Built for [avis](https://github.com/sryo/avis). Useful to any client that
-needs background browser automation without installing anything in the browser.
+## What perch is for
+Agents doing real tasks in the macOS browser the user already has open,
+while the user keeps working. The known consumers:
+- [avis](https://github.com/sryo/avis): review and annotate a live page with
+  the user.
+- Unattended agents that fill long forms across many background tabs, often
+  for hours, with the user at the same machine.
 
-## Goals
-- **Drive the user's already-open browser.** No relaunch, no separate
-  profile, no debug port.
-- **Background-friendly by default.** The user owns the foreground. perch
-  doesn't activate apps or steal focus unless a tool explicitly opts in
-  (`screenshot {raise:true}`, `activate_tab`, trusted input with `raise`).
-- **Cross-browser within macOS.** Chrome family, Arc, Safari. Per-browser
-  quirks live behind the same tool API.
-- **Cheap on agent tokens.** Large payloads (file bytes, long text) stay
-  out of agent tool args — perch reads them from disk and ships to the
-  page itself.
-- **Minimum install surface.** Single-file server, one runtime dependency,
-  one-command install.
+The benchmark to beat is Claude in Chrome (`bench/compare/`), not Playwright.
+
+## Constraints (never traded)
+- The user's own browser, as it is: no extension, no debug port, no relaunch,
+  no separate profile.
+- Single-file server, one runtime dependency, one-command install.
+
+## Goals, in priority order
+When two goals conflict, the higher one wins.
+
+1. **Never take the user's foreground.** No app activation, tab selection,
+   keyboard redirection or cursor move unless the call opts in
+   (`activate_tab`, `raise:true`). A refused action is better than a stolen one.
+2. **Correct outcomes, verified.** Report what actually happened on the page
+   (readback, value checks, `trusted`/`hit`). `{ok:false}` beats a false `ok`.
+3. **As few agent turns as success needs.** Each call costs the model a turn,
+   about 6 seconds, so a common workflow shouldn't take five calls when one
+   will do. But a call that lets the agent see and recover is worth its turn;
+   saving turns never comes at the cost of goal 2.
+4. **Small context footprint.** Short tool schemas, compact results, and large
+   payloads (files, long text) read from disk instead of passed as arguments.
+5. **Fast per call.** Latency is Apple Events per call; spend as few as possible.
+6. **Any macOS browser, one API.** Chrome family, Arc, Safari. Clients never
+   branch on browser; real gaps surface as neutral error codes.
+
+## How we know
+| Goal | Metric | Where |
+|---|---|---|
+| 1 | foreground app, key process, cursor unchanged | `scripts/trusted-live.mjs --background`, `npm run smoke` |
+| 2 | readback hits, navigate success rate | `bench/compare/README.md` |
+| 3 | calls per task that succeeds | `bench/compare/README.md` |
+| 4 | `tools/list` chars under `SCHEMA_BUDGET`; payload sizes | `test/schema.test.mjs`, `bench/baseline.json` |
+| 5 | p50/p95 per tool; Apple Events per call | `bench/baseline.json`, `test/perf-budget.test.mjs` |
+| 6 | no browser names in descriptions | `test/runtime.test.mjs` |
+
+## A new tool or param earns its slot if
+- a consumer workflow needs it today, not a CDP feature by analogy;
+- it removes agent turns or makes a result verifiable;
+- it fits `SCHEMA_BUDGET`, or something else leaves to make room;
+- it keeps goal 1 by default.
 
 ## Non-goals
-- Chrome DevTools Protocol or `--remote-debugging-port`.
-- A browser extension.
-- Playwright/Puppeteer-level DOM automation.
-- Multi-browser concurrent driving.
-- See `AGENTS.md` "Ceiling" for the deeper list of AppleScript limits
-  (network interception, pre-load instrumentation, console subscription).
+- Network interception, pre-load instrumentation, console subscription: out of
+  reach for AppleScript (see AGENTS.md "Ceiling").
+- A general scripting API. perch offers task-shaped tools (`fill {fields}`,
+  `click {readback}`) and `eval_js` as the escape hatch, not a selector
+  language or a page object model.
+- Driving several browsers at once in one call.
 
-## Decisions on record
+## Decisions
+Each entry: what was chosen, the goal it served, what was rejected. Mechanism
+lives in AGENTS.md.
 
-### File uploads (2026-05): server-side base64 + DataTransfer
-- ❌ OS file dialog via keystrokes — focus stealing, violates Background-friendly.
-- ❌ Localhost HTTP server + page fetch — Chrome 142 LNA permission prompt
-  breaks the silent-background goal.
-- ❌ claude-in-chrome — Chrome-only, no Arc/Safari.
-- ✅ Server-side base64 in `file_upload` — perch reads the file, encodes
-  in Node, ships through the AppleScript bridge in one `eval_js`. The
-  ~80 KB bridge transit is the price for background-only + browser-agnostic.
-
-### Trusted input (2026-09): background SkyLight route
-- ❌ `CGEventPostToPid` and a bare `SLEventPostToPid` did not reach Chrome's
-  page in live tests. Posting AppKit focus records made routed events work, but
-  briefly redirected the user's keyboard. That violates the foreground goal.
-- ✅ Implemented and live-tested: default `click {trusted:true}` /
-  `fill {trusted:true}` leave the user's AppKit key process unchanged. Clicks
-  use window-routed SkyLight events with a Command flag on the press and no
-  flag on release, yielding an ordinary trusted click in Chrome. Background
-  fill clicks the field, then uses Chromium's editing command, which produced
-  a trusted input event while replacing existing text. Perch verifies the
-  event and resulting value. The Chrome Canary scratch-page test observed
-  exact click position, full Unicode text, unchanged foreground app, key
-  process, and cursor.
-- A later user-observed focus change during live checks exposed an unmeasured
-  route: test tab creation and implicit tab selection. Background trusted clicks
-  and screenshots now refuse inactive target tabs; `new_tab` no longer launches
-  a browser or explicitly selects a tab. The default smoke test reuses an
-  existing scratch tab and skips tab creation.
-- A minimized-window test established a narrower split: Chrome's editing
-  command produced a trusted input event in an inactive tab while Canary was
-  minimized, with the foreground and key process monitored continuously.
-  Background trusted fill now uses that direct page route, so several inactive
-  tabs can be filled without selecting them. A routed SkyLight click to the
-  minimized window's off-screen CGWindowID delivered no page event, and Chrome's
-  minimized AX tree exposed no webpage controls. Keep trusted clicks limited
-  to active tabs in on-screen windows; use ordinary DOM clicks and verify the
-  resulting page state elsewhere.
-- ✅ The previously verified `raise:true` HID path raises the target,
-  posts hardware-style events, then restores the cursor. Both routes require
-  Accessibility permission.
-- ✅ The SkyLight event functions can be called from JXA, so the implementation
-  keeps the single-file server and has no compiled helper. See
-  `scripts/skylight-probe.js` for the FFI proof and AGENTS.md for the flow.
-- Research: [Cua's implementation](https://github.com/trycua/cua/tree/main/libs/cua-driver/rust/crates/platform-macos/src/input) supplied Chromium gesture fields; [Lakr233's background-click analysis](https://github.com/Lakr233/bgclick-rev-skill) identified the Command flag that permits background routing. [CGSInternal](https://github.com/NUIKit/CGSInternal) catalogs private CoreGraphics/SkyLight APIs; [SkyLightWindow](https://github.com/Lakr233/SkyLightWindow) covers window and Space manipulation, not input delivery. [Stage Manager's logs](https://eclecticlight.co/2023/01/19/how-stage-manager-works-in-the-log/) show why calling SetFrontProcess would risk window reordering and a Space switch.
-
-### Surface diet and runtime (2026-09): fewer tools, fewer tokens, one runtime
-- ✅ 17 tools became 15: `get_html` folded into `get_text {html}`, and the
-  old page-state tool into the `accessibility_snapshot` header (neither
-  consumer used it). Unused params dropped. Shared guidance moved to server
-  `instructions`. `tools/list` went from 14,465 to about 7,500 chars, enforced
-  by `SCHEMA_BUDGET`.
-- ✅ Snapshot switched to a line format (`ref role "name" key=json flags`),
-  about 30% smaller on form pages; `list_tabs` always returns `{tabs,total}`,
-  capped at 50 rows.
-- ✅ JXA moved from string templates to one `jxaRuntime()` function shipped as
-  the daemon prelude, so it's parse-checked and unit-tested under `node:vm`.
-  Targeting reads one CGWindowList instead of querying System Events.
-- ✅ TDD: `npm test` (node:test, happy-dom as a devDependency) runs without a
-  browser; `npm run smoke` and `scripts/bench.mjs` run against a live one.
-- ❌ Splitting server.js into modules. Rejected to keep the single-file rule;
-  the test seams are exports plus a realpath start guard instead.
-
-### Browser-neutral clients (2026-09): perch figures out the browser
-- ✅ Clients ask for things; which browser a tab lives in is perch's concern.
-  `tabId` became an opaque handle that encodes the browser, so `target:
-  {tabId}` alone works everywhere, Safari included. It also fixed a real
-  collision: Chromium tab ids are per-process counters, so a bare id could
-  resolve in the wrong Chromium app.
-- ✅ `list_tabs` rows are `{app, tabId, url, title, active?}`; `new_tab`
-  defaults to the browser in use and returns `{app, tabId}`; `app` matches
-  loosely.
-- ✅ Real capability gaps (page JS only in a window's shown tab on some
-  browsers, never stealing focus) surface as neutral error codes
-  (`tab_not_visible`, `stale_tab`, `window_offscreen`, `no_browser`,
-  `timeout`) instead of browser-named advice. A test keeps browser names out
-  of tool descriptions and instructions.
-- ❌ Auto-activating a tab on `tab_not_visible`. Rejected: implicit selection
-  changed the user's foreground before (see above).
+- **File uploads (2026-05): server-side base64 + DataTransfer.** perch reads
+  the file and ships it in one `eval_js` (goal 4 for the agent, about 80 KB
+  across the bridge). Rejected: the OS file dialog (goal 1), a localhost server
+  the page fetches from (Chrome's local-network prompt breaks goal 1).
+- **Trusted input (2026-09): background SkyLight route.** Window-routed click
+  events and Chrome's editing command for fill, both without touching the
+  user's key process. Rejected: AppKit focus records (redirected the user's
+  keyboard, goal 1); trusted clicks on inactive tabs or minimized windows (no
+  delivery, and selecting the tab breaks goal 1). `raise:true` keeps the HID
+  route for callers who opt in.
+- **Surface diet (2026-09): 17 tools to 15, schema about halved.** `get_html`
+  folded into `get_text {html}`, page state into the snapshot header,
+  snapshot as a line format (goal 4). Enforced by `SCHEMA_BUDGET`.
+- **One JXA runtime (2026-09).** A real function shipped as the daemon
+  prelude, so it is parse-checked and unit-tested. Rejected: splitting
+  `server.js` into modules (constraint: single file).
+- **Browser-neutral handles (2026-09).** `tabId` encodes the browser, so
+  `{tabId}` alone works everywhere (goal 6) and Chromium id collisions across
+  apps are gone. Rejected: auto-activating a tab on `tab_not_visible` (goal 1).
+- **One-call workflows (2026-09).** `fill {fields}` and `click {readback}` do
+  in one call what took five and two (goals 2 and 3).
