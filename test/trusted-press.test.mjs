@@ -162,6 +162,6 @@ test("trusted press without Accessibility fails before posting", async () => {
 
 test("the press schema offers trusted and says to check hit", () => {
   const press = TOOLS.find((t) => t.name === "press");
-  assert.equal(press.description, "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element; emulates Enter/Space/Tab defaults. `trusted`: real key events in the shown tab; check `hit`.");
+  assert.ok(press.description.includes("`trusted`: real key events in the shown tab; check `hit`."), press.description);
   assert.deepEqual(press.inputSchema.properties.trusted, { type: "boolean" });
 });

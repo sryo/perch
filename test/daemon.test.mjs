@@ -85,6 +85,33 @@ test("a hung slow-lane call does not block the fast lane", async () => {
   await hung;
 });
 
+test("abort() rejects the current job with the given error, kills the REPL, and the next call respawns", async () => {
+  const { d, f } = daemonWith({ mode: "silent" });
+  const token = {};
+  const job = d.run("1", 5000, token);
+  await new Promise((r) => setTimeout(r, 20));
+  const err = new Error("dialog_open: test");
+  assert.equal(d.abort(err, token), true);
+  await assert.rejects(job, (e) => e === err);
+  assert.equal(f.spawned[0].killed, true);
+  await assert.rejects(d.run("1", 50), (e) => e.message === ERR.timeout(50));
+  assert.equal(f.spawned.length, 2);
+});
+
+test("a stale abort after its job finished is a no-op", async () => {
+  const { d, f } = daemonWith();
+  const token = {};
+  assert.equal(await d.run("1", 1000, token), "1");
+  assert.equal(d.abort(new Error("late"), token), false);
+  assert.equal(f.spawned[0].killed, false);
+  // Another call's job is not the aborted token's either.
+  const other = d.run("'x'", 1000);
+  assert.equal(d.abort(new Error("late"), token), false);
+  assert.equal(await other, "x");
+  assert.equal(f.spawned.length, 1);
+  d.kill();
+});
+
 test("the daemon runs its own stdin loop, not `osascript -i`", async () => {
   const { d, f } = daemonWith();
   assert.equal(await d.run("1", 1000), "1");

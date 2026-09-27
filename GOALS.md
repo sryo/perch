@@ -93,3 +93,13 @@ lives in AGENTS.md.
   hover, drag, resize, dialogs and cross-origin iframes (each waits for a lab
   result), GIF recording (no encoder without a dependency), scroll (`eval_js`
   covers it) and same-origin iframe descent (next use of the shadow walker).
+- **Dialogs and trusted keys (2026-09): budget 9400 to 9600, SKILL cap 6600
+  to 6800.** `press {trusted}` posts real key events through SkyLight to the
+  tab its window shows (named keys, shift only). `press {dialog}` answers a
+  native alert/confirm/prompt through Accessibility without raising the
+  window. Page JS stuck behind a dialog fails in about 2s with `dialog_open`
+  instead of a 30s timeout. `new_tab` puts back the tab its window was
+  showing. Rejected: `click {dialog}` (over the per-tool cap), a dialog tool,
+  auto-dismissing dialogs (goal 2), trusted cmd/ctrl/alt chords (they can fire
+  browser menu shortcuts such as closing the tab), and re-activating the
+  user's previous app after `new_tab` (that is itself an activation, goal 1).

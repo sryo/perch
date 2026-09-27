@@ -56,6 +56,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 - **Page globals may be invisible.** Some browsers run eval in an isolated world: the DOM is shared with the page, JS globals are not. Read page state through the DOM, never through `window.*` values the page set.
 - **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait`, which polls from outside the page.
 - **Return summaries, not state.** Results land in context verbatim.
+- **Dialogs.** A call stuck behind a page's alert/confirm/prompt fails in ~2s with `dialog_open`. Answer with `press {key:"Enter"|"Escape", dialog:true}` (a string fills a prompt); no raise. Re-read the page after.
 
 ## Trusted input
 

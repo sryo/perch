@@ -6,7 +6,7 @@ import vm from "node:vm";
 
 export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } = {}) {
   const clock = { t: 1_000_000 };
-  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [] };
+  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [] };
   const cgEntries = cg.map((entry) => ({ ...entry }));
   const posted = [];
   const counts = {};
@@ -291,10 +291,22 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
   function axAttr(el, name) {
     if (el.role === "AXApplication") {
       if (name !== "AXWindows") return undefined;
-      return axList(cgEntries.filter((c) => c.pid === el.pid && c.ax).map((c) => ({ role: "AXWindow", c })));
+      return axList(cgEntries.filter((c) => c.pid === el.pid && c.ax).map((c) => ({ role: "AXWindow", c }))
+        .concat(state.dialogs.filter((d) => d.pid === el.pid).map((d) => ({ role: "AXWindow", subrole: "AXApplicationDialog", d }))));
     }
     const box = el.role === "AXWindow" ? el.c : el.box;
     if (name === "AXRole") return el.role;
+    if (name === "AXSubrole") return el.subrole;
+    if (name === "AXTitle") return el.title;
+    if (name === "AXValue") return el.role === "AXTextField" ? el.d.value || "" : el.value;
+    // A dialog `{pid, texts, buttons, field?}`: a close button, then a group
+    // holding the texts (the origin line first), the prompt's field and the buttons.
+    if (el.d && el.role === "AXWindow" && name === "AXChildren") {
+      const d = el.d, kids = d.texts.map((value) => ({ role: "AXStaticText", value }));
+      if (d.field != null) kids.push({ role: "AXTextField", d });
+      d.buttons.forEach((title) => kids.push({ role: "AXButton", title, d, kids: [{ role: "AXStaticText", value: title }] }));
+      return axList([{ role: "AXButton", subrole: "AXCloseButton", title: "close" }, { role: "AXGroup", kids }]);
+    }
     if (name === "AXPosition") return box ? axPoint(box.x, box.y) : undefined;
     if (name === "AXSize") return box ? axSize(box.w, box.h) : undefined;
     if (name === "AXChildren") {
@@ -372,6 +384,23 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         const v = axAttr(el, name.js);
         if (v === undefined) return -25205; // kAXErrorAttributeUnsupported
         out[0] = v;
+        return 0;
+      },
+      // Dialog answers are recorded; an AXPress on a dialog's button closes it
+      // unless the dialog is `sticky`.
+      AXUIElementPerformAction: (el, action) => {
+        bump("AXAction");
+        state.axActions.push({ role: el.role, title: el.title, action: action.js });
+        if (el.role === "AXButton" && action.js === "AXPress" && el.d && !el.d.sticky) {
+          el.d.answer = el.title;
+          state.dialogs.splice(state.dialogs.indexOf(el.d), 1);
+        }
+        return 0;
+      },
+      AXUIElementSetAttributeValue: (el, name, value) => {
+        bump("AXSet");
+        if (el.role !== "AXTextField" || name.js !== "AXValue") return -25205;
+        el.d.value = value.js;
         return 0;
       },
       AXIsProcessTrustedWithOptions: () => state.ax,
