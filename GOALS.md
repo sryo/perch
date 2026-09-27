@@ -116,3 +116,14 @@ lives in AGENTS.md.
   (credentials), leave-page and permission prompts (the user's call), and
   scoping by browser only (it aborted calls and answered dialogs in the user's
   other tabs).
+- **Round 3 (2026-09): room back, Safari background tabs.** `target` lists
+  only `tabId` and `app` (`windowId` and `tabIndex` still work) and
+  descriptions and SKILL.md were tightened: `tools/list` 9511 to 8385 chars,
+  budgets unchanged (goal 4). Safari runs page JS in, and `navigate` loads, a
+  tab its window isn't showing (live, Safari on macOS 27.2), so `navigate` no
+  longer selects the tab (goal 1). Rejected: dropping `windowId`/`tabIndex`
+  (list rows without a handle still use them) and raising any budget.
+  Deferred: dialog attribution live (no live dialog tests while the user may
+  type), Safari and Arc dialog trees, cross-origin iframes through
+  Accessibility (captcha, payment and login frames need their own design),
+  and screenshots of minimized or other-Space windows (no consumer needs them).
