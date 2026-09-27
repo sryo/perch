@@ -165,7 +165,10 @@ lives in AGENTS.md.
   returns `{ok:false}` with a hand-to-user message before anything is raised
   or posted (safety; goal 3: the snapshot shows it before the agent tries).
   Rejected: leaving it to SKILL.md, a configurable list, and guessing
-  challenges from control names. Unverified live.
+  challenges from control names. Fails closed: a frame without an http(s)
+  URL (about:blank, srcdoc, no AXURL) is `handoff`, and so is any frame
+  nested under a `handoff` one; DataDome, AWS WAF, GeeTest and Friendly
+  Captcha joined the list. Unverified live.
 - **Round 5 (2026-09): fail closed on focus and window identity.** A
   background `press {trusted}` refuses unless Accessibility shows the target's
   window as the browser's key window and focus inside its page (goal 2: a key

@@ -55,6 +55,15 @@ const HANDOFF = [
   "https://login.microsoftonline.com/common/oauth2/authorize",
   "https://login.live.com/oauth20_authorize.srf",
   "https://ACCOUNTS.Google.com./signin",
+  "https://geo.captcha-delivery.com/captcha/?initialCid=x",
+  "https://captcha-delivery.com/interstitial/",
+  "https://abc123.edge.sdk.awswaf.com/abc123/def/captcha.js",
+  "https://static.geetest.com/static/js/gt.0.4.9.js",
+  "https://api.friendlycaptcha.com/api/v1/puzzle",
+  "",
+  "about:blank",
+  "about:srcdoc",
+  "not a url",
 ];
 
 const ORDINARY = [
@@ -68,7 +77,8 @@ const ORDINARY = [
   "https://arkoselabs.com.example/",
   "https://apple.com/appleid",
   "https://js.stripe.com/v3/elements-inner-card.html",
-  "about:blank",
+  "https://captcha-delivery.com.evil.test/",
+  "https://notgeetest.com/",
 ];
 
 test("the snapshot flags sign-in and challenge frames handoff, and only those", async () => {
@@ -158,5 +168,46 @@ test("a field that turned secure since the snapshot is refused on the fresh walk
   const o = await click("f1");
   assert.equal(o.ok, false);
   assert.match(o.error, /hand it to the user/);
+  assert.deepEqual(w.posted, []);
+});
+
+test("a frame nested anywhere under a handoff frame is handoff too, and refused with nothing posted", async () => {
+  const inner = (url, y) => ({ url, box: { x: 100, y, w: 400, h: 36 }, kids: [
+    { role: "AXButton", title: "Continue", box: { x: 110, y: y + 2, w: 100, h: 30 } },
+  ] });
+  const w = world([], [
+    { url: "https://accounts.google.com/gsi/iframe", box: { x: 100, y: 170, w: 400, h: 200 }, kids: [],
+      frames: [{ url: "https://widget.example/a", box: { x: 100, y: 170, w: 400, h: 200 }, kids: [], frames: [inner("https://widget.example/b", 180)] }] },
+    { url: "", box: { x: 100, y: 400, w: 400, h: 100 }, kids: [], frames: [inner("https://widget.example/c", 410)] },
+    inner("https://widget.example/d", 520),
+  ]);
+  const lines = frameLines(await snap());
+  assert.deepEqual(lines, [
+    `f1 button "Continue" frame="widget.example"`,
+    `f2 button "Continue" frame="widget.example" handoff`,
+    `f3 button "Continue" frame="widget.example" handoff`,
+  ]);
+  w.reset();
+  for (const ref of ["f2", "f3"]) {
+    const o = await click(ref);
+    assert.equal(o.ok, false, ref);
+    assert.match(o.error, /hand it to the user/);
+  }
+  assert.deepEqual(w.posted, []);
+  assert.equal(w.counts["tab.execute"], undefined);
+  const ok = await click("f1");
+  assert.equal(ok.ok, true);
+  assert.deepEqual(w.posted.filter((e) => e.type === 1 && e.pt.x >= 0).map((e) => e.pt), [{ x: 160, y: 537 }]);
+});
+
+test("a row whose frame moved under a handoff frame since the snapshot is not clicked", async () => {
+  const kid = { role: "AXButton", title: "Continue", box: { x: 110, y: 182, w: 100, h: 30 } };
+  const child = { url: "https://widget.example/b", box: { x: 100, y: 180, w: 400, h: 36 }, kids: [kid] };
+  const w = world([], [{ url: "https://widget.example/a", box: { x: 100, y: 170, w: 400, h: 200 }, kids: [], frames: [child] }]);
+  assert.deepEqual(frameLines(await snap()), [`f1 button "Continue" frame="widget.example"`]);
+  w.frames[0].url = "https://challenges.cloudflare.com/turnstile";
+  const r = await handleCall("click", { ref: "f1", trusted: true });
+  assert.equal(r.isError, true);
+  assert.match(text(r), /ref/);
   assert.deepEqual(w.posted, []);
 });

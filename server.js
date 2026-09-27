@@ -832,7 +832,9 @@ function jxaRuntime(BROWSERS) {
       for (let f = q.fr; f && shown; f = f.up) shown = inside(c, f.box);
       if (!shown) flags.push("offscreen");
       ords[key] = (ords[key] || 0) + 1;
-      rows.push({ role: role, name: name, url: q.fr.url, ord: ords[key], flags: flags, el: q.el, box: box, fr: q.fr });
+      const up = [];
+      for (let f = q.fr.up; f; f = f.up) up.push(f.url);
+      rows.push({ role: role, name: name, url: q.fr.url, up: up, ord: ords[key], flags: flags, el: q.el, box: box, fr: q.fr });
     }
     return { rows: rows, truncated: truncated };
   }
@@ -1383,7 +1385,7 @@ function jxaRuntime(BROWSERS) {
       try { const s = JSON.parse(String(page)), nl = s.indexOf("\n"); vp = JSON.parse(s.slice(2, nl < 0 ? s.length : nl)); } catch (e) { return out; }
       try {
         const W = frameWalk(frameTarget(t), vp);
-        out.frames = W.rows.map(function (r) { return { role: r.role, name: r.name, url: r.url, ord: r.ord, flags: r.flags }; });
+        out.frames = W.rows.map(function (r) { return { role: r.role, name: r.name, url: r.url, up: r.up, ord: r.ord, flags: r.flags }; });
         if (W.truncated) out.truncated = true;
       } catch (e) { out.error = String(e.message || e); }
       return out;
@@ -1400,7 +1402,7 @@ function jxaRuntime(BROWSERS) {
       visibleGuard(T.t, "click");
       const vp = parseExec(T.t, a.probe);
       if (!vp || String(vp.url).split("#")[0] !== String(want.url).split("#")[0]) return miss;
-      const row = frameWalk(T.I, vp).rows.filter(function (r) { return r.url === w.url && r.role === w.role && r.name === w.name && r.ord === w.ord; })[0];
+      const row = frameWalk(T.I, vp).rows.filter(function (r) { return r.url === w.url && r.up.join("\n") === (w.up || []).join("\n") && r.role === w.role && r.name === w.name && r.ord === w.ord; })[0];
       if (!row) return miss;
       if (row.flags.indexOf("secure") >= 0) return refuse;
       if (row.flags.indexOf("offscreen") >= 0) return { ok: false, tabId: tabId, error: w.role + " " + JSON.stringify(w.name) + " is outside the visible page; scroll it into view and snapshot again" };
@@ -2686,12 +2688,15 @@ function frameHost(url) {
   try { const u = new URL(url); return u.host || (u.protocol + u.pathname).slice(0, 60); } catch { return String(url).slice(0, 60); }
 }
 
-// Sign-in and challenge frames are the user's. The path matters only for
-// google.com, which serves reCAPTCHA under /recaptcha beside ordinary embeds.
-const HANDOFF_HOST = /^(accounts\.google\.com|(www\.)?recaptcha\.net|([^.]+\.)*hcaptcha\.com|challenges\.cloudflare\.com|appleid\.apple\.com|idmsa\.apple\.com|([^.]+\.)*arkoselabs\.com|login\.microsoftonline\.com|login\.live\.com)$/;
+// Sign-in and challenge frames are the user's, and so is any frame without an
+// http(s) URL (about:blank, srcdoc, script-written, no AXURL): challenges often
+// run in those. The path matters only for google.com, which serves reCAPTCHA
+// under /recaptcha beside ordinary embeds.
+const HANDOFF_HOST = /^(accounts\.google\.com|(www\.)?recaptcha\.net|([^.]+\.)*hcaptcha\.com|challenges\.cloudflare\.com|appleid\.apple\.com|idmsa\.apple\.com|([^.]+\.)*arkoselabs\.com|login\.microsoftonline\.com|login\.live\.com|([^.]+\.)*captcha-delivery\.com|([^.]+\.)*awswaf\.com|([^.]+\.)*geetest\.com|([^.]+\.)*friendlycaptcha\.com)$/;
 function handoffFrame(url) {
   let u;
-  try { u = new URL(url); } catch { return false; }
+  try { u = new URL(url); } catch { return true; }
+  if (!/^https?:$/.test(u.protocol) || !u.hostname) return true;
   const host = u.hostname.toLowerCase().replace(/\.$/, "");
   return HANDOFF_HOST.test(host) || (/^(www\.)?google\.com$/.test(host) && /^\/recaptcha(\/|$)/.test(u.pathname));
 }
@@ -2728,12 +2733,13 @@ async function accessibilitySnapshot(args = {}) {
     let truncated = !!r.truncated;
     for (const row of r.frames || []) {
       if (roles && !roles.includes(row.role)) continue;
-      const flags = handoffFrame(row.url) ? row.flags.concat("handoff") : row.flags;
+      const up = row.up || [];
+      const flags = [row.url].concat(up).some(handoffFrame) ? row.flags.concat("handoff") : row.flags;
       const line = `${row.role} ${JSON.stringify(row.name)} frame=${JSON.stringify(frameHost(row.url))}${flags.map((f) => " " + f).join("")}`;
       if (re && !re.test(line)) continue;
       if (lines.length >= max) { truncated = true; break; }
       const ref = "f" + (lines.length + 1);
-      rows[ref] = { url: row.url, role: row.role, name: row.name, ord: row.ord, handoff: flags.includes("handoff") || flags.includes("secure") };
+      rows[ref] = { url: row.url, up, role: row.role, name: row.name, ord: row.ord, handoff: flags.includes("handoff") || flags.includes("secure") };
       lines.push(ref + " " + line);
     }
     head.frames = truncated ? { count: lines.length, truncated: true } : { count: lines.length };
