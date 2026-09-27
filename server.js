@@ -43,6 +43,7 @@ function jxaRuntime(BROWSERS) {
   // Errors start with a stable, browser-neutral code that clients branch on.
   const notVisible = (what) => "tab_not_visible: " + what + " needs the tab its window shows; activate_tab (takes focus) or retry later";
   const OFFSCREEN = "window_offscreen: the browser window isn't on screen (minimized or on another Space)";
+  const AMBIGUOUS = "window_ambiguous: another window of this browser has the same frame, so perch can't tell which is the target's; move or resize one";
 
   // Tab handles are opaque to clients: "<key>:<raw id>". Chromium ids are
   // per-process counters, so the key keeps two Chromium apps from colliding.
@@ -413,24 +414,33 @@ function jxaRuntime(BROWSERS) {
     try { const p = t.win.position(), s = t.win.size(); geom = { x: p[0], y: p[1], w: s[0], h: s[1] }; } catch (e) {}
     if (!geom) { try { const b = t.win.bounds(); geom = { x: b.x, y: b.y, w: b.width, h: b.height }; } catch (e) {} }
     const cands = t.P.wins[t.app] || [];
-    let best = null;
+    let best = null, ambiguous = false;
     if (geom) {
+      const score = function (c) { return Math.abs(c.x - geom.x) + Math.abs(c.y - geom.y) + Math.abs(c.w - geom.w) + Math.abs(c.h - geom.h); };
       let bestScore = Infinity;
-      cands.forEach(function (c) {
-        const score = Math.abs(c.x - geom.x) + Math.abs(c.y - geom.y) + Math.abs(c.w - geom.w) + Math.abs(c.h - geom.h);
-        if (score < bestScore) { bestScore = score; best = c; }
-      });
+      cands.forEach(function (c) { if (score(c) < bestScore) { bestScore = score(c); best = c; } });
+      // Another entry about as close: geometry can't say which CGWindowID is ours.
+      ambiguous = cands.some(function (c) { return c !== best && score(c) <= bestScore + 2; });
     } else {
       best = byTitle(t, cands) || cands[t.w] || cands[0] || null;
       if (best) geom = { x: best.x, y: best.y, w: best.w, h: best.h };
     }
     if (!geom) throw new Error(OFFSCREEN);
-    return {
+    const I = {
       geom: geom,
       pid: t.P.pid[t.app] == null ? null : t.P.pid[t.app],
       windowNumber: best ? best.wid : null,
       cgBounds: best ? { x: best.x, y: best.y, w: best.w, h: best.h } : null,
     };
+    if (ambiguous) I.ambiguous = true;
+    return I;
+  }
+
+  // Input and frame reads need the one window that is ours; screenshots don't check.
+  function ownWindow(I) {
+    if (I.windowNumber == null) throw new Error(OFFSCREEN);
+    if (I.ambiguous) throw new Error(AMBIGUOUS);
+    return I;
   }
 
   // Arc has no geometry verbs, so its window is matched to a CG entry by title.
@@ -461,8 +471,7 @@ function jxaRuntime(BROWSERS) {
     requireAccessibility();
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
     else if (!isActive(t)) throw new Error(what ? notVisible(what) : notVisible("a background trusted click") + ", or pass raise:true");
-    const I = ids(t);
-    if (I.windowNumber == null) throw new Error(OFFSCREEN);
+    const I = ownWindow(ids(t));
     if (a.raise && t.P.front !== t.app) throw new Error("target did not become frontmost after raise");
     return { t: t, I: I, background: !a.raise };
   }
@@ -671,14 +680,16 @@ function jxaRuntime(BROWSERS) {
       return m ? [Number(m[1]), Number(m[2])] : null;
     };
     const r = I.cgBounds || I.geom;
-    let win = null, off = Infinity;
-    list(attr($.AXUIElementCreateApplication(I.pid), "AXWindows")).forEach(function (w) {
+    // Every AX window within 8pt of the target's frame. When one reports its
+    // CGWindowID, the ids decide; otherwise geometry must leave exactly one.
+    let near = list(attr($.AXUIElementCreateApplication(I.pid), "AXWindows")).filter(function (w) {
       const p = pair(w, "AXPosition", "x", "y"), s = pair(w, "AXSize", "w", "h");
-      if (!p || !s) return;
-      const d = Math.abs(p[0] - r.x) + Math.abs(p[1] - r.y) + Math.abs(s[0] - r.w) + Math.abs(s[1] - r.h);
-      if (d < off) { off = d; win = w; }
+      return !!p && !!s && Math.abs(p[0] - r.x) + Math.abs(p[1] - r.y) + Math.abs(s[0] - r.w) + Math.abs(s[1] - r.h) <= 8;
     });
-    if (!win || off > 8) return null;
+    const wids = near.map(ax.wid);
+    if (wids.some(function (n) { return n != null; })) near = near.filter(function (w, i) { return wids[i] === I.windowNumber; });
+    if (near.length !== 1) return null;
+    const win = near[0];
     let best = null, miss = Infinity, seen = 0;
     const queue = [win];
     while (queue.length && seen < 600) {
@@ -703,6 +714,13 @@ function jxaRuntime(BROWSERS) {
     ObjC.bindFunction("AXUIElementCopyAttributeValue", ["int", ["id", "id", "id *"]]);
     ObjC.bindFunction("AXUIElementPerformAction", ["int", ["id", "id"]]);
     ObjC.bindFunction("AXUIElementSetAttributeValue", ["int", ["id", "id", "id"]]);
+    // Private but long-standing: an AX window's CGWindowID. Null when unavailable.
+    let widOk = false;
+    try { ObjC.bindFunction("_AXUIElementGetWindow", ["int", ["id", "int *"]]); widOk = true; } catch (e) {}
+    const wid = function (el) {
+      if (!widOk) return null;
+      try { const out = Ref(); return $._AXUIElementGetWindow(el, out) === 0 ? Number(out[0]) : null; } catch (e) { return null; }
+    };
     const attr = function (el, name) { const out = Ref(); return $.AXUIElementCopyAttributeValue(el, $(name), out) === 0 ? out[0] : null; };
     const list = function (v) { const n = v ? Number(v.count) : 0, out = []; for (let i = 0; i < n; i++) out.push(v.objectAtIndex(i)); return out; };
     const str = function (el, name) { const v = attr(el, name); return v == null ? "" : String(ObjC.unwrap(v)); };
@@ -716,7 +734,7 @@ function jxaRuntime(BROWSERS) {
       const p = pair(el, "AXPosition", "x", "y"), s = pair(el, "AXSize", "w", "h");
       return p && s ? { x: p[0], y: p[1], w: s[0], h: s[1] } : null;
     };
-    axKit = { attr: attr, list: list, str: str, frame: frame };
+    axKit = { attr: attr, list: list, str: str, frame: frame, wid: wid };
     return axKit;
   }
 
@@ -754,9 +772,7 @@ function jxaRuntime(BROWSERS) {
   function frameTarget(t) {
     requireAccessibility();
     if (!isActive(t)) throw new Error(notVisible("frames"));
-    const I = ids(t);
-    if (I.windowNumber == null) throw new Error(OFFSCREEN);
-    return I;
+    return ownWindow(ids(t));
   }
 
   function frameWalk(I, vp) {

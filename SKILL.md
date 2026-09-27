@@ -49,7 +49,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change.
 - `fill {trusted:true}` returns `{ok, trusted, value, el}`. Require both `ok` and `trusted`.
 - Page errors come back as `isError` with `__perch_error`, `__perch_error_name`, a stack head.
-- Other errors start with a code; branch on it, not on the browser. `tab_not_visible`: not the tab its window shows; `activate_tab` (takes focus) or retry later. `stale_tab`: re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `no_browser`: none running or no window (never launched). `timeout`: re-list, retry once. `tab_not_scriptable`: internal page; `navigate` first. `dialog_open`: see Dialogs.
+- Other errors start with a code; branch on it, not on the browser. `tab_not_visible`: not the tab its window shows; `activate_tab` (takes focus) or retry later. `stale_tab`: re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `window_ambiguous`: move or resize a same-frame window. `no_browser`: none running or no window (never launched). `timeout`: re-list, retry once. `tab_not_scriptable`: internal page; `navigate` first. `dialog_open`: see Dialogs.
 
 ## Gotchas
 
