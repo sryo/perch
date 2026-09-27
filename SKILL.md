@@ -22,7 +22,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `get_text` | innerText, or outerHTML with `html: true`. Paged by `offset` / `maxChars`. |
 | `accessibility_snapshot` | Page outline with refs (format below). Filter with `role`; `max: 0` for the header only. |
 | `console_capture` | `start`, then `read` drains `"level: text"` strings, `stop` restores. Navigation clears it. |
-| `click` | By `ref` / `selector`. `trusted: true` posts a real OS click (see below). |
+| `click` | By `ref` / `selector`. `readback: css` adds `{readback, changed, url?}`: its text once changed (2s cap), no follow-up read. `trusted: true`: see below. |
 | `fill` | Inputs, textareas, rich editors; verifies the text landed. `ref` > `selector` > `label_pattern`. `text_path` for long bodies. |
 | `select` | Native `<select>`, react-select, ARIA combobox/listbox; reads back what's shown. |
 | `file_upload` | Put a local file on an `<input type=file>` without the bytes entering context. |
@@ -51,7 +51,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 ## Gotchas
 
 - **Page globals may be invisible.** Some browsers run eval in an isolated world: the DOM is shared with the page, JS globals are not. Read page state through the DOM, never through `window.*` values the page set.
-- **Don't sleep in page code.** Background tabs throttle timers to about one per second, so `awaitPromise` plus `setTimeout` crawls. Use `wait`, which polls from outside the page.
+- **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait`, which polls from outside the page.
 - **Return summaries, not state.** Results land in context verbatim.
 
 ## Trusted input
@@ -60,7 +60,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Permissions
 
-The server names the exact toggle on first failure; show it to the user and wait for them to flip it.
+The server names the exact toggle on first failure; show it to the user and wait.
 
 - Chromium family and Arc: View > Developer > Allow JavaScript from Apple Events (per profile).
 - Safari: Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.

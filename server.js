@@ -449,6 +449,13 @@ function jxaRuntime(BROWSERS) {
 
   const parseExec = function (t, js) { return JSON.parse(String(exec(t, js))); };
 
+  // After a click armed with readback: the first changed text/url within a.settle ms,
+  // else what the element shows now. Polled here because page timers are throttled.
+  function readback(t, a) {
+    const r = poll(t, a.read, a.settle, 50);
+    return r ? r.value : parseExec(t, a.readFinal);
+  }
+
   // Finds the screen point for a trusted press. The target tab is shown first: a
   // background tab's screenX/outerWidth are stale. The page's estimate can't tell
   // which side a panel is on, or the zoom, so a harmless mouse move at the estimate
@@ -718,25 +725,42 @@ function jxaRuntime(BROWSERS) {
       const read = poll(t, a.read, 500, 50);
       return read ? read.value : parseExec(t, a.readFinal);
     },
+    // Plain click with readback: click (arming the pre-click text), then poll.
+    click(a) {
+      const t = resolve(a.target);
+      visibleGuard(t, "click");
+      const r = parseExec(t, a.click);
+      if (!r || r.ok !== true) return r;
+      return Object.assign(r, readback(t, a));
+    },
     trustedClick(a) {
       const T = trustedTarget(a);
       const home = T.background ? null : cursorAt();
+      const arm = function () { return a.arm ? parseExec(T.t, a.arm) : null; };
+      let out;
       try {
         if (a.x != null) {
+          const bad = arm();
+          if (bad && bad.ok === false) return bad;
           if (T.background) skyClick(T.I, { x: a.x, y: a.y });
           else leftClick(T.I, { x: a.x, y: a.y });
-          return { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" };
+          out = { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" };
+        } else {
+          const A = aim(T, a, "click");
+          if (A.out) return A.out;
+          const bad = arm();
+          if (bad && bad.ok === false) return bad;
+          if (T.background) skyClick(T.I, A.pt);
+          else leftClick(T.I, A.pt);
+          delay(0.05);
+          const check = parseExec(T.t, a.check);
+          out = Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, delivery: T.background ? "skylight" : "hid" }, check);
         }
-        const A = aim(T, a, "click");
-        if (A.out) return A.out;
-        if (T.background) skyClick(T.I, A.pt);
-        else leftClick(T.I, A.pt);
-        delay(0.05);
-        const check = parseExec(T.t, a.check);
-        return Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, delivery: T.background ? "skylight" : "hid" }, check);
       } finally {
         if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
       }
+      // The cursor is already home, so the settle wait doesn't hold it.
+      return a.arm ? Object.assign(out, readback(T.t, a)) : out;
     },
     trustedFill(a) {
       const T = trustedTarget(a);
@@ -1204,6 +1228,16 @@ const press = function (el) {
 };
 `;
 
+// click {readback}: the pre-click text and url live on window.__perch_rb until read.
+const READBACK_LIB = String.raw`
+function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
+function rbArm() {
+  try { window.__perch_rb = { text: rbText(), url: location.href }; }
+  catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
+  return null;
+}
+`;
+
 export const PAGE_SCRIPTS = {
   get_text: String.raw`
 const r = resolveEl(A, A.html ? "html" : "body");
@@ -1421,11 +1455,34 @@ if (!seen) out.unverified = true;
 return out;
 `,
 
-  click: String.raw`
+  click: READBACK_LIB + String.raw`
 const r = resolveEl(A);
 if (r.out) return r.out;
+if (A.readback) { const bad = rbArm(); if (bad) return bad; }
 r.el.click();
 return { ok: true, el: ident(r.el) };
+`,
+
+  readback_arm: READBACK_LIB + String.raw`
+return rbArm() || { ok: true };
+`,
+
+  // null (keep polling) until the text or url moved; A.final settles for what's there.
+  // No state means a new document: wait for it to show the element, or give up at final.
+  readback_read: READBACK_LIB + String.raw`
+const s = window.__perch_rb;
+const text = rbText();
+if (!s) {
+  if (!A.final && (text == null || document.readyState === "loading")) return null;
+  return { readback: text, changed: true, navigated: true, url: location.href };
+}
+const moved = location.href !== s.url;
+const changed = moved || text !== s.text;
+if (!changed && !A.final) return null;
+delete window.__perch_rb;
+const out = { readback: text, changed: changed };
+if (moved) out.url = location.href;
+return out;
 `,
 
   file_upload: String.raw`
@@ -1728,7 +1785,15 @@ export function chunkUtf16(text, max = 20) {
 
 const pageFn = (name, A) => buildEvalWrapper(pageScript(name, A));
 
-async function trustedClick({ ref, selector, x, y, raise, target }) {
+// How long click {readback} waits for the element's text or the url to change.
+const READBACK_SETTLE = 2000;
+const readbackSteps = (readback) => readback ? {
+  read: pageFn("readback_read", { readback }),
+  readFinal: pageFn("readback_read", { readback, final: true }),
+  settle: READBACK_SETTLE,
+} : {};
+
+async function trustedClick({ ref, selector, x, y, raise, target, readback }) {
   if (!ref && !selector && (x == null || y == null)) throw new Error("click {trusted:true} requires `ref`, `selector`, or both `x` and `y`");
   const probing = !!(ref || selector);
   return rt("trustedClick", {
@@ -1737,7 +1802,9 @@ async function trustedClick({ ref, selector, x, y, raise, target }) {
     cal: probing ? pageFn("trusted_cal", {}) : null,
     calReset: probing ? pageFn("trusted_cal", { reset: true }) : null,
     check: probing ? pageFn("trusted_check", {}) : null,
-  });
+    arm: readback ? pageFn("readback_arm", { readback }) : null,
+    ...readbackSteps(readback),
+  }, readback ? { lane: "slow" } : {});
 }
 
 // Background fields use the browser's trusted editing command; the explicit
@@ -1764,10 +1831,12 @@ async function fileUpload(args = {}) {
 }
 
 async function click(args = {}) {
-  const { ref = null, selector = null, x = null, y = null, trusted = false, raise = false, target } = args;
-  if (trusted) return trustedClick({ ref, selector, x, y, raise, target });
+  const { ref = null, selector = null, x = null, y = null, trusted = false, raise = false, target, readback = null } = args;
+  if (readback != null && (typeof readback !== "string" || !readback.trim())) throw new Error("click: `readback` must be a CSS selector");
+  if (trusted) return trustedClick({ ref, selector, x, y, raise, target, readback });
   if (!ref && !selector) throw new Error("click requires `ref` or `selector` (x/y is screen coords, trusted:true only)");
-  return runPage("click", "click", { ref, selector }, target);
+  if (!readback) return runPage("click", "click", { ref, selector }, target);
+  return rt("click", { target, click: pageFn("click", { ref, selector, readback }), ...readbackSteps(readback) }, { lane: "slow" });
 }
 
 async function fill(args = {}) {
@@ -1879,6 +1948,7 @@ const TOOLS = [
     y: { type: "number" },
     trusted: { type: "boolean" },
     raise: { type: "boolean" },
+    readback: { type: "string", description: "CSS; adds its text after the click (waits up to 2s for a change) as {readback,changed,url?}." },
     target: TARGET,
   }),
   tool("fill", "Set a field's text and verify it landed: inputs, textareas, and rich editors (contenteditable, ProseMirror, Quill…). Returns {ok,kind,el,len,ambiguous?}. `trusted` gives plain fields a trusted input event in background tabs without taking key focus; `raise:true` types foreground keys.", {

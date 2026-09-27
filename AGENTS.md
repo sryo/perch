@@ -71,7 +71,7 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 - **Page globals:** the page's own globals are invisible, so probe page state through the DOM.
 - **Events:** a plain `click` still fires main-world handlers, because DOM events cross worlds.
 - **Console:** `console_capture` injects a `<script>` that patches the main world's console and relays entries as `perch:console` events. A ping/pong tells whether it ran; under a CSP that blocks inline scripts it patches the isolated console instead, which sees only perch's own evals.
-- **Timers:** page timers are throttled to about 1/s in background tabs. Anything that must wait polls from JXA (`poll` in the runtime) instead of `setTimeout` in the page. `select` is start/pick/readback steps polled that way.
+- **Timers:** page timers are throttled to about 1/s in background tabs. Anything that must wait polls from JXA (`poll` in the runtime) instead of `setTimeout` in the page. `select` is start/pick/readback steps polled that way, and so is `click {readback}`: the click stores the readback element's text and the url on `window.__perch_rb`, then JXA polls `readback_read` for up to 2s until either changes (a missing `__perch_rb` means a new document). Trusted clicks arm it with `readback_arm` just before posting and poll after restoring the cursor.
 
 **Page scripts.** One prelude defines `vis`, `labelText`/`hintText`/`accName` (accessible-name precedence), `role`, `ident` (`role "name"`), `setNativeValue` (the prototype setter, which reaches React-controlled fields), `fire` and `resolveEl`.
 - **Arguments:** every tool body reads its arguments from `A`; no user value is spliced into code.
