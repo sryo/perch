@@ -453,11 +453,11 @@ function jxaRuntime(BROWSERS) {
   }
 
   // Resolves the target for trusted input: permission, optional foreground, ids.
-  function trustedTarget(a) {
+  function trustedTarget(a, what) {
     const t = resolve(a.target);
     requireAccessibility();
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
-    else if (!isActive(t)) throw new Error(notVisible("a background trusted click") + ", or pass raise:true");
+    else if (!isActive(t)) throw new Error(what ? notVisible(what) : notVisible("a background trusted click") + ", or pass raise:true");
     const I = ids(t);
     if (I.windowNumber == null) throw new Error(OFFSCREEN);
     if (a.raise && t.P.front !== t.app) throw new Error("target did not become frontmost after raise");
@@ -534,6 +534,22 @@ function jxaRuntime(BROWSERS) {
     skyMouse(I, pt, 1, 3, 1, group);
     delay(0.001);
     skyMouse(I, pt, 2, 3, 1, group);
+  }
+
+  // A key pair addressed to the browser pid only: no window fields, no Command
+  // flag. The Unicode string goes on both events, as AppKit's own key events carry it.
+  function skyKey(I, vk, uni, flags) {
+    skyInit();
+    if (I.pid == null) throw new Error("SkyLight target has no pid");
+    ObjC.bindFunction("CGEventKeyboardSetUnicodeString", ["void", ["void *", "unsigned long", "void *"]]);
+    const data = $(uni).dataUsingEncoding(0x94000100); // NSUTF16LittleEndianStringEncoding
+    [true, false].forEach(function (down) {
+      if (!down) delay(0.01);
+      const e = $.CGEventCreateKeyboardEvent($.CGEventSourceCreate(1), vk, down);
+      $.CGEventKeyboardSetUnicodeString(e, uni.length, data.bytes);
+      $.CGEventSetFlags(e, flags & ~0x100000);
+      $.SLEventPostToPid(I.pid, e);
+    });
   }
 
   const cursorAt = () => { const p = $.CGEventGetLocation($.CGEventCreate($())); return { x: p.x, y: p.y }; };
@@ -1046,6 +1062,17 @@ function jxaRuntime(BROWSERS) {
       } finally {
         $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
       }
+    },
+    // The browser performs the key's real default; the page recorder says whether
+    // a trusted keydown with that key arrived (polled: page timers are throttled).
+    trustedPress(a) {
+      const T = trustedTarget(a, "a background trusted press");
+      const arm = parseExec(T.t, a.arm);
+      if (!arm || arm.ok === false || arm.__perch_ref_miss) return arm;
+      skyKey(T.I, a.vk, a.uni, a.flags);
+      const r = poll(T.t, a.check, 1000, 25);
+      const check = r ? r.value : parseExec(T.t, a.final);
+      return Object.assign({ ok: check.hit === true, el: arm.el, key: a.key }, check, { delivery: "skylight" });
     },
   };
 }
@@ -2139,6 +2166,41 @@ if (A.forFill && st.el) {
 return out;
 `,
 
+  // Focuses the ref/selector element (else keeps document.activeElement) and
+  // records the first keydown and keyup the window sees.
+  trusted_key_arm: String.raw`
+let el = document.activeElement;
+if (A.ref || A.selector) {
+  const r = resolveEl(A);
+  if (r.out) return r.out;
+  el = r.el;
+  el.focus({ preventScroll: true });
+  if (el.getRootNode().activeElement !== el) return { ok: false, error: ident(el) + " did not accept focus" };
+}
+const prev = window.__perch_key;
+if (prev) prev.off();
+const st = window.__perch_key = { want: A.key, down: null, up: null };
+const rec = function (e) {
+  const k = e.type === "keydown" ? "down" : "up";
+  if (!st[k]) st[k] = { key: e.key, trusted: e.isTrusted };
+};
+window.addEventListener("keydown", rec, true);
+window.addEventListener("keyup", rec, true);
+st.off = function () { window.removeEventListener("keydown", rec, true); window.removeEventListener("keyup", rec, true); };
+return { ok: true, el: el ? ident(el) : null };
+`,
+
+  // hit: a trusted keydown with the expected key; false: untrusted or another key;
+  // null: no keydown reached the page. null (keep polling) until the keyup, unless A.final.
+  trusted_key_check: String.raw`
+const st = window.__perch_key;
+if (!A.final && !(st && st.down && st.up)) return null;
+if (st) { st.off(); delete window.__perch_key; }
+const d = st && st.down;
+const a = document.activeElement;
+return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ident(a) : null };
+`,
+
   wait_check: String.raw`
 const order = { loading: 0, interactive: 1, complete: 2 };
 if (A.readyState && order[document.readyState] < order[A.readyState]) return false;
@@ -2286,6 +2348,14 @@ async function click(args = {}) {
 
 const KEY_CODES = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, Delete: 46, Space: 32, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34 };
 for (let i = 1; i <= 12; i++) KEY_CODES["F" + i] = 111 + i;
+// Virtual keycodes and the characters AppKit attaches (NS function-key range for
+// arrows, Home/End, PageUp/PageDown, forward Delete and F-keys).
+const VKEYS = {
+  Enter: [36, "\r"], Escape: [53, "\u001b"], Tab: [48, "\t"], Backspace: [51, "\u007f"], Delete: [117, "\uF728"], Space: [49, " "],
+  ArrowUp: [126, "\uF700"], ArrowDown: [125, "\uF701"], ArrowLeft: [123, "\uF702"], ArrowRight: [124, "\uF703"],
+  Home: [115, "\uF729"], End: [119, "\uF72B"], PageUp: [116, "\uF72C"], PageDown: [121, "\uF72D"],
+};
+[122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111].forEach((vk, i) => { VKEYS["F" + (i + 1)] = [vk, String.fromCharCode(0xF704 + i)]; });
 const MODIFIERS = { cmd: "metaKey", meta: "metaKey", ctrl: "ctrlKey", alt: "altKey", option: "altKey", shift: "shiftKey" };
 
 // "cmd+shift+k" -> KeyboardEvent init fields. A trailing "+" is the key itself ("cmd++").
@@ -2309,8 +2379,23 @@ export function parseKey(chord) {
   return { key, code: "", keyCode: 0, ...out };
 }
 
+// Command/Control/Option chords are refused: posted for real they can fire
+// browser menu shortcuts. Untrusted press covers chords at the page level.
+async function trustedPress({ key, ref, selector, target }) {
+  const k = parseKey(key);
+  const v = VKEYS[k.code];
+  if (!v || k.metaKey || k.ctrlKey || k.altKey) throw new Error("press: trusted takes a named key (Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12), optionally with shift");
+  return rt("trustedPress", {
+    target, key, vk: v[0], uni: v[1], flags: k.shiftKey ? 0x20000 : 0,
+    arm: pageFn("trusted_key_arm", { ref, selector, key: k.key }),
+    check: pageFn("trusted_key_check", {}),
+    final: pageFn("trusted_key_check", { final: true }),
+  });
+}
+
 async function press(args = {}) {
-  const { key, ref = null, selector = null, target } = args;
+  const { key, ref = null, selector = null, trusted = false, target } = args;
+  if (trusted) return trustedPress({ key, ref, selector, target });
   return runPage("press", "press", { ref, selector, ...parseKey(key) }, target);
 }
 
@@ -2468,10 +2553,11 @@ const TOOLS = [
     hover: { type: "boolean" },
     target: TARGET,
   }),
-  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element. Untrusted; emulates Enter/Space/Tab defaults.", {
+  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element; emulates Enter/Space/Tab defaults. `trusted`: real key events in the shown tab; check `hit`.", {
     key: { type: "string" },
     ref: REF,
     selector: SEL,
+    trusted: { type: "boolean" },
     target: TARGET,
   }, ["key"]),
   tool("fill", "Set text in inputs, textareas, rich editors; verifies it landed: {ok,kind,el,len}. `fields`: many fields in one call. `trusted`: trusted input event, no key focus; `raise:true` types foreground keys.", {
