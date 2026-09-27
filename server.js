@@ -1923,6 +1923,32 @@ s.installed = false;
 return { ok: true, entries: s.entries.splice(0) };
 `,
 
+  // Completed requests from Resource Timing, which the browser buffers on its own:
+  // no patching, no start. The cursor lives on a global, so navigation resets both.
+  // The buffer starts at the spec's 250 and is raised to 1000 on the first read; a
+  // full buffer means the browser stopped recording.
+  network_read: String.raw`
+if (typeof performance.getEntriesByType !== "function") return { ok: false, error: "network: this browser has no Resource Timing" };
+const st = window.__perch_net || (window.__perch_net = { seen: 0, cap: 250 });
+const all = performance.getEntriesByType("resource");
+if (all.length < st.seen) st.seen = 0;
+const out = { ok: true, requests: [] };
+if (all.length >= st.cap) out.full = true;
+if (st.cap < 1000 && performance.setResourceTimingBufferSize) { performance.setResourceTimingBufferSize(1000); st.cap = 1000; }
+function size(e) {
+  const n = e.transferSize || 0;
+  if (!n && e.decodedBodySize > 0) return "cache";
+  return n < 1000 ? n + "B" : n < 1e6 ? (n / 1e3).toFixed(1) + "kB" : (n / 1e6).toFixed(1) + "MB";
+}
+for (const e of all.slice(st.seen, st.seen + 100)) {
+  const url = e.name.length > 200 ? e.name.slice(0, 200) + "..." : e.name;
+  out.requests.push((e.responseStatus || "-") + " " + e.initiatorType + " " + Math.round(e.duration) + "ms " + size(e) + " " + url);
+}
+st.seen += out.requests.length;
+if (all.length > st.seen) out.more = all.length - st.seen;
+return out;
+`,
+
   // Trusted input: find the element, scroll it into view, estimate its screen
   // point, and arm listeners: mousemove for calibration, mousedown for `hit`.
   // Estimate: screen origin + browser chrome (outer - inner, assumed left and top)
@@ -2061,8 +2087,8 @@ async function accessibilitySnapshot(args = {}) {
 
 async function consoleCapture(args = {}) {
   const { mode = "read", target } = args;
-  if (!["start", "read", "stop"].includes(mode)) throw new Error(`console_capture: unknown mode '${mode}' (expected start | read | stop)`);
-  return runPage("console_capture", "console_" + mode, {}, target);
+  if (!["start", "read", "stop", "network"].includes(mode)) throw new Error(`console_capture: unknown mode '${mode}' (expected start | read | stop | network)`);
+  return runPage("console_capture", mode === "network" ? "network_read" : "console_" + mode, {}, target);
 }
 
 async function notify(args = {}) {
@@ -2293,8 +2319,8 @@ const TOOLS = [
     role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles, e.g. textbox, combobox, button." },
     target: TARGET,
   }),
-  tool("console_capture", "Patch console.* in the page: `start`, then `read` drains entries as \"level: text\" strings, `stop` restores. Navigation clears it.", {
-    mode: { type: "string", enum: ["start", "read", "stop"], description: "Default read." },
+  tool("console_capture", "Patch console.* in the page: `start`, then `read` drains entries as \"level: text\" strings, `stop` restores. Navigation clears it. `network` drains finished requests as \"status type ms size url\" (Resource Timing, no start).", {
+    mode: { type: "string", enum: ["start", "read", "stop", "network"], description: "Default read." },
     target: TARGET,
   }),
   tool("notify", "Show a macOS notification (appears as Script Editor).", {
