@@ -206,7 +206,7 @@ function jxaRuntime(BROWSERS) {
     const t = resolve(a.target);
     requireAccessibility();
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
-    else if (!isActive(t)) throw new Error("background trusted input requires the target to already be the active tab in its browser window; select the tab explicitly when you can spare focus");
+    else if (!isActive(t)) throw new Error("background trusted click requires the target to already be the active tab in its browser window; select the tab explicitly when you can spare focus");
     const I = ids(t);
     if (I.windowNumber == null) throw new Error(t.app + "'s window isn't on screen (minimized or on another Space)");
     if (a.raise && t.P.front !== t.app) throw new Error("target did not become frontmost after raise");
@@ -482,7 +482,9 @@ function jxaRuntime(BROWSERS) {
       else if (a.target && a.target.tabIndex != null && !isActive(t)) {
         throw new Error("background screenshot requires the target to already be the active tab in its browser window; use raise:true only when focus is available");
       }
-      return ids(t);
+      const I = ids(t);
+      if (I.windowNumber == null) throw new Error(t.app + "'s window isn't on screen (minimized or on another Space); screenshot cannot capture its pixels");
+      return I;
     },
     select(a) {
       const t = resolve(a.target);
@@ -517,23 +519,17 @@ function jxaRuntime(BROWSERS) {
     },
     trustedFill(a) {
       const T = trustedTarget(a);
-      const home = T.background ? null : cursorAt();
+      const home = cursorAt();
       try {
         const A = aim(T, a, "fill");
         if (A.out) return A.out;
-        if (T.background) skyClick(T.I, A.pt);
-        else leftClick(T.I, A.pt);
+        leftClick(T.I, A.pt);
         delay(0.05); // let focus settle before typing
-        if (T.background) {
-          const inserted = parseExec(T.t, a.insert);
-          const checked = parseExec(T.t, a.check);
-          return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, delivery: "skylight+editing" }, checked, inserted, { ok: inserted.ok === true && checked.ok === true });
-        }
         typeChunks(a.chunks);
         delay(0.05);
-        return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, delivery: T.background ? "skylight" : "hid" }, parseExec(T.t, a.check));
+        return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, delivery: "hid" }, parseExec(T.t, a.check));
       } finally {
-        if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
+        $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
       }
     },
   };
@@ -820,10 +816,9 @@ async function screenshot(args = {}) {
   const base = join(tmpdir(), `perch-${process.pid}-${Date.now().toString(36)}`);
   const files = [`${base}.${ext}`];
   try {
-    // -l reads the window's own pixels regardless of z-order. Without a CGWindowID
-    // (minimized, other Space) fall back to the screen rect, reliable only on top.
-    const where = g.windowNumber != null ? ["-l", String(g.windowNumber)] : ["-R", `${g.geom.x},${g.geom.y},${g.geom.w},${g.geom.h}`];
-    await deps.exec("screencapture", [...where, "-x", "-o", "-t", ext, files[0]]);
+    // A missing CGWindowID is rejected by shotGeom: a screen-rect capture would
+    // show the user's foreground app rather than a minimized browser window.
+    await deps.exec("screencapture", ["-l", String(g.windowNumber), "-x", "-o", "-t", ext, files[0]]);
     let buf = await readFile(files[0]);
     let dims = imageDims(buf);
     if (maxWidth > 0 && dims && dims.w > maxWidth) {
@@ -836,7 +831,7 @@ async function screenshot(args = {}) {
       } catch {}
     }
     // -l pixels cover the CG bounds (titlebar included), not AppleScript's inner geom.
-    const rect = g.windowNumber != null && g.cgBounds ? g.cgBounds : g.geom;
+    const rect = g.cgBounds || g.geom;
     return { __image: true, data: buf.toString("base64"), mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: dims ? { window: rect, image: dims } : undefined };
   } finally {
     await Promise.all(files.map((f) => unlink(f).catch(() => {})));
@@ -1332,23 +1327,37 @@ st.moves = [];
 return A.reset || !moves.length ? null : { moves: moves };
 `,
 
-  // Chromium's editing command runs through the browser's editing pipeline and
-  // emits a trusted input event, even when the OS key window belongs to the user.
-  // Verify both the delivered event and the resulting value before reporting success.
-  trusted_insert: String.raw`
-const st = window.__perch_trusted;
-if (!st || !st.el || !st.el.isConnected) return { ok: false, error: "trusted field disappeared; re-snapshot" };
-const el = st.el;
+  // Chrome's editing command emits a trusted input event in an inactive tab,
+  // including when its window has no on-screen CG entry. It needs no mouse
+  // event, tab selection, window geometry, or AppKit focus change.
+  trusted_fill_background: String.raw`
+let el;
+if (A.ref || A.selector) {
+  const r = resolveEl(A);
+  if (r.out) return r.out;
+  el = r.el;
+} else {
+  const re = new RegExp(A.label_pattern, "i");
+  const fields = Array.from(document.querySelectorAll("input, textarea")).filter(function (e) {
+    return !(e.tagName === "INPUT" && INPUT_SKIP.indexOf((e.type || "text").toLowerCase()) >= 0) && !e.disabled && !e.readOnly;
+  });
+  const hit = function (e) { return re.test(labelText(e)) || re.test(hintText(e)); };
+  el = fields.filter(vis).find(hit) || fields.find(hit);
+  if (!el) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
+}
+if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, error: "fill {trusted:true} supports plain inputs/textareas only" };
+if (el.disabled || el.readOnly) return { ok: false, error: ident(el) + " is disabled or read-only" };
 let trusted = false;
 const onInput = function (e) { if (e.target === el && e.isTrusted) trusted = true; };
 el.addEventListener("input", onInput, true);
 try {
   el.focus({ preventScroll: true });
+  if (document.activeElement !== el) return { ok: false, error: ident(el) + " did not accept focus" };
   if (el.select) el.select();
   const accepted = document.execCommand(A.text ? "insertText" : "delete", false, A.text);
   const value = String(el.value || "");
   const ok = accepted === true && trusted && value === A.text;
-  return { ok: ok, trusted: trusted, value: value, ...(ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
+  return { ok: ok, trusted: trusted, value: value, el: ident(el), ...(ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
 } finally { el.removeEventListener("input", onInput, true); }
 `,
 
@@ -1469,12 +1478,12 @@ async function trustedClick({ ref, selector, x, y, raise, target }) {
 // Background fields use the browser's trusted editing command; the explicit
 // foreground route keeps the hardware-style keystrokes. Both verify the value.
 async function trustedFill({ ref, selector, label_pattern, text, raise, target }) {
+  if (!raise) return runPage("fill", "trusted_fill_background", { ref, selector, label_pattern, text }, target);
   return rt("trustedFill", {
     target, raise,
     probe: pageFn("trusted_probe", { ref, selector, label_pattern, forFill: true, background: !raise }),
     cal: pageFn("trusted_cal", {}),
     calReset: pageFn("trusted_cal", { reset: true }),
-    insert: pageFn("trusted_insert", { text }),
     check: pageFn("trusted_check", { forFill: true, text }),
     chunks: chunkUtf16(text),
   });
@@ -1528,7 +1537,7 @@ export const INSTRUCTIONS = `perch drives the user's own macOS browsers (Chrome 
 Targeting: tools take an optional \`target\` {app, windowId, tabIndex}; the default is the active tab of the topmost browser window. tabIndex is a position, not an id: it shifts as tabs open and close, so re-list instead of caching it. new_tab creates an unselected tab in an existing browser window but may focus the browser; defer it while the user works.
 Elements: prefer \`ref\` (from accessibility_snapshot) over \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
-Arc runs page JS only on a window's active tab (activate_tab first). Background screenshot and trusted input require the target tab already active in its browser window. Only activate_tab, screenshot{raise} and trusted input with raise explicitly take focus.`;
+Arc runs page JS only on a window's active tab (activate_tab first). Background screenshots and SkyLight trusted clicks require the target tab already active in its browser window; background trusted fills work on inactive Chrome tabs, including minimized windows. Only activate_tab, screenshot{raise} and trusted input with raise explicitly take focus.`;
 
 const TARGET = { type: "object", properties: { app: { type: "string" }, windowId: { type: ["string", "number"] }, tabIndex: { type: "number" } } };
 const REF = { type: "string", description: "From accessibility_snapshot." };
@@ -1607,7 +1616,7 @@ const TOOLS = [
     raise: { type: "boolean" },
     target: TARGET,
   }),
-  tool("fill", "Set a field's text and verify it landed: inputs, textareas, and rich editors (contenteditable, ProseMirror, Quill…). Returns {ok,kind,el,len,ambiguous?}. `trusted` gives plain fields a trusted input event without taking key focus; `raise:true` types foreground keys.", {
+  tool("fill", "Set a field's text and verify it landed: inputs, textareas, and rich editors (contenteditable, ProseMirror, Quill…). Returns {ok,kind,el,len,ambiguous?}. `trusted` gives plain fields a trusted input event in inactive Chrome tabs without taking key focus; `raise:true` types foreground keys.", {
     text: { type: "string" },
     text_path: { type: "string", description: "File with the text." },
     ref: REF,

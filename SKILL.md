@@ -18,7 +18,7 @@ Every tool takes an optional `target` `{app, windowId, tabIndex}`. The default i
 | `navigate` | Load a URL and wait for the new page to finish loading. |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path` loads a local file; with both, the file runs first, then `script`, in one call. `awaitPromise` for real async. |
 | `wait` | Until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`). |
-| `screenshot` | Window image without raising it, plus `{window, image}` for mapping: `screenX = window.x + imageX * window.w / image.w`. |
+| `screenshot` | On-screen window image without raising it, plus `{window, image}` for mapping: `screenX = window.x + imageX * window.w / image.w`. Minimized windows cannot be captured. |
 | `get_text` | innerText, or outerHTML with `html: true`. Paged by `offset` / `maxChars`. |
 | `accessibility_snapshot` | Page outline with refs (format below). Filter with `role`; `max: 0` for the header only. |
 | `console_capture` | `start`, then `read` drains `"level: text"` strings, `stop` restores. Navigation clears it. |
@@ -44,6 +44,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 - `{ok: false, error}` is an outcome, not a crash: nothing matched, or the value didn't land. Read it before retrying.
 - `fill` returns `{ok, kind: "plain"|"rich", el: 'textbox "Email"', len, ambiguous?}`. `ok: true` is proof; don't re-check.
+- `fill {trusted:true}` returns `{ok, trusted, value, el}` for background plain fields. Require both `ok` and `trusted`.
 - Page errors come back as `isError` with `__perch_error`, `__perch_error_name` and a stack head.
 
 ## Gotchas
@@ -55,7 +56,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Trusted input
 
-`click {trusted: true}` uses SkyLight to address the browser window without explicitly activating it or moving the shared cursor. The target tab must already be active in its browser window; perch refuses to switch it in background mode. Background `fill {trusted: true}` clicks the field there, then uses the browser's editing command; it verifies a trusted `input` event and the exact value. Both require Accessibility permission. This route was verified on a Chrome Canary scratch page, but a later test run visibly focused Chrome; use the result checks and verify the page outcome. Pass `raise: true` for the HID route, which takes focus briefly and restores the cursor. Rich editors usually work without trusted mode.
+`fill {trusted: true}` edits a plain input or textarea through Chrome's editing command and verifies a trusted `input` event and the exact value. It works in inactive Chrome tabs and minimized Chrome windows without changing the selected tab or taking the user's key focus. `click {trusted: true}` uses SkyLight to address an on-screen browser window without explicitly activating it or moving the shared cursor; its target tab must already be active in that window. A minimized Chrome window does not receive this SkyLight click in the live probe. Use ordinary `click` for inactive or minimized tabs and verify the page outcome; it produces an untrusted DOM click. SkyLight clicks require Accessibility permission. Pass `raise: true` for the foreground HID route, which takes focus briefly and restores the cursor. Rich editors usually work without trusted mode.
 
 ## Permissions
 
@@ -63,4 +64,4 @@ The server names the exact toggle on first failure; show it to the user and wait
 
 - Chromium family and Arc: View > Developer > Allow JavaScript from Apple Events (per profile).
 - Safari: Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.
-- macOS Automation (first call prompts) and, for trusted input only, Accessibility: System Settings > Privacy & Security, for the controlling app.
+- macOS Automation (first call prompts) and, for SkyLight/HID input only, Accessibility: System Settings > Privacy & Security, for the controlling app.

@@ -52,10 +52,19 @@ needs background browser automation without installing anything in the browser.
   exact click position, full Unicode text, unchanged foreground app, key
   process, and cursor.
 - A later user-observed focus change during live checks exposed an unmeasured
-  route: test tab creation and implicit tab selection. Background trusted input
+  route: test tab creation and implicit tab selection. Background trusted clicks
   and screenshots now refuse inactive target tabs; `new_tab` no longer launches
   a browser or explicitly selects a tab. The default smoke test reuses an
   existing scratch tab and skips tab creation.
+- A minimized-window test established a narrower split: Chrome's editing
+  command produced a trusted input event in an inactive tab while Canary was
+  minimized, with the foreground and key process monitored continuously.
+  Background trusted fill now uses that direct page route, so several inactive
+  tabs can be filled without selecting them. A routed SkyLight click to the
+  minimized window's off-screen CGWindowID delivered no page event, and Chrome's
+  minimized AX tree exposed no webpage controls. Keep trusted clicks limited
+  to active tabs in on-screen windows; use ordinary DOM clicks and verify the
+  resulting page state elsewhere.
 - ✅ The previously verified `raise:true` HID path raises the target,
   posts hardware-style events, then restores the cursor. Both routes require
   Accessibility permission.

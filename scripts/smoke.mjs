@@ -59,6 +59,7 @@ try {
   await check("screenshot image + metadata block", async () => {
     if (!haveBrowser) return skip("no browser running");
     const res = await call("screenshot", { target: { app: active.app, windowId: active.windowId } });
+    if (res.isError && /isn't on screen/.test(text(res))) return skip("target browser window is minimized or on another Space");
     expect(res.content.find((c) => c.type === "image"), "no image block");
     const meta = JSON.parse(text(res));
     for (const k of ["x", "y", "w", "h"]) expect(typeof meta.window?.[k] === "number", `window.${k} missing`);

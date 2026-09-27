@@ -80,31 +80,15 @@ test("trusted_check reports whether the mousedown hit the element, then disarms"
   assert.equal(run(w, "trusted_cal", {}), null, "listeners removed after check");
 });
 
-test("trusted_insert edits the probed field and requires a trusted input event", () => {
-  const w = page(`<input id=i aria-label="Name">`);
-  run(w, "trusted_probe", { selector: "#i", forFill: true });
-  w.document.execCommand = (_command, _ui, text) => {
-    const el = w.document.activeElement;
-    el.value = text;
-    const event = new w.Event("input", { bubbles: true });
-    Object.defineProperty(event, "isTrusted", { value: true });
-    el.dispatchEvent(event);
-    return true;
-  };
-  assert.deepEqual(run(w, "trusted_insert", { text: "Ada 😀" }), { ok: true, trusted: true, value: "Ada 😀" });
-  assert.equal(w.document.getElementById("i").value, "Ada 😀");
-});
-
-test("trusted_insert rejects a value change without a trusted input event", () => {
+test("background trusted fill rejects a value change without a trusted input event", () => {
   const w = page(`<input id=i value=old>`);
-  run(w, "trusted_probe", { selector: "#i", forFill: true, background: true });
   w.document.execCommand = (_command, _ui, text) => {
     const el = w.document.activeElement;
     el.value = text;
     el.dispatchEvent(new w.Event("input", { bubbles: true }));
     return true;
   };
-  const result = run(w, "trusted_insert", { text: "new" });
+  const result = run(w, "trusted_fill_background", { selector: "#i", text: "new" });
   assert.equal(result.ok, false);
   assert.equal(result.trusted, false);
   assert.equal(result.value, "new");
@@ -171,19 +155,74 @@ test("trusted input reaches a background browser without changing app focus or c
   assert.deepEqual(world.state.warps, []);
 });
 
-test("background trusted input refuses to switch a browser window's active tab", async () => {
+test("background trusted clicks refuse to switch a browser window's active tab", async () => {
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(2) }] }],
     cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
   });
   const target = { app: "Google Chrome", windowId: 1, tabIndex: 1 };
   const click = await handleCall("click", { trusted: true, x: 300, y: 200, target });
-  const fill = await handleCall("fill", { trusted: true, selector: "input", text: "Ada", target });
   assert.equal(click.isError, true);
-  assert.equal(fill.isError, true);
   assert.match(click.content[0].text, /already be the active tab/);
-  assert.match(fill.content[0].text, /already be the active tab/);
   assert.equal(world.counts["win.activeTabIndex="], undefined);
+  assert.equal(world.posted.length, 0);
+});
+
+test("trusted fill edits an inactive Chrome tab without an on-screen window", async () => {
+  const dom = page(`<input id=i aria-label="Name" value="old">`);
+  Object.defineProperty(dom.document, "visibilityState", { value: "hidden", configurable: true });
+  dom.document.execCommand = (_command, _ui, text) => {
+    const el = dom.document.activeElement;
+    el.value = text;
+    const event = new dom.Event("input", { bubbles: true });
+    Object.defineProperty(event, "isTrusted", { value: true });
+    el.dispatchEvent(event);
+    return true;
+  };
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: [{ url: "about:blank", id: "front" }, { url: "about:blank", id: "background", dom }] }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }],
+  });
+  const r = await handleCall("fill", { trusted: true, selector: "#i", text: "Ada 😀", target: { app: "Google Chrome", windowId: 1, tabIndex: 1 } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.deepEqual(JSON.parse(r.content[0].text), { ok: true, trusted: true, value: "Ada 😀", el: 'textbox "Name"' });
+  assert.equal(dom.document.getElementById("i").value, "Ada 😀");
+  assert.equal(world.counts["win.activeTabIndex="], undefined);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+  assert.equal(world.posted.length, 0);
+});
+
+test("trusted fills can target three inactive tabs without selecting any", async () => {
+  const doms = Array.from({ length: 3 }, () => page(`<input id=i aria-label="Name" value="old">`));
+  for (const dom of doms) {
+    Object.defineProperty(dom.document, "visibilityState", { value: "hidden", configurable: true });
+    dom.document.execCommand = (_command, _ui, value) => {
+      const el = dom.document.activeElement;
+      el.value = value;
+      const event = new dom.Event("input", { bubbles: true });
+      Object.defineProperty(event, "isTrusted", { value: true });
+      el.dispatchEvent(event);
+      return true;
+    };
+  }
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: [
+      { url: "about:blank", id: "front" },
+      ...doms.map((dom, i) => ({ url: "about:blank", id: `background${i}`, dom })),
+    ] }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }],
+  });
+  const values = ["first 😀", "second é", "third ok"];
+  const results = await Promise.all(values.map((value, i) => handleCall("fill", {
+    trusted: true, selector: "#i", text: value, target: { app: "Google Chrome", windowId: 1, tabIndex: i + 1 },
+  })));
+  results.forEach((result, i) => {
+    assert.equal(result.isError, undefined, result.content[0].text);
+    assert.equal(JSON.parse(result.content[0].text).ok, true);
+    assert.equal(doms[i].document.getElementById("i").value, values[i]);
+  });
+  assert.equal(world.counts["win.activeTabIndex="], undefined);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
   assert.equal(world.posted.length, 0);
 });
 
@@ -202,7 +241,7 @@ test("raise:true keeps the existing foreground HID path", async () => {
 test("trusted input without Accessibility permission fails before posting", async () => {
   const world = chromeFront();
   world.state.ax = false;
-  const r = await handleCall("fill", { trusted: true, selector: "input", text: "x" });
+  const r = await handleCall("click", { trusted: true, x: 300, y: 200 });
   assert.match(r.content[0].text, /Accessibility permission required/);
   assert.equal(world.posted.length, 0);
 });
@@ -218,6 +257,14 @@ test("screenshot geometry: Arc frame comes from its CG window; inactive tabs nee
   assert.deepEqual(JSON.parse(g), { geom: { x: 5, y: 6, w: 900, h: 700 }, pid: 9, windowNumber: 31, cgBounds: { x: 5, y: 6, w: 900, h: 700 } });
   assert.equal(world.counts["tab.select"], undefined);
   assert.equal(world.counts["activate(Arc)"], undefined);
+});
+
+test("screenshot refuses a minimized window instead of capturing another app's pixels", () => {
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(1) }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }],
+  });
+  assert.throws(() => world.run(`__perch.shotGeom({ target: { app: "Google Chrome", windowId: 1 } })`), /isn't on screen/);
 });
 
 // ---- aiming: visibility + calibration, through the runtime against a happy-dom page ----

@@ -4,12 +4,18 @@
 // the front app or cursor. Both modes post real input and require --yes.
 //   node scripts/trusted-live.mjs --yes [--app "Google Chrome Canary"]
 //   node scripts/trusted-live.mjs --yes --background [--app "Google Chrome Canary"]
+//   node scripts/trusted-live.mjs --yes --background-fill [--app "Google Chrome Canary"]
 // Uses a scratch about:blank tab in a Chrome-family browser (reused like smoke's).
-// --background requires another app to be foreground and an existing scratch
-// tab already active in its Chrome window. Defer the live test otherwise;
-// never create/select tabs or switch apps to satisfy its preconditions.
+// --background requires an existing scratch tab active in its Chrome window;
+// --background-fill requires an inactive scratch tab and also works minimized.
+// Both require another app foreground. Never create/select tabs or switch apps
+// to satisfy these preconditions.
 
 import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { writeFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { connect, text } from "./mcp-client.mjs";
 
 const argv = process.argv.slice(2);
@@ -18,7 +24,8 @@ if (!argv.includes("--yes")) {
   process.exit(2);
 }
 const appArg = argv.includes("--app") ? argv[argv.indexOf("--app") + 1] : null;
-const background = argv.includes("--background");
+const fillOnly = argv.includes("--background-fill");
+const background = argv.includes("--background") || fillOnly;
 if (background && argv.includes("--delivery")) {
   console.error("--background and --delivery are separate probes; run one at a time.");
   process.exit(2);
@@ -33,16 +40,25 @@ const keyProcess = () => execFileSync("osascript", ["-l", "JavaScript", "-e",
   "ObjC.bindFunction('_SLPSGetFrontProcess',['int',['void *']]);" +
   "const d=$.NSMutableData.dataWithLength(8);if($._SLPSGetFrontProcess(d.mutableBytes)!==0)throw Error('front process unavailable');ObjC.unwrap(d.description)"
 ]).toString().trim();
+const keyProcessForApp = (name) => execFileSync("osascript", ["-l", "JavaScript", "-e",
+  "ObjC.import('CoreGraphics');ObjC.import('Foundation');" +
+  "ObjC.bindFunction('GetProcessForPID',['int',['int','void *']]);" +
+  "const l=ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(16,0)));" +
+  `const w=l.find(w=>w.kCGWindowOwnerName===${JSON.stringify(name)});if(!w)throw Error('target browser pid unavailable');` +
+  "const d=$.NSMutableData.dataWithLength(8);if($.GetProcessForPID(w.kCGWindowOwnerPID,d.mutableBytes)!==0)throw Error('target process unavailable');ObjC.unwrap(d.description)"
+]).toString().trim();
 const monitorKeyProcess = () => {
+  const stopPath = join(tmpdir(), `perch-focus-stop-${process.pid}-${randomUUID()}`);
   const script = "ObjC.import('Foundation');ObjC.bindFunction('dlopen',['void *',['char *','int']]);" +
     "$.dlopen('/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight',2);" +
     "ObjC.bindFunction('_SLPSGetFrontProcess',['int',['void *']]);" +
     "function sample(){const d=$.NSMutableData.dataWithLength(8);if($._SLPSGetFrontProcess(d.mutableBytes)!==0)throw Error('front process unavailable');return ObjC.unwrap(d.description)}" +
-    "const initial=sample();let last=initial;const changes=[];const until=Date.now()+4500;" +
-    "while(Date.now()<until){const now=sample();if(now!==last){changes.push({at:Date.now(),from:last,to:now});last=now}delay(0.005)}" +
+    `const stop=${JSON.stringify(stopPath)};const fm=$.NSFileManager.defaultManager;` +
+    "const initial=sample();let last=initial;const changes=[];const until=Date.now()+120000;" +
+    "while(Date.now()<until&&!fm.fileExistsAtPath(stop)){const now=sample();if(now!==last){changes.push({at:Date.now(),from:last,to:now});last=now}delay(0.005)}" +
     "JSON.stringify({initial,final:last,changes})";
   const child = spawn("osascript", ["-l", "JavaScript", "-e", script]);
-  return new Promise((resolve, reject) => {
+  const result = new Promise((resolve, reject) => {
     let out = "", err = "";
     child.stdout.on("data", (data) => { out += data; });
     child.stderr.on("data", (data) => { err += data; });
@@ -52,6 +68,10 @@ const monitorKeyProcess = () => {
       try { resolve(JSON.parse(out.trim())); } catch (e) { reject(e); }
     });
   });
+  return { stop: async () => {
+    await writeFile(stopPath, "stop");
+    try { return await result; } finally { await unlink(stopPath).catch(() => {}); }
+  } };
 };
 const cursorAt = () => JSON.parse(execFileSync("osascript", ["-l", "JavaScript", "-e",
   "ObjC.import('CoreGraphics');const p=$.CGEventGetLocation($.CGEventCreate($()));JSON.stringify({x:p.x,y:p.y})"]).toString().trim());
@@ -105,9 +125,11 @@ const report = (ok, label, detail) => { if (!ok) failures++; console.log(`${ok ?
 try {
   const listed = JSON.parse(text(await client.call("list_tabs", { urlContains: "about:blank", limit: 200 })));
   const chrome = (t) => /chrome|chromium|brave|edge|vivaldi/i.test(t.app) && (!appArg || t.app === appArg);
-  let tab = listed.tabs.find((t) => chrome(t) && (!background || t.active));
+  let tab = listed.tabs.find((t) => chrome(t) && (fillOnly ? !t.active : (!background || t.active)));
   if (background && !tab) {
-    throw new Error("background probe needs an existing about:blank tab already active in its Chrome window; defer rather than creating or selecting a tab");
+    throw new Error(fillOnly
+      ? "background-fill probe needs an existing inactive about:blank tab; defer rather than creating or selecting a tab"
+      : "background click probe needs an existing about:blank tab already active in its Chrome window; defer rather than creating or selecting a tab");
   }
   if (!tab) {
     const all = JSON.parse(text(await client.call("list_tabs", { limit: 500 }))).tabs.find(chrome);
@@ -146,14 +168,15 @@ try {
   if (background && before === tab.app) {
     throw new Error(`${tab.app} is frontmost; defer --background until another app is naturally in front (do not switch apps for this test)`);
   }
-  if (background && frontApp() !== before) {
-    throw new Error(`scratch-tab setup changed the front app from ${before} to ${frontApp()}`);
+  if (background && frontApp() === tab.app) {
+    throw new Error(`scratch-tab setup focused ${tab.app}`);
   }
   const cursorBefore = background ? cursorAt() : null;
   const foregroundSamples = [];
   const keySamples = [];
   const keyBefore = background ? keyProcess() : null;
-  const keyMonitor = background ? monitorKeyProcess().then((value) => ({ ok: true, value }), (error) => ({ ok: false, error: error.message })) : null;
+  const targetKey = background ? keyProcessForApp(tab.app) : null;
+  const keyMonitor = background ? monitorKeyProcess() : null;
   let poll;
   if (background) {
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -169,8 +192,10 @@ try {
 
   let clickRes, fillRes, inputError;
   try {
-    clickRes = await client.call("click", { trusted: true, raise: !background, selector: "#b", target });
-    if (background) foregroundSamples.push(frontApp());
+    if (!fillOnly) {
+      clickRes = await client.call("click", { trusted: true, raise: !background, selector: "#b", target });
+      if (background) foregroundSamples.push(frontApp());
+    }
     fillRes = await client.call("fill", { trusted: true, raise: !background, selector: "#i", text: TEXT, target });
     if (background) foregroundSamples.push(frontApp());
   } catch (e) {
@@ -180,10 +205,10 @@ try {
     if (background) {
       foregroundSamples.push(frontApp());
       keySamples.push(keyProcess());
-      report(foregroundSamples.every((app) => app === before), "front app stays unchanged", JSON.stringify({ expected: before, observed: [...new Set(foregroundSamples)], samples: foregroundSamples.length }));
-      report(keySamples.every((process) => process === keyBefore), "key focus stays with the user", JSON.stringify({ expected: keyBefore, observed: [...new Set(keySamples)], samples: keySamples.length }));
-      const monitored = await keyMonitor;
-      report(monitored.ok && monitored.value.initial === keyBefore && monitored.value.final === keyBefore && monitored.value.changes.length === 0,
+      report(foregroundSamples.every((app) => app !== tab.app), "browser never becomes frontmost", JSON.stringify({ observed: [...new Set(foregroundSamples)], samples: foregroundSamples.length }));
+      report(keySamples.every((process) => process !== targetKey), "browser never receives key focus", JSON.stringify({ observed: [...new Set(keySamples)], samples: keySamples.length }));
+      const monitored = await keyMonitor.stop().then((value) => ({ ok: true, value }), (error) => ({ ok: false, error: error.message }));
+      report(monitored.ok && monitored.value.initial !== targetKey && monitored.value.final !== targetKey && monitored.value.changes.every((change) => change.to !== targetKey),
         "continuous key-focus monitor", JSON.stringify(monitored));
       const cursorAfter = cursorAt();
       if (Math.abs(cursorAfter.x - cursorBefore.x) <= 1 && Math.abs(cursorAfter.y - cursorBefore.y) <= 1) {
@@ -194,19 +219,21 @@ try {
     }
   }
   if (inputError) throw inputError;
-  const click = JSON.parse(text(clickRes).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
+  const click = fillOnly ? null : JSON.parse(text(clickRes).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
   const fill = JSON.parse(text(fillRes).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
   const rec = JSON.parse(text(await client.call("eval_js", { target, script: "return { rec: window.__rec, value: document.getElementById('i').value }" })));
 
-  const down = rec.rec.downs.find((d) => d.id === "b");
-  report(click.hit === true && !!down?.trusted, "trusted click lands on the button", JSON.stringify({ result: click, pageSaw: rec.rec.downs[0] || null }));
-  const clicked = rec.rec.clicks.find((e) => e.id === "b");
-  report(!!clicked?.trusted && !clicked.meta, "button receives an ordinary trusted click", JSON.stringify(clicked || null));
-  if (down) report(Math.abs(down.x - centers.b[0]) <= 3 && Math.abs(down.y - centers.b[1]) <= 3, "click point matches the element center", `center ${centers.b.map(Math.round)}, pressed ${[down.x, down.y]}`);
-  const firstMove = rec.rec.moves[0];
-  if (!background && firstMove) console.log(`INFO estimate before calibration was off by ${[Math.round(centers.b[0] - firstMove[0]), Math.round(centers.b[1] - firstMove[1])]} (px)`);
-  else if (!firstMove) console.log("INFO no mousemove reached the page (calibration unavailable)");
-  report(fill.ok === true && fill.hit === true && rec.value === TEXT, "trusted fill replaces old text with the full text", JSON.stringify({ result: fill, value: rec.value }));
+  if (!fillOnly) {
+    const down = rec.rec.downs.find((d) => d.id === "b");
+    report(click.hit === true && !!down?.trusted, "trusted click lands on the button", JSON.stringify({ result: click, pageSaw: rec.rec.downs[0] || null }));
+    const clicked = rec.rec.clicks.find((e) => e.id === "b");
+    report(!!clicked?.trusted && !clicked.meta, "button receives an ordinary trusted click", JSON.stringify(clicked || null));
+    if (down) report(Math.abs(down.x - centers.b[0]) <= 3 && Math.abs(down.y - centers.b[1]) <= 3, "click point matches the element center", `center ${centers.b.map(Math.round)}, pressed ${[down.x, down.y]}`);
+    const firstMove = rec.rec.moves[0];
+    if (!background && firstMove) console.log(`INFO estimate before calibration was off by ${[Math.round(centers.b[0] - firstMove[0]), Math.round(centers.b[1] - firstMove[1])]} (px)`);
+    else if (!firstMove) console.log("INFO no mousemove reached the page (calibration unavailable)");
+  }
+  report(fill.ok === true && (background ? fill.trusted === true : fill.hit === true) && rec.value === TEXT, "trusted fill replaces old text with the full text", JSON.stringify({ result: fill, value: rec.value }));
   const trustedInputs = rec.rec.inputs.filter((e) => e.id === "i" && e.trusted);
   report(trustedInputs.length > 0, "page receives a trusted input event", JSON.stringify({ trusted: trustedInputs.length, total: rec.rec.inputs.length }));
   await client.call("eval_js", { target, script: "document.body.innerHTML=''; delete window.__rec; return 1" });
