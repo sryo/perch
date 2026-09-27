@@ -62,6 +62,8 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 `fill {trusted: true}` edits a plain input or textarea through the browser's editing command, verifying a trusted `input` event and the exact value. It works wherever page JS runs, minimized windows included, without selecting the tab or taking key focus. `click {trusted: true}` uses SkyLight to reach an on-screen, unminimized window without activating it or moving the cursor; its tab must be the one its window shows (else `tab_not_visible`). Plain `click` works in any tab; verify the outcome. `raise: true` uses the foreground HID route: brief focus, cursor restored. Rich editors rarely need trusted mode.
 
+`accessibility_snapshot {frames:true}` adds iframe controls (payment, widgets) as `fN` rows, never values. `fN` takes only `click {trusted:true}`; read its `after`. Captcha frames and secure fields go to the user.
+
 ## Permissions
 
 The server names the exact toggle on first failure; show it to the user and wait.

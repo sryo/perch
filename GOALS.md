@@ -136,3 +136,15 @@ lives in AGENTS.md.
   type), Safari and Arc dialog trees, cross-origin iframes through
   Accessibility (captcha, payment and login frames need their own design),
   and screenshots of minimized or other-Space windows (no consumer needs them).
+- **Frames (2026-09): iframe controls through Accessibility.** Opt-in
+  `accessibility_snapshot {frames:true}` lists controls inside iframes,
+  cross-origin ones too, as `fN` rows, and `click {ref:"fN", trusted:true}`
+  clicks one after walking the frames again (goals 2 and 3: one snapshot and
+  one click instead of a hand-off). No new tool, budgets unchanged. Click only:
+  frame refs refuse fill, press, select, get_text and file_upload, so card and
+  password fields are never typed into, and rows never carry a field's value.
+  Rejected: stealth of any kind (motion humanizing, jitter, timing
+  randomization) and anything captcha-specific; challenge frames are the
+  user's. Deferred again: screenshots of minimized windows, because in the lab
+  `screencapture -l` returned the pixels from before minimizing, and a stale
+  image is the false `ok` goal 2 rejects.

@@ -6,6 +6,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
+import { page } from "./helpers/page.mjs";
 
 const chrome = (windows, extra = {}) => ({ name: "Google Chrome", kind: "chrome", windows, ...extra });
 const safari = (windows, extra = {}) => ({ name: "Safari", kind: "safari", windows, ...extra });
@@ -238,4 +239,30 @@ test("the dialog probe sends no Apple Events while no dialog is open, and few on
   // The proof adds the tab's url and one bounded execute (NSAppleScript, which
   // the fake also counts as tab.execute).
   assert.ok(events() <= 7, breakdown());
+});
+
+// A default snapshot is one page call and no Accessibility work; frames:true adds
+// the frame walk in the same runtime call: a few Apple Events for the tab's shown
+// state and window geometry, and Accessibility reads bounded by the tree's size.
+test("accessibility_snapshot: the default does no Accessibility work; frames:true stays one call with a few more events", async () => {
+  const dom = page(`<button>Go</button>`, { url: "https://c0.test/" });
+  Object.defineProperty(dom, "innerWidth", { value: 800, configurable: true });
+  Object.defineProperty(dom, "innerHeight", { value: 520, configurable: true });
+  const frame = { url: "https://pay.test/f", box: { x: 10, y: 100, w: 300, h: 100 }, kids: [{ role: "AXButton", title: "Pay", box: { x: 20, y: 110, w: 80, h: 30 } }] };
+  const cg = [{ owner: "Google Chrome", pid: 40, wid: 400, x: 0, y: 0, w: 800, h: 600, ax: { web: [{ x: 0, y: 80, w: 800, h: 520, frames: [frame] }] } }];
+  install({ browsers: [chrome([{ id: 1, active: 0, x: 0, y: 0, w: 800, h: 600, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg });
+  const ax = () => world.counts.AX || 0;
+  const events = () => Object.entries(world.counts).filter(([k]) => !NOT_AE.test(k) && !/^AX/.test(k)).reduce((s, [, n]) => s + n, 0);
+  let { t } = await call("accessibility_snapshot", {});
+  assert.equal(t.split("\n").length, 2, t);
+  assert.equal(ax(), 0, breakdown());
+  assert.equal(events(), 1, breakdown());
+  world.reset();
+  ({ t } = await call("accessibility_snapshot", { frames: true }));
+  assert.match(t, /\nf1 button "Pay" frame="pay\.test"$/);
+  // resolve (4), the tab's shown state (1) and the page script (1); the fake world
+  // doesn't count window geometry reads (2 more live).
+  assert.equal(events(), 6, breakdown());
+  // Window and page-area match, then role, name, flags and frame per node.
+  assert.equal(ax(), 34, breakdown());
 });
