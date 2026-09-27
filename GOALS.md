@@ -239,3 +239,22 @@ lives in AGENTS.md.
   2.5s (select) or 3s (fill). Deferred: every trusted path live (Canary was
   frontmost), the frame hit test and covering-window message, and real
   sites' async uploads.
+- **Round 10 (2026-09): a typeahead waits for its own list, and free text
+  stays.** fill's typeahead picks only from the input's own lists (select's
+  `linkedLists` rule) or its box's popup, never another control's open list,
+  and an empty own list means keep waiting. A combobox that needs no pick (no
+  hidden companion, text survives blur) keeps typed text as `kind:"plain"`
+  with a `note`; one that does is withdrawn and its companion restored. The
+  3s wait applies only once a companion or a list shows; otherwise 1s. Live
+  fixes: a background tab's `blur()` fires no events, so fill dispatches
+  `blur`/`focusout` itself (react-select had reported kept text as ok), and a
+  list id repeated by separate React roots resolves to the copy beside the
+  control. First live run of the round 8-9 trusted paths with Canary behind
+  Arc: `trusted-live --background` passed every check with `aim:"ax"`, and
+  trusted clicks on a cross-origin iframe's button and checkbox (fN refs)
+  landed; front app, key process and cursor never moved. Fixtures passed in
+  Canary's and Safari's background tabs. `npm run bench -- --app X` now
+  honors X. Budgets: `tools/list` 8796 chars, SKILL.md 6786 bytes. Accepted:
+  an async typeahead that shows nothing for 1s keeps its text as plain; a
+  restored companion's framework state may not follow. Deferred: a real
+  site's portaled suggestion list with no aria-controls, Arc.
