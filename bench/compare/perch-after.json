@@ -1,0 +1,146 @@
+{
+  "tool": "perch",
+  "app": "Google Chrome Canary",
+  "date": "2026-09-27T17:55:54.431Z",
+  "node": "v26.8.2",
+  "macos": "27.2",
+  "ops": {
+    "O1": {
+      "name": "list_tabs",
+      "calls": 1,
+      "chars": 168,
+      "ms": {
+        "median": 83.3,
+        "p90": 84,
+        "min": 80.5,
+        "max": 84.9
+      },
+      "ok_rate": 1,
+      "notes": []
+    },
+    "O2": {
+      "name": "navigate",
+      "calls": 1,
+      "chars": 96,
+      "ms": {
+        "median": 134.9,
+        "p90": 150.6,
+        "min": 113.4,
+        "max": 154.2
+      },
+      "ok_rate": 1,
+      "notes": []
+    },
+    "O3": {
+      "name": "read_text",
+      "calls": 1,
+      "chars": 14436,
+      "ms": {
+        "median": 16.7,
+        "p90": 17.3,
+        "min": 5.3,
+        "max": 17.5
+      },
+      "ok_rate": 1,
+      "notes": []
+    },
+    "O4": {
+      "name": "snapshot",
+      "calls": 1,
+      "chars": 7460,
+      "ms": {
+        "median": 17.1,
+        "p90": 18.3,
+        "min": 11.4,
+        "max": 20.7
+      },
+      "ok_rate": 1,
+      "notes": []
+    },
+    "O5": {
+      "name": "eval",
+      "calls": 1,
+      "chars": 21,
+      "ms": {
+        "median": 16.6,
+        "p90": 16.9,
+        "min": 15.6,
+        "max": 17.1
+      },
+      "ok_rate": 1,
+      "notes": []
+    },
+    "O6": {
+      "name": "fill_form",
+      "calls": 5,
+      "chars": 281,
+      "ms": {
+        "median": 101,
+        "p90": 102.4,
+        "min": 98,
+        "max": 104.5
+      },
+      "ok_rate": 1,
+      "notes": []
+    },
+    "O7": {
+      "name": "click_verify",
+      "calls": 2,
+      "chars": 81,
+      "ms": {
+        "median": 32.8,
+        "p90": 33.4,
+        "min": 31.4,
+        "max": 33.9
+      },
+      "ok_rate": 1,
+      "notes": []
+    },
+    "O8": {
+      "name": "screenshot",
+      "calls": 1,
+      "chars": 72,
+      "ms": {
+        "median": 164.7,
+        "p90": 172.7,
+        "min": 149.8,
+        "max": 174.1
+      },
+      "ok_rate": 1,
+      "notes": [],
+      "image": {
+        "b64": 909884,
+        "w": 1252,
+        "h": 2148
+      }
+    },
+    "O6b": {
+      "name": "fill_form_fields",
+      "calls": 1,
+      "chars": 355,
+      "ms": {
+        "median": 13.8,
+        "p90": 17.9,
+        "min": 7.2,
+        "max": 18.1
+      },
+      "ok_rate": 1,
+      "notes": []
+    },
+    "O7b": {
+      "name": "click_readback",
+      "calls": 1,
+      "chars": 110,
+      "ms": {
+        "median": 51.4,
+        "p90": 54.3,
+        "min": 49.1,
+        "max": 55.2
+      },
+      "ok_rate": 1,
+      "notes": [
+        "matched after whitespace collapse (innerText shows the newline as a space)"
+      ]
+    }
+  }
+}

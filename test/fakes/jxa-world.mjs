@@ -62,9 +62,19 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     // Safari reports a blank tab's URL as null, not "about:blank".
     tab.shownUrl = () => { const u = tab.pending ? tab.pending.url : tab.page.url; return b.kind === "safari" && u === "about:blank" ? null : u; };
     Object.defineProperty(tab, "url", {
-      get: () => () => { bump("tab.url"); return tab.shownUrl(); },
+      get: () => () => {
+        bump("tab.url");
+        // state.arcSlowUrl = {throws, reads}: a new Arc tab's url() first throws, then
+        // keeps showing arc://newtab until `reads` more reads, then the set URL commits.
+        if (tab.slow) {
+          if (tab.slow.throws > 0) { tab.slow.throws--; throw new Error("Can't get object."); }
+          if (tab.slow.target != null && --tab.slow.reads <= 0) { tab.page = makePage(tab.slow.target); tab.slow = null; }
+        }
+        return tab.shownUrl();
+      },
       set: (u) => {
         bump("tab.url=");
+        if (tab.slow) { tab.slow.target = u; return; }
         log.push(["navigate", b.name, u]);
         // A fragment-only change keeps the document, as browsers do.
         const cur = new URL(tab.page.url), next = new URL(u, tab.page.url);
@@ -118,7 +128,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         if (k === "push") return (t) => {
           // Arc's `make new tab` rejects about: and data: URLs (they can be set afterwards).
           if (b.kind === "arc" && /^(about|data):/.test(t.url)) throw new Error("Please provide a valid URL property for the make new tab command.");
-          const tab = makeTab({ url: t.url, id: "new" + w.tabs.length }, b, w); w.tabs.push(tab); log.push(["newTab", b.name, t.url]); };
+          const tab = makeTab({ url: t.url, id: "new" + w.tabs.length }, b, w);
+          if (b.kind === "arc" && state.arcSlowUrl && /^arc:/.test(t.url)) tab.slow = { ...state.arcSlowUrl, target: null }; w.tabs.push(tab); log.push(["newTab", b.name, t.url]); };
         if (/^\d+$/.test(String(k))) return w.tabs[Number(k)];
         return undefined;
       },

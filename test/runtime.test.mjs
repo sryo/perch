@@ -539,3 +539,12 @@ test("a new blank Safari tab's handle matches what list_tabs reports and resolve
   const { r } = await call("eval_js", { script: "return 1", target: { tabId: o.tabId } });
   assert.equal(r.isError, undefined, r.content[0].text);
 });
+
+test("Arc new_tab waits out url() reads that throw before the URL commits", async () => {
+  install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }])], cg: [{ owner: "Arc" }] });
+  world.state.arcSlowUrl = { throws: 2, reads: 3 };
+  const { o } = await call("new_tab", { app: "arc", url: "about:blank" });
+  world.winSpec("Arc", 0).active = 1;
+  const { r } = await call("eval_js", { script: "return 1", target: { tabId: o.tabId } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+});

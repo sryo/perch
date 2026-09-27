@@ -833,9 +833,13 @@ function jxaRuntime(BROWSERS) {
           const nt = win.tabs.byId(newId);
           nt.url = a.url;
           // Until the URL commits the tab still shows arc://newtab, where page JS hangs.
-          for (let i = 0; i < 40; i++) {
-            let u = ""; try { u = nt.url(); } catch (e) {}
-            if (!/^arc:/i.test(u)) break;
+          // Arc sometimes drops a URL set while its new-tab page is still loading, so
+          // the URL is set again once after a second.
+          for (let i = 0; i < 100; i++) {
+            // A read that throws means the tab isn't ready yet, not that it committed.
+            let u = null; try { u = nt.url(); } catch (e) {}
+            if (u != null && !/^arc:/i.test(u)) break;
+            if (i === 20) { try { nt.url = a.url; } catch (e) {} }
             delay(0.05);
           }
         }
