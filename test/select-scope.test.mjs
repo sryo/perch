@@ -191,7 +191,8 @@ test("Downshift: opens by typing, picks, and a miss leaves no typed text", async
   assert.equal(dom.document.getElementById("downshift-:r0:-input").value, "");
 });
 
-// Radix Popover + cmdk: a dialog trigger whose aria-controls names the popper content.
+// Radix Popover + cmdk: a dialog trigger whose aria-controls names the popper content;
+// cmdk's input is an expanded combobox, and Escape inside the content closes it.
 const RADIX = `<span id=ql>Languages</span><button id=trigger type=button aria-haspopup=dialog aria-expanded=false aria-controls="radix-:r5:" aria-labelledby=ql>Select all that apply</button>
   <div role=listbox><div role=option>Spanish</div></div>`;
 const RADIX_JS = `
@@ -204,9 +205,10 @@ const RADIX_JS = `
     window.opens++;
     const d = document.createElement('div');
     d.setAttribute('data-radix-popper-content-wrapper', '');
-    d.innerHTML = '<div role=dialog id="radix-:r5:"><div cmdk-root><input cmdk-input placeholder=Search><div cmdk-list role=listbox>' +
+    d.innerHTML = '<div role=dialog id="radix-:r5:"><div cmdk-root><input cmdk-input role=combobox aria-expanded=true placeholder=Search><div cmdk-list role=listbox>' +
       ['English', 'Spanish', 'Portuguese'].map(x => '<div cmdk-item data-value="' + x.toLowerCase() + '">' + x + '</div>').join('') + '</div></div></div>';
     document.body.appendChild(d);
+    d.addEventListener('keydown', (e) => { if (e.key === 'Escape') { d.remove(); t.setAttribute('aria-expanded', 'false'); } });
     t.setAttribute('aria-expanded', 'true');
     d.querySelectorAll('[cmdk-item]').forEach(it => it.addEventListener('click', () => { chosen.push(it.textContent); t.textContent = chosen.join(', '); }));
   });`;
@@ -220,4 +222,52 @@ test("Radix popover + cmdk multi-select: picks items and keeps an open popover o
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.value, "Spanish, English");
   assert.equal(dom.opens, 1);
+});
+
+// A React 18 control: its focused state comes from its own focus event and lands a
+// microtask later, and a mousedown while unfocused only focuses the input, opening
+// the menu from the focus event that follows. o.hidden: focus() moves focus but fires
+// no focus event, as in a background tab.
+const GATED = `<div><label for=gin>Priority</label><div class="x-control" id=gc><span class=gv></span><input id=gin role=combobox aria-expanded=false></div></div>`;
+const gatedJs = (hidden) => `
+  if (${hidden}) {
+    let active = null;
+    HTMLElement.prototype.focus = function () { active = this; };
+    Object.defineProperty(document, 'activeElement', { configurable: true, get: () => active || document.body });
+  }
+  const input = document.getElementById('gin'), ctl = document.getElementById('gc');
+  let focused = false, open = false, after = false;
+  function openMenu() {
+    open = true;
+    input.setAttribute('aria-expanded', 'true');
+    input.setAttribute('aria-controls', 'gl');
+    const m = document.createElement('div');
+    m.id = 'gl'; m.setAttribute('role', 'listbox');
+    m.innerHTML = '<div role=option>Low</div><div role=option>High</div>';
+    document.body.appendChild(m);
+    m.querySelectorAll('[role=option]').forEach(o => o.addEventListener('click', () => { ctl.querySelector('.gv').textContent = o.textContent; m.remove(); open = false; }));
+  }
+  input.addEventListener('focus', () => { queueMicrotask(() => { focused = true; }); if (after) { after = false; openMenu(); } });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) { document.getElementById('gl').remove(); open = false; } });
+  ctl.addEventListener('mousedown', () => { if (!focused) { after = true; input.focus(); } else if (!open) openMenu(); });`;
+
+for (const hidden of [false, true]) {
+  test(`a control that opens from its own focus event opens${hidden ? " in a background tab" : ""}`, async () => {
+    let dom = onPage(GATED, gatedJs(hidden));
+    let o = await select({ label_pattern: "priority", text: "" });
+    assert.deepEqual(o.candidates, ["Low", "High"], JSON.stringify(o));
+    dom = onPage(GATED, gatedJs(hidden));
+    o = await select({ label_pattern: "priority", text: "High" });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    assert.equal(o.value, "High");
+  });
+}
+
+test("a combobox input sharing its wrapper with its label reads back its own value", async () => {
+  const dom = onPage(`<div><label for=fr>Fruit</label>${DOWNSHIFT.replace(/<span id=dl>Department<\/span>/, "")}</div>`.replace("<div class=dwrap>", "").replace("</div><ul", "<ul"), DOWNSHIFT_JS);
+  dom.document.getElementById("downshift-:r0:-input").id = "fr";
+  const o = await select({ selector: "#fr", text: "Design" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.value, "Design");
+  assert.equal(o.unverified, undefined, JSON.stringify(o));
 });

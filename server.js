@@ -2106,6 +2106,21 @@ const press = function (el) {
     el.dispatchEvent(new C(t, { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window }));
   });
 };
+// Presses target, then focuses el if the press didn't. A background tab moves
+// focus but fires no focus event, and widgets that track focus from that event
+// (react-select) then never open, so one is sent when none came.
+const pressFocus = function (target, el) {
+  const was = document.activeElement;
+  let fired = false;
+  const on = function () { fired = true; };
+  el.addEventListener("focus", on);
+  press(target);
+  if (document.activeElement !== el && el.focus) el.focus();
+  el.removeEventListener("focus", on);
+  if (fired || was === el || document.activeElement !== el) return;
+  el.dispatchEvent(new FocusEvent("focus"));
+  el.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+};
 const pressEscape = function (el) { el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true })); };
 // Exact text, then a whole-word hit, then a word prefix; never mid-word. Ties go to the shortest.
 function bestMatch(list, key, want) {
@@ -2526,9 +2541,11 @@ const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySele
 const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
 const box = wrap || (ctl.tagName === "INPUT" ? ctl.parentElement : ctl);
 const s = { ctl: ctl, input: input, box: box, polls: 0 };
-// Other open menus would cover this one or grab its keys: Escape them first.
+// Other open menus would cover this one or grab its keys: Escape them first, but
+// not a combobox inside this control's own popup (cmdk's search box).
+const popups = [ctl, input].filter(Boolean).map(function (e) { return document.getElementById(attr(e, "aria-controls")); }).filter(Boolean);
 document.querySelectorAll("[role=combobox][aria-expanded=true], [aria-haspopup][aria-expanded=true]").forEach(function (o) {
-  if (mine(s, o)) return;
+  if (mine(s, o) || popups.some(function (p) { return p.contains(o); })) return;
   pressEscape(o);
   if (document.activeElement === o && o.blur) o.blur();
 });
@@ -2536,9 +2553,10 @@ s.before = Array.from(document.querySelectorAll(OPT)).filter(vis);
 // A press on an open react-select closes it, so an open menu is used as is.
 const open = [ctl, input].some(function (e) { return attr(e, "aria-expanded") === "true"; }) || ownOptions(s).length > 0;
 if (!open) {
-  if (ctl.focus) ctl.focus();
-  // react-select and friends open on a left-button press with a view, on the control wrapper.
-  press(wrap || ctl);
+  // react-select and friends open on a left-button press with a view, on the control
+  // wrapper. Pressed before focus: a React 18 control that sees its own focus event
+  // only a microtask later takes a press right after focus() as unfocused.
+  pressFocus(wrap || ctl, input || ctl);
   s.opened = true;
 }
 window.__perch_select = s;
@@ -2588,7 +2606,9 @@ return { ok: false, error: wantN ? "no option of this control matched" : "empty 
   // Until the control shows the choice: null (keep polling); A.final reports anyway.
   select_read: SELECT_LIB + String.raw`
 const s = window.__perch_select;
-const full = textOf(s.box) || (s.input && s.input.value) || "";
+// An input's own value first: its wrapper may hold only its label.
+const iv = (s.input && s.input.value) || "";
+const full = (iv && norm(iv).indexOf(s.pickedN) >= 0 ? iv : textOf(s.box)) || iv;
 const shown = clip(full, 120);
 const seen = norm(full).indexOf(s.pickedN) >= 0;
 if (!seen && !A.final) return null;
