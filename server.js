@@ -688,7 +688,7 @@ function jxaRuntime(BROWSERS) {
       const p = pair(el, "AXPosition", "x", "y"), s = pair(el, "AXSize", "w", "h");
       if (!p || !s || !s[0]) continue;
       const scale = s[0] / probe.iw, d = Math.abs(s[1] - probe.ih * scale);
-      if (scale > 0.2 && scale < 5 && d <= 2 && d < miss) { miss = d; best = { x: p[0], y: p[1], scale: scale }; }
+      if (scale > 0.2 && scale < 5 && d <= 2 && d < miss) { miss = d; best = { x: p[0], y: p[1], scale: scale, el: el }; }
     }
     return best;
   }
@@ -718,6 +718,87 @@ function jxaRuntime(BROWSERS) {
     };
     axKit = { attr: attr, list: list, str: str, frame: frame };
     return axKit;
+  }
+
+  // Controls inside the page's nested web areas: iframes, cross-origin ones too,
+  // which page JS can't see into. The walk starts at the page area axPageArea
+  // picks and emits only controls inside a nested web area, so page-level ones
+  // stay with the page snapshot. It reads role, name (AXTitle, else
+  // AXDescription), enabled/expanded, a checkbox or radio's AXValue and the
+  // frame's AXURL: never a field's value. Bounded by node count and time.
+  const FRAME_ROLES = {
+    AXButton: "button", AXLink: "link", AXCheckBox: "checkbox", AXRadioButton: "radio",
+    AXTextField: "textbox", AXTextArea: "textbox", AXSecureTextField: "textbox",
+    AXPopUpButton: "combobox", AXComboBox: "combobox", AXMenuItem: "menuitem", AXTab: "tab",
+  };
+  const FRAME_NODES = 3000, FRAME_MS = 150;
+  const axTruth = function (v) { if (v == null) return null; const u = ObjC.unwrap(v); return u === true || Number(u) === 1; };
+  function axUrl(el) {
+    const v = axInit().attr(el, "AXURL");
+    if (v == null) return "";
+    try { if (v.absoluteString !== undefined) return String(ObjC.unwrap(v.absoluteString)); } catch (e) {}
+    return String(ObjC.unwrap(v));
+  }
+  const axName = function (ax, el) {
+    const s = (ax.str(el, "AXTitle") || ax.str(el, "AXDescription")).replace(/\s+/g, " ").trim();
+    return s.length > 100 ? s.slice(0, 100) + "…" : s;
+  };
+
+  // The frame walk's preconditions, the background trusted click's own:
+  // Accessibility, the tab its window shows, and an on-screen window.
+  function frameTarget(t) {
+    requireAccessibility();
+    if (!isActive(t)) throw new Error(notVisible("frames"));
+    const I = ids(t);
+    if (I.windowNumber == null) throw new Error(OFFSCREEN);
+    return I;
+  }
+
+  function frameWalk(I, vp) {
+    const area = axPageArea(I, vp);
+    if (!area) throw new Error("no page area: Accessibility found no web area matching the page's viewport");
+    const ax = axInit();
+    const inside = function (p, b) { return !!b && p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h; };
+    const bounds = [I.cgBounds || I.geom, ax.frame(area.el)];
+    const rows = [], ords = {}, start = Date.now(), queue = [];
+    const kids = function (el, fr) { ax.list(ax.attr(el, "AXChildren")).forEach(function (k) { queue.push({ el: k, fr: fr }); }); };
+    kids(area.el, null);
+    let n = 0, truncated = false;
+    while (queue.length) {
+      if (++n > FRAME_NODES || Date.now() - start > FRAME_MS) { truncated = true; break; }
+      const q = queue.shift(), axRole = ax.str(q.el, "AXRole");
+      if (axRole === "AXWebArea") { kids(q.el, { el: q.el, url: axUrl(q.el), box: ax.frame(q.el), up: q.fr }); continue; }
+      const role = FRAME_ROLES[axRole];
+      if (!role) { kids(q.el, q.fr); continue; }
+      if (!q.fr) continue;
+      const box = ax.frame(q.el);
+      if (!box || !box.w || !box.h) continue;
+      const name = axName(ax, q.el), key = q.fr.url + "\n" + role + "\n" + name;
+      const flags = [];
+      if ((role === "checkbox" || role === "radio") && axTruth(ax.attr(q.el, "AXValue"))) flags.push("checked");
+      if (axTruth(ax.attr(q.el, "AXExpanded"))) flags.push("expanded");
+      if (axTruth(ax.attr(q.el, "AXEnabled")) === false) flags.push("disabled");
+      if (axRole === "AXSecureTextField" || (axRole === "AXTextField" && ax.str(q.el, "AXSubrole") === "AXSecureTextField")) flags.push("secure");
+      const c = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+      let shown = bounds.every(function (b) { return inside(c, b); });
+      for (let f = q.fr; f && shown; f = f.up) shown = inside(c, f.box);
+      if (!shown) flags.push("offscreen");
+      ords[key] = (ords[key] || 0) + 1;
+      rows.push({ role: role, name: name, url: q.fr.url, ord: ords[key], flags: flags, el: q.el, box: box, fr: q.fr });
+    }
+    return { rows: rows, truncated: truncated };
+  }
+
+  // What a frame click can check afterwards, since no page recorder sees inside:
+  // the element's role, name, checkbox/radio state and focus, and its frame's URL.
+  function frameState(row) {
+    const ax = axInit(), axRole = ax.str(row.el, "AXRole");
+    if (!axRole) return { gone: true };
+    const s = { role: FRAME_ROLES[axRole] || axRole, name: axName(ax, row.el) };
+    if (s.role === "checkbox" || s.role === "radio") s.checked = axTruth(ax.attr(row.el, "AXValue")) === true;
+    s.focused = axTruth(ax.attr(row.el, "AXFocused")) === true;
+    if (axUrl(row.fr.el) !== row.url) s.navigated = true;
+    return s;
   }
 
   // A page's alert/confirm/prompt is its own window (live, Chrome: subrole
@@ -1211,6 +1292,48 @@ function jxaRuntime(BROWSERS) {
       }
       // The cursor is already home, so the settle wait doesn't hold it.
       return a.arm ? Object.assign(out, readback(T.t, a)) : out;
+    },
+    // The page snapshot and, in the same call, the frame walk. A walk that can't
+    // run leaves the page rows and says why.
+    snapshotFrames(a) {
+      const t = resolve(a.target);
+      visibleGuard(t, "accessibility_snapshot");
+      const page = exec(t, a.js);
+      const out = { page: page, tabId: handleOf(t) };
+      let vp;
+      try { const s = JSON.parse(String(page)), nl = s.indexOf("\n"); vp = JSON.parse(s.slice(2, nl < 0 ? s.length : nl)); } catch (e) { return out; }
+      try {
+        const W = frameWalk(frameTarget(t), vp);
+        out.frames = W.rows.map(function (r) { return { role: r.role, name: r.name, url: r.url, ord: r.ord, flags: r.flags }; });
+        if (W.truncated) out.truncated = true;
+      } catch (e) { out.error = String(e.message || e); }
+      return out;
+    },
+    // Never trusts stored coordinates: walks the frames again, finds the row by
+    // (frame URL, role, name, ordinal) and clicks its fresh center.
+    frameClick(a) {
+      const T = trustedTarget(a);
+      const tabId = handleOf(T.t), want = a.rows[tabId];
+      const miss = { __perch_ref_miss: true, ref: a.ref };
+      if (!want) return miss;
+      visibleGuard(T.t, "click");
+      const vp = parseExec(T.t, a.probe);
+      if (!vp || String(vp.url).split("#")[0] !== String(want.url).split("#")[0]) return miss;
+      const w = want.row;
+      const row = frameWalk(T.I, vp).rows.filter(function (r) { return r.url === w.url && r.role === w.role && r.name === w.name && r.ord === w.ord; })[0];
+      if (!row) return miss;
+      if (row.flags.indexOf("offscreen") >= 0) return { ok: false, tabId: tabId, error: w.role + " " + JSON.stringify(w.name) + " is outside the visible page; scroll it into view and snapshot again" };
+      const pt = { x: row.box.x + row.box.w / 2, y: row.box.y + row.box.h / 2 };
+      const before = frameState(row);
+      const home = T.background ? null : cursorAt();
+      try {
+        if (T.background) skyClick(T.I, pt);
+        else leftClick(T.I, pt);
+      } finally {
+        if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
+      }
+      delay(0.1);
+      return { ok: true, tabId: tabId, point: pt, aim: "ax", delivery: T.background ? "skylight" : "hid", before: before, after: frameState(row), hit: null };
     },
     trustedFill(a) {
       const T = trustedTarget(a);
@@ -1963,6 +2086,8 @@ for (const el of deepAll(SEL)) {
   lines.push(ref + " " + line);
 }
 const head = { url: location.href, title: document.title, ready: document.readyState, count: n };
+// For the frame walk's page-area match; Node drops them from the header.
+if (A.frames) { head.iw = innerWidth; head.ih = innerHeight; }
 if (re) head.matched = matched;
 if (truncated) head.truncated = true;
 let act = document.activeElement;
@@ -2430,6 +2555,9 @@ const a = document.activeElement;
 return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ident(a) : null };
 `,
 
+  // What a frame click needs from the page: its URL and viewport.
+  viewport: "return { url: location.href, iw: innerWidth, ih: innerHeight };",
+
   wait_check: String.raw`
 const order = { loading: 0, interactive: 1, complete: 2 };
 if (A.readyState && order[document.readyState] < order[A.readyState]) return false;
@@ -2457,11 +2585,73 @@ async function getText(args = {}) {
   return runPage("get_text", "get_text", { selector, ref, html, maxChars, offset }, target);
 }
 
+// Frame rows per tab handle, from that tab's last accessibility_snapshot
+// {frames:true}. They live here: page JS can't see into cross-origin frames,
+// and the runtime's REPLs respawn after a dialog abort or a timeout.
+const frameRefs = new Map();
+const FRAME_REFS_MAX = 50;
+const FRAME_REF = /^f\d+$/;
+function frameHost(url) {
+  try { const u = new URL(url); return u.host || (u.protocol + u.pathname).slice(0, 60); } catch { return String(url).slice(0, 60); }
+}
+
+// Frame refs reach nothing but click {trusted:true}: no typing, reading or
+// uploading into embedded frames.
+function guardFrameRefs(name, args) {
+  const refs = [args.ref].concat(Array.isArray(args.fields) ? args.fields.map((f) => f && f.ref) : []);
+  if (!refs.some((r) => r != null && FRAME_REF.test(String(r)))) return;
+  if (name !== "click" || args.trusted !== true) throw new Error(`${name}: frame refs need click {trusted:true}`);
+}
+
 async function accessibilitySnapshot(args = {}) {
-  const { role = null, query = null, target } = args;
+  const { role = null, query = null, target, frames = false } = args;
   const max = args.max == null ? 500 : Math.max(0, Number(args.max) || 0);
   if (query != null) validateLabelPattern("accessibility_snapshot", query, "query");
-  return runPage("accessibility_snapshot", "snapshot", { max, role, query }, target);
+  if (target && target.tabId != null) frameRefs.delete(String(target.tabId));
+  if (frames !== true) return runPage("accessibility_snapshot", "snapshot", { max, role, query }, target);
+  const r = await rt("snapshotFrames", { target, js: buildEvalWrapper(pageScript("snapshot", { max, role, query, frames: true })) });
+  if (r.tabId) frameRefs.delete(r.tabId);
+  const page = parsePage(r.page);
+  if (typeof page !== "string" || !page.startsWith("# ")) return page;
+  const nl = page.indexOf("\n");
+  const head = JSON.parse(page.slice(2, nl < 0 ? page.length : nl));
+  delete head.iw;
+  delete head.ih;
+  const lines = [];
+  if (r.error) head.frames = { error: r.error };
+  else {
+    const roles = role == null ? null : [].concat(role);
+    const re = query == null ? null : new RegExp(query, "i");
+    const rows = {};
+    let truncated = !!r.truncated;
+    for (const row of r.frames || []) {
+      if (roles && !roles.includes(row.role)) continue;
+      const line = `${row.role} ${JSON.stringify(row.name)} frame=${JSON.stringify(frameHost(row.url))}${row.flags.map((f) => " " + f).join("")}`;
+      if (re && !re.test(line)) continue;
+      if (lines.length >= max) { truncated = true; break; }
+      const ref = "f" + (lines.length + 1);
+      rows[ref] = { url: row.url, role: row.role, name: row.name, ord: row.ord };
+      lines.push(ref + " " + line);
+    }
+    head.frames = truncated ? { count: lines.length, truncated: true } : { count: lines.length };
+    if (r.tabId) {
+      frameRefs.set(r.tabId, { url: head.url, rows });
+      if (frameRefs.size > FRAME_REFS_MAX) frameRefs.delete(frameRefs.keys().next().value);
+    }
+  }
+  return ["# " + JSON.stringify(head) + (nl < 0 ? "" : page.slice(nl))].concat(lines).join("\n");
+}
+
+// The runtime resolves the target, so it gets this ref's row from every tab
+// that has one and keeps the row stored under the tab it resolved.
+async function frameClick({ ref, raise, target }) {
+  const rows = {};
+  for (const [h, e] of frameRefs) if (e.rows[ref]) rows[h] = { url: e.url, row: e.rows[ref] };
+  if (!Object.keys(rows).length) return { __perch_ref_miss: true, ref };
+  const r = await rt("frameClick", { target, raise, ref, rows, probe: pageFn("viewport", {}) });
+  if (!r || !rows[r.tabId]) return r;
+  const { tabId, ...rest } = r;
+  return { ok: rest.ok, ref, frame: frameHost(rows[tabId].row.url), ...rest };
 }
 
 async function consoleCapture(args = {}) {
@@ -2568,6 +2758,10 @@ async function click(args = {}) {
   const { ref = null, selector = null, x = null, y = null, trusted = false, raise = false, hover = false, target, readback = null } = args;
   if (readback != null && (typeof readback !== "string" || !readback.trim())) throw new Error("click: `readback` must be a CSS selector");
   if (hover && (trusted || readback || x != null || y != null)) throw new Error("click: hover is untrusted and element-only");
+  if (trusted && ref != null && FRAME_REF.test(String(ref))) {
+    if (readback) throw new Error("click: frame refs take no readback");
+    return frameClick({ ref, raise, target });
+  }
   if (trusted) return trustedClick({ ref, selector, x, y, raise, target, readback });
   if (!ref && !selector) throw new Error("click requires `ref` or `selector` (x/y is screen coords, trusted:true only)");
   if (hover) return runPage("click", "hover", { ref, selector }, target);
@@ -2765,6 +2959,7 @@ const TOOLS = [
     max: { type: "number", description: "Element cap, default 500; 0 = header only." },
     role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles (textbox, button…)." },
     query: { type: "string", description: "Keep lines matching this regex." },
+    frames: { type: "boolean", description: "Add iframe controls from Accessibility as `fN` rows (the tab its window shows); fN takes only click {trusted:true}." },
     target: TARGET,
   }),
   tool("console_capture", "`start` patches console.*, `read` drains \"level: text\" lines, `stop` restores; navigation clears it. `network` drains finished requests as \"status type ms size url\" (Resource Timing, no start).", {
@@ -2871,6 +3066,7 @@ export async function handleCall(name, args = {}) {
   const handler = Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : null;
   try {
     if (!handler) throw new Error(`unknown tool: ${name}`);
+    guardFrameRefs(name, args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
     return formatResult(await handler(args));

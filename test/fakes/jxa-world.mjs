@@ -333,6 +333,26 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     return undefined;
   }
 
+  // Nested frames: a web area box's optional `frames: [{url, box, kids, frames}]`
+  // adds frame web areas after the area's own children. A kid is
+  // `{role, subrole, title, description, value, enabled, expanded, focused, box}`,
+  // read live, so a test can change it between calls. undefined: not a frame part.
+  const frameKid = (k) => ({ role: k.role, fk: k, box: k.box });
+  function frameAttr(el, name) {
+    const fr = el.fr;
+    if (name === "AXChildren" && el.role === "AXWebArea" && (fr || (el.box && el.box.frames))) {
+      const own = fr ? (fr.kids || []).map(frameKid) : (() => { const l = axAttr(el, name); return Array.from({ length: l.count }, (_, i) => l.objectAtIndex(i)); })();
+      return axList(own.concat(((fr || el.box).frames || []).map((f) => ({ role: "AXWebArea", fr: f, box: f.box }))));
+    }
+    if (fr && name === "AXURL") return { absoluteString: fr.url };
+    if (!el.fk) return undefined;
+    const k = el.fk;
+    const v = { AXRole: k.role, AXSubrole: k.subrole, AXTitle: k.title, AXDescription: k.description, AXValue: k.value,
+      AXEnabled: k.enabled, AXExpanded: k.expanded, AXFocused: k.focused,
+      AXPosition: axPoint(k.box.x, k.box.y), AXSize: axSize(k.box.w, k.box.h), AXChildren: axList([]) }[name];
+    return v === undefined ? null : v;
+  }
+
   const sandbox = {
     Ref: () => [],
     Application: (name) => {
@@ -399,7 +419,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         bump("AX");
         // A closed dialog's elements are gone: kAXErrorInvalidUIElement.
         if (el.d && !state.dialogs.includes(el.d)) return -25202;
-        const v = axAttr(el, name.js);
+        // A kid removed from its frame is gone, like a closed dialog's elements.
+        if (el.fk && el.fk.gone) return -25202;
+        const f = frameAttr(el, name.js);
+        const v = f === undefined ? axAttr(el, name.js) : f === null ? undefined : f;
         if (v === undefined) return -25205; // kAXErrorAttributeUnsupported
         out[0] = v;
         return 0;
