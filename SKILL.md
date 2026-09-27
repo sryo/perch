@@ -45,7 +45,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 ## Results
 
 - `{ok: false, error}` is an outcome (no match, value didn't land), not a crash. Read it before retrying.
-- `fill` returns `{ok, kind: "plain"|"rich", el: 'textbox "Email"', len, ambiguous?}`. `ok: true` is proof; don't re-check.
+- `fill` returns `{ok, kind: "plain"|"rich"|"typeahead", el, len, ambiguous?}`. A typeahead takes its best suggestion (`selected`) or fails. `ok: true` is proof.
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change.
 - `fill {trusted:true}` returns `{ok, trusted, value, el}`. Require both `ok` and `trusted`.
 - Page errors: `isError` with `__perch_error`, `__perch_error_name`, a stack head.
@@ -60,7 +60,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Trusted input
 
-`fill {trusted: true}` edits a plain input or textarea through the browser's editing command, verifying a trusted `input` event and the exact value. It works wherever page JS runs, minimized windows included, without selecting the tab or taking key focus. `click {trusted: true}` reaches an on-screen, unminimized window without activating it or moving the cursor; its tab must be the one its window shows (else `tab_not_visible`). Plain `click` works in any tab; verify the outcome. `raise: true` takes focus briefly (HID route), cursor restored. Rich editors rarely need trusted mode.
+`fill {trusted: true}` edits a plain input or textarea through the browser's editing command, verifying a trusted `input` event and the exact value. It works wherever page JS runs, minimized windows included, without selecting the tab or taking key focus. `click {trusted: true}` reaches an on-screen, unminimized window without activating it or moving the cursor; its tab must be the one its window shows (else `tab_not_visible`). Plain `click` works in any tab; verify the outcome. `raise: true` takes focus briefly (HID route), cursor restored.
 
 `accessibility_snapshot {frames:true}` adds iframe controls as `fN` rows, never values. `fN` takes only `click {trusted:true}`; read its `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's.
 
