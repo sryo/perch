@@ -1,28 +1,24 @@
 #!/usr/bin/env osascript -l JavaScript
 //
-// SkyLight FFI probe — settles the "background trusted input" ceiling question.
+// SkyLight FFI probe: shows that pure JXA can dlopen SkyLight, bind its private
+// symbols and marshal the 0xf8-byte event-record buffer, with no event tap and no
+// C callback. That is what made background trusted input possible in the
+// single-file server (skyInit / skyMouse in server.js).
 //
-// AGENTS.md (Ceiling / Limitations) claims true background dispatch is blocked
-// because it "needs per-pid event taps from CGEvent.tapCreateForPid, which
-// requires a C-callback function pointer JXA cannot construct." The cua driver
-// (trycua/cua, inside-macos-window-internals.md) reaches the same capability by
-// a different route that uses NO event tap and NO callback:
+// The two symbols it checks take only pointer arguments:
 //
-//   * SLEventPostToPid(pid, CGEventRef)     — route an event to a pid without
-//                                             moving the shared cursor
-//   * SLPSPostEventRecordTo(psn*, bytes*)   — flip a process AppKit-active
-//                                             without raising its window
-//                                             (the yabai focus-without-raise recipe)
+//   * SLEventPostToPid(pid, CGEventRef)     route an event to a pid without
+//                                           moving the shared cursor
+//   * SLPSPostEventRecordTo(psn*, bytes*)   flip a process AppKit-active without
+//                                           raising its window
 //
-// Both take only POINTER args — no struct-by-value — so the real open question
-// is narrow: can pure JXA dlopen SkyLight, bind these private symbols, build the
-// 0xf8-byte event-record buffer, and call them? If yes, the ceiling rationale is
-// wrong and background trusted input is reachable in the single-file server.
+// perch uses the first. It never posts the second in its background route: live,
+// it redirected the user's keyboard to the browser (see AGENTS.md, Trusted input).
 //
-// This probe DOES NOT wire anything into perch. It resolves the symbols and makes
-// ONE harmless SLPSPostEventRecordTo call targeting the CURRENT process's PSN with
-// window id 0 — a no-op focus message to our own non-GUI osascript process. A bad
-// pointer would crash osascript, so run it standalone, never inside the daemon:
+// The probe wires nothing into perch. It resolves the symbols and makes ONE
+// harmless SLPSPostEventRecordTo call to the CURRENT process's PSN with window
+// id 0, a no-op focus message to this non-GUI osascript process. A bad pointer
+// would crash osascript, so run it standalone, never inside the daemon:
 //
 //   osascript -l JavaScript scripts/skylight-probe.js
 //
@@ -35,9 +31,8 @@ const RTLD_NOW = 2;
 const report = { steps: [] };
 const note = (name, ok, detail) => report.steps.push({ name, ok, detail });
 
-// $.dlopen is NOT callable directly — it's undefined on the bridge (AGENTS.md:73's
-// `$.dlopen(...)` fallback throws as written). The working path is to bind dlopen
-// itself first, then call it. In practice SkyLight is already pulled in transitively
+// $.dlopen is not callable directly: it's undefined on the bridge until dlopen
+// itself is bound, as skyInit does. In practice SkyLight is already pulled in transitively
 // by the JXA runtime, so the symbols below bind even if this explicit load is skipped
 // — but binding dlopen makes force-loading available for environments that don't.
 let handle = null;
@@ -112,9 +107,9 @@ note("call SLPSPostEventRecordTo (self-PSN, win 0)", !/threw|skipped/.test(callR
 
 const verdict = (haveMemset && havePost && /returned CGError/.test(callResult))
   ? "REACHABLE — SkyLight symbols bind and the event-record buffer marshals from pure JXA. " +
-    "The AGENTS.md ceiling rationale (C-callback / tapCreateForPid) is not the real blocker."
+    "Background input needs no event tap or C callback."
   : "BLOCKED at: " + (report.steps.find((s) => !s.ok)?.name || "unknown step") +
-    ". Ceiling may stand — see step detail.";
+    ". See the step detail.";
 
 const out = ["=== SkyLight FFI probe ==="];
 for (const s of report.steps) out.push(`[${s.ok ? "ok " : "FAIL"}] ${s.name} — ${s.detail}`);
