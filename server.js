@@ -637,15 +637,36 @@ function jxaRuntime(BROWSERS) {
   // JS misses a frame in a closed shadow root (elementFromPoint gives its host);
   // another web area first is such a frame, none at all is browser UI, a bubble
   // or a child window. A hit test that fails, or no page area, refuses too.
+  // A standard window other than the target's (by CGWindowID, else frame) is
+  // another of the browser's windows in front, named apart for a clearer error.
   // `area` is the page area aim already read, if any.
   function offPage(T, probe, pt, area) {
     const ax = axInit();
     if (area === undefined) try { area = axPageArea(T.I, probe); } catch (e) {}
-    let el = area ? ax.hit(T.I.pid, pt) : null;
+    let el = area ? ax.hit(T.I.pid, pt) : null, web = false;
     for (let i = 0; el && i < 64; i++, el = ax.attr(el, "AXParent")) {
-      if (ax.str(el, "AXRole") === "AXWebArea") { if (ax.same(el, area.el)) return null; break; }
+      const role = ax.str(el, "AXRole");
+      if (role === "AXWebArea" && !web) { if (ax.same(el, area.el)) return null; web = true; }
+      if (role !== "AXWindow") continue;
+      const id = ax.wid(el), f = ax.frame(el), r = T.I.cgBounds || T.I.geom;
+      const mine = id != null ? id === T.I.windowNumber : !!f && Math.abs(f.x - r.x) + Math.abs(f.y - r.y) + Math.abs(f.w - r.w) + Math.abs(f.h - r.h) <= 8;
+      if (!mine && ax.str(el, "AXSubrole") === "AXStandardWindow") return { ok: false, error: "another of the browser's windows covers the point, so nothing was clicked; raise:true brings the tab's window to the front" };
+      break;
     }
     return { ok: false, error: "the point is not on the page itself (embedded frame or browser UI); frame controls need accessibility_snapshot {frames:true} and an fN ref" };
+  }
+
+  // A frame click's check at its final point: Accessibility's hit there must be
+  // the row's element, or inside it, and the first web area up the row's frame.
+  // A frame or control drawn over it, or a failed hit test, says no.
+  function hitsRow(I, row, pt) {
+    const ax = axInit();
+    let el = ax.hit(I.pid, pt), mine = false;
+    for (let i = 0; el && i < 64; i++, el = ax.attr(el, "AXParent")) {
+      if (!mine && ax.same(el, row.el)) mine = true;
+      if (ax.str(el, "AXRole") === "AXWebArea") return mine && ax.same(el, row.fr.el);
+    }
+    return false;
   }
 
   // Finds the screen point for a trusted press. The target tab is shown first: a
@@ -1472,6 +1493,7 @@ function jxaRuntime(BROWSERS) {
       if (row.flags.indexOf("secure") >= 0) return refuse;
       if (row.flags.indexOf("offscreen") >= 0) return { ok: false, tabId: tabId, error: w.role + " " + JSON.stringify(w.name) + " is outside the visible page; scroll it into view and snapshot again" };
       const pt = { x: row.box.x + row.box.w / 2, y: row.box.y + row.box.h / 2 };
+      if (!hitsRow(T.I, row, pt)) return { ok: false, tabId: tabId, error: w.role + " " + JSON.stringify(w.name) + " is covered at its center by something else (another frame or an overlay); nothing was clicked" };
       const before = frameState(row);
       const home = T.background ? null : cursorAt();
       try {
