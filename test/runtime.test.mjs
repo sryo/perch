@@ -529,7 +529,7 @@ test("new_tab on Arc says so when it can't find the tab it made for an about: ur
   world.state.tabIdsFail = true;
   const { r, t } = await call("new_tab", { app: "arc", url: "about:blank" });
   assert.equal(r.isError, true);
-  assert.match(t, /^error: no_browser: Arc created a tab perch could not find to load about:blank/);
+  assert.match(t, /^error: no_browser: Arc made no tab perch could find for about:blank/);
   assert.equal(world.log.filter((l) => l[0] === "navigate").length, 0);
 });
 

@@ -82,6 +82,8 @@ test("timeout: wait and eval_js awaitPromise", async () => {
   oneChrome();
   await fails("wait", { expression: "false", timeout: 500 }, /^error: timeout: wait timed out after 500ms/);
   await fails("eval_js", { script: "return new Promise(() => {})", awaitPromise: true }, /^error: timeout: eval_js \(awaitPromise\) timed out after 30000ms/);
+  // A background tab throttles timers, so a page-side sleep can outlast the cap.
+  await fails("eval_js", { script: "return new Promise(() => {})", awaitPromise: true }, /background tabs throttle timers/);
 });
 
 // ---- argument errors: rejected before any Apple Event ----

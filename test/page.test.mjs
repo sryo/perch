@@ -135,6 +135,14 @@ test("snapshot leaves out elements inside a hidden container", () => {
 
 const BODY = "Hi there, this is a multi-line reply body.\nSecond line.\n\nA second paragraph that makes the text comfortably longer than fifty characters.";
 
+// Some forms render a field only after a button such as "Enter manually" is clicked.
+test("fill by label with no matching field says the field may appear after a click", () => {
+  const w = page(`<label>Cover letter</label><button>Enter manually</button>`);
+  const o = run(w, "fill", { label_pattern: "cover letter", text: "hi" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^no fillable field matched .*after clicking a button/);
+});
+
 test("fill by label skips a field whose container is hidden", () => {
   const w = page(`<div style="display:none"><textarea aria-label="Message"></textarea></div><textarea aria-label="Message body"></textarea>`);
   const o = run(w, "fill", { label_pattern: "message", text: "hi" });
