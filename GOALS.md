@@ -202,3 +202,17 @@ lives in AGENTS.md.
   Accepted: `raise:true` has already raised the window when a point click is
   refused. Deferred: every round-7 path live, navigate with the browser behind
   another app (Canary was frontmost again), Arc and Safari.
+- **Round 8 (2026-09): Accessibility has the last word on where a click
+  lands.** Every trusted page click (selector, ref, point, background or
+  raised, and raised fill's click) hit-tests its final screen point with
+  `AXUIElementCopyElementAtPosition` and posts only when the first web area
+  up from the hit is the page's own (safety, failing closed: page JS can't
+  see a frame in a closed shadow root). Another web area, browser UI, a
+  failed hit test or no page area refuses with nothing posted, so the page's
+  estimate alone no longer clicks and the "unconfirmed aim" warning is gone.
+  Budgets unchanged: `tools/list` 8544 chars, SKILL.md 6792 bytes. Accepted:
+  a click is refused where Accessibility finds no page area, or where another
+  window of the same browser covers the point; a refused raised fill can
+  leave its field cleared; `raise:true` has already raised the window when
+  it refuses. Deferred: the hit test and `CFEqual` binding live, a real
+  challenge widget in a closed shadow root, Arc and Safari.
