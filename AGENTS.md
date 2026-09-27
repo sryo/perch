@@ -130,6 +130,8 @@ Mouse event fields use raw indices, because `$.kCG*` constants aren't reliably b
 | Arc | active tab only | yes | yes | See Arc quirks. |
 | Safari | current tab only | yes | tab create sometimes flaky | Falls back to System Events Cmd+T. |
 
+Safari background tabs (2026-09): in the lab, `doJavaScript` ran in a non-current tab of a hidden Safari window on macOS 27.2. perch has not retested it live, so `navigate` still selects the tab first. The retest: a scratch `about:blank` tab that is not current in a Safari window behind another app; `doJavaScript` and a `url` set on it, then check the shown tab, frontmost app and key process are unchanged.
+
 ## Permissions
 
 1. **Browser:** Allow JavaScript from Apple Events. Chromium family: View > Developer (per profile). Safari: Develop menu.
@@ -158,6 +160,6 @@ Each blocked layer returns an actionable error.
 
 - **Network interception** (request/response capture, header injection): CDP or an extension only.
 - **Pre-load instrumentation** (`document_start`): both bridges run after navigation.
-- **Safari background-tab JS:** `doJavaScript` needs the tab to be current, so call `activate_tab` first.
+- **Safari background-tab JS:** assumed to need the current tab until the live retest above (a failing `doJavaScript` there reads `tab_not_visible`: call `activate_tab`).
 - **Off-screen capture** of minimized windows or windows on another Space: the rect fallback needs the window on top.
 - **Background trusted input:** live-verified on Chrome Canary on this macOS version. SkyLight is a private macOS API and can change between OS releases. The explicit `raise:true` HID route remains available.
