@@ -220,7 +220,7 @@ export function shapeReport(suite, { app, date, node, macos }) {
 }
 
 export function parseArgs(argv) {
-  const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
+  const opt = (k, d) => { const i = argv.lastIndexOf(k); return i >= 0 ? argv[i + 1] : d; };
   const app = opt("--app");
   if (!app) throw new Error("usage: compare.mjs --app <browser> [--reps 10] [--out bench/runs/compare.json] [--activate]; --app is required");
   const reps = Number(opt("--reps", 10));
