@@ -218,8 +218,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         bump("doJavaScript");
         if (tab && tab.__specifier) tab = tab();
         if (!tab) throw gone();
-        // Safari only runs JS in the window's current tab.
-        if (!tab._active) throw new Error("Safari: tab is not current");
+        // Live on macOS 27.2 Safari runs JS in any tab; state.safariCurrentOnly
+        // models versions that only run it in the window's current tab.
+        if (state.safariCurrentOnly && !tab._active) throw new Error("Safari: tab is not current");
         return vm.runInContext(js, tab.page.ctx);
       },
       Tab: (props) => props,

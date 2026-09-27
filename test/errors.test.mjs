@@ -38,8 +38,9 @@ test("tab_not_visible: Arc background tab", async () => {
   await fails("eval_js", { script: "return 1", target: { app: "Arc", tabIndex: 1 } }, /^error: tab_not_visible: /);
 });
 
-test("tab_not_visible: Safari page JS in a tab that isn't its window's current one", async () => {
+test("tab_not_visible: Safari page JS in a tab that isn't its window's current one, where Safari requires that", async () => {
   const world = install({ browsers: [safari([{ id: 3, active: 0, tabs: tabs(2, "s") }])], cg: [{ owner: "Safari" }] });
+  world.state.safariCurrentOnly = true;
   await fails("eval_js", { script: "return 1", target: { app: "Safari", tabIndex: 1 } }, /^error: tab_not_visible: /);
   assert.equal(world.counts["doJavaScript"], 1);
 });
