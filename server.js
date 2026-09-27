@@ -71,6 +71,28 @@ function jxaRuntime(BROWSERS) {
   const apps = {};
   const app = (name) => apps[name] || (apps[name] = Application(name));
 
+  // Touching a quit app's windows relaunches it; on screen means running.
+  function alive(name, P) {
+    if (P && P.z.indexOf(name) >= 0) return true;
+    try { return app(name).running(); } catch (e) { return false; }
+  }
+
+  // Each Apple Event to a browser costs about one display frame (~16ms live),
+  // while CGWindowList and running() cost well under that, so the hot paths
+  // below count events. errAENoSuchObject (or a bad index) means the specifier
+  // matched nothing, so the page script never ran and a slower path may retry.
+  const noSuchObject = (e) => !!e && (e.errorNumber === -1728 || e.errorNumber === -1719);
+
+  // Chromium handle -> {w: window position, id: the tab's native id}, learned
+  // from list_tabs, new_tab and resolve. `windows[w].tabs.byId(id)` pins the
+  // exact tab, so a wrong hint can only miss (errAENoSuchObject), never mis-target.
+  let hints = {}, hintCount = 0;
+  function hint(name, id, w) {
+    if (KIND[name] !== "chrome" || id == null) return;
+    if (++hintCount > 5000) { hints = {}; hintCount = 0; }
+    hints[handle(name, id)] = { w: w, id: id };
+  }
+
   // One CGWindowList read replaces System Events: z-order of on-screen browsers,
   // the frontmost app, pids and CGWindowIDs. ~4ms vs ~60ms for a System Events
   // `frontmost` query, and it needs no extra permission.
@@ -105,7 +127,7 @@ function jxaRuntime(BROWSERS) {
     try {
       if (kind === "chrome") return win.activeTabIndex() - 1;
       if (kind === "arc") return tabs.id().indexOf(win.activeTab.id());
-      return tabs.index().indexOf(win.currentTab().index());
+      return win.currentTab.index() - 1;
     } catch (e) { return -1; }
   }
 
@@ -131,6 +153,15 @@ function jxaRuntime(BROWSERS) {
   // active (it hangs through any other), so a tabId prefers such a window.
   function resolveById(want, P) {
     const key = String(want.raw);
+    // A hinted Chromium window first: one event instead of a window walk.
+    const hn = want.windowId == null && hints[want.tabId];
+    if (hn && alive(want.app, P)) {
+      try {
+        const win = app(want.app).windows[hn.w], i = win.tabs.id().map(String).indexOf(key);
+        if (i >= 0) return { tab: win.tabs.byId(hn.id), idx: i, tabId: hn.id, kind: "chrome", app: want.app, win, w: hn.w, P };
+      } catch (e) {}
+      delete hints[want.tabId];
+    }
     for (const name of candidates(P, want.app)) {
       const a = app(name), kind = KIND[name];
       if (kind === "safari") continue;
@@ -148,6 +179,7 @@ function jxaRuntime(BROWSERS) {
         const i = ids.map(String).indexOf(key);
         if (i < 0) continue;
         const t = { tab: win.tabs.byId(ids[i]), idx: i, tabId: ids[i], kind, app: name, win, w, P };
+        hint(name, ids[i], w);
         if (kind !== "arc" || isActive(t)) return t;
         if (!fallback) fallback = t;
       }
@@ -158,7 +190,20 @@ function jxaRuntime(BROWSERS) {
 
   function resolveSafari(want, raw, P) {
     const parts = raw.split("."), winId = parts[0], idx = Number(parts[1]), hash = parts.slice(2).join(".");
+    if (!alive("Safari", P)) throw new Error("stale_tab: tab " + want.tabId + " is gone (its browser quit); re-run list_tabs");
     const a = app("Safari");
+    const nearest = function (urls) {
+      let best = -1;
+      urls.forEach(function (u, i) { if (fp(u) === hash && (best < 0 || Math.abs(i - idx) < Math.abs(best - idx))) best = i; });
+      return best;
+    };
+    // The recorded window by id: one event when the tab is still in it.
+    if (/^\d+$/.test(winId)) {
+      try {
+        const win = a.windows.byId(Number(winId)), best = nearest(win.tabs.url());
+        if (best >= 0) return { tab: win.tabs[best], idx: best, tabId: null, kind: "safari", app: "Safari", win, w: null, P };
+      } catch (e) {}
+    }
     let n = 0; try { n = a.windows.length; } catch (e) {}
     // The recorded window first, then the rest: the tab may have been dragged out.
     const order = [];
@@ -169,8 +214,7 @@ function jxaRuntime(BROWSERS) {
     for (const w of order) {
       const win = a.windows[w];
       let urls; try { urls = win.tabs.url(); } catch (e) { continue; }
-      let best = -1;
-      urls.forEach(function (u, i) { if (fp(u) === hash && (best < 0 || Math.abs(i - idx) < Math.abs(best - idx))) best = i; });
+      const best = nearest(urls);
       if (best >= 0) return { tab: win.tabs[best], idx: best, tabId: null, kind: "safari", app: "Safari", win, w, P };
     }
     throw new Error("stale_tab: tab " + want.tabId + " is gone (closed or navigated); re-run list_tabs");
@@ -197,8 +241,8 @@ function jxaRuntime(BROWSERS) {
           let id; try { id = win.id(); } catch (e) { id = w; }
           if (String(id) !== String(want.windowId)) continue;
         }
-        let tabs;
-        try { tabs = win.tabs; if (!tabs.length) continue; } catch (e) { continue; }
+        let tabs, len;
+        try { tabs = win.tabs; len = tabs.length; if (!len) continue; } catch (e) { continue; }
         if (kind === "arc") {
           let id;
           if (want.tabIndex != null) {
@@ -211,8 +255,8 @@ function jxaRuntime(BROWSERS) {
           return { tab: tabs.byId(id), idx: want.tabIndex, tabId: id, kind, app: name, win, w, P };
         }
         const idx = want.tabIndex != null ? want.tabIndex : activeIndex(kind, win, tabs);
-        if (idx < 0 || idx >= tabs.length) {
-          if (want.tabIndex != null) throw new Error("stale_tab: tabIndex " + want.tabIndex + " out of range; window has " + tabs.length + " tabs");
+        if (idx < 0 || idx >= len) {
+          if (want.tabIndex != null) throw new Error("stale_tab: tabIndex " + want.tabIndex + " out of range; window has " + len + " tabs");
           continue;
         }
         let tab = tabs[idx], tabId = null;
@@ -231,7 +275,7 @@ function jxaRuntime(BROWSERS) {
         return t.win.activeTabIndex() === t.idx + 1;
       }
       if (t.kind === "arc") return String(t.win.activeTab.id()) === String(t.tabId);
-      return t.win.currentTab().index() === t.idx + 1;
+      return t.win.currentTab.index() === t.idx + 1;
     } catch (e) { return false; }
   }
 
@@ -278,6 +322,44 @@ function jxaRuntime(BROWSERS) {
     // Arc JSON.stringifies whatever execute returns; perch's wrappers already did.
     if (t.kind === "arc") { try { return JSON.parse(x); } catch (e) { return x; } }
     return x;
+  }
+
+  // One-event page JS for a target that needs no guard: a Chromium handle with a
+  // window hint, a Safari handle (the page checks its own URL hash first), or the
+  // default target when the topmost browser is Chromium or Safari. Returns {v},
+  // or null (only when the script cannot have run) for the full resolve path.
+  const WRONG_TAB = "__perch_wrong_tab__";
+  function quickExec(want, js) {
+    want = want || {};
+    if (want.windowId != null || want.tabIndex != null) return null;
+    if (want.tabId != null) {
+      const h = parseHandle(want.tabId);
+      if (!h) return null;
+      if (KIND[h.app] === "safari") {
+        const m = /^(\d+)\.(\d+)\.(.+)$/.exec(h.raw);
+        if (!m || !alive("Safari", procs())) return null;
+        const guarded = "(function(){if((" + fp + ")(location.href)!==" + JSON.stringify(m[3]) + ")return " + JSON.stringify(WRONG_TAB) + ";return (" + js + ")})()";
+        let v;
+        try { v = app("Safari").doJavaScript(guarded, { in: app("Safari").windows.byId(Number(m[1])).tabs[Number(m[2])] }); }
+        catch (e) { if (e && e.errorNumber === -1712) throw e; return null; }
+        return v === WRONG_TAB ? null : { v: v };
+      }
+      const hn = hints[want.tabId];
+      if (KIND[h.app] !== "chrome" || !hn || !alive(h.app, procs())) return null;
+      try { return { v: app(h.app).windows[hn.w].tabs.byId(hn.id).execute({ javascript: js }) }; }
+      catch (e) { if (noSuchObject(e)) { delete hints[want.tabId]; return null; } throw e; }
+    }
+    if (want.app != null) return null;
+    const top = procs().z[0], kind = KIND[top];
+    if (!top || (kind !== "chrome" && kind !== "safari")) return null;
+    const win = app(top).windows[0];
+    try {
+      if (kind === "chrome") return { v: win.activeTab.execute({ javascript: js }) };
+      return { v: app(top).doJavaScript(js, { in: win.currentTab }) };
+    } catch (e) {
+      if (noSuchObject(e) || (kind === "safari" && !(e && e.errorNumber === -1712))) return null;
+      throw e;
+    }
   }
 
   // Re-runs `js` (which returns a JSON string) until it yields non-null/non-false.
@@ -551,6 +633,38 @@ function jxaRuntime(BROWSERS) {
     });
   }
 
+  // Every window of a Chromium or Safari app in at most five events, instead of
+  // five or six per window. false (nothing pushed) when a bulk read fails or the
+  // per-window arrays don't line up; the caller then walks the windows.
+  function listBulk(ap, name, kind, out) {
+    let wids, urls, titles, tids = null, acts;
+    try {
+      const W = ap.windows;
+      wids = W.id();
+      urls = W.tabs.url();
+      titles = kind === "safari" ? W.tabs.name() : W.tabs.title();
+      if (kind === "chrome") tids = W.tabs.id();
+      acts = kind === "chrome" ? W.activeTabIndex() : W.currentTab.index();
+    } catch (e) { return false; }
+    const n = wids.length;
+    const lined = function (x) { return Array.isArray(x) && x.length === n; };
+    if (!lined(urls) || !lined(titles) || !lined(acts) || (tids && !lined(tids))) return false;
+    for (let w = 0; w < n; w++) if (!Array.isArray(urls[w])) return false;
+    for (let w = 0; w < n; w++) {
+      const u = urls[w], ti = titles[w] || [], ids = tids ? tids[w] || [] : [];
+      for (let i = 0; i < u.length; i++) {
+        const row = { app: name };
+        if (kind === "safari") row.tabId = safariHandle(wids[w], i, u[i]);
+        else if (ids[i] != null) { row.tabId = handle(name, ids[i]); hint(name, ids[i], w); }
+        else { row.windowId = wids[w]; row.tabIndex = i; }
+        row.url = u[i] || ""; row.title = ti[i] || "";
+        if (i === acts[w] - 1) row.active = true;
+        out.push(row);
+      }
+    }
+    return true;
+  }
+
   globalThis.__perch = {
     listTabs(a) {
       const P = procs();
@@ -558,6 +672,7 @@ function jxaRuntime(BROWSERS) {
       const names = candidates(P, a.app);
       for (const name of names) {
         const ap = app(name), kind = KIND[name];
+        if (kind !== "arc" && listBulk(ap, name, kind, out)) continue;
         let n;
         try { n = ap.windows.length; } catch (e) { continue; }
         if (kind === "arc") { listArc(ap, name, n, out); continue; }
@@ -571,6 +686,7 @@ function jxaRuntime(BROWSERS) {
           // `active` marks the tab each window shows (one extra read per window).
           const act = activeIndex(kind, win, win.tabs);
           for (let i = 0; i < urls.length; i++) {
+            if (kind === "chrome") hint(name, tabIds[i], w);
             const row = { app: name };
             if (kind === "safari") row.tabId = safariHandle(id, i, urls[i]);
             else if (tabIds[i] != null) row.tabId = handle(name, tabIds[i]);
@@ -584,6 +700,8 @@ function jxaRuntime(BROWSERS) {
       return out;
     },
     evalJs(a) {
+      const q = quickExec(a.target, a.js);
+      if (q) return q.v;
       const t = resolve(a.target);
       visibleGuard(t, a.tool || "eval_js");
       return exec(t, a.js);
@@ -683,7 +801,7 @@ function jxaRuntime(BROWSERS) {
         if (kind === "safari") {
           const i = win.tabs.length - 1;
           tabId = safariHandle(win.id(), i, win.tabs[i].url() || a.url);
-        } else if (newId != null) tabId = handle(name, newId);
+        } else if (newId != null) { tabId = handle(name, newId); hint(name, newId, 0); }
       } catch (e) {}
       return { app: name, tabId };
     },

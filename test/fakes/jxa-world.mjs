@@ -12,6 +12,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
   const counts = {};
   const bump = (k) => { counts[k] = (counts[k] || 0) + 1; };
   const log = [];
+  // What JXA throws when a specifier resolves to nothing (errAENoSuchObject).
+  const gone = () => Object.assign(new Error("Can't get object."), { errorNumber: -1728 });
+  const missing = new Proxy({}, { get: () => { throw gone(); } });
   const makeData = (len) => {
     const bytes = Buffer.alloc(len);
     return {
@@ -93,7 +96,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         if (k === "title" || k === "name") return () => { bump("tabs.title()"); return w.tabs.map((t) => t.spec.title || ""); };
         if (k === "id") return () => { bump("tabs.id()"); return w.tabs.map((t) => t.spec.id); };
         if (k === "location") return () => { bump("tabs.location()"); return w.tabs.map((t) => t.spec.location || "unpinned"); };
-        if (k === "byId") return (id) => { bump("tabs.byId"); return w.tabs.find((t) => String(t.spec.id) === String(id)); };
+        if (k === "byId") return (id) => { bump("tabs.byId"); return w.tabs.find((t) => String(t.spec.id) === String(id)) || missing; };
         if (k === "index") return () => w.tabs.map((_, i) => i + 1);
         if (k === "push") return (t) => {
           // Arc's `make new tab` rejects about: and data: URLs (they can be set afterwards).
@@ -137,7 +140,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       set: () => { throw new Error("Access not authorized"); },
     });
     Object.defineProperty(win, "currentTab", {
-      get: () => () => { if (b.kind !== "safari") throw new Error("Can't convert types"); return w.tabs[spec.active]; },
+      // Called, it fetches the tab; uncalled, it is a specifier (`currentTab.index()`).
+      get: () => Object.assign(() => { if (b.kind !== "safari") throw new Error("Can't convert types"); return w.tabs[spec.active]; }, {
+        index: () => { bump("win.currentTab.index()"); if (b.kind !== "safari") throw new Error("Can't convert types"); return spec.active + 1; },
+        __specifier: true,
+      }),
       set: (t) => { bump("win.currentTab="); if (b.kind !== "safari") throw new Error("Can't convert types"); spec.active = w.tabs.indexOf(t); },
     });
     w.win = win;
@@ -148,7 +155,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
   const winsByApp = {};
   const nsString = (str) => ({ dataUsingEncoding: (enc) => (enc === 0x94000100 ? { length: str.length * 2, bytes: str } : null) });
   const specifier = (resolveWin) => new Proxy({}, {
-    get: (_, k) => { const w = resolveWin(); const v = w[k]; return typeof v === "function" ? v.bind(w) : v; },
+    get: (_, k) => { const w = resolveWin(); if (!w) throw gone(); const v = w[k]; return typeof v === "function" && !v.__specifier ? v.bind(w) : v; },
     set: (_, k, v) => { resolveWin()[k] = v; return true; },
   });
   for (const b of browsers) {
@@ -165,6 +172,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       },
       doJavaScript: (js, { in: tab }) => {
         bump("doJavaScript");
+        if (tab && tab.__specifier) tab = tab();
+        if (!tab) throw gone();
         // Safari only runs JS in the window's current tab.
         if (!tab._active) throw new Error("Safari: tab is not current");
         return vm.runInContext(js, tab.page.ctx);
@@ -179,12 +188,20 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         // JXA specifiers are lazy: windows[k] means "whatever is k-th when used".
         if (/^\d+$/.test(String(k))) {
           bump(`windows[${k}](${b.name})`);
-          if (!wins[Number(k)]) return undefined;
           return specifier(() => wins[Number(k)] && wins[Number(k)].win);
         }
         if (k === "byId") return (id) => specifier(() => { const w = wins.find((x) => String(x.spec.id) === String(id)); return w && w.win; });
-        if (k === "id") return () => wins.map((w) => w.spec.id);
+        if (k === "id") return () => { bump(`windows.id()(${b.name})`); return wins.map((w) => w.spec.id); };
         if (k === "name") return () => wins.map((w) => w.win.name());
+        // Every window's elements in one event (nested arrays, one per window); counted like a per-window bulk read.
+        if (k === "tabs") return {
+          url: () => { bump("tabs.url()"); return wins.map((w) => w.tabs.map((t) => t.shownUrl())); },
+          title: () => { bump("tabs.title()"); return wins.map((w) => w.tabs.map((t) => t.spec.title || "")); },
+          name: () => { bump("tabs.title()"); return wins.map((w) => w.tabs.map((t) => t.spec.title || "")); },
+          id: () => { bump("tabs.id()"); return wins.map((w) => w.tabs.map((t) => t.spec.id)); },
+        };
+        if (k === "activeTabIndex") return () => { bump(`windows.activeTabIndex()(${b.name})`); if (b.kind !== "chrome") throw new Error("Can't convert types"); return wins.map((w) => w.spec.active + 1); };
+        if (k === "currentTab") return { index: () => { bump(`windows.currentTab.index()(${b.name})`); if (b.kind !== "safari") throw new Error("Can't convert types"); return wins.map((w) => w.spec.active + 1); } };
         return undefined;
       },
     });
