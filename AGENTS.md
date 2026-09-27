@@ -133,7 +133,13 @@ Each blocked layer returns an actionable error.
 - **The runtime stays self-contained ES2019.** It must not reference Node scope; `test/runtime.test.mjs` runs it under `node:vm` and compiles it with real osascript.
 - **Tools earn their slot.** Solve a real workflow; don't mirror CDP. Check both consumers (avis, trabAGItos) before changing the surface. Keep `tools/list` under `SCHEMA_BUDGET`, with shared guidance in `INSTRUCTIONS`.
 - **Background-friendly by default.** Only `activate_tab`, `screenshot {raise}` and trusted input with `raise` take focus. Background trusted input must never change the user's AppKit key process or shared cursor.
-- **TDD.** Write the failing test first. Then run `npm test` (unit, no browser) and `npm run smoke` (live) after any change, and `node scripts/bench.mjs --app canary` for anything performance related. Runs go to `bench/runs/` (gitignored); replace `bench/baseline.json` or add a row to `bench/compare/README.md` only on purpose.
+- **Every improvement is measured.** Before committing a change to perch:
+  1. Write the failing test first, then make it pass. `npm test` (unit, no browser) must be green.
+  2. `npm run smoke` (live) must pass.
+  3. `npm run bench` (live, Canary's shown tab) compares against `bench/baseline.json`. Say the before/after in the commit message. A regression needs a reason or a fix. Unchanged code moves about ±5% between runs, so smaller differences are noise.
+  4. If the change made perch faster, replace `bench/baseline.json` with the new run (`bench/runs/bench.json`) in the same commit. For a change a user would notice in an agent's session (fewer calls, a flow that works now), rerun `scripts/compare.mjs` and add a row to `bench/compare/README.md`.
+
+  Live steps need a browser the user isn't using; if none is free, say so and leave them for later rather than skipping silently. Runs land in `bench/runs/` (gitignored).
 - **Live focus checks.** `npm run smoke` reuses an existing scratch tab and skips tab creation; `--with-tab-creation` opts into checks that may focus the browser. `scripts/trusted-live.mjs --background` needs an active scratch tab behind another app for SkyLight click; `--background-fill` tests an inactive scratch tab even while minimized. If the preconditions are absent, defer; never create/select tabs or activate another app to create them. Preserve the user's foreground while testing.
 
 ## Ceiling: what AppleScript can't do
