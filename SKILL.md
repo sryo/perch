@@ -23,7 +23,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `accessibility_snapshot` | Page outline with refs (format below). Filter with `role`; `max: 0` for the header only. |
 | `console_capture` | `start`, then `read` drains `"level: text"` strings, `stop` restores. Navigation clears it. |
 | `click` | By `ref` / `selector`. `trusted: true` posts a real OS click (see below). |
-| `fill` | Inputs, textareas, rich editors; verifies the text landed. `ref` > `selector` > `label_pattern`. `text_path` for long bodies. |
+| `fill` | Inputs, textareas, rich editors; verifies the text landed. `text_path` for long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>`, react-select, ARIA combobox/listbox; reads back what's shown. |
 | `file_upload` | Put a local file on an `<input type=file>` without the bytes entering context. |
 | `notify` | macOS notification to ping the user. |
@@ -44,6 +44,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 - `{ok: false, error}` is an outcome, not a crash: nothing matched, or the value didn't land. Read it before retrying.
 - `fill` returns `{ok, kind: "plain"|"rich", el: 'textbox "Email"', len, ambiguous?}`. `ok: true` is proof; don't re-check.
+- `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change.
 - `fill {trusted:true}` returns `{ok, trusted, value, el}` for background plain fields. Require both `ok` and `trusted`.
 - Page errors come back as `isError` with `__perch_error`, `__perch_error_name` and a stack head.
 - Other errors start with a code; branch on it, never on the browser. `tab_not_visible`: needs the tab its window shows: `activate_tab` (takes focus) or retry later. `stale_tab`: tab gone; re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `no_browser`: none running or no window (never launched). `timeout`: re-list, retry once. `tab_not_scriptable`: internal page; `navigate` first.
@@ -56,7 +57,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Trusted input
 
-`fill {trusted: true}` edits a plain input or textarea through the browser's editing command and verifies a trusted `input` event and the exact value. It works in background tabs and minimized windows wherever page JS runs (else `tab_not_visible`), without changing the selected tab or taking the user's key focus. `click {trusted: true}` uses SkyLight to address an on-screen browser window without explicitly activating it or moving the shared cursor; its tab must be the one its window shows (else `tab_not_visible`), and a minimized window does not receive it. Use ordinary `click` for background or minimized tabs and verify the page outcome; it produces an untrusted DOM click. SkyLight clicks require Accessibility permission. Pass `raise: true` for the foreground HID route, which takes focus briefly and restores the cursor. Rich editors usually work without trusted mode.
+`fill {trusted: true}` edits a plain input or textarea through the browser's editing command and verifies a trusted `input` event and the exact value. It works in background tabs and minimized windows wherever page JS runs, without changing the selected tab or taking key focus. `click {trusted: true}` uses SkyLight to reach an on-screen window without activating it or moving the cursor; its tab must be the one its window shows (else `tab_not_visible`), and a minimized window does not receive it. Plain `click` (untrusted) works in background or minimized tabs; verify the outcome. `raise: true` uses the foreground HID route: brief focus, cursor restored. Rich editors usually work without trusted mode.
 
 ## Permissions
 
