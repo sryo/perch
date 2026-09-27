@@ -579,10 +579,14 @@ function jxaRuntime(BROWSERS) {
     }
     const area = axPageArea(I, probe), af = area && ax.frame(area.el);
     let el = af ? ax.attr(app, "AXFocusedUIElement") : null;
+    // The first web area up must be the page's: one below it is an embedded frame's
+    // (a captcha, a sign-in widget), where a key must not go.
+    let framed = false;
     for (let i = 0; el && i < 64; i++, el = ax.attr(el, "AXParent")) {
       if (ax.str(el, "AXRole") !== "AXWebArea") continue;
       const f = ax.frame(el);
-      if (f && near(f, af, 1)) return null;
+      if (f && near(f, af, 1)) return framed ? "focus is inside an embedded frame; frames take only click {trusted:true}" : null;
+      framed = true;
     }
     return "the browser's keyboard focus is outside the page (toolbar, popup or panel); a background trusted click on the page first moves it back";
   }
@@ -2601,14 +2605,17 @@ return out;
   // Focuses the ref/selector element (else keeps document.activeElement) and
   // records the first keydown and keyup the window sees.
   trusted_key_arm: String.raw`
+const framed = function (e) { return e && /^(IFRAME|FRAME|OBJECT|EMBED)$/.test(e.tagName) ? { ok: false, error: ident(e) + " is an embedded frame; frames take only click {trusted:true}" } : null; };
 let el = document.activeElement;
 if (A.ref || A.selector) {
   const r = resolveEl(A);
   if (r.out) return r.out;
   el = r.el;
+  if (framed(el)) return framed(el);
   el.focus({ preventScroll: true });
   if (el.getRootNode().activeElement !== el) return { ok: false, error: ident(el) + " did not accept focus" };
 }
+if (framed(el)) return framed(el);
 // A real Tab past either end leaves the page for the browser's toolbar, where the
 // next trusted key would act on the browser instead (Enter reloads the tab).
 if (A.key === "Tab" && el) {
