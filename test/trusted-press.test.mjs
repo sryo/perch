@@ -71,16 +71,24 @@ test("trusted_key_arm focuses an element inside a shadow root", () => {
 // The page's view of a key event, keyed by virtual keycode (what the browser derives).
 const KEY_OF = { 36: "Enter", 53: "Escape", 48: "Tab", 125: "ArrowDown", 49: " " };
 
-function background({ active = 1, cg } = {}) {
+// The target window's CG frame, and its page's web area (happy-dom's viewport is
+// 1024x768, shown at 800x600). By default the browser's key focus is a field in
+// that page.
+const WIN = { x: 10, y: 0, w: 800, h: 620 };
+const AREA = { x: 10, y: 20, w: 800, h: 600 };
+const inPage = { window: WIN, chain: [{ role: "AXTextField", box: { x: 20, y: 40, w: 100, h: 20 } }, { role: "AXGroup" }, { role: "AXWebArea", box: AREA }, { role: "AXGroup" }, { role: "AXWindow", box: WIN }] };
+
+function background({ active = 1, cg, extra = [], focus = inPage } = {}) {
   const dom = page(`<input id=i aria-label="City"><button id=b>Go</button>`);
   const world = makeWorld({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active, x: 10, y: 20, w: 800, h: 600, tabs: [{ url: "about:blank", id: "front" }, { url: "about:blank", id: "scratch", dom }] }] }],
-    cg: cg || [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620 }],
+    cg: cg || [{ owner: "Terminal", pid: 1, wid: 10 }, ...extra, { owner: "Google Chrome", pid: 5, wid: 77, ...WIN, ax: { web: [AREA] } }],
   });
   world.run(JXA_PRELUDE);
   DAEMONS.fast = world.daemon;
   DAEMONS.slow = world.daemon;
   world.reset();
+  world.state.focus = focus;
   world.state.onPost = (e) => { if (e.kind === "key") trustedKey(dom, e.down ? "keydown" : "keyup", KEY_OF[e.vk]); };
   return { world, dom };
 }
@@ -161,6 +169,64 @@ test("trusted press reports hit:null when no keydown reaches the page, and ok:fa
   delete o.error;
   assert.deepEqual(o, { ok: false, el: 'generic "Go"', key: "Escape", hit: null, focus: 'generic "Go"', delivery: "skylight" });
   assert.equal(keys(world).length, 2);
+});
+
+// A key posted to the pid goes to the browser's key window and its focused
+// element, so the press refuses unless both are the target's page.
+async function refused(opts, hint) {
+  const { world, dom } = background(opts);
+  const r = await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target });
+  assert.equal(r.isError, true, r.content[0].text);
+  assert.match(r.content[0].text, /^error: tab_not_visible: /);
+  assert.match(r.content[0].text, hint);
+  assert.equal(world.posted.length, 0, "nothing posted");
+  assert.equal(dom.__perch_key, undefined, "the page was not armed");
+  assert.notEqual(dom.document.activeElement.id, "i", "page focus untouched");
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+}
+const OTHER = { x: 300, y: 200, w: 700, h: 500 };
+const BUBBLE = { x: 400, y: 60, w: 320, h: 180 };
+const onRaise = /another browser window has the keyboard.*click \{trusted:true, raise:true\}/;
+const onClick = /keyboard focus is outside the page.*trusted click on the page first/;
+
+test("trusted press refuses when another browser window is the key window", async () => {
+  await refused({
+    extra: [{ owner: "Google Chrome", pid: 5, wid: 78, ...OTHER, ax: { web: [] } }],
+    focus: { window: OTHER, chain: [{ role: "AXTextField" }, { role: "AXWebArea", box: { ...OTHER, y: 280, h: 420 } }, { role: "AXWindow", box: OTHER }] },
+  }, onRaise);
+});
+
+test("trusted press refuses when focus is in the toolbar (the address bar)", async () => {
+  await refused({ focus: { window: WIN, chain: [{ role: "AXTextField", box: { x: 100, y: 5, w: 500, h: 20 } }, { role: "AXToolbar" }, { role: "AXWindow", box: WIN }] } }, onClick);
+});
+
+test("trusted press refuses when focus is in a bubble, a child window or a side panel", async () => {
+  // A bubble's own window has the focus.
+  await refused({
+    extra: [{ owner: "Google Chrome", pid: 5, wid: 79, ...BUBBLE }],
+    focus: { window: BUBBLE, chain: [{ role: "AXButton" }, { role: "AXGroup" }, { role: "AXWindow", box: BUBBLE }] },
+  }, onRaise);
+  // The target window reports focus, but the element hangs off a popup, not the page.
+  await refused({ focus: { window: WIN, chain: [{ role: "AXButton" }, { role: "AXGroup" }, { role: "AXPopover" }, { role: "AXWindow", box: WIN }] } }, onClick);
+  // A web area that is not the page's (a side panel's).
+  await refused({ focus: { window: WIN, chain: [{ role: "AXTextField" }, { role: "AXWebArea", box: { x: 610, y: 20, w: 200, h: 600 } }, { role: "AXWindow", box: WIN }] } }, onClick);
+});
+
+test("trusted press refuses when the focused window can't be told apart", async () => {
+  // Two browser windows share the target's frame: no unique match.
+  await refused({ extra: [{ owner: "Google Chrome", pid: 5, wid: 78, ...WIN }] }, onRaise);
+  // No focused window at all.
+  await refused({ focus: null }, onRaise);
+});
+
+test("trusted press accepts focus anywhere inside the page, frames included", async () => {
+  const frameFocus = { window: WIN, chain: [{ role: "AXTextField" }, { role: "AXWebArea", box: { x: 50, y: 300, w: 300, h: 150 } }, { role: "AXGroup" }, { role: "AXWebArea", box: AREA }, { role: "AXWindow", box: WIN }] };
+  for (const focus of [inPage, frameFocus, { window: WIN, chain: [{ role: "AXWebArea", box: AREA }, { role: "AXWindow", box: WIN }] }]) {
+    const { world } = background({ focus });
+    const r = await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target });
+    assert.equal(JSON.parse(r.content[0].text).hit, true, r.content[0].text);
+    assert.equal(keys(world).length, 2);
+  }
 });
 
 test("trusted press stops on a missed element without posting", async () => {

@@ -361,6 +361,25 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     return v === undefined ? null : v;
   }
 
+  // Keyboard focus: `state.focus = { window: {x,y,w,h}, chain: [{role, box?}, ...] }`
+  // is the application's AXFocusedWindow (by frame) and its AXFocusedUIElement,
+  // chain[0], whose AXParent is chain[1], and so on up. No `state.focus`: neither
+  // attribute answers. undefined: not a focus part.
+  function focusAttr(el, name) {
+    const f = state.focus;
+    if (el.role === "AXApplication" && (name === "AXFocusedWindow" || name === "AXFocusedUIElement")) {
+      if (!f) return null;
+      if (name === "AXFocusedWindow") return { role: "AXWindow", fo: { box: f.window } };
+      return { role: f.chain[0].role, fo: { chain: f.chain, i: 0, box: f.chain[0].box } };
+    }
+    if (!el.fo) return undefined;
+    const o = el.fo, up = o.chain && o.chain[o.i + 1];
+    const v = { AXRole: el.role,
+      AXPosition: o.box && axPoint(o.box.x, o.box.y), AXSize: o.box && axSize(o.box.w, o.box.h),
+      AXParent: up && { role: up.role, fo: { chain: o.chain, i: o.i + 1, box: up.box } } }[name];
+    return v == null ? null : v;
+  }
+
   const sandbox = {
     Ref: () => [],
     Application: (name) => {
@@ -429,7 +448,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         if (el.d && !state.dialogs.includes(el.d)) return -25202;
         // A kid removed from its frame is gone, like a closed dialog's elements.
         if (el.fk && el.fk.gone) return -25202;
-        const f = frameAttr(el, name.js);
+        let f = focusAttr(el, name.js);
+        if (f === undefined) f = frameAttr(el, name.js);
         const v = f === undefined ? axAttr(el, name.js) : f === null ? undefined : f;
         if (v === undefined) return -25205; // kAXErrorAttributeUnsupported
         out[0] = v;
