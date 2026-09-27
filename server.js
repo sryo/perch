@@ -1453,7 +1453,8 @@ function jxaRuntime(BROWSERS) {
       // a.short: give up early unless a.probe says a list or companion is there.
       let picked = poll(t, a.pick, a.short || a.wait || 2500, 50);
       if (!picked && a.short && parseExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50);
-      if (!picked) return parseExec(t, a.miss);
+      if (!picked && !a.missFinal) return parseExec(t, a.miss);
+      if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : parseExec(t, a.missFinal); }
       if (picked.value.ok === false) return picked.value;
       const read = poll(t, a.read, 500, 50);
       return read ? read.value : parseExec(t, a.readFinal);
@@ -2169,7 +2170,9 @@ function linkedLists(s) {
 // Separate React roots can repeat an id; take the copy that shares the deepest
 // ancestor with the control.
 function byIdNear(id, near) {
-  const all = document.querySelectorAll('[id="' + id.replace(/["\\]/g, "\\$&") + '"]');
+  let all;
+  try { all = document.querySelectorAll(typeof CSS !== "undefined" && CSS.escape ? "#" + CSS.escape(id) : '[id="' + id.replace(/["\\]/g, "\\$&") + '"]'); }
+  catch (e) { all = Array.prototype.filter.call(document.querySelectorAll("[id]"), function (m) { return m.id === id; }); }
   if (all.length < 2 || !near) return document.getElementById(id);
   let best = null, depth = -1;
   Array.prototype.forEach.call(all, function (m) {
@@ -2489,31 +2492,41 @@ if (A.probe) return !!(s.comp || attr(s.el, "aria-expanded") === "true" || taSco
 const w = taNorm(s.text);
 const opts = taOptions(s);
 const opt = opts.find(function (o) { return taNorm(o.textContent) === w; }) || opts.find(function (o) { return taNorm(o.textContent).indexOf(w) === 0; });
-if (!opt) return null;
+if (!opt) {
+  if (opts.length) s.cands = opts.slice(0, 8).map(function (o) { return clip(o.textContent, 60); });
+  return null;
+}
 s.picked = clip(opt.textContent, 80);
 s.pickedN = taNorm(opt.textContent);
 press(opt);
 return { picked: true };
 `,
 
-  // No pick. A widget that requires one (a hidden companion, or text cleared on
-  // blur) gets its prior value back; any other combobox keeps the typed text.
+  // No pick. A widget that expects one (a hidden companion, its own suggestions
+  // shown, or text cleared on blur) gets its prior value back; any other
+  // combobox keeps the typed text. React clears on blur only after the blurring
+  // script ends, so the blur and the read of the settled value are separate
+  // polls; null = keep polling, and A.final keeps text that survived.
   fill_ta_miss: TA_PICK_LIB + String.raw`
 const s = window.__perch_ta;
 const el = s.el;
-const c = taOptions(s).slice(0, 8).map(function (o) { return clip(o.textContent, 60); });
-let out;
-if (!s.comp) {
-  taBlur(el);
-  if (taNorm(el.value) === taNorm(s.text)) out = { ok: true, kind: "plain", el: ident(el), len: el.value.length, note: "no suggestion was picked; the typed text stays" };
+if (!s.missed) {
+  s.missed = true;
+  const c = taOptions(s).slice(0, 8).map(function (o) { return clip(o.textContent, 60); });
+  if (c.length) s.cands = c;
+  if (!s.comp && !s.cands) { taBlur(el); return null; }
 }
-if (!out) {
+const kept = !s.comp && !s.cands && taNorm(el.value) === taNorm(s.text);
+if (kept && !A.final) return null;
+let out;
+if (kept) out = { ok: true, kind: "plain", el: ident(el), len: el.value.length, note: "no suggestion was picked; the typed text stays" };
+else {
   setNativeValue(el, s.prior);
   fire(el, ["input", "change"]);
   if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
   out = { ok: false, kind: "typeahead", el: ident(el), error: "no suggestion matched " + JSON.stringify(s.text) + "; the text was withdrawn" };
 }
-if (c.length) out.candidates = c;
+if (s.cands) out.candidates = s.cands;
 return out;
 `,
 
@@ -3437,7 +3450,7 @@ async function fill(args = {}) {
 // so they are polled JXA-side through select's phases rather than page timers.
 const pickSuggestion = (target) => rt("select", {
   target, tool: "fill", wait: 3000,
-  pick: pageFn("fill_ta_pick", {}), miss: pageFn("fill_ta_miss", {}),
+  pick: pageFn("fill_ta_pick", {}), miss: pageFn("fill_ta_miss", {}), missFinal: pageFn("fill_ta_miss", { final: true }), settle: 300,
   read: pageFn("fill_ta_read", {}), readFinal: pageFn("fill_ta_read", { final: true }),
   short: 1000, probe: pageFn("fill_ta_pick", { probe: true }),
 }, { lane: "slow" });
