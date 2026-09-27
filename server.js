@@ -1450,7 +1450,9 @@ function jxaRuntime(BROWSERS) {
       // No start: the caller's own page call already opened the control.
       const r = a.start ? parseExec(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
-      const picked = poll(t, a.pick, a.wait || 2500, 50);
+      // a.short: give up early unless a.probe says a list or companion is there.
+      let picked = poll(t, a.pick, a.short || a.wait || 2500, 50);
+      if (!picked && a.short && parseExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50);
       if (!picked) return parseExec(t, a.miss);
       if (picked.value.ok === false) return picked.value;
       const read = poll(t, a.read, 500, 50);
@@ -2155,26 +2157,27 @@ function pickNative(nat, text) {
   return { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
 }
 function mine(s, el) { return [s.ctl, s.input, s.box].some(function (m) { return m && (m === el || m.contains(el) || el.contains(m)); }); }
-// The control's own options: its aria-controls/aria-owns targets (react-select's
-// listbox id derives from its input id), else a list beside it in a wrapper that
-// holds no other control, else options that appeared after select opened it.
-// Never the rest of the page. Sets s.filter to a search box inside a linked popup.
-function ownOptions(s) {
-  const within = function (root) { return Array.from(root.querySelectorAll(OPT)).filter(vis); };
-  if (attr(s.ctl, "role") === "listbox") return within(s.ctl);
+// The lists a control names as its own: aria-controls/aria-owns targets, and
+// react-select's listbox, whose id derives from its input id.
+function linkedLists(s) {
   let ids = [];
   [s.ctl, s.input, s.box].forEach(function (el) { if (el) ids = ids.concat((attr(el, "aria-controls") + " " + attr(el, "aria-owns")).split(/\s+/)); });
   const rs = s.input && /^(react-select-.+)-input$/.exec(s.input.id);
   if (rs) ids.push(rs[1] + "-listbox");
-  let found = false, out = [];
-  ids.forEach(function (id, i) {
-    const m = id && ids.indexOf(id) === i && document.getElementById(id);
-    if (!m || mine(s, m)) return;
-    found = true;
-    out = out.concat(m.matches(OPT) ? [m] : within(m));
-    if (!s.input && !s.filter) s.filter = m.querySelector("input");
-  });
-  if (found) return out;
+  return ids.map(function (id, i) { return id && ids.indexOf(id) === i && document.getElementById(id); }).filter(function (m) { return m && !mine(s, m); });
+}
+// The control's own options: its linked lists, else a list beside it in a wrapper
+// that holds no other control, else options that appeared after select opened it.
+// Never the rest of the page. Sets s.filter to a search box inside a linked popup.
+function ownOptions(s) {
+  const within = function (root) { return Array.from(root.querySelectorAll(OPT)).filter(vis); };
+  if (attr(s.ctl, "role") === "listbox") return within(s.ctl);
+  const lists = linkedLists(s);
+  if (lists.length) {
+    lists.forEach(function (m) { if (!s.input && !s.filter) s.filter = m.querySelector("input"); });
+    return lists.reduce(function (out, m) { return out.concat(m.matches(OPT) ? [m] : within(m)); }, []);
+  }
+  const rs = s.input && /^(react-select-.+)-input$/.exec(s.input.id);
   if (rs) {
     const byId = within(document).filter(function (o) { return o.id.indexOf(rs[1] + "-option-") === 0; });
     if (byId.length) return byId;
@@ -2245,15 +2248,22 @@ function isTypeahead(el) {
   const t = taParts(el);
   return !!(t.comp && t.pop);
 }
+`;
+
+// The typeahead's suggestions come only from its own lists (select's rule), else
+// its box's popup; never the rest of the page, so an empty list means keep waiting.
+const TA_PICK_LIB = TYPEAHEAD_LIB + SELECT_LIB + String.raw`
+function taScopes(s) {
+  const own = linkedLists({ ctl: s.el, input: s.el, box: s.el });
+  return own.length ? own : s.pop ? [s.pop] : [];
+}
 function taOptions(s) {
-  const ids = (attr(s.el, "aria-controls") + " " + attr(s.el, "aria-owns")).split(/\s+/).filter(Boolean);
-  const own = ids.map(function (id) { return document.getElementById(id); }).filter(Boolean)[0];
-  const scope = own || s.pop;
   const ITEM = "[role=option], li, [class*=option], [class*=item], [class*=result]";
-  let opts = scope ? Array.from(scope.querySelectorAll("[role=option]")) : [];
-  if (!opts.length && scope) opts = Array.from(scope.querySelectorAll(ITEM)).filter(function (o) { return !o.querySelector(ITEM); });
-  if (!opts.length) opts = Array.from(document.querySelectorAll("[role=option]"));
-  return opts.filter(function (o) { return vis(o) && taNorm(o.textContent); });
+  return taScopes(s).reduce(function (out, scope) {
+    let opts = scope.matches("[role=option]") ? [scope] : Array.from(scope.querySelectorAll("[role=option]"));
+    if (!opts.length) opts = Array.from(scope.querySelectorAll(ITEM)).filter(function (o) { return !o.querySelector(ITEM); });
+    return out.concat(opts.filter(function (o) { return vis(o) && taNorm(o.textContent); }));
+  }, []);
 }
 `;
 
@@ -2281,7 +2291,7 @@ function fillOne(a) {
   // Typed with input events and no blur, so the widget runs its own lookup.
   function startTypeahead(el) {
     const t = taParts(el);
-    window.__perch_ta = { el: el, comp: t.comp, pop: t.pop, text: text, prior: el.value };
+    window.__perch_ta = { el: el, comp: t.comp, pop: t.pop, text: text, prior: el.value, priorComp: t.comp && t.comp.value };
     if (el.focus) el.focus();
     setNativeValue(el, text);
     const key = text.slice(-1);
@@ -2450,10 +2460,12 @@ return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "
 
   fill: FILL_LIB + "return fillOne(A);",
 
-  // null = keep polling; exact text first, then prefix.
-  fill_ta_pick: TYPEAHEAD_LIB + SELECT_LIB + String.raw`
+  // null = keep polling; exact text first, then prefix. A.probe: is a pick worth
+  // waiting longer for (a hidden companion, an open or non-empty list)?
+  fill_ta_pick: TA_PICK_LIB + String.raw`
 const s = window.__perch_ta;
 if (!s) return { ok: false, kind: "typeahead", error: "fill state lost (did the page navigate?)" };
+if (A.probe) return !!(s.comp || attr(s.el, "aria-expanded") === "true" || taScopes(s).some(function (r) { return vis(r) && taNorm(r.textContent); }));
 const w = taNorm(s.text);
 const opts = taOptions(s);
 const opt = opts.find(function (o) { return taNorm(o.textContent) === w; }) || opts.find(function (o) { return taNorm(o.textContent).indexOf(w) === 0; });
@@ -2464,12 +2476,23 @@ press(opt);
 return { picked: true };
 `,
 
-  fill_ta_miss: TYPEAHEAD_LIB + String.raw`
+  // No pick. A widget that requires one (a hidden companion, or text cleared on
+  // blur) gets its prior value back; any other combobox keeps the typed text.
+  fill_ta_miss: TA_PICK_LIB + String.raw`
 const s = window.__perch_ta;
+const el = s.el;
 const c = taOptions(s).slice(0, 8).map(function (o) { return clip(o.textContent, 60); });
-setNativeValue(s.el, s.prior);
-fire(s.el, ["input", "change"]);
-const out = { ok: false, kind: "typeahead", el: ident(s.el), error: "no suggestion matched " + JSON.stringify(s.text) + "; the text was withdrawn" };
+let out;
+if (!s.comp) {
+  if (document.activeElement === el) el.blur(); else fire(el, ["blur"]);
+  if (taNorm(el.value) === taNorm(s.text)) out = { ok: true, kind: "plain", el: ident(el), len: el.value.length, note: "no suggestion was picked; the typed text stays" };
+}
+if (!out) {
+  setNativeValue(el, s.prior);
+  fire(el, ["input", "change"]);
+  if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
+  out = { ok: false, kind: "typeahead", el: ident(el), error: "no suggestion matched " + JSON.stringify(s.text) + "; the text was withdrawn" };
+}
 if (c.length) out.candidates = c;
 return out;
 `,
@@ -3396,6 +3419,7 @@ const pickSuggestion = (target) => rt("select", {
   target, tool: "fill", wait: 3000,
   pick: pageFn("fill_ta_pick", {}), miss: pageFn("fill_ta_miss", {}),
   read: pageFn("fill_ta_read", {}), readFinal: pageFn("fill_ta_read", { final: true }),
+  short: 1000, probe: pageFn("fill_ta_pick", { probe: true }),
 }, { lane: "slow" });
 
 async function select(args = {}) {

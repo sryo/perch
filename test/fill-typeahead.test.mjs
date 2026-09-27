@@ -112,6 +112,67 @@ test("typeahead: a pick the widget drops on blur is reported", async () => {
   assert.equal($(dom, "#loc").value, "");
 });
 
+test("typeahead: a hidden companion alone means a pick is required", async () => {
+  const { dom } = onPage(LOCATION, LOCATION_JS().replace("if (!hid.value) inp.value = '';", ""));
+  const o = await fill({ label_pattern: "location", text: "Zzyzx" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal($(dom, "#loc").value, "");
+});
+
+test("typeahead: a miss after an earlier pick puts back the text and the hidden value", async () => {
+  const { dom } = onPage(LOCATION.replace("id=loc name=location type=text", "id=loc name=location type=text value='Toronto, ON, Canada'").replace("name=selectedLocation>", "name=selectedLocation value=loc-2>"), LOCATION_JS());
+  const o = await fill({ label_pattern: "location", text: "Zzyzx" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal($(dom, "#loc").value, "Toronto, ON, Canada");
+  assert.equal($(dom, "#selected-location").value, "loc-2");
+});
+
+// An async combobox whose own listbox fills late, beside another control's
+// always-open listbox: only the combobox's own list may be pressed.
+const FOREIGN = `<form>
+  <div><label for=loc>Location</label><input id=loc role=combobox aria-autocomplete=list aria-controls=loc-list aria-expanded=false><ul id=loc-list role=listbox></ul></div>
+  <div><span id=pl>Preferred offices</span><ul role=listbox aria-labelledby=pl aria-multiselectable=true>
+    <li role=option id=o1 aria-selected=false>Buenos Aires office</li><li role=option id=o2 aria-selected=false>Rosario office</li></ul></div>
+</form>`;
+const FOREIGN_JS = `
+  const inp = document.getElementById('loc'), ul = document.getElementById('loc-list');
+  window.offClicks = [];
+  document.querySelectorAll('#o1,#o2').forEach((o) => o.addEventListener('click', () => window.offClicks.push(o.id)));
+  inp.addEventListener('input', () => { const q = inp.value.toLowerCase(); later(() => {
+    ul.innerHTML = ['Rosario, Santa Fe, Argentina'].filter((c) => c.toLowerCase().startsWith(q)).map((c) => '<li role=option>' + c + '</li>').join('');
+    ul.querySelectorAll('li').forEach((o) => o.addEventListener('mousedown', () => { inp.value = o.textContent; ul.innerHTML = ''; }));
+  }, 3); });`;
+
+test("typeahead: an empty own list is waited on, never another control's options", async () => {
+  const { dom } = onPage(FOREIGN, FOREIGN_JS);
+  const o = await fill({ label_pattern: "^location", text: "Rosario" });
+  assert.equal(JSON.stringify(dom.offClicks), "[]");
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Rosario, Santa Fe, Argentina");
+  assert.equal($(dom, "#loc").value, "Rosario, Santa Fe, Argentina");
+});
+
+test("typeahead: a free-text combobox with no suggestions keeps the text, without the long wait", async () => {
+  const { dom, world } = onPage(`<form><label for=t>Job title</label><input id=t role=combobox aria-autocomplete=list aria-expanded=false></form>`);
+  const t0 = world.clock.t;
+  const o = await fill({ label_pattern: "job title", text: "Staff Engineer" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.kind, "plain");
+  assert.match(o.note, /no suggestion/);
+  assert.equal($(dom, "#t").value, "Staff Engineer");
+  assert.ok(world.clock.t - t0 < 2000, "waited " + (world.clock.t - t0) + "ms");
+});
+
+test("typeahead: a combobox that clears unpicked text on blur is withdrawn", async () => {
+  const { dom } = onPage(`<label for=t>Team</label><input id=t role=combobox aria-autocomplete=list>`,
+    `const t = document.getElementById('t'); t.addEventListener('blur', () => { t.value = ''; });`);
+  const o = await fill({ label_pattern: "team", text: "Platform" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kind, "typeahead");
+  assert.match(o.error, /withdrawn/);
+  assert.equal($(dom, "#t").value, "");
+});
+
 // react-select with async loadOptions: role=combobox on an inner input that is
 // emptied after a pick; the choice shows in the control and a hidden input.
 const ASYNC_SELECT = `<label id=l>City</label>
