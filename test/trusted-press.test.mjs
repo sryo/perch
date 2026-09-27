@@ -45,10 +45,19 @@ test("trusted_key_check: untrusted or other keys miss; no keydown at all is null
 test("trusted_key_arm without ref/selector keeps the focused element; misses are reported", () => {
   const w = page(`<input id=a aria-label="Name"><input id=d aria-label="Off" disabled>`);
   w.document.getElementById("a").focus();
-  assert.deepEqual(run(w, "trusted_key_arm", { key: "Tab" }), { ok: true, el: 'textbox "Name"' });
+  assert.deepEqual(run(w, "trusted_key_arm", { key: "Escape" }), { ok: true, el: 'textbox "Name"' });
   assert.equal(run(w, "trusted_key_arm", { ref: "9", key: "Tab" }).__perch_ref_miss, true);
   assert.match(run(w, "trusted_key_arm", { selector: "#nope", key: "Tab" }).error, /no element/);
   assert.match(run(w, "trusted_key_arm", { selector: "#d", key: "Tab" }).error, /did not accept focus/);
+});
+
+test("trusted_key_arm refuses a Tab that would leave the page for the browser's toolbar", () => {
+  const w = page(`<button id=b>Go</button><input id=i aria-label="Name"><input id=h type=hidden>`);
+  assert.match(run(w, "trusted_key_arm", { selector: "#i", key: "Tab" }).error, /last focusable.*toolbar/);
+  assert.match(run(w, "trusted_key_arm", { selector: "#b", key: "Tab", shift: true }).error, /first focusable.*toolbar/);
+  assert.equal(run(w, "trusted_key_arm", { selector: "#b", key: "Tab" }).ok, true);
+  assert.equal(run(w, "trusted_key_arm", { selector: "#i", key: "Tab", shift: true }).ok, true);
+  assert.equal(run(w, "trusted_key_arm", { selector: "#i", key: "Enter" }).ok, true);
 });
 
 test("trusted_key_arm focuses an element inside a shadow root", () => {
@@ -109,6 +118,15 @@ test("trusted press: shift is the only modifier, and never with Command", async 
   for (const k of keys(world)) assert.equal(k.flags & 0x100000, 0);
 });
 
+test("trusted press never posts a Tab that would move focus out of the page", async () => {
+  const { world } = background();
+  for (const [key, selector] of [["shift+Tab", "#i"], ["Tab", "#b"]]) {
+    const r = await handleCall("press", { key, selector, trusted: true, target });
+    assert.match(JSON.parse(r.content[0].text).error, /focusable element; a real Tab would move focus into the browser's toolbar/, key);
+  }
+  assert.equal(keys(world).length, 0);
+});
+
 test("trusted press refuses chords and characters before touching the browser", async () => {
   const { world } = background();
   for (const key of ["cmd+k", "ctrl+Enter", "alt+ArrowDown", "a", "shift+a"]) {
@@ -138,7 +156,10 @@ test("trusted press reports hit:null when no keydown reaches the page, and ok:fa
   const { world } = background();
   world.state.onPost = null;
   const r = await handleCall("press", { key: "Escape", trusted: true, target });
-  assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, el: 'generic "Go"', key: "Escape", hit: null, focus: 'generic "Go"', delivery: "skylight" });
+  const o = JSON.parse(r.content[0].text);
+  assert.match(o.error, /no key reached the page/);
+  delete o.error;
+  assert.deepEqual(o, { ok: false, el: 'generic "Go"', key: "Escape", hit: null, focus: 'generic "Go"', delivery: "skylight" });
   assert.equal(keys(world).length, 2);
 });
 

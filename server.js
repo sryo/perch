@@ -707,29 +707,39 @@ function jxaRuntime(BROWSERS) {
     return axKit;
   }
 
-  // A page's alert/confirm/prompt is a window with subrole AXApplicationDialog.
-  // Its parts are read by position, never by localized title: a text field makes
-  // it a prompt, two or more buttons a confirm. Static texts in AX order are the
-  // origin line ("x.test says") and then the message. Window buttons (close,
-  // zoom) carry a subrole and are skipped; buttons and fields are not descended into.
+  // A page's alert/confirm/prompt is its own window (live, Chrome: subrole
+  // AXUnknown) holding, a few levels down, a group with subrole AXApplicationDialog.
+  // Browser windows are skipped: a page's role=dialog maps to that subrole too.
+  // Parts are read by position, never by localized title: a text field makes it a
+  // prompt, two or more buttons a confirm. The origin line ("x.test says") is a
+  // heading, so the static texts are the message. Buttons that carry a subrole
+  // (close, zoom) are skipped; buttons and fields are not descended into.
   function scanDialogs(only) {
     ObjC.import("ApplicationServices");
     if (!$.AXIsProcessTrusted()) return [];
     const ax = axInit(), P = procs(), out = [];
+    const kids = function (el) { return ax.list(ax.attr(el, "AXChildren")); };
     P.z.filter(function (n) { return !only || n === only; }).forEach(function (name) {
       ax.list(ax.attr($.AXUIElementCreateApplication(P.pid[name]), "AXWindows")).forEach(function (w) {
-        if (ax.str(w, "AXSubrole") !== "AXApplicationDialog") return;
-        const d = { app: name, buttons: [], field: null, texts: [] }, stack = [w];
+        if (ax.str(w, "AXSubrole") === "AXStandardWindow") return;
+        let root = null, level = [w];
+        for (let depth = 0; depth < 4 && !root && level.length; depth++) {
+          root = level.filter(function (el) { return ax.str(el, "AXSubrole") === "AXApplicationDialog"; })[0] || null;
+          level = [].concat.apply([], level.map(kids));
+        }
+        if (!root) return;
+        const d = { app: name, buttons: [], field: null, texts: [] }, stack = [root];
         let seen = 0;
         while (stack.length && seen++ < 300) {
           const el = stack.pop(), role = ax.str(el, "AXRole");
           if (role === "AXButton") { if (!ax.str(el, "AXSubrole")) d.buttons.push(el); continue; }
           if (role === "AXTextField") { d.field = d.field || el; continue; }
           if (role === "AXStaticText") { const v = ax.str(el, "AXValue").trim(); if (v) d.texts.push(v); }
-          stack.push.apply(stack, ax.list(ax.attr(el, "AXChildren")).reverse());
+          stack.push.apply(stack, kids(el).reverse());
         }
         d.kind = d.field ? "prompt" : d.buttons.length >= 2 ? "confirm" : "alert";
-        d.message = (d.texts.length >= 2 ? d.texts.slice(1) : d.texts).join(" ").slice(0, 200);
+        // A prompt shows its message as the field's title.
+        d.message = (d.field ? ax.str(d.field, "AXTitle") : d.texts.join(" ")).slice(0, 200);
         out.push(d);
       });
     });
@@ -752,12 +762,15 @@ function jxaRuntime(BROWSERS) {
     const btn = a.key === "Enter" ? d.buttons[d.buttons.length - 1] : d.buttons[0];
     if (!btn) return { ok: false, error: "the dialog has no button" };
     $.AXUIElementPerformAction(btn, $("AXPress"));
+    // The page may open its next dialog at once; one that differs is not this one.
     const start = Date.now();
-    while (scanDialogs(a.app).length) {
+    let now;
+    while ((now = scanDialogs(a.app)).length && now[0].kind === d.kind && now[0].message === d.message) {
       if (Date.now() - start >= 1000) return { ok: false, error: "the dialog is still open" };
       delay(0.05);
     }
     const r = { ok: true, dialog: d.kind, message: d.message, answer: a.key === "Enter" ? "accept" : "dismiss" };
+    if (now.length) r.next = now[0].kind;
     if (a.text != null) r.text = a.text;
     return r;
   }
@@ -1159,7 +1172,9 @@ function jxaRuntime(BROWSERS) {
       skyKey(T.I, a.vk, a.uni, a.flags);
       const r = poll(T.t, a.check, 1000, 25);
       const check = r ? r.value : parseExec(T.t, a.final);
-      return Object.assign({ ok: check.hit === true, el: arm.el, key: a.key }, check, { delivery: "skylight" });
+      const out = Object.assign({ ok: check.hit === true, el: arm.el, key: a.key }, check, { delivery: "skylight" });
+      if (check.hit === null) out.error = "no key reached the page; the browser's focus may be in its toolbar (a trusted click on the page brings it back)";
+      return out;
     },
   };
 }
@@ -1611,6 +1626,12 @@ function vis(el) {
   const r = el.getBoundingClientRect();
   return !(r.width === 0 && r.height === 0);
 }
+// Sequential focus order, approximated as DOM order of visible focusables.
+function tabbables() {
+  return Array.prototype.filter.call(document.querySelectorAll("a[href], button, input, select, textarea, summary, [tabindex], [contenteditable]"), function (n) {
+    return n.tabIndex >= 0 && !n.disabled && n.type !== "hidden" && vis(n);
+  });
+}
 // Strong label sources, in accessible-name precedence order.
 function labelText(el) {
   const ids = attr(el, "aria-labelledby");
@@ -2047,9 +2068,7 @@ if (!prevented && !A.ctrlKey && !A.metaKey && !A.altKey) {
     const b = el.form.querySelector("button:not([type]), [type=submit]");
     if (b) b.click(); else el.form.requestSubmit();
   } else if (A.key === "Tab") {
-    const all = Array.prototype.filter.call(document.querySelectorAll("a[href], button, input, select, textarea, summary, [tabindex], [contenteditable]"), function (n) {
-      return n.tabIndex >= 0 && !n.disabled && n.type !== "hidden" && vis(n);
-    });
+    const all = tabbables();
     const i = all.indexOf(el), n = all.length;
     if (n) all[A.shiftKey ? (i <= 0 ? n - 1 : i - 1) : (i + 1) % n].focus();
   }
@@ -2323,6 +2342,12 @@ if (A.ref || A.selector) {
   el.focus({ preventScroll: true });
   if (el.getRootNode().activeElement !== el) return { ok: false, error: ident(el) + " did not accept focus" };
 }
+// A real Tab past either end leaves the page for the browser's toolbar, where the
+// next trusted key would act on the browser instead (Enter reloads the tab).
+if (A.key === "Tab" && el) {
+  const all = tabbables(), i = all.indexOf(el);
+  if (i >= 0 && i === (A.shift ? 0 : all.length - 1)) return { ok: false, error: ident(el) + " is the page's " + (A.shift ? "first" : "last") + " focusable element; a real Tab would move focus into the browser's toolbar" };
+}
 const prev = window.__perch_key;
 if (prev) prev.off();
 const st = window.__perch_key = { want: A.key, down: null, up: null };
@@ -2533,7 +2558,7 @@ async function trustedPress({ key, ref, selector, target }) {
   if (!v || k.metaKey || k.ctrlKey || k.altKey) throw new Error("press: trusted takes a named key (Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12), optionally with shift");
   return rt("trustedPress", {
     target, key, vk: v[0], uni: v[1], flags: k.shiftKey ? 0x20000 : 0,
-    arm: pageFn("trusted_key_arm", { ref, selector, key: k.key }),
+    arm: pageFn("trusted_key_arm", { ref, selector, key: k.key, shift: k.shiftKey }),
     check: pageFn("trusted_key_check", {}),
     final: pageFn("trusted_key_check", { final: true }),
   });

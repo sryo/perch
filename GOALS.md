@@ -103,3 +103,7 @@ lives in AGENTS.md.
   auto-dismissing dialogs (goal 2), trusted cmd/ctrl/alt chords (they can fire
   browser menu shortcuts such as closing the tab), and re-activating the
   user's previous app after `new_tab` (that is itself an activation, goal 1).
+  After the live run, a trusted Tab past the page's last focusable element is
+  refused: it moved focus into the toolbar, where the next Enter reloaded the
+  tab (goal 2). Dialogs are found only outside browser windows, because a
+  page's own `role=dialog` looks the same to Accessibility.

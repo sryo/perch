@@ -291,27 +291,35 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
   function axAttr(el, name) {
     if (el.role === "AXApplication") {
       if (name !== "AXWindows") return undefined;
-      return axList(cgEntries.filter((c) => c.pid === el.pid && c.ax).map((c) => ({ role: "AXWindow", c }))
-        .concat(state.dialogs.filter((d) => d.pid === el.pid).map((d) => ({ role: "AXWindow", subrole: "AXApplicationDialog", d }))));
+      return axList(cgEntries.filter((c) => c.pid === el.pid && c.ax).map((c) => ({ role: "AXWindow", subrole: "AXStandardWindow", c }))
+        .concat(state.dialogs.filter((d) => d.pid === el.pid).map((d) => ({ role: "AXWindow", subrole: "AXUnknown", d }))));
     }
     const box = el.role === "AXWindow" ? el.c : el.box;
     if (name === "AXRole") return el.role;
     if (name === "AXSubrole") return el.subrole;
     if (name === "AXTitle") return el.title;
     if (name === "AXValue") return el.role === "AXTextField" ? el.d.value || "" : el.value;
-    // A dialog `{pid, texts, buttons, field?}`: a close button, then a group
-    // holding the texts (the origin line first), the prompt's field and the buttons.
+    // A dialog `{pid, texts, buttons, field?}`, shaped as Chrome Canary showed it
+    // live: a window (subrole AXUnknown) holding another, holding a group with
+    // subrole AXApplicationDialog. In it the origin line (texts[0]) is a heading,
+    // the message lines are static texts (a prompt's are its field's title), then
+    // the prompt's field and the buttons.
     if (el.d && el.role === "AXWindow" && name === "AXChildren") {
-      const d = el.d, kids = d.texts.map((value) => ({ role: "AXStaticText", value }));
-      if (d.field != null) kids.push({ role: "AXTextField", d });
+      const d = el.d;
+      if (!el.inner) return axList([{ role: "AXButton", subrole: "AXCloseButton", title: "close" }, { role: "AXWindow", subrole: "AXUnknown", d, inner: true }]);
+      // A prompt's message is its field's title, not a static text.
+      const lines = d.field != null ? [] : d.texts.slice(1);
+      const kids = [{ role: "AXHeading", title: d.texts[0] }].concat(lines.map((value) => ({ role: "AXGroup", kids: [{ role: "AXStaticText", value }] })));
+      if (d.field != null) kids.push({ role: "AXTextField", title: d.texts.slice(1).join(" "), d });
       d.buttons.forEach((title) => kids.push({ role: "AXButton", title, d, kids: [{ role: "AXStaticText", value: title }] }));
-      return axList([{ role: "AXButton", subrole: "AXCloseButton", title: "close" }, { role: "AXGroup", kids }]);
+      return axList([{ role: "AXGroup", subrole: "AXApplicationDialog", kids: [{ role: "AXGroup", kids }] }]);
     }
     if (name === "AXPosition") return box ? axPoint(box.x, box.y) : undefined;
     if (name === "AXSize") return box ? axSize(box.w, box.h) : undefined;
     if (name === "AXChildren") {
       if (el.role === "AXWindow") return axList([{ role: "AXToolbar" }, { role: "AXGroup", kids: el.c.ax.web.map((box) => ({ role: "AXWebArea", box })) }]);
-      if (el.role === "AXWebArea") return axList([{ role: "AXStaticText" }]);
+      // A page's own role=dialog also maps to AXApplicationDialog; it is not a JS dialog.
+      if (el.role === "AXWebArea") return axList([{ role: "AXStaticText" }, { role: "AXGroup", subrole: "AXApplicationDialog", kids: [{ role: "AXStaticText", value: "Page modal" }, { role: "AXButton", title: "Close" }, { role: "AXButton", title: "Save" }] }]);
       return axList(el.kids || []);
     }
     return undefined;
@@ -394,6 +402,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         if (el.role === "AXButton" && action.js === "AXPress" && el.d && !el.d.sticky) {
           el.d.answer = el.title;
           state.dialogs.splice(state.dialogs.indexOf(el.d), 1);
+          if (state.onAxPress) state.onAxPress(el);
         }
         return 0;
       },

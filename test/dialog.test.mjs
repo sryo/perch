@@ -19,7 +19,7 @@ function install(dialogs = []) {
       { name: CANARY, kind: "chrome", windows: [{ id: 1, active: 0, tabs: [{ id: 5, url: "https://a.test/" }] }] },
       { name: "Google Chrome", kind: "chrome", windows: [{ id: 2, active: 0, tabs: [{ id: 6, url: "https://b.test/" }] }] },
     ],
-    cg: [{ owner: "Terminal", pid: 1 }, { owner: CANARY, pid: 40, wid: 400 }, { owner: "Google Chrome", pid: 50, wid: 500 }],
+    cg: [{ owner: "Terminal", pid: 1 }, { owner: CANARY, pid: 40, wid: 400, x: 0, y: 0, w: 800, h: 700, ax: { web: [{ x: 0, y: 80, w: 800, h: 620 }] } }, { owner: "Google Chrome", pid: 50, wid: 500 }],
   });
   world.run(JXA_PRELUDE);
   world.state.dialogs = dialogs;
@@ -51,6 +51,20 @@ test("dialogs() names kind and message from the AX dialog window, origin line dr
   ]);
   const one = JSON.parse(world.run(`JSON.stringify(__perch.dialogs({app:${JSON.stringify(CANARY)}}))`));
   assert.deepEqual(one.map((d) => d.app), [CANARY]);
+});
+
+test("dialogs() ignores a page's own role=dialog inside a browser window", () => {
+  install([]);
+  assert.deepEqual(JSON.parse(world.run("JSON.stringify(__perch.dialogs({}))")), []);
+});
+
+test("press {dialog} reports a dialog that replaced the answered one instead of 'still open'", async () => {
+  const next = { pid: 40, texts: ["a.test says", "Your name?"], buttons: ["Cancel", "OK"], field: "" };
+  const first = confirmBox();
+  install([first]);
+  world.state.onAxPress = () => world.state.dialogs.push(next);
+  const { o } = await call("press", { key: "Escape", dialog: true, target: { tabId: "canary:5" } });
+  assert.deepEqual(o, { ok: true, dialog: "confirm", message: "Delete the draft?", answer: "dismiss", next: "prompt" });
 });
 
 test("dialogs() joins multi-line messages and caps them at 200 chars", () => {

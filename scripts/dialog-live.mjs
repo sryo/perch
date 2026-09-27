@@ -6,8 +6,9 @@
 // Needs an existing about:blank tab already active in its window (a background
 // tab's dialog waits until the tab is shown). It never creates, selects or closes
 // tabs and never switches apps; without that tab it defers. The page's own
-// confirm() may bring the browser forward by itself; the front app and key
-// process are recorded around every dialog step so that shows up.
+// dialogs bring the browser forward by themselves and take the keyboard (live,
+// keys typed elsewhere landed in a prompt's field), so run it while nobody is
+// typing; the front app and key process are recorded around every step.
 
 import { execFileSync } from "node:child_process";
 import { connect, text } from "./mcp-client.mjs";
@@ -34,7 +35,10 @@ const json = async (name, args) => JSON.parse(await call(name, args));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failures = 0;
+// After a failure a dialog may still be open, and every later step would queue
+// another behind it, each one taking the keyboard when it shows. Stop instead.
 async function step(label, fn) {
+  if (failures) { console.log(`SKIP ${label}: an earlier step failed`); return; }
   const before = focus();
   let status = "PASS", detail = "";
   try { detail = (await fn()) || ""; } catch (e) { status = "FAIL"; detail = e.message; failures++; }

@@ -195,11 +195,15 @@ try {
     }, 75);
   }
 
-  let clickRes, fillRes, tabRes, enterRes, inputError;
+  let clickRes, fillRes, tabRes, backRes, enterRes, inputError;
   try {
     if (pressOnly) {
-      // Tab and Enter-on-a-button have native defaults the page cannot fake.
-      tabRes = await client.call("press", { trusted: true, key: "Tab", selector: "#i", target });
+      // Tab and Enter-on-a-button have native defaults the page cannot fake. Tab
+      // starts on the button so focus stays in the page: a Tab past the last field
+      // moves into the browser's toolbar, where the next Enter would reload the tab.
+      tabRes = await client.call("press", { trusted: true, key: "Tab", selector: "#b", target });
+      foregroundSamples.push(frontApp());
+      backRes = await client.call("press", { trusted: true, key: "shift+Tab", selector: "#i", target });
       foregroundSamples.push(frontApp());
       enterRes = await client.call("press", { trusted: true, key: "Enter", selector: "#b", target });
       foregroundSamples.push(frontApp());
@@ -234,9 +238,12 @@ try {
   if (inputError) throw inputError;
   if (pressOnly) {
     const parse = (res) => JSON.parse(text(res).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
-    const tabR = parse(tabRes), enterR = parse(enterRes);
-    const got = JSON.parse(text(await client.call("eval_js", { target, script: "return window.__rec" })));
-    report(tabR.ok === true && /Trusted target/.test(tabR.focus || ""), "trusted Tab moves focus by the browser's own default", JSON.stringify({ result: tabR, pageSaw: got.keys[0] || null }));
+    const tabR = parse(tabRes), backR = parse(backRes), enterR = parse(enterRes);
+    // A missing recorder means the document was replaced: a key reached the browser, not the page.
+    const got = JSON.parse(text(await client.call("eval_js", { target, script: "return window.__rec" }))) || { keys: [], clicks: [], reloaded: true };
+    if (got.reloaded) report(false, "fixture survives the presses", "the page was reloaded or navigated");
+    report(tabR.ok === true && /Name/.test(tabR.focus || ""), "trusted Tab moves focus by the browser's own default", JSON.stringify({ result: tabR, pageSaw: got.keys[0] || null }));
+    report(backR.ok === true && /Trusted target/.test(backR.focus || ""), "trusted shift+Tab moves focus back", JSON.stringify({ result: backR, pageSaw: got.keys[1] || null }));
     const clicked = got.clicks.find((e) => e.id === "b");
     report(enterR.ok === true && !!clicked?.trusted, "trusted Enter on a button fires its native click", JSON.stringify({ result: enterR, click: clicked || null }));
     await client.call("eval_js", { target, script: "document.body.innerHTML=''; delete window.__rec; return 1" });
