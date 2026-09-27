@@ -280,6 +280,29 @@ function jxaRuntime(BROWSERS) {
     return x;
   }
 
+  // exec with an Apple Event timeout of `secs`. Chrome never replies to an
+  // execute that lands while a navigation is replacing the document, and JXA
+  // commands take no timeout, so a plain execute then blocks for the 2-minute
+  // Apple Event default. AppleScript's `with timeout` bounds the wait; the
+  // abandoned reply is harmless. Only Chrome tabs pinned by id take this path.
+  // The error Ref is never read: after a timeout it can hold a freed
+  // dictionary, and reading it segfaults osascript.
+  // navigate's page JS answers in tens of ms; a dropped reply costs at most this.
+  const NAV_EXEC_SECS = 0.5;
+  // How long navigate holds page JS while the tab reports loading.
+  const NAV_GATE_MS = 2000;
+  function execWithin(t, js, secs) {
+    if (t.kind !== "chrome" || t.tabId == null) return exec(t, js);
+    if (t.winId == null) t.winId = t.win.id();
+    const q = function (s) { return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; };
+    const src = "with timeout of " + secs + " seconds\ntell application " + q(t.app) +
+      " to execute tab id " + q(t.tabId) + " of window id " + q(t.winId) + " javascript " + q(js) + "\nend timeout";
+    const start = Date.now();
+    const d = $.NSAppleScript.alloc.initWithSource(src).executeAndReturnError(Ref());
+    if (d.isNil()) throw new Error(Date.now() - start >= secs * 900 ? "timeout: page JS got no reply within " + secs + "s" : "page JS failed");
+    return ObjC.unwrap(d.stringValue);
+  }
+
   // Re-runs `js` (which returns a JSON string) until it yields non-null/non-false.
   function poll(t, js, timeout, interval) {
     const start = Date.now();
@@ -609,6 +632,10 @@ function jxaRuntime(BROWSERS) {
     // alone can read the OLD document's 'complete' right after the url is set.
     navigate(a) {
       const t = resolve(a.target);
+      const deadline = Date.now() + a.timeout;
+      // Each page-JS call gets at most NAV_EXEC_SECS, and never more than the time
+      // left, so one unanswered execute can't carry navigate past its timeout.
+      const run = function (js) { return execWithin(t, js, Math.max(0.1, Math.min(NAV_EXEC_SECS, (deadline - Date.now()) / 1000))); };
       // Safari only runs JS in, and applies url to, the window's current tab.
       if (t.kind === "safari") { try { t.win.currentTab = t.tab; } catch (e) {} }
       const canEval = t.kind !== "arc" || isActive(t);
@@ -620,16 +647,28 @@ function jxaRuntime(BROWSERS) {
         const stamp = "(function(){try{var u=new URL(" + JSON.stringify(a.url) + ",location.href);" +
           "if(u.hash&&u.href.split('#')[0]===location.href.split('#')[0])return 'same'}catch(e){}" +
           "window.__perch_nav=" + JSON.stringify(token) + ";return 'stamped'})()";
-        try { sameDoc = exec(t, stamp) === "same"; } catch (e) {}
+        try { sameDoc = run(stamp) === "same"; } catch (e) {}
       }
       t.tab.url = a.url;
       if (!canEval || sameDoc) return { waited: false, tabId: handleOf(t) };
       const check = "(function(){try{return JSON.stringify(window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete')}catch(e){return 'false'}})()";
       const start = Date.now();
+      // Page JS sent before the new document commits may never be answered, and
+      // Chromium's `loading` is already true when setting url returns, so hold off
+      // while it is. Only for NAV_GATE_MS: subframe navigations can keep it true
+      // after the document is complete, and a slow server's commit is covered by
+      // the bounded execute.
+      if (t.kind !== "safari") {
+        for (;;) {
+          let busy = false; try { busy = t.tab.loading(); } catch (e) {}
+          if (!busy || Date.now() - start >= NAV_GATE_MS || Date.now() >= deadline) break;
+          delay(0.02);
+        }
+      }
       let idle = 0;
-      while (Date.now() - start < a.timeout) {
+      while (Date.now() < deadline) {
         let done = false;
-        try { done = JSON.parse(String(exec(t, check))) === true; } catch (e) {}
+        try { done = JSON.parse(String(run(check))) === true; } catch (e) {}
         if (done) return { waited: true, tabId: handleOf(t) };
         // A download or 204 never replaces the document; Chrome's `loading` settles.
         if (t.kind !== "safari" && Date.now() - start > 300) {
