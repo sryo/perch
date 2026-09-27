@@ -1226,6 +1226,136 @@ const press = function (el) {
     el.dispatchEvent(new C(t, { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window }));
   });
 };
+// -> {el} (the select or combobox) or {out}.
+function findCtl(a) {
+  if (a.ref || a.selector) return resolveEl(a);
+  const re = new RegExp(a.label_pattern, "i");
+  const cands = Array.from(document.querySelectorAll("select, [role=combobox], [aria-haspopup=listbox], [role=listbox]"));
+  const hit = function (el) { return re.test(labelText(el)) || re.test(hintText(el)); };
+  const el = cands.filter(vis).find(hit) || cands.find(hit);
+  return el ? { el: el } : { out: { ok: false, error: "no select/combobox matched /" + a.label_pattern + "/i" } };
+}
+function nativeOf(ctl) { return ctl.tagName === "SELECT" ? ctl : (ctl.querySelector && ctl.querySelector("select")) || null; }
+function pickNative(nat, text) {
+  const w = norm(text);
+  const opts = Array.from(nat.options);
+  const opt = opts.find(function (o) { return norm(o.text) === w || norm(o.value) === w; }) || opts.find(function (o) { return norm(o.text).indexOf(w) >= 0; });
+  if (!opt) return { ok: false, error: "no matching option", candidates: opts.slice(0, 8).map(function (o) { return clip(o.text, 60); }) };
+  setNativeValue(nat, opt.value);
+  fire(nat, ["input", "change"]);
+  return { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
+}
+`;
+
+// Sets a checkbox, radio, or ARIA checkbox/radio/switch to a state through
+// el.click(), so page handlers (React's included) run as for a user click.
+const CHECK_LIB = String.raw`
+const CHECKABLE = "input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [role=switch], [role=menuitemcheckbox]";
+function isOn(el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; }
+function checkOne(a) {
+  let el;
+  if (a.ref || a.selector) {
+    const r = resolveEl(a);
+    if (r.out) return r.out;
+    el = r.el;
+    if (!el.matches(CHECKABLE)) return { ok: false, error: ident(el) + " is not a checkbox or radio" };
+  } else {
+    const re = new RegExp(a.label_pattern, "i");
+    const cands = Array.from(document.querySelectorAll(CHECKABLE));
+    const hit = function (x) { return re.test(accName(x)) || re.test(hintText(x)); };
+    el = cands.filter(vis).find(hit) || cands.find(hit);
+    if (!el) return { ok: false, error: "no checkbox/radio matched /" + a.label_pattern + "/i" };
+  }
+  const want = !!a.checked;
+  const out = { ok: true, kind: "check", el: ident(el), checked: want };
+  if (isOn(el) === want) return out;
+  if (!want && role(el) === "radio") return { ok: false, kind: "check", el: out.el, error: "a radio can't be unchecked; check another option" };
+  el.click();
+  if (isOn(el) !== want) return { ok: false, kind: "check", el: out.el, error: "state did not change after click", checked: isOn(el) };
+  return out;
+}
+`;
+
+const FILL_LIB = String.raw`
+// -> fill's result for one field {ref|selector|label_pattern, text}.
+function fillOne(a) {
+  const text = a.text;
+  // Compare non-whitespace counts: rich editors normalize whitespace on the way in.
+  const want = Math.floor(text.replace(/\s/g, "").length * 0.9);
+  const landed = function (s) { return String(s || "").replace(/\s/g, "").length >= want; };
+  const isField = function (el) { return el.tagName === "TEXTAREA" || el.tagName === "INPUT"; };
+  function isRich(el) {
+    return !!el && (editable(el) || !!(el.classList && (el.classList.contains("fr-element") || el.classList.contains("ql-editor") || el.classList.contains("ProseMirror"))));
+  }
+  function setPlain(el) {
+    setNativeValue(el, text);
+    fire(el, ["input", "change", "blur"]);
+    return landed(el.value);
+  }
+  function setRich(root) {
+    root.focus();
+    // Build nodes rather than assigning innerHTML: an HTML-string sink trips
+    // Trusted Types (require-trusted-types-for 'script') on Gmail-class pages.
+    while (root.firstChild) root.removeChild(root.firstChild);
+    text.split(/\n\n+/).forEach(function (para) {
+      const block = document.createElement("div");
+      para.split("\n").forEach(function (line, i) {
+        if (i) block.appendChild(document.createElement("br"));
+        block.appendChild(document.createTextNode(line));
+      });
+      if (!block.childNodes.length) block.appendChild(document.createElement("br"));
+      root.appendChild(block);
+    });
+    ["input", "change", "blur"].forEach(function (t) { root.dispatchEvent(new InputEvent(t, { bubbles: true, inputType: "insertText", data: text })); });
+    return landed(textOf(root));
+  }
+  function tryFill(el, host) {
+    if (isField(el)) return setPlain(el) ? { ok: true, kind: "plain", el: ident(el), len: el.value.length } : null;
+    if (isRich(el)) return setRich(el) ? { ok: true, kind: "rich", el: ident(host || el), len: textOf(el).length } : null;
+    return null;
+  }
+  if (a.ref || a.selector) {
+    const r = resolveEl(a);
+    if (r.out) return r.out;
+    const out = tryFill(r.el);
+    if (!out) return { ok: false, error: ident(r.el) + " is not fillable or rejected the text" };
+    if (a.selector) {
+      const hits = Array.from(document.querySelectorAll(a.selector)).filter(vis);
+      if (hits.length > 1) out.ambiguous = hits.slice(0, 3).map(ident);
+    }
+    return out;
+  }
+  // Ranked search across every editable surface, so a visible field outranks a
+  // hidden one and text never lands silently in the wrong element.
+  const re = new RegExp(a.label_pattern, "i");
+  const scored = [];
+  document.querySelectorAll("textarea, input, [contenteditable], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe").forEach(function (el) {
+    if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return;
+    if (el.hasAttribute("contenteditable") && !editable(el)) return;
+    const root = el.tagName === "IFRAME" ? el.contentDocument && el.contentDocument.body : el;
+    if (!root) return;
+    let s;
+    if (re.test(labelText(el))) s = 100;
+    else if (re.test(hintText(el))) s = 40;
+    else {
+      let p = el, hit = false;
+      for (let i = 0; i < 6 && p; i++, p = p.parentElement) if (re.test(p.textContent || "")) { hit = true; break; }
+      if (!hit) return;
+      s = 10;
+    }
+    if (vis(el)) s += 20;
+    if (!el.disabled && !el.readOnly) s += 10;
+    scored.push({ el: el, root: root, s: s });
+  });
+  scored.sort(function (a, b) { return b.s - a.s; });
+  if (!scored.length) return { ok: false, error: "no fillable field matched /" + a.label_pattern + "/i" };
+  const best = scored[0];
+  const out = tryFill(isField(best.el) ? best.el : best.root, best.el);
+  if (!out) return { ok: false, error: ident(best.el) + " did not accept the text" };
+  const rivals = scored.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
+  if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
+  return out;
+}
 `;
 
 // click {readback}: the pre-click text and url live on window.__perch_rb until read.
@@ -1310,109 +1440,47 @@ if (forms.length) {
 return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "");
 `,
 
-  fill: String.raw`
-const text = A.text;
-// Compare non-whitespace counts: rich editors normalize whitespace on the way in.
-const want = Math.floor(text.replace(/\s/g, "").length * 0.9);
-const landed = function (s) { return String(s || "").replace(/\s/g, "").length >= want; };
-const isField = function (el) { return el.tagName === "TEXTAREA" || el.tagName === "INPUT"; };
-function isRich(el) {
-  return !!el && (editable(el) || !!(el.classList && (el.classList.contains("fr-element") || el.classList.contains("ql-editor") || el.classList.contains("ProseMirror"))));
-}
-function setPlain(el) {
-  setNativeValue(el, text);
-  fire(el, ["input", "change", "blur"]);
-  return landed(el.value);
-}
-function setRich(root) {
-  root.focus();
-  // Build nodes rather than assigning innerHTML: an HTML-string sink trips
-  // Trusted Types (require-trusted-types-for 'script') on Gmail-class pages.
-  while (root.firstChild) root.removeChild(root.firstChild);
-  text.split(/\n\n+/).forEach(function (para) {
-    const block = document.createElement("div");
-    para.split("\n").forEach(function (line, i) {
-      if (i) block.appendChild(document.createElement("br"));
-      block.appendChild(document.createTextNode(line));
-    });
-    if (!block.childNodes.length) block.appendChild(document.createElement("br"));
-    root.appendChild(block);
-  });
-  ["input", "change", "blur"].forEach(function (t) { root.dispatchEvent(new InputEvent(t, { bubbles: true, inputType: "insertText", data: text })); });
-  return landed(textOf(root));
-}
-function tryFill(el, host) {
-  if (isField(el)) return setPlain(el) ? { ok: true, kind: "plain", el: ident(el), len: el.value.length } : null;
-  if (isRich(el)) return setRich(el) ? { ok: true, kind: "rich", el: ident(host || el), len: textOf(el).length } : null;
-  return null;
-}
-if (A.ref || A.selector) {
-  const r = resolveEl(A);
-  if (r.out) return r.out;
-  const out = tryFill(r.el);
-  if (!out) return { ok: false, error: ident(r.el) + " is not fillable or rejected the text" };
-  if (A.selector) {
-    const hits = Array.from(document.querySelectorAll(A.selector)).filter(vis);
-    if (hits.length > 1) out.ambiguous = hits.slice(0, 3).map(ident);
+  fill: FILL_LIB + "return fillOne(A);",
+
+  // One pass over A.fields from A.from. A custom combobox needs select's
+  // JXA-polled phases, so the pass stops there with {defer: index} and Node
+  // resumes after it.
+  fill_fields: FILL_LIB + SELECT_LIB + CHECK_LIB + String.raw`
+const results = [];
+for (let i = A.from || 0; i < A.fields.length; i++) {
+  const f = A.fields[i];
+  let o, kind;
+  if (f.option != null) {
+    kind = "select";
+    const c = findCtl(f);
+    if (c.out) o = c.out;
+    else {
+      const nat = nativeOf(c.el);
+      if (!nat) return { results: results, defer: i };
+      o = pickNative(nat, f.option);
+    }
+  } else if (f.checked != null) {
+    kind = "check";
+    o = checkOne(f);
+  } else {
+    kind = "text";
+    o = fillOne(f);
   }
-  return out;
+  if (o.__perch_ref_miss) o = { ok: false, error: "ref " + o.ref + " is stale or unknown; call accessibility_snapshot again" };
+  if (!o.kind) o.kind = kind;
+  results.push(o);
 }
-// Ranked search across every editable surface, so a visible field outranks a
-// hidden one and text never lands silently in the wrong element.
-const re = new RegExp(A.label_pattern, "i");
-const scored = [];
-document.querySelectorAll("textarea, input, [contenteditable], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe").forEach(function (el) {
-  if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return;
-  if (el.hasAttribute("contenteditable") && !editable(el)) return;
-  const root = el.tagName === "IFRAME" ? el.contentDocument && el.contentDocument.body : el;
-  if (!root) return;
-  let s;
-  if (re.test(labelText(el))) s = 100;
-  else if (re.test(hintText(el))) s = 40;
-  else {
-    let p = el, hit = false;
-    for (let i = 0; i < 6 && p; i++, p = p.parentElement) if (re.test(p.textContent || "")) { hit = true; break; }
-    if (!hit) return;
-    s = 10;
-  }
-  if (vis(el)) s += 20;
-  if (!el.disabled && !el.readOnly) s += 10;
-  scored.push({ el: el, root: root, s: s });
-});
-scored.sort(function (a, b) { return b.s - a.s; });
-if (!scored.length) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
-const best = scored[0];
-const out = tryFill(isField(best.el) ? best.el : best.root, best.el);
-if (!out) return { ok: false, error: ident(best.el) + " did not accept the text" };
-const rivals = scored.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
-if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
-return out;
+return { results: results };
 `,
 
   // select runs in phases polled from JXA (runtime `select`), never with page
   // timers: Chrome throttles those to ~1/s in background tabs.
   select_start: SELECT_LIB + String.raw`
-let ctl;
-if (A.ref || A.selector) {
-  const r = resolveEl(A);
-  if (r.out) return r.out;
-  ctl = r.el;
-} else {
-  const re = new RegExp(A.label_pattern, "i");
-  const cands = Array.from(document.querySelectorAll("select, [role=combobox], [aria-haspopup=listbox], [role=listbox]"));
-  const hit = function (el) { return re.test(labelText(el)) || re.test(hintText(el)); };
-  ctl = cands.filter(vis).find(hit) || cands.find(hit);
-  if (!ctl) return { ok: false, error: "no select/combobox matched /" + A.label_pattern + "/i" };
-}
-const nat = ctl.tagName === "SELECT" ? ctl : ctl.querySelector && ctl.querySelector("select");
-if (nat) {
-  const opts = Array.from(nat.options);
-  const opt = opts.find(function (o) { return norm(o.text) === wantN || norm(o.value) === wantN; }) || opts.find(function (o) { return norm(o.text).indexOf(wantN) >= 0; });
-  if (!opt) return { ok: false, error: "no matching option", candidates: opts.slice(0, 8).map(function (o) { return clip(o.text, 60); }) };
-  setNativeValue(nat, opt.value);
-  fire(nat, ["input", "change"]);
-  return { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
-}
+const c = findCtl(A);
+if (c.out) return c.out;
+const ctl = c.el;
+const nat = nativeOf(ctl);
+if (nat) return pickNative(nat, A.text);
 // react-select and friends open on a left-button press with a view, on the control wrapper.
 if (attr(ctl, "aria-expanded") !== "true") {
   if (ctl.focus) ctl.focus();
@@ -1839,8 +1907,47 @@ async function click(args = {}) {
   return rt("click", { target, click: pageFn("click", { ref, selector, readback }), ...readbackSteps(readback) }, { lane: "slow" });
 }
 
+const VALUE_KEYS = ["text", "checked", "option"];
+
+function validateFields(fields) {
+  if (!Array.isArray(fields) || !fields.length) throw new Error("fill: fields: empty; pass [{ref|selector|label_pattern, text|checked|option}]");
+  fields.forEach((f, i) => {
+    const at = `fill: fields[${i}]`;
+    if (!f || (!f.ref && !f.selector && !f.label_pattern)) throw new Error(`${at} requires \`ref\`, \`selector\`, or \`label_pattern\``);
+    if (VALUE_KEYS.filter((k) => f[k] != null).length !== 1) throw new Error(`${at} takes exactly one of \`text\`, \`checked\`, \`option\``);
+    if (f.checked != null && typeof f.checked !== "boolean") throw new Error(`${at}: \`checked\` must be a boolean`);
+    if (f.label_pattern) validateLabelPattern(at, f.label_pattern);
+  });
+}
+
+// Native fields go in page passes; each custom combobox in between goes
+// through `select`, so the whole form is one tool call and stays in order.
+async function fillFields(fields, target) {
+  validateFields(fields);
+  const A = fields.map(({ ref, selector, label_pattern, text, checked, option }) =>
+    ({ ref, selector, label_pattern, text: text == null ? text : String(text), checked, option: option == null ? option : String(option) }));
+  const results = [];
+  for (let from = 0; from < A.length;) {
+    const r = await runPage("fill", "fill_fields", { fields: A, from }, target);
+    if (!r || !Array.isArray(r.results)) return r;
+    results.push(...r.results);
+    if (r.defer == null) break;
+    const s = await select({ ...A[r.defer], text: A[r.defer].option, target });
+    results.push(s && s.__perch_ref_miss
+      ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
+      : { ...s, kind: "select" });
+    from = r.defer + 1;
+  }
+  return { ok: results.every((x) => x.ok === true), results };
+}
+
 async function fill(args = {}) {
-  const { selector, label_pattern, ref, text, text_path, target, trusted = false, raise = false } = args;
+  const { selector, label_pattern, ref, text, text_path, target, trusted = false, raise = false, fields } = args;
+  if (fields != null) {
+    if (text != null || text_path != null || ref || selector || label_pattern) throw new Error("fill: pass `fields` OR a single field, not both");
+    if (trusted || raise) throw new Error("fill: `fields` does not take trusted/raise; fill trusted fields one at a time");
+    return fillFields(fields, target);
+  }
   if (!text && !text_path) throw new Error("fill requires `text` or `text_path`");
   if (text && text_path) throw new Error("fill: pass `text` OR `text_path`, not both");
   if (!ref && !selector && !label_pattern) throw new Error("fill requires `ref`, `selector`, or `label_pattern`");
@@ -1951,7 +2058,8 @@ const TOOLS = [
     readback: { type: "string", description: "CSS; adds its text after the click (waits up to 2s for a change) as {readback,changed,url?}." },
     target: TARGET,
   }),
-  tool("fill", "Set a field's text and verify it landed: inputs, textareas, and rich editors (contenteditable, ProseMirror, Quill…). Returns {ok,kind,el,len,ambiguous?}. `trusted` gives plain fields a trusted input event in background tabs without taking key focus; `raise:true` types foreground keys.", {
+  tool("fill", "Set text in inputs, textareas, rich editors; verifies it landed: {ok,kind,el,len}. `fields`: many fields in one call. `trusted`: trusted input event, no key focus; `raise:true` types foreground keys.", {
+    fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]" },
     text: { type: "string" },
     text_path: { type: "string", description: "File with the text." },
     ref: REF,
