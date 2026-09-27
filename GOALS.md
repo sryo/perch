@@ -107,3 +107,12 @@ lives in AGENTS.md.
   refused: it moved focus into the toolbar, where the next Enter reloaded the
   tab (goal 2). Dialogs are found only outside browser windows, because a
   page's own `role=dialog` looks the same to Accessibility.
+- **Dialog scope (2026-09).** `press {dialog}` answers, and the watchdog
+  reports `dialog_open` for, only the target tab's own JS alert/confirm/prompt:
+  a child window directly above the target's window, on the tab that window
+  shows, in one of the recorded shapes, and for answers, with the tab's host in
+  its origin line. Anything perch cannot tie to the target fails closed (goals 1
+  and 2). Rejected: answering the browser's other dialogs, HTTP sign-in sheets
+  (credentials), leave-page and permission prompts (the user's call), and
+  scoping by browser only (it aborted calls and answered dialogs in the user's
+  other tabs).

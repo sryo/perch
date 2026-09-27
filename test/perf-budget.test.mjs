@@ -218,3 +218,22 @@ test("new_tab costs a fixed number of Apple Events, one more when the browser se
     }
   }
 });
+
+// The dialog probe runs every 2s while a call hangs, so with no dialog open it
+// must stay on Accessibility and the CGWindowList. Attribution (resolve, the
+// shown tab, the window's geometry) only starts once a dialog window exists.
+test("the dialog probe sends no Apple Events while no dialog is open, and few once one is", () => {
+  const cg = [{ owner: "Google Chrome", pid: 40, wid: 400, x: 0, y: 0, w: 800, h: 600, ax: { web: [{ x: 0, y: 80, w: 800, h: 520 }] } }];
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(3, "c") }])], cg });
+  const probe = (target) => JSON.parse(world.run(`JSON.stringify(__perch.dialogs(${JSON.stringify({ target })}))`));
+  const events = () => Object.entries(world.counts).filter(([k]) => !NOT_AE.test(k) && !/^AX/.test(k)).reduce((s, [, n]) => s + n, 0);
+  for (const target of [{ tabId: "chrome:c1" }, undefined]) {
+    world.reset();
+    assert.deepEqual(probe(target), []);
+    assert.equal(events(), 0, breakdown());
+  }
+  world.state.dialogs = [{ pid: 40, parent: 400, texts: ["c0.test says", "Sure?"], buttons: ["Cancel", "OK"] }];
+  world.reset();
+  assert.deepEqual(probe({ tabId: "chrome:c0" }), [{ kind: "confirm", message: "Sure?" }]);
+  assert.ok(events() <= 4, breakdown());
+});

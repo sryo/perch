@@ -288,13 +288,14 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
   // AXValue's bridge only offers its description, e.g. "{value = x:917.000000 y:57.000000 ...}".
   const axPoint = (x, y) => ({ description: `<AXValue 0x1> {value = x:${x.toFixed(6)} y:${y.toFixed(6)} type = kAXValueCGPointType}` });
   const axSize = (w, h) => ({ description: `<AXValue 0x2> {value = w:${w.toFixed(6)} h:${h.toFixed(6)} type = kAXValueCGSizeType}` });
+  const dialogFrame = (d) => d.frame || { x: 175, y: 120, w: 450, h: 160 };
   function axAttr(el, name) {
     if (el.role === "AXApplication") {
       if (name !== "AXWindows") return undefined;
       return axList(cgEntries.filter((c) => c.pid === el.pid && c.ax).map((c) => ({ role: "AXWindow", subrole: "AXStandardWindow", c }))
         .concat(state.dialogs.filter((d) => d.pid === el.pid).map((d) => ({ role: "AXWindow", subrole: "AXUnknown", d }))));
     }
-    const box = el.role === "AXWindow" ? el.c : el.box;
+    const box = el.role === "AXWindow" ? el.c || (el.d && !el.inner ? dialogFrame(el.d) : null) : el.box;
     if (name === "AXRole") return el.role;
     if (name === "AXSubrole") return el.subrole;
     if (name === "AXTitle") return el.title;
@@ -303,16 +304,22 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     // live: a window (subrole AXUnknown) holding another, holding a group with
     // subrole AXApplicationDialog. In it the origin line (texts[0]) is a heading,
     // the message lines are static texts (a prompt's are its field's title), then
-    // the prompt's field and the buttons.
+    // the prompt's field and the buttons. Other shapes: `secure` makes the field a
+    // secure one, `fields: n` repeats it, `noHeading` turns the origin line into
+    // plain text. `parent` is the CGWindowID of the browser window the dialog is a
+    // child of; without one it has no CG entry. `frame` is its AX frame, `cgFrame`
+    // its CG one when they differ.
     if (el.d && el.role === "AXWindow" && name === "AXChildren") {
       const d = el.d;
       if (!el.inner) return axList([{ role: "AXButton", subrole: "AXCloseButton", title: "close" }, { role: "AXWindow", subrole: "AXUnknown", d, inner: true }]);
       // A prompt's message is its field's title, not a static text.
-      const lines = d.field != null ? [] : d.texts.slice(1);
-      const kids = [{ role: "AXHeading", title: d.texts[0] }].concat(lines.map((value) => ({ role: "AXGroup", kids: [{ role: "AXStaticText", value }] })));
-      if (d.field != null) kids.push({ role: "AXTextField", title: d.texts.slice(1).join(" "), d });
+      const lines = d.field != null ? [] : d.texts.slice(d.noHeading ? 0 : 1);
+      const kids = (d.noHeading ? [] : [{ role: "AXHeading", title: d.texts[0] }]).concat(lines.map((value) => ({ role: "AXGroup", kids: [{ role: "AXStaticText", value }] })));
+      if (d.field != null) {
+        for (let i = 0; i < (d.fields || 1); i++) kids.push({ role: "AXTextField", subrole: d.secure ? "AXSecureTextField" : undefined, title: d.texts.slice(1).join(" "), d });
+      }
       d.buttons.forEach((title) => kids.push({ role: "AXButton", title, d, kids: [{ role: "AXStaticText", value: title }] }));
-      return axList([{ role: "AXGroup", subrole: "AXApplicationDialog", kids: [{ role: "AXGroup", kids }] }]);
+      return axList([{ role: "AXGroup", subrole: "AXApplicationDialog", d, kids: [{ role: "AXGroup", kids }] }]);
     }
     if (name === "AXPosition") return box ? axPoint(box.x, box.y) : undefined;
     if (name === "AXSize") return box ? axSize(box.w, box.h) : undefined;
@@ -389,6 +396,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       AXUIElementCreateApplication: (pid) => ({ role: "AXApplication", pid }),
       AXUIElementCopyAttributeValue: (el, name, out) => {
         bump("AX");
+        // A closed dialog's elements are gone: kAXErrorInvalidUIElement.
+        if (el.d && !state.dialogs.includes(el.d)) return -25202;
         const v = axAttr(el, name.js);
         if (v === undefined) return -25205; // kAXErrorAttributeUnsupported
         out[0] = v;
@@ -417,7 +426,15 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       kAXTrustedCheckOptionPrompt: "prompt",
       CGWindowListCopyWindowInfo: () => {
         bump("CGWindowList");
-        return cgEntries.map((e) => ({
+        // A dialog's child window sits directly above its parent window.
+        const rows = [];
+        for (const e of cgEntries) {
+          for (const d of state.dialogs) {
+            if (d.parent != null && d.parent === e.wid) rows.push({ owner: e.owner, pid: d.pid, wid: d.wid ?? 900 + state.dialogs.indexOf(d), ...(d.cgFrame || dialogFrame(d)) });
+          }
+          rows.push(e);
+        }
+        return rows.map((e) => ({
           kCGWindowLayer: e.layer ?? 0,
           kCGWindowOwnerName: e.owner,
           kCGWindowOwnerPID: e.pid ?? 100,

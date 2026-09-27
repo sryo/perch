@@ -97,12 +97,15 @@ function jxaRuntime(BROWSERS) {
   // the frontmost app, pids and CGWindowIDs. ~4ms vs ~60ms for a System Events
   // `frontmost` query, and it needs no extra permission.
   function procs() {
-    const out = { front: null, frontPid: null, frontWid: null, z: [], pid: {}, wins: {} };
+    // `byPid` keeps every layer-0 window of a pid, small ones too, front to back.
+    const out = { front: null, frontPid: null, frontWid: null, z: [], pid: {}, wins: {}, byPid: {} };
     let list = [];
     try { list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || []; } catch (e) {}
     for (const w of list) {
       const b = w.kCGWindowBounds || {};
-      if (w.kCGWindowLayer !== 0 || b.Width < 100 || b.Height < 100) continue;
+      if (w.kCGWindowLayer !== 0) continue;
+      (out.byPid[w.kCGWindowOwnerPID] = out.byPid[w.kCGWindowOwnerPID] || []).push({ wid: w.kCGWindowNumber, x: b.X, y: b.Y, w: b.Width, h: b.Height });
+      if (b.Width < 100 || b.Height < 100) continue;
       const owner = w.kCGWindowOwnerName;
       if (out.front === null) { out.front = owner; out.frontPid = w.kCGWindowOwnerPID; out.frontWid = w.kCGWindowNumber; }
       if (!KIND[owner]) continue;
@@ -703,22 +706,35 @@ function jxaRuntime(BROWSERS) {
     const attr = function (el, name) { const out = Ref(); return $.AXUIElementCopyAttributeValue(el, $(name), out) === 0 ? out[0] : null; };
     const list = function (v) { const n = v ? Number(v.count) : 0, out = []; for (let i = 0; i < n; i++) out.push(v.objectAtIndex(i)); return out; };
     const str = function (el, name) { const v = attr(el, name); return v == null ? "" : String(ObjC.unwrap(v)); };
-    axKit = { attr: attr, list: list, str: str };
+    // AXValue has no JS bridge; its description reads "{value = x:917.000000 y:57.000000 ...}".
+    const pair = function (el, name, a, b) {
+      const v = attr(el, name);
+      const m = v && new RegExp(a + ":(-?[\\d.]+) " + b + ":(-?[\\d.]+)").exec(String(ObjC.unwrap(v.description)));
+      return m ? [Number(m[1]), Number(m[2])] : null;
+    };
+    const frame = function (el) {
+      const p = pair(el, "AXPosition", "x", "y"), s = pair(el, "AXSize", "w", "h");
+      return p && s ? { x: p[0], y: p[1], w: s[0], h: s[1] } : null;
+    };
+    axKit = { attr: attr, list: list, str: str, frame: frame };
     return axKit;
   }
 
   // A page's alert/confirm/prompt is its own window (live, Chrome: subrole
   // AXUnknown) holding, a few levels down, a group with subrole AXApplicationDialog.
   // Browser windows are skipped: a page's role=dialog maps to that subrole too.
-  // Parts are read by position, never by localized title: a text field makes it a
-  // prompt, two or more buttons a confirm. The origin line ("x.test says") is a
-  // heading, so the static texts are the message. Buttons that carry a subrole
-  // (close, zoom) are skipped; buttons and fields are not descended into.
+  // Parts are read by position, never by localized title, and only the recorded
+  // shapes count, each with a heading origin line ("x.test says"): one button
+  // (alert), two (confirm), or two and one plain text field (prompt). Anything else,
+  // such as a sign-in sheet's secure field, is kind "other". The static texts are
+  // the message. Buttons that carry a subrole (close, zoom) are skipped; buttons and
+  // fields are not descended into.
   function scanDialogs(only) {
     ObjC.import("ApplicationServices");
     if (!$.AXIsProcessTrusted()) return [];
     const ax = axInit(), P = procs(), out = [];
     const kids = function (el) { return ax.list(ax.attr(el, "AXChildren")); };
+    const text = function (el) { return (ax.str(el, "AXTitle") || ax.str(el, "AXDescription") || ax.str(el, "AXValue")).trim(); };
     P.z.filter(function (n) { return !only || n === only; }).forEach(function (name) {
       ax.list(ax.attr($.AXUIElementCreateApplication(P.pid[name]), "AXWindows")).forEach(function (w) {
         if (ax.str(w, "AXSubrole") === "AXStandardWindow") return;
@@ -728,49 +744,99 @@ function jxaRuntime(BROWSERS) {
           level = [].concat.apply([], level.map(kids));
         }
         if (!root) return;
-        const d = { app: name, buttons: [], field: null, texts: [] }, stack = [root];
-        let seen = 0;
+        const buttons = [], fields = [], texts = [], stack = [root];
+        let origin = null, secure = false, seen = 0;
         while (stack.length && seen++ < 300) {
           const el = stack.pop(), role = ax.str(el, "AXRole");
-          if (role === "AXButton") { if (!ax.str(el, "AXSubrole")) d.buttons.push(el); continue; }
-          if (role === "AXTextField") { d.field = d.field || el; continue; }
-          if (role === "AXStaticText") { const v = ax.str(el, "AXValue").trim(); if (v) d.texts.push(v); }
+          if (role === "AXButton") { if (!ax.str(el, "AXSubrole")) buttons.push(el); continue; }
+          if (/TextField|TextArea/.test(role)) {
+            fields.push(el);
+            if (role !== "AXTextField" || ax.str(el, "AXSubrole") === "AXSecureTextField") secure = true;
+            continue;
+          }
+          if (role === "AXHeading" && origin == null) { origin = text(el) || kids(el).map(text).join(" "); continue; }
+          if (role === "AXStaticText") { const v = ax.str(el, "AXValue").trim(); if (v) texts.push(v); }
           stack.push.apply(stack, kids(el).reverse());
         }
-        d.kind = d.field ? "prompt" : d.buttons.length >= 2 ? "confirm" : "alert";
-        // A prompt shows its message as the field's title.
-        d.message = (d.field ? ax.str(d.field, "AXTitle") : d.texts.join(" ")).slice(0, 200);
-        out.push(d);
+        const field = fields.length === 1 && !secure ? fields[0] : null, n = buttons.length;
+        const kind = origin == null || fields.length !== (field ? 1 : 0) || n < 1 || n > 2 || (field && n !== 2) ? "other"
+          : field ? "prompt" : n === 2 ? "confirm" : "alert";
+        out.push({
+          app: name, pid: P.pid[name], kind: kind, origin: origin, root: root, buttons: buttons, field: field, frame: ax.frame(w),
+          // A prompt shows its message as the field's title.
+          message: (field ? ax.str(field, "AXTitle") : texts.join(" ")).slice(0, 200),
+        });
       });
     });
     return out;
   }
 
-  // Answers the one open dialog like a user would: Enter presses the last button
-  // (OK), Escape the first (Cancel, or an alert's only one). No activate, no raise.
+  // The target's own dialogs. A JS dialog is a child window of the browser
+  // window showing the tab, and a child window sits directly above its parent in
+  // the CGWindowList. So the dialog's CG entry (matched to its AX frame) must be
+  // followed by the target's window among the browser's own windows, and the
+  // target must be the tab that window shows. Apple Events are spent only once
+  // the AX scan has found a candidate; anything ambiguous is left out.
+  function ownDialogs(target, withOther) {
+    const h = target && target.tabId != null ? parseHandle(target.tabId) : null;
+    const found = scanDialogs(h ? h.app : target && target.app).filter(function (d) { return withOther || d.kind !== "other"; });
+    if (!found.length) return [];
+    const t = resolve(target);
+    if (!isActive(t)) return [];
+    let I;
+    try { I = ids(t); } catch (e) { return []; }
+    const wins = t.P.byPid[I.pid] || [];
+    const near = function (a, b) { return Math.abs(a.x - b.x) <= 4 && Math.abs(a.y - b.y) <= 4 && Math.abs(a.w - b.w) <= 4 && Math.abs(a.h - b.h) <= 4; };
+    return found.filter(function (d) {
+      if (d.pid !== I.pid || !d.frame || I.windowNumber == null) return false;
+      const at = [];
+      wins.forEach(function (c, i) { if (near(c, d.frame)) at.push(i); });
+      d.tab = t.tab;
+      return at.length === 1 && !!wins[at[0] + 1] && wins[at[0] + 1].wid === I.windowNumber;
+    });
+  }
+
+  // "host" of scheme://[user@]host[:port], lower-cased without a leading www.;
+  // null for about:, data:, file:, blob: and other hostless URLs.
+  function hostOf(url) {
+    const m = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@\/?#]*@)?(\[[^\]]*\]|[^:\/?#]*)/i.exec(url || "");
+    return m && m[1] ? m[1].toLowerCase().replace(/^www\./, "") : null;
+  }
+
+  // Answers the target tab's one open dialog like a user would: Enter presses the
+  // last button (OK), Escape the first (Cancel, or an alert's only one). Only when
+  // its origin line names the tab's host, which rules out leave-page prompts and
+  // other origins' dialogs. No activate, no raise.
   function answerDialog(a) {
     requireAccessibility();
-    const found = scanDialogs(a.app);
-    if (!found.length) return { ok: false, error: "no open dialog" };
-    if (found.length > 1) return { ok: false, error: "several dialogs open in " + found.length + " windows; pass target" };
+    const found = ownDialogs(a.target, true);
+    if (!found.length) return { ok: false, error: "no open alert/confirm/prompt on the target tab" };
+    if (found.length > 1) return { ok: false, error: "several dialogs open on the target tab" };
     const d = found[0], ax = axInit();
+    if (d.kind === "other") return { ok: false, error: "the open dialog is not a page alert/confirm/prompt (sign-in, leave-page or permission prompt); perch does not answer it, hand it to the user" };
+    let url = "";
+    try { url = d.tab.url(); } catch (e) {}
+    const host = hostOf(url);
+    if (!host) return { ok: false, error: "cannot check the dialog's origin on a page without a host" };
+    const named = new RegExp("(^|[^a-z0-9.-])(www\\.)?" + host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![a-z0-9-]|\\.[a-z0-9])", "i");
+    if (!named.test(d.origin)) return { ok: false, error: "the dialog is from " + d.origin + ", not this tab's origin " + host };
     if (a.text != null) {
       if (!d.field) return { ok: false, error: "the open dialog is " + (d.kind === "alert" ? "an alert" : "a confirm") + ", not a prompt; answer it without text" };
       $.AXUIElementSetAttributeValue(d.field, $("AXValue"), $(a.text));
       if (ax.str(d.field, "AXValue") !== a.text) return { ok: false, error: "the prompt's text did not land" };
     }
     const btn = a.key === "Enter" ? d.buttons[d.buttons.length - 1] : d.buttons[0];
-    if (!btn) return { ok: false, error: "the dialog has no button" };
     $.AXUIElementPerformAction(btn, $("AXPress"));
-    // The page may open its next dialog at once; one that differs is not this one.
+    // A closed dialog's element stops answering; one the page opens next, even an
+    // identical one, is a new element.
     const start = Date.now();
-    let now;
-    while ((now = scanDialogs(a.app)).length && now[0].kind === d.kind && now[0].message === d.message) {
+    while (ax.attr(d.root, "AXRole") != null) {
       if (Date.now() - start >= 1000) return { ok: false, error: "the dialog is still open" };
       delay(0.05);
     }
     const r = { ok: true, dialog: d.kind, message: d.message, answer: a.key === "Enter" ? "accept" : "dismiss" };
-    if (now.length) r.next = now[0].kind;
+    const next = ownDialogs(a.target)[0];
+    if (next) r.next = next.kind;
     if (a.text != null) r.text = a.text;
     return r;
   }
@@ -891,7 +957,7 @@ function jxaRuntime(BROWSERS) {
 
   globalThis.__perch = {
     dialogs(a) {
-      return scanDialogs(a.app).map(function (d) { return { app: d.app, kind: d.kind, message: d.message }; });
+      return ownDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
     },
     answerDialog: answerDialog,
     listTabs(a) {
@@ -1408,40 +1474,34 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   const script = raw ? call : `JSON.stringify(${call})`;
   const out = DIALOG_BLIND.has(fn)
     ? await jxa(script, { lane, timeout })
-    : await watchDialogs(dialogApp(args && args.target), lane, (token) => jxa(script, { lane, timeout, token }));
+    : await watchDialogs(args && args.target ? args.target : {}, lane, (token) => jxa(script, { lane, timeout, token }));
   return raw ? out : JSON.parse(out);
 }
 
 // A page's alert/confirm/prompt blocks its JS, and with it our call, until the
 // timeout. Once a call has been in flight DIALOG_PROBE_MS, a one-shot osascript
-// (never queued behind the hung lane) looks for a dialog through Accessibility,
-// again every DIALOG_REPROBE_MS; a hit aborts the hung job with dialog_open.
+// (never queued behind the hung lane) looks for a dialog on the call's own target,
+// again every DIALOG_REPROBE_MS; a hit aborts the hung job with dialog_open. A
+// dialog it cannot tie to the target is ignored and the plain timeout stands.
 // Without the daemon it looks once, when the call times out. Entries that never
 // run page JS, and the dialog entries themselves, are not watched.
 const DIALOG_PROBE_MS = 1500, DIALOG_REPROBE_MS = 2000;
 const DIALOG_BLIND = new Set(["listTabs", "newTab", "closeTab", "activate", "shotGeom", "dialogs", "answerDialog"]);
 
-// The target's browser from its handle key or `app`; null means every browser on screen.
-function dialogApp(target) {
-  const m = target && target.tabId != null && /^([a-z-]+):/.exec(String(target.tabId));
-  const b = m && BROWSERS.find((x) => x.key === m[1]);
-  return b ? b.app : (target && target.app) || null;
-}
-
-const probeDialogs = async (app) => JSON.parse(await jxaOneShot(`JSON.stringify(__perch.dialogs(${JSON.stringify({ app })}))`, { timeout: 5000 }));
+const probeDialogs = async (target) => JSON.parse(await jxaOneShot(`JSON.stringify(__perch.dialogs(${JSON.stringify({ target })}))`, { timeout: 5000 }));
 
 const dialogOpen = (d) => new Error(`dialog_open: a ${d.kind} (${JSON.stringify(String(d.message).slice(0, 200))}) is open and pauses the page; answer it with press {key:"Enter"|"Escape", dialog:true} (a string answers a prompt). The page JS stopped at the dialog and its result is lost; check the page after answering.`);
 
-async function findDialog(app) {
-  try { return (await deps.dialogs(app))[0] || null; } catch { return null; }
+async function findDialog(target) {
+  try { return (await deps.dialogs(target))[0] || null; } catch { return null; }
 }
 
-async function watchDialogs(app, lane, run) {
+async function watchDialogs(target, lane, run) {
   const d = DAEMONS[lane] || DAEMONS.fast;
   const token = {};
   let timer = null, done = false;
   const probe = async () => {
-    const hit = await findDialog(app);
+    const hit = await findDialog(target);
     if (done) return;
     if (hit && d.abort(dialogOpen(hit), token)) return;
     timer = setTimeout(probe, DIALOG_REPROBE_MS);
@@ -1451,7 +1511,7 @@ async function watchDialogs(app, lane, run) {
   try { return await run(token); }
   catch (e) { err = e; }
   finally { done = true; clearTimeout(timer); }
-  const hit = /^timeout:/.test(err.message) && await findDialog(app);
+  const hit = /^timeout:/.test(err.message) && await findDialog(target);
   throw hit ? dialogOpen(hit) : err;
 }
 
@@ -2571,7 +2631,7 @@ async function answerDialog(args) {
   if (dialog !== true && !(typeof dialog === "string" && dialog)) throw new Error("press {dialog}: pass true, or the prompt's answer as a non-empty string");
   if (args.ref != null || args.selector != null || args.trusted) throw new Error("press {dialog} answers the browser's dialog; it takes no ref, selector or trusted");
   if (typeof dialog === "string" && key === "Escape") throw new Error("press {dialog}: a prompt's text goes with Enter; Escape dismisses it without text");
-  return rt("answerDialog", { key, text: typeof dialog === "string" ? dialog : undefined, app: dialogApp(target) });
+  return rt("answerDialog", { key, text: typeof dialog === "string" ? dialog : undefined, target });
 }
 
 async function press(args = {}) {
