@@ -204,3 +204,17 @@ test("a remembered tab never launches a browser that has quit", async () => {
   }
   assert.equal(appleEvents(), 0, breakdown());
 });
+
+// new_tab reads the shown tab before and after creating and sends one selection
+// only when the browser moved it: at most 3 Apple Events over creation itself.
+test("new_tab costs a fixed number of Apple Events, one more when the browser selects the new tab", async () => {
+  // Creation alone is 3 (Chrome), 5 (Arc, about: loads after its new-tab page) and 4 (Safari).
+  for (const [make, app, url, n] of [[chrome, "Google Chrome", "https://n.test/", 5], [arc, "Arc", "about:blank", 7], [safari, "Safari", "https://n.test/", 6]]) {
+    for (const selectOnCreate of [false, true]) {
+      install({ browsers: [make([{ id: 1, active: 0, tabs: tabs(2) }], { selectOnCreate })], cg: [{ owner: "Terminal" }, { owner: app }] });
+      await call("new_tab", { app, url });
+      assert.equal(appleEvents(), n + (selectOnCreate ? 1 : 0), `${app} ${breakdown()}`);
+      assert.equal(world.counts.CGWindowList, 2, "procs() before and after, nothing more");
+    }
+  }
+});

@@ -139,7 +139,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
           // Arc's `make new tab` rejects about: and data: URLs (they can be set afterwards).
           if (b.kind === "arc" && /^(about|data):/.test(t.url)) throw new Error("Please provide a valid URL property for the make new tab command.");
           const tab = makeTab({ url: t.url, id: "new" + w.tabs.length }, b, w);
-          if (b.kind === "arc" && state.arcSlowUrl && /^arc:/.test(t.url)) tab.slow = { ...state.arcSlowUrl, target: null }; w.tabs.push(tab); log.push(["newTab", b.name, t.url]); };
+          if (b.kind === "arc" && state.arcSlowUrl && /^arc:/.test(t.url)) tab.slow = { ...state.arcSlowUrl, target: null }; w.tabs.push(tab); log.push(["newTab", b.name, t.url]);
+          // b.selectOnCreate: the browser shows the tab it just made. b.raiseOnCreate:
+          // it also brings its windows to the front.
+          if (b.selectOnCreate) w.spec.active = w.tabs.length - 1;
+          const i = b.raiseOnCreate ? cgEntries.findIndex((entry) => entry.owner === b.name) : -1;
+          if (i > 0) cgEntries.unshift(cgEntries.splice(i, 1)[0]);
+        };
         if (/^\d+$/.test(String(k))) return w.tabs[Number(k)];
         return undefined;
       },

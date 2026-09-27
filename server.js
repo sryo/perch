@@ -905,8 +905,11 @@ function jxaRuntime(BROWSERS) {
       }
       return { waited: false, tabId: handleOf(t) };
     },
+    // Browsers may show the tab they just made; new_tab puts back the tab the window
+    // showed. It can't undo a raise without activating an app, so it reports one.
     newTab(a) {
-      const name = a.app || defaultBrowser(procs());
+      const P = procs();
+      const name = a.app || defaultBrowser(P);
       const kind = KIND[name];
       const ap = app(name);
       if (!ap.running()) throw new Error("no_browser: " + name + " must already be running (new_tab never launches it)");
@@ -914,6 +917,8 @@ function jxaRuntime(BROWSERS) {
       let win, newId = null;
       if (kind === "chrome" || kind === "arc") {
         win = ap.windows[0];
+        let prev = null;
+        try { prev = kind === "chrome" ? win.activeTabIndex() : win.activeTab.id(); } catch (e) {}
         let beforeIds = null;
         try { beforeIds = win.tabs.id(); } catch (e) {}
         // Arc's `make new tab` rejects about: and data: URLs but accepts them set
@@ -921,6 +926,10 @@ function jxaRuntime(BROWSERS) {
         const later = kind === "arc" && /^(about|data):/i.test(a.url);
         const tab = ap.Tab({ url: later ? "arc://newtab" : a.url });
         win.tabs.push(tab);
+        // Push appends, so the index still names the tab shown before.
+        if (kind === "chrome" && prev != null) {
+          try { if (win.activeTabIndex() !== prev) win.activeTabIndex = prev; } catch (e) {}
+        }
         try { newId = tab.id(); } catch (e) {}
         if (newId == null && beforeIds) {
           try { newId = win.tabs.id().find(function (id) { return beforeIds.indexOf(id) < 0; }); } catch (e) {}
@@ -940,12 +949,19 @@ function jxaRuntime(BROWSERS) {
             delay(0.05);
           }
         }
+        if (kind === "arc" && prev != null) {
+          try { if (win.activeTab.id() !== prev) win.tabs.byId(prev).select(); } catch (e) {}
+        }
       } else {
         // Safari: documents[0].tabs throws under JXA; windows[0].tabs works.
         win = ap.windows[0];
-        let created = false;
+        let created = false, prev = null;
+        try { prev = win.currentTab.index(); } catch (e) {}
         try { win.tabs.push(ap.Tab({ url: a.url })); created = true; } catch (e) {}
         if (!created) throw new Error("no_browser: " + name + " could not create a background tab");
+        if (prev != null) {
+          try { if (win.currentTab.index() !== prev) win.currentTab = win.tabs[prev - 1]; } catch (e) {}
+        }
       }
       let tabId = null;
       try {
@@ -954,7 +970,9 @@ function jxaRuntime(BROWSERS) {
           tabId = safariHandle(win.id(), i, win.tabs[i].url() || a.url);
         } else if (newId != null) { tabId = handle(name, newId); hint(name, newId, 0); }
       } catch (e) {}
-      return { app: name, tabId };
+      const out = { app: name, tabId };
+      if (P.front !== name && procs().front === name) out.warning = "creating the tab brought the browser to the front";
+      return out;
     },
     activate(a) {
       focus(resolve(a.target));

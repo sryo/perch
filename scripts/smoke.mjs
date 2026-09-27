@@ -7,6 +7,7 @@
 // (a created tab is closed afterwards) and may focus the browser. Non-zero exit
 // on any FAIL.
 
+import { execFileSync } from "node:child_process";
 import { writeFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +33,13 @@ async function check(label, fn) {
   console.log(`${status.padEnd(4)} ${label}${detail ? ` — ${detail}` : ""}`);
 }
 const expect = (cond, msg) => { if (!cond) throw new Error(msg); };
+const jxa = (src) => { try { return execFileSync("osascript", ["-l", "JavaScript", "-e", src]).toString().trim(); } catch { return "?"; } };
+const frontApp = () => jxa("ObjC.import('CoreGraphics');const l=ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(17,0)));" +
+  "(l.find(w=>w.kCGWindowLayer===0&&w.kCGWindowBounds.Width>100)||{}).kCGWindowOwnerName||''");
+const keyProcess = () => jxa("ObjC.import('Foundation');ObjC.bindFunction('dlopen',['void *',['char *','int']]);" +
+  "$.dlopen('/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight',2);" +
+  "ObjC.bindFunction('_SLPSGetFrontProcess',['int',['void *']]);" +
+  "const d=$.NSMutableData.dataWithLength(8);$._SLPSGetFrontProcess(d.mutableBytes);ObjC.unwrap(d.description)");
 
 try {
   await check("tools/list within schema budget", async () => {
@@ -156,6 +164,30 @@ try {
     await setDom(`<label>Country <select><option>Pick</option><option>Argentina</option><option>Brazil</option></select></label>`);
     const o = await json("select", { label_pattern: "country", text: "Argentina", target: scratch });
     expect(o.ok && o.selected === "Argentina" && o.el === 'combobox "Country"', JSON.stringify(o));
+  });
+
+  // new_tab must leave every window showing the tab it showed, and close_tab must
+  // close exactly the tab it made. Only rows of this app are read, and only their
+  // tabIds are kept. Frontmost app and key process are recorded around both calls.
+  await check("new_tab keeps the shown tab; close_tab closes only its tab", async () => {
+    if (!withTabCreation) return skip("requires tab creation, which may focus the browser");
+    if (!haveBrowser) return skip("no browser running");
+    const token = `about:blank#perch-${Date.now()}`;
+    const shownIds = async () => (await json("list_tabs", { app, limit: 500 })).tabs.filter((t) => t.active).map((t) => t.tabId).sort().join(",");
+    const focus = () => `${frontApp()} / ${keyProcess()}`;
+    const shownBefore = await shownIds();
+    const focusBefore = focus();
+    const made = await json("new_tab", { app, url: token });
+    const focusAfter = focus();
+    const shownAfter = await shownIds();
+    const closed = await json("close_tab", { tabId: made.tabId });
+    const left = (await json("list_tabs", { app, urlContains: token })).total;
+    const focusEnd = focus();
+    const detail = `focus ${focusBefore} -> ${focusAfter} -> ${focusEnd}${made.warning ? `; warning: ${made.warning}` : ""}`;
+    if (!closed.ok || left) created.push({ app, tabId: made.tabId });
+    expect(shownAfter === shownBefore, `shown tabs changed (${shownBefore} -> ${shownAfter}); ${detail}`);
+    expect(closed.ok && left === 0, `close_tab ${JSON.stringify(closed)}, ${left} tab(s) left; ${detail}`);
+    return detail;
   });
 
   await check("TT-safe rich fill under Trusted Types", async () => {
