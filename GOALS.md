@@ -148,3 +148,13 @@ lives in AGENTS.md.
   user's. Deferred again: screenshots of minimized windows, because in the lab
   `screencapture -l` returned the pixels from before minimizing, and a stale
   image is the false `ok` goal 2 rejects.
+- **Round 4 (2026-09): dialog proof, frames live.** Dialogs are answered and
+  reported only with proof (above), and frame clicks ran live on Chrome Canary
+  behind another app with the foreground unchanged. `tools/list` 8385 to 8544
+  chars, SKILL.md 6704 bytes, budgets unchanged (goal 4). A frame click's
+  `after` waits up to 0.5s for Accessibility to catch up, and a checkbox state
+  Chrome doesn't expose reads null, not false (goal 2). Found live: `navigate`
+  from `about:blank` to a local page raised Canary although perch never
+  activates (goal 1). Deferred: why, and a fix; the dialog proof and the
+  whitelist against the real dialog tree (no live dialog tests while the user
+  may type); frame links, `raise:true` frame clicks, Safari and Arc frames.

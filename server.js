@@ -732,7 +732,12 @@ function jxaRuntime(BROWSERS) {
     AXPopUpButton: "combobox", AXComboBox: "combobox", AXMenuItem: "menuitem", AXTab: "tab",
   };
   const FRAME_NODES = 3000, FRAME_MS = 150;
-  const axTruth = function (v) { if (v == null) return null; const u = ObjC.unwrap(v); return u === true || Number(u) === 1; };
+  // A boolean attribute as true/false, or null when it isn't one (live, Chrome
+  // gave a frame checkbox's AXValue as "" whether checked or not).
+  const axTruth = function (v) {
+    const u = v == null ? null : ObjC.unwrap(v);
+    return typeof u === "boolean" ? u : typeof u === "number" || /^[01]$/.test(u) ? Number(u) === 1 : null;
+  };
   function axUrl(el) {
     const v = axInit().attr(el, "AXURL");
     if (v == null) return "";
@@ -795,7 +800,7 @@ function jxaRuntime(BROWSERS) {
     const ax = axInit(), axRole = ax.str(row.el, "AXRole");
     if (!axRole) return { gone: true };
     const s = { role: FRAME_ROLES[axRole] || axRole, name: axName(ax, row.el) };
-    if (s.role === "checkbox" || s.role === "radio") s.checked = axTruth(ax.attr(row.el, "AXValue")) === true;
+    if (s.role === "checkbox" || s.role === "radio") s.checked = axTruth(ax.attr(row.el, "AXValue"));
     s.focused = axTruth(ax.attr(row.el, "AXFocused")) === true;
     if (axUrl(row.fr.el) !== row.url) s.navigated = true;
     return s;
@@ -1363,8 +1368,13 @@ function jxaRuntime(BROWSERS) {
       } finally {
         if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
       }
-      delay(0.1);
-      return { ok: true, tabId: tabId, point: pt, aim: "ax", delivery: T.background ? "skylight" : "hid", before: before, after: frameState(row), hit: null };
+      // Accessibility can trail the page (live: focus moved at once, a checkbox's
+      // AXValue later), so read until something besides focus changes, up to
+      // half a second.
+      const same = function (s) { return JSON.stringify(Object.assign({}, s, { focused: 0 })) === JSON.stringify(Object.assign({}, before, { focused: 0 })); };
+      let after, waited = 0;
+      do { delay(0.1); waited += 100; after = frameState(row); } while (waited < 500 && same(after));
+      return { ok: true, tabId: tabId, point: pt, aim: "ax", delivery: T.background ? "skylight" : "hid", before: before, after: after, hit: null };
     },
     trustedFill(a) {
       const T = trustedTarget(a);

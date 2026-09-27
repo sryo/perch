@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Live check for native JS dialogs: a call stuck behind confirm() must fail with
-// dialog_open in about 2s, and press {dialog} must answer confirm, prompt and
+// dialog_open in about 3s, and press {dialog} must answer confirm, prompt and
 // alert through Accessibility without raising the window. With a second scratch
 // window, a dialog there must neither abort nor be answered by calls on the first.
 //   node scripts/dialog-live.mjs --yes [--app "Google Chrome Canary"]

@@ -176,6 +176,43 @@ test("the click reads the element again after posting: a checkbox's state shows 
   assert.deepEqual(o.after, { role: "checkbox", name: "Save card", checked: false, focused: false });
 });
 
+// Live, Chrome's Accessibility tree showed a frame checkbox's new state a little
+// after the page did, so `after` is read until it changes, within a bound.
+test("after waits for Accessibility to catch up with a slow state change", async () => {
+  const { world, pay } = frameWorld();
+  await snap();
+  let at = null;
+  // Focus lands at once (live, it did), the checked state later.
+  world.state.onPost = (e) => { if (e.type === 2 && e.pt.x >= 0) { at = world.clock.t; pay.kids[2].focused = true; } };
+  Object.defineProperty(pay.kids[2], "value", { get: () => (at != null && world.clock.t - at >= 250 ? 0 : 1), configurable: true });
+  const { o } = await click({ ref: "f3" });
+  assert.equal(o.before.checked, true);
+  assert.equal(o.after.checked, false);
+  assert.equal(o.after.focused, true);
+});
+
+test("after gives up waiting within half a second when nothing changes", async () => {
+  const { world } = frameWorld();
+  await snap();
+  const t0 = world.clock.t;
+  const { o } = await click({ ref: "f4" });
+  assert.deepEqual(o.after, o.before);
+  // The routed click itself spends about 120ms of the clock.
+  assert.ok(world.clock.t - t0 <= 700, `waited ${world.clock.t - t0}ms`);
+});
+
+// Live, Chrome gave a frame checkbox an empty-string AXValue whether or not it
+// was checked, so a state perch can't read is null, never false.
+test("a checkbox whose AXValue is not a number reports checked:null, not false", async () => {
+  const { pay } = frameWorld();
+  pay.kids[2].value = "";
+  const s = await snap();
+  assert.ok(frameLines(s).includes(`f3 checkbox "Save card" frame="js.pay.example"`), s);
+  const { o } = await click({ ref: "f3" });
+  assert.equal(o.before.checked, null);
+  assert.equal(o.after.checked, null);
+});
+
 test("the click uses the element's fresh position, never the one from the snapshot", async () => {
   const { world, pay } = frameWorld();
   await snap();
