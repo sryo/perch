@@ -555,6 +555,29 @@ function jxaRuntime(BROWSERS) {
     });
   }
 
+  // skyKey has no window routing: the browser hands the key to its key window's
+  // focused element. So a press goes ahead only when Accessibility (no Apple
+  // Events) shows that window is the target's, as the one CG entry of the pid
+  // with its frame, and the focused element sits inside the page's own web area,
+  // not the toolbar, a popup, a side panel or a child window. Returns why not, or null.
+  function keyFocusMiss(I, P, probe) {
+    const ax = axInit(), app = $.AXUIElementCreateApplication(I.pid);
+    const win = ax.attr(app, "AXFocusedWindow"), wf = win && ax.frame(win);
+    const near = function (a, b, d) { return Math.abs(a.x - b.x) <= d && Math.abs(a.y - b.y) <= d && Math.abs(a.w - b.w) <= d && Math.abs(a.h - b.h) <= d; };
+    const same = wf ? (P.byPid[I.pid] || []).filter(function (c) { return near(c, wf, 4); }) : [];
+    if (same.length !== 1 || same[0].wid !== I.windowNumber) {
+      return "another browser window has the keyboard (or it can't be told apart); click {trusted:true, raise:true} on the page first";
+    }
+    const area = axPageArea(I, probe), af = area && ax.frame(area.el);
+    let el = af ? ax.attr(app, "AXFocusedUIElement") : null;
+    for (let i = 0; el && i < 64; i++, el = ax.attr(el, "AXParent")) {
+      if (ax.str(el, "AXRole") !== "AXWebArea") continue;
+      const f = ax.frame(el);
+      if (f && near(f, af, 1)) return null;
+    }
+    return "the browser's keyboard focus is outside the page (toolbar, popup or panel); a background trusted click on the page first moves it back";
+  }
+
   const cursorAt = () => { const p = $.CGEventGetLocation($.CGEventCreate($())); return { x: p.x, y: p.y }; };
 
   // Chunks are pre-split in Node (<= 20 UTF-16 units, CGEvent's buffer cap,
@@ -1395,6 +1418,8 @@ function jxaRuntime(BROWSERS) {
     // a trusted keydown with that key arrived (polled: page timers are throttled).
     trustedPress(a) {
       const T = trustedTarget(a, "a background trusted press");
+      const miss = keyFocusMiss(T.I, T.t.P, parseExec(T.t, a.probe));
+      if (miss) throw new Error("tab_not_visible: a background trusted press needs the keyboard in the target's page: " + miss);
       const arm = parseExec(T.t, a.arm);
       if (!arm || arm.ok === false || arm.__perch_ref_miss) return arm;
       skyKey(T.I, a.vk, a.uni, a.flags);
@@ -2851,6 +2876,7 @@ async function trustedPress({ key, ref, selector, target }) {
   if (!v || k.metaKey || k.ctrlKey || k.altKey) throw new Error("press: trusted takes a named key (Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12), optionally with shift");
   return rt("trustedPress", {
     target, key, vk: v[0], uni: v[1], flags: k.shiftKey ? 0x20000 : 0,
+    probe: pageFn("viewport", {}),
     arm: pageFn("trusted_key_arm", { ref, selector, key: k.key, shift: k.shiftKey }),
     check: pageFn("trusted_key_check", {}),
     final: pageFn("trusted_key_check", { final: true }),
