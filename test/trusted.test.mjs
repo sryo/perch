@@ -96,7 +96,8 @@ test("background trusted fill rejects a value change without a trusted input eve
 
 // ---- runtime (fake JXA world) ----
 
-const tabs = (n) => Array.from({ length: n }, (_, i) => ({ url: `https://t${i}.test/`, id: `t${i}` }));
+// A click by point first asks the page for its embedded frames, so tabs carry a DOM.
+const tabs = (n) => Array.from({ length: n }, (_, i) => ({ url: `https://t${i}.test/`, id: `t${i}`, dom: page("", { url: `https://t${i}.test/` }) }));
 function install(spec) {
   const world = makeWorld(spec);
   world.run(JXA_PRELUDE);
