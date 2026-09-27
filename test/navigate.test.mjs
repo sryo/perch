@@ -219,3 +219,90 @@ test("navigate on Safari: loads from page JS, and a fallback carries no Chromium
   assert.deepEqual(paths().slice(1), [["navigate", "Safari", "https://next.test/"]]);
   assert.equal(world.winSpec("Safari", 0).active, 0);
 });
+
+// A lost reply only counts as a started load when the tab wasn't already busy:
+// a load still committing from an earlier navigate also shows as loading and
+// replaces the stamped document.
+test("navigate on Chrome: a lost reply while an earlier load commits still loads the url", () => {
+  install(fixture());
+  world.state.commitMs = 20000;
+  assert.equal(runtimeNavigate("https://other.test/").waited, false);
+  world.state.commitMs = 60;
+  world.state.dropWhilePending = true;
+  const r = runtimeNavigate("https://want.test/");
+  assert.equal(world.page("Google Chrome", 0, 0).location.href, "https://want.test/");
+  assert.equal(r.waited, true);
+  assert.equal(r.warning, RAISE);
+  assert.deepEqual(paths().slice(1), [["navigate", "Google Chrome", "https://want.test/"]]);
+});
+
+// A redirect lands on another URL: the stamp is gone and the tab moved.
+test("navigate on Chrome: a redirected page-started load counts as loaded, even with its reply lost", () => {
+  install(fixture());
+  world.state.commitMs = 60;
+  world.state.dropAfterAssign = true;
+  const loc = world.page("Google Chrome", 0, 0).location;
+  const assign = loc.assign;
+  loc.assign = () => assign("https://final.test/");
+  const r = runtimeNavigate("https://next.test/");
+  assert.equal(r.waited, true);
+  assert.equal(r.warning, undefined);
+  assert.deepEqual(paths(), [["assign", "Google Chrome", "https://final.test/"]]);
+});
+
+// The Navigation API lets the page cancel a load it starts (a `navigate`
+// listener calling preventDefault); a url set through AppleScript is not
+// cancelable that way.
+test("navigate on Chrome: a page that cancels the load falls back to the tab's url", () => {
+  install(fixture());
+  const ctx = world.page("Google Chrome", 0, 0);
+  const assign = ctx.location.assign;
+  Object.assign(ctx, { EventTarget, Event });
+  ctx.navigation = new EventTarget();
+  ctx.navigation.addEventListener("navigate", (e) => e.preventDefault());
+  ctx.location.assign = (u) => {
+    const e = new Event("navigate", { cancelable: true });
+    ctx.navigation.dispatchEvent(e);
+    if (!e.defaultPrevented) assign(u);
+  };
+  const r = runtimeNavigate("https://next.test/");
+  assert.equal(r.waited, true);
+  assert.equal(r.warning, RAISE);
+  assert.deepEqual(paths(), [["navigate", "Google Chrome", "https://next.test/"]]);
+  assert.equal(world.page("Google Chrome", 0, 0).location.href, "https://next.test/");
+});
+
+// A load dropped without a trace (a held beforeunload the user stayed on) leaves
+// the old document in place once loading settles, as a download or 204 does, so
+// it isn't loaded again from outside the page: that would fetch a download twice.
+test("navigate on Chrome: a page-started load that never leaves the old page is not waited", () => {
+  install(fixture());
+  world.page("Google Chrome", 0, 0).location.assign = () => {};
+  const r = runtimeNavigate("https://next.test/");
+  assert.equal(r.waited, false);
+  assert.equal(world.page("Google Chrome", 0, 0).location.href, "http://127.0.0.1:8787/fixture.html");
+});
+
+test("navigate on Chrome: a lost reply on a page that is still loading sets the tab's url", () => {
+  install({ ...fixture(), loadTicks: 1e9 });
+  world.state.hung = true;
+  const r = runtimeNavigate("https://want.test/");
+  assert.equal(r.waited, false);
+  assert.equal(r.warning, RAISE);
+  assert.deepEqual(paths(), [["navigate", "Google Chrome", "https://want.test/"]]);
+});
+
+// A fresh document at the URL the tab already showed is the page reloading
+// itself, not the load navigate asked for.
+test("navigate on Chrome: a lost reply after the page reloaded itself sets the tab's url", () => {
+  install(fixture());
+  world.state.commitMs = 60;
+  world.state.dropAfterAssign = true;
+  const loc = world.page("Google Chrome", 0, 0).location;
+  const assign = loc.assign;
+  loc.assign = () => assign(loc.href);
+  const r = runtimeNavigate("https://next.test/");
+  assert.equal(r.warning, RAISE);
+  assert.deepEqual(paths().slice(1), [["navigate", "Google Chrome", "https://next.test/"]]);
+  assert.equal(world.page("Google Chrome", 0, 0).location.href, "https://next.test/");
+});

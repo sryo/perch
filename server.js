@@ -1195,20 +1195,25 @@ function jxaRuntime(BROWSERS) {
       // the load itself (the reply ends in '!') when it can; a page can't open data:,
       // javascript: or browser URLs that way.
       const fromPage = /^(https?:\/\/|about:blank$)/i.test(a.url);
-      let r = null;
+      let r = null, wasLoading = false, preUrl = null;
+      if (canEval && t.kind !== "safari") { try { wasLoading = t.tab.loading(); preUrl = String(t.tab.url()); } catch (e) {} }
       if (canEval) {
         const q = JSON.stringify(a.url);
         const stamp = "(function(){var s='stamped';try{var u=new URL(" + q + ",location.href);" +
           "if(u.hash&&u.href.split('#')[0]===location.href.split('#')[0])s='same'}catch(e){}" +
           "if(s==='stamped')window.__perch_nav=" + JSON.stringify(token) + ";" +
-          (fromPage ? "try{location.assign(" + q + ")}catch(e){return s}return s+'!'" : "return s") + "})()";
+          // A Navigation API listener added after the page's own sees whether the
+          // page cancelled the load; a cancelled one falls back to the tab's url.
+          (fromPage ? "var c=false,n=window.navigation,f=function(e){c=e.defaultPrevented};try{n.addEventListener('navigate',f)}catch(e){}" +
+            "try{location.assign(" + q + ")}catch(e){return s}finally{try{n.removeEventListener('navigate',f)}catch(e){}}return c?s:s+'!'" : "return s") + "})()";
         try { r = String(run(stamp)); } catch (e) {}
       }
       // A reply lost as the new document replaced the old one still started the load:
-      // the tab is loading, or a document without the stamp answers.
+      // the tab is loading, or a document without the stamp answers from another URL.
+      // A tab already loading before the stamp shows both for its earlier load.
       let viaPage = /!$/.test(r || "");
-      if (canEval && fromPage && r == null && t.kind !== "safari") {
-        try { viaPage = t.tab.loading() || String(run("String(window.__perch_nav===" + JSON.stringify(token) + ")")) === "false"; } catch (e) {}
+      if (canEval && fromPage && r == null && t.kind !== "safari" && !wasLoading) {
+        try { viaPage = t.tab.loading() || (preUrl != null && String(t.tab.url()) !== preUrl && String(run("String(window.__perch_nav===" + JSON.stringify(token) + ")")) === "false"); } catch (e) {}
       }
       const result = function (waited) {
         const o = { waited: waited, tabId: handleOf(t) };
@@ -1238,9 +1243,10 @@ function jxaRuntime(BROWSERS) {
         try { done = JSON.parse(String(run(check))) === true; } catch (e) {}
         if (done) return result(true);
         // A download or 204 never replaces the document; Chrome's `loading` settles.
+        // So does a load the page dropped, so it counts only if the tab's URL moved.
         if (t.kind !== "safari" && Date.now() - start > 300) {
           try { idle = t.tab.loading() ? 0 : idle + 1; } catch (e) {}
-          if (idle >= 2) return result(true);
+          if (idle >= 2) { let u = preUrl; try { u = String(t.tab.url()); } catch (e) {} return result(preUrl != null && u !== preUrl); }
         }
         delay(0.1);
       }
