@@ -13,7 +13,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | Tool | Use |
 |---|---|
 | `list_tabs` | `{tabs:[{app,tabId,url,title,active?}], total}`, 50 rows by default, in browser order. `active`: the tab its window shows. Filter with `app`, `urlContains`, `titleContains`. |
-| `new_tab` | Unselected tab in a running browser's window, default the browser in use. May focus the browser; defer while the user works. Returns `{app,tabId}`. |
+| `new_tab` | Unselected tab in a running browser, default the one in use. May focus the browser; defer while the user works. Returns `{app,tabId}`. |
 | `activate_tab` | Bring a tab and its window to the front. |
 | `close_tab` | Close a tab by its required `tabId`. Refuses a window's last tab; never changes focus. |
 | `navigate` | Load a URL and wait for the new page. Returns the tab's current `tabId`; use it from then on. `waited:false`: load not confirmed. |
@@ -26,9 +26,9 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `click` | By `ref` / `selector`. `readback: css` adds `{readback, changed, url?}`: its text once changed (2s cap). `hover: true` fires hover events only (JS menus, not CSS `:hover`). `trusted`: below. |
 | `press` | `key` (`Enter`, `Escape`, `Tab`, `ArrowDown`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | Inputs, textareas, rich editors; verifies it landed. `text_path` for long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
-| `select` | Native `<select>`, react-select, ARIA combobox/listbox; reads back what's shown. |
+| `select` | Native `<select>` or custom combobox, own list only; reads back. Miss or `text:""`: `candidates`. |
 | `file_upload` | Put a local file on an `<input type=file>` without the bytes entering context. |
-| `notify` | macOS notification to ping the user. |
+| `notify` | macOS notification for the user. |
 
 ## Snapshot format
 

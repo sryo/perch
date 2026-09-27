@@ -1393,7 +1393,7 @@ function jxaRuntime(BROWSERS) {
       visibleGuard(t, "select");
       const r = parseExec(t, a.start);
       if (!r || !r.pending) return r;
-      const picked = poll(t, a.pick, 1500, 50);
+      const picked = poll(t, a.pick, 2500, 50);
       if (!picked) return parseExec(t, a.miss);
       if (picked.value.ok === false) return picked.value;
       const read = poll(t, a.read, 500, 50);
@@ -2035,20 +2035,35 @@ function resolveEl(a, dflt) {
 `;
 
 const SELECT_LIB = String.raw`
-const norm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
+// Curly quotes and dashes fold to ASCII, so typed text matches typographic options.
+const norm = function (s) { return String(s || "").replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2010-\u2015]/g, "-").replace(/\s+/g, " ").trim().toLowerCase(); };
 const wantN = norm(A.text);
-const options = function () { return Array.from(document.querySelectorAll("[role=option]")).filter(vis); };
+const OPT = "[role=option], [cmdk-item]";
 const press = function (el) {
   ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (t) {
     const C = t.indexOf("pointer") === 0 && window.PointerEvent ? PointerEvent : MouseEvent;
     el.dispatchEvent(new C(t, { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window }));
   });
 };
+const pressEscape = function (el) { el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true })); };
+// Exact text, then a whole-word hit, then a word prefix; never mid-word. Ties go to the shortest.
+function bestMatch(list, key, want) {
+  if (!want) return null;
+  const esc = want.replace(/[.*+?^$(){}|[\]\\/]/g, "\\$&");
+  const word = new RegExp("(?:^|[^\\p{L}\\p{N}])" + esc + "(?:$|[^\\p{L}\\p{N}])", "u");
+  const pre = new RegExp("(?:^|[^\\p{L}\\p{N}])" + esc, "u");
+  const tiers = [function (t) { return t === want; }, function (t) { return word.test(t); }, function (t) { return pre.test(t); }];
+  for (const f of tiers) {
+    const hits = list.filter(function (x) { return f(key(x)); });
+    if (hits.length) return hits.sort(function (a, b) { return key(a).length - key(b).length; })[0];
+  }
+  return null;
+}
 // -> {el} (the select or combobox) or {out}.
 function findCtl(a) {
   if (a.ref || a.selector) return resolveEl(a);
   const re = new RegExp(a.label_pattern, "i");
-  const cands = Array.from(document.querySelectorAll("select, [role=combobox], [aria-haspopup=listbox], [role=listbox]"));
+  const cands = Array.from(document.querySelectorAll("select, [role=combobox], [aria-haspopup=listbox], [aria-haspopup=dialog], [role=listbox]"));
   const hit = function (el) { return re.test(labelText(el)) || re.test(hintText(el)); };
   const el = cands.filter(vis).find(hit) || cands.find(hit);
   return el ? { el: el } : { out: { ok: false, error: "no select/combobox matched /" + a.label_pattern + "/i" } };
@@ -2057,11 +2072,44 @@ function nativeOf(ctl) { return ctl.tagName === "SELECT" ? ctl : (ctl.querySelec
 function pickNative(nat, text) {
   const w = norm(text);
   const opts = Array.from(nat.options);
-  const opt = opts.find(function (o) { return norm(o.text) === w || norm(o.value) === w; }) || opts.find(function (o) { return norm(o.text).indexOf(w) >= 0; });
-  if (!opt) return { ok: false, error: "no matching option", candidates: opts.slice(0, 8).map(function (o) { return clip(o.text, 60); }) };
+  const opt = (w && opts.find(function (o) { return norm(o.value) === w; })) || bestMatch(opts, function (o) { return norm(o.text); }, w);
+  if (!opt) return { ok: false, error: "no matching option", candidates: opts.slice(0, 30).map(function (o) { return clip(o.text, 60); }) };
   setNativeValue(nat, opt.value);
   fire(nat, ["input", "change"]);
   return { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
+}
+function mine(s, el) { return [s.ctl, s.input, s.box].some(function (m) { return m && (m === el || m.contains(el) || el.contains(m)); }); }
+// The control's own options: its aria-controls/aria-owns targets (react-select's
+// listbox id derives from its input id), else a list beside it in a wrapper that
+// holds no other control, else options that appeared after select opened it.
+// Never the rest of the page. Sets s.filter to a search box inside a linked popup.
+function ownOptions(s) {
+  const within = function (root) { return Array.from(root.querySelectorAll(OPT)).filter(vis); };
+  if (attr(s.ctl, "role") === "listbox") return within(s.ctl);
+  let ids = [];
+  [s.ctl, s.input, s.box].forEach(function (el) { if (el) ids = ids.concat((attr(el, "aria-controls") + " " + attr(el, "aria-owns")).split(/\s+/)); });
+  const rs = s.input && /^(react-select-.+)-input$/.exec(s.input.id);
+  if (rs) ids.push(rs[1] + "-listbox");
+  let found = false, out = [];
+  ids.forEach(function (id, i) {
+    const m = id && ids.indexOf(id) === i && document.getElementById(id);
+    if (!m || mine(s, m)) return;
+    found = true;
+    out = out.concat(m.matches(OPT) ? [m] : within(m));
+    if (!s.input && !s.filter) s.filter = m.querySelector("input");
+  });
+  if (found) return out;
+  if (rs) {
+    const byId = within(document).filter(function (o) { return o.id.indexOf(rs[1] + "-option-") === 0; });
+    if (byId.length) return byId;
+  }
+  for (let p = s.box.parentElement, i = 0; p && p !== document.body && i < 3; p = p.parentElement, i++) {
+    const others = Array.from(p.querySelectorAll("select, input:not([type=hidden]), [role=combobox], [aria-haspopup]")).some(function (c) { return !mine(s, c) && !c.closest(OPT); });
+    if (others) break;
+    const o = within(p).filter(function (x) { return !mine(s, x); });
+    if (o.length) return o;
+  }
+  return s.opened ? within(document).filter(function (o) { return s.before.indexOf(o) < 0; }) : [];
 }
 `;
 
@@ -2308,34 +2356,69 @@ if (c.out) return c.out;
 const ctl = c.el;
 const nat = nativeOf(ctl);
 if (nat) return pickNative(nat, A.text);
-// react-select and friends open on a left-button press with a view, on the control wrapper.
-if (attr(ctl, "aria-expanded") !== "true") {
-  if (ctl.focus) ctl.focus();
-  press((ctl.closest && ctl.closest(".select__control")) || ctl);
-}
 const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySelector("input");
-if (input) { setNativeValue(input, A.text); fire(input, ["input"]); }
 // Where the choice shows: react-select v5 puts role=combobox on an inner <input>
 // that it empties after a pick, so read the surrounding control instead.
-const box = (ctl.closest && ctl.closest('.select__control, [class*="-control"]')) || (ctl.tagName === "INPUT" ? ctl.parentElement : ctl);
-window.__perch_select = { ctl: ctl, input: input, box: box };
+const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
+const box = wrap || (ctl.tagName === "INPUT" ? ctl.parentElement : ctl);
+const s = { ctl: ctl, input: input, box: box, polls: 0 };
+// Other open menus would cover this one or grab its keys: Escape them first.
+document.querySelectorAll("[role=combobox][aria-expanded=true], [aria-haspopup][aria-expanded=true]").forEach(function (o) {
+  if (mine(s, o)) return;
+  pressEscape(o);
+  if (document.activeElement === o && o.blur) o.blur();
+});
+s.before = Array.from(document.querySelectorAll(OPT)).filter(vis);
+// A press on an open react-select closes it, so an open menu is used as is.
+const open = [ctl, input].some(function (e) { return attr(e, "aria-expanded") === "true"; }) || ownOptions(s).length > 0;
+if (!open) {
+  if (ctl.focus) ctl.focus();
+  // react-select and friends open on a left-button press with a view, on the control wrapper.
+  press(wrap || ctl);
+  s.opened = true;
+}
+window.__perch_select = s;
 return { pending: true };
 `,
 
-  // null = keep polling.
+  // null = keep polling. The unfiltered list is matched first; a filter is typed
+  // only when that has no match (an async or virtualized list, or one that opens
+  // on input), cut at the first punctuation so a strict filter can't empty it.
   select_pick: SELECT_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
-const opt = options().find(function (o) { return norm(o.textContent) === wantN; }) || options().find(function (o) { return norm(o.textContent).indexOf(wantN) >= 0; });
-if (!opt) return null;
-press(opt);
-s.picked = clip(opt.textContent, 80);
-s.pickedN = norm(opt.textContent);
-return { picked: true };
+s.polls++;
+const opts = ownOptions(s);
+if (!s.typed && opts.length) s.cands = opts.slice(0, 30).map(function (o) { return clip(textOf(o), 60); });
+const opt = bestMatch(opts, function (o) { return norm(textOf(o)); }, wantN);
+if (opt) {
+  press(opt);
+  s.picked = clip(textOf(opt), 80);
+  s.pickedN = norm(textOf(opt));
+  return { picked: true };
+}
+const box = s.input || s.filter;
+if (!s.typed && wantN && box && s.polls >= 4) {
+  const q = String(A.text).trim().split(/[^\p{L}\p{N} ]/u)[0].trim() || String(A.text).trim();
+  if (box.focus) box.focus();
+  setNativeValue(box, q);
+  fire(box, ["input"]);
+  s.typed = box;
+}
+return null;
 `,
 
+  // Candidates come from the control's own list, unfiltered when it was seen; the
+  // typed filter is cleared and a menu select opened is closed again.
   select_miss: SELECT_LIB + String.raw`
-return { ok: false, error: "no matching option after open", candidates: options().slice(0, 8).map(function (o) { return clip(o.textContent, 60); }) };
+const s = window.__perch_select;
+if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
+const now = ownOptions(s).slice(0, 30).map(function (o) { return clip(textOf(o), 60); });
+const cands = s.cands || now;
+if (s.typed) { setNativeValue(s.typed, ""); fire(s.typed, ["input"]); }
+if (s.opened) pressEscape(s.input || s.ctl);
+if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty; click it with trusted:true, then select again", candidates: [] };
+return { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands };
 `,
 
   // Until the control shows the choice: null (keep polling); A.final reports anyway.
@@ -3206,7 +3289,7 @@ const TOOLS = [
     raise: { type: "boolean" },
     target: TARGET,
   }),
-  tool("select", "Choose an option in a native <select>, react-select, or ARIA combobox/listbox, and read back what's shown. Exact text or value first, then substring.", {
+  tool("select", "Choose an option in a native <select> or custom combobox (react-select, Downshift, cmdk), from that control's own list only, and read back what's shown. Exact text or value, then whole word, then word prefix. A miss returns the control's options as `candidates`; `text:\"\"` just lists them.", {
     text: { type: "string" },
     ref: REF,
     selector: SEL,
