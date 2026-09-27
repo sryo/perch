@@ -365,7 +365,7 @@ test("without a bounded probe (a Safari tab) dialogs fail closed", async () => {
   DAEMONS.fast = world.daemon;
   DAEMONS.slow = world.daemon;
   assert.deepEqual(dialogsOf(undefined), []);
-  const tabId = JSON.parse(world.run(`JSON.stringify(__perch.listTabs({}))`))[0].tabId;
+  const tabId = JSON.parse(world.run(`JSON.stringify(__perch.listTabs({}))`)).rows[0].tabId;
   const { o } = await call("press", { key: "Enter", dialog: true, target: { tabId } });
   assert.deepEqual(o, { ok: false, error: "perch cannot confirm the dialog pauses the page in this browser; hand it to the user" });
   assert.deepEqual(world.state.axActions, []);

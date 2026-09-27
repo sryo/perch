@@ -406,13 +406,13 @@ function jxaRuntime(BROWSERS) {
 
 
   // Window geometry plus the pid and CGWindowID that screencapture -l and CGEvent
-  // routing need. Chrome has position()/size(), Safari bounds(); Arc has neither,
-  // so its frame comes from its own CG entry. AppleScript reports inner-content
-  // bounds while CG includes the titlebar, so the closest CG entry wins.
+  // routing need. Chromium and Safari answer bounds() (Chromium fails position(), and a
+  // failed read costs a full Apple Event); Arc has neither, so its frame comes
+  // from its own CG entry. AppleScript reports inner-content bounds while CG
+  // includes the titlebar, so the closest CG entry wins.
   function ids(t) {
     let geom = null;
-    try { const p = t.win.position(), s = t.win.size(); geom = { x: p[0], y: p[1], w: s[0], h: s[1] }; } catch (e) {}
-    if (!geom) { try { const b = t.win.bounds(); geom = { x: b.x, y: b.y, w: b.width, h: b.height }; } catch (e) {} }
+    if (t.kind !== "arc") { try { const b = t.win.bounds(); geom = { x: b.x, y: b.y, w: b.width, h: b.height }; } catch (e) {} }
     const cands = t.P.wins[t.app] || [];
     let best = null, ambiguous = false;
     if (geom) {
@@ -1064,6 +1064,34 @@ function jxaRuntime(BROWSERS) {
     q = String(q).toLowerCase();
     return !lists.some(function (l) { return (l || []).some(function (v) { return String(v || "").toLowerCase().indexOf(q) >= 0; }); });
   }
+  // shapeTabs' filter.
+  function matches(a, url, title) {
+    const has = function (v, q) { return !q || String(v || "").toLowerCase().indexOf(String(q).toLowerCase()) >= 0; };
+    return has(url, a.urlContains) && has(title, a.titleContains);
+  }
+
+  // How many of a browser's tabs match, for one past list_tabs' limit: its urls
+  // or titles (one read each), plus Arc's tab ids, since its windows share tabs.
+  // null when a read fails or the lists don't line up; the caller lists it instead.
+  function countTabs(ap, kind, a) {
+    try {
+      const W = ap.windows;
+      const ids = kind === "arc" ? W.tabs.id() : null;
+      const urls = a.urlContains || !(a.titleContains || ids) ? W.tabs.url() : null;
+      const titles = a.titleContains ? (kind === "safari" ? W.tabs.name() : W.tabs.title()) : null;
+      const base = urls || titles || ids, seen = {};
+      const lists = [base, titles, ids].filter(Boolean);
+      if (lists.some(function (l) { return l.length !== base.length || l.some(function (x, w) { return !Array.isArray(x) || x.length !== base[w].length; }); })) return null;
+      let n = 0;
+      base.forEach(function (win, w) {
+        win.forEach(function (_, i) {
+          if (ids) { if (seen[ids[w][i]]) return; seen[ids[w][i]] = true; }
+          if (matches(a, urls && urls[w][i], titles && titles[w][i])) n++;
+        });
+      });
+      return n;
+    } catch (e) { return null; }
+  }
 
   // Reads each Arc window on its own; a window sharing an earlier one's tabs reuses its reads.
   function arcWindows(ap) {
@@ -1161,12 +1189,18 @@ function jxaRuntime(BROWSERS) {
       return provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
     },
     answerDialog: answerDialog,
+    // Node filters and cuts the rows at `limit`; `more` counts matches past it.
     listTabs(a) {
       const P = procs();
       const out = [];
+      let more = 0;
       const names = candidates(P, a.app);
       for (const name of names) {
         const ap = app(name), kind = KIND[name];
+        if (a.limit != null && out.filter(function (r) { return matches(a, r.url, r.title); }).length >= a.limit) {
+          const n = countTabs(ap, kind, a);
+          if (n != null) { more += n; continue; }
+        }
         if (kind === "arc") { listArc(ap, name, out, a); continue; }
         if (listBulk(ap, name, kind, out, a)) continue;
         let n;
@@ -1192,7 +1226,7 @@ function jxaRuntime(BROWSERS) {
           }
         }
       }
-      return out;
+      return { rows: out, more: more };
     },
     evalJs(a) {
       const q = quickExec(a.target, a.js);
@@ -1822,8 +1856,11 @@ export function shapeTabs(rows, { urlContains, titleContains, limit = 50 } = {})
 }
 
 async function listTabs(args = {}) {
-  const { urlContains = null, titleContains = null } = args;
-  return shapeTabs(await rt("listTabs", { app: args.app || null, urlContains, titleContains }), args);
+  const { urlContains = null, titleContains = null, limit = 50 } = args;
+  const r = await rt("listTabs", { app: args.app || null, urlContains, titleContains, limit });
+  const out = shapeTabs(r.rows, args);
+  out.total += r.more;
+  return out;
 }
 
 async function evalJs(script, target, { awaitPromise = false, timeout = 30000, tool = "eval_js" } = {}) {
