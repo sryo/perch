@@ -1,67 +1,71 @@
 {
-  "rev": "a33de49",
-  "date": "2026-09-28T06:26:28.048Z",
+  "rev": "62625a5",
+  "date": "2026-09-28T08:34:41.316Z",
   "macos": "27.2",
   "browser": "Google Chrome Canary",
+  "fixture": {
+    "file": "bench/fixture.html",
+    "sha256": "7b9acd78fb654ccbd48f9f212f4b7a12a2e392709f02ccbf3b2bb9bf2f101151"
+  },
   "runs": 20,
   "results": {
     "list_tabs": {
-      "p50": 66.7,
-      "p95": 67.4,
-      "min": 64.5,
+      "p50": 66.9,
+      "p95": 68.9,
+      "min": 63.3,
       "bytes": 11039
     },
     "list_tabs limit:1": {
-      "p50": 66.7,
-      "p95": 68.8,
-      "min": 64.8,
+      "p50": 66.6,
+      "p95": 69.4,
+      "min": 64.9,
       "bytes": 293
     },
     "eval_js explicit target": {
-      "p50": 16.8,
-      "p95": 18.2,
-      "min": 15.2,
+      "p50": 16.9,
+      "p95": 17.7,
+      "min": 15.4,
       "bytes": 28
     },
     "eval_js awaitPromise": {
-      "p50": 33.4,
-      "p95": 37.4,
-      "min": 29.4,
+      "p50": 33.2,
+      "p95": 35,
+      "min": 32.1,
       "bytes": 28
     },
     "wait readyState": {
-      "p50": 16.6,
-      "p95": 21.9,
-      "min": 11.9,
+      "p50": 16.8,
+      "p95": 19.1,
+      "min": 14.7,
       "bytes": 53
     },
     "accessibility_snapshot": {
-      "p50": 16.4,
-      "p95": 21,
-      "min": 12.2,
-      "bytes": 6668
+      "p50": 16.6,
+      "p95": 18.9,
+      "min": 14.3,
+      "bytes": 766
     },
     "get_text 2000": {
-      "p50": 16.7,
-      "p95": 18.3,
-      "min": 15.1,
-      "bytes": 2164
+      "p50": 16.9,
+      "p95": 17.9,
+      "min": 14.7,
+      "bytes": 674
     },
     "screenshot png": {
-      "p50": 83.1,
-      "p95": 87.5,
-      "min": 78.5,
-      "bytes": 488870
+      "p50": 85.1,
+      "p95": 100.8,
+      "min": 78.4,
+      "bytes": 329258
     },
     "screenshot jpeg": {
-      "p50": 82.6,
-      "p95": 111.4,
-      "min": 75.9,
-      "bytes": 384827
+      "p50": 83.5,
+      "p95": 87.7,
+      "min": 74.7,
+      "bytes": 259747
     },
     "schema": {
       "tools": 17,
-      "chars": 8796
+      "chars": 8826
     }
   }
 }
