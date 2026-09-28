@@ -348,8 +348,8 @@ function jxaRuntime(BROWSERS) {
   }
 
   // For tools that only run page JS: a hinted Chromium handle costs no Apple
-  // Event here, and its first execute re-resolves once if the tab is gone from
-  // that window (exec). Anything else resolves and is guarded as usual.
+  // Event here, and an execute that finds no tab in that window re-resolves it
+  // (onTab). Anything else resolves and is guarded as usual.
   function pageTarget(want, tool) {
     const hn = want && want.windowId == null && want.tabId != null && hints[want.tabId];
     if (hn) {
@@ -364,19 +364,45 @@ function jxaRuntime(BROWSERS) {
     return t;
   }
 
-  function exec(t, js) {
-    if (t.lazy) {
-      const want = t.lazy;
-      t.lazy = null;
-      try { return exec(t, js); } catch (e) {
-        if (!noSuchObject(e)) throw e;
-        delete hints[want.tabId];
-        Object.assign(t, resolve(want));
-      }
+  const isStale = (e) => !!e && /^stale_tab:/.test(e.message);
+  function staleError(h) {
+    return new Error("stale_tab: " + (h ? "tab " + h : "the tab") + " is gone (closed during the call); re-run list_tabs");
+  }
+
+  // Runs `f`, a read or command on t's tab. A specifier that names nothing
+  // (errAENoSuchObject: the tab closed, or its window moved in the app's
+  // positional window list) is re-resolved by the tab's id once and `f` runs
+  // again; a tab found nowhere, or missing again, is stale_tab. Safari tabs have
+  // no id to re-find them by, so theirs is stale_tab at once.
+  function onTab(t, f) {
+    try { return f(); } catch (e) {
+      if (!noSuchObject(e)) throw e;
     }
+    const h = t.lazy ? t.lazy.tabId : t.tabId != null ? handle(t.app, t.tabId) : null;
+    if (t.lazy) delete hints[h];
+    if (h == null || t.kind === "safari") throw staleError(h);
+    const r = resolve({ tabId: h });
+    visibleGuard(r, "page JS");
+    t.lazy = t.winId = t.shown = null;
+    t.pageOk = false;
+    Object.assign(t, r);
+    try { return f(); } catch (e) {
+      if (noSuchObject(e)) throw staleError(h);
+      throw e;
+    }
+  }
+
+  function exec(t, js) {
+    return onTab(t, function () { return execOnce(t, js); });
+  }
+  function execOnce(t, js) {
     if (t.kind === "safari") {
       try { return app(t.app).doJavaScript(js, { in: t.tab }); }
-      catch (e) { if (!isActive(t)) throw new Error(notVisible("page JS")); throw e; }
+      catch (e) {
+        if (noSuchObject(e)) throw e;
+        if (!isActive(t)) throw new Error(notVisible("page JS"));
+        throw e;
+      }
     }
     const x = t.tab.execute({ javascript: js });
     // Arc JSON.stringifies whatever execute returns; perch's wrappers already did.
@@ -449,11 +475,12 @@ function jxaRuntime(BROWSERS) {
     try { return r != null && r !== "" ? JSON.parse(String(r)) : null; } catch (e) { return null; }
   }
   // Re-runs `js` (which returns a JSON string) until it yields non-null/non-false.
+  // A failed run counts as not yet, except a closed tab.
   function poll(t, js, timeout, interval) {
     const start = Date.now();
     for (;;) {
       let v = null;
-      try { v = pollValue(exec(t, js)); } catch (e) {}
+      try { v = pollValue(exec(t, js)); } catch (e) { if (isStale(e)) throw e; }
       if (v !== null && v !== false) return { value: v, waited: Date.now() - start };
       if (Date.now() - start >= timeout) return null;
       delay(interval / 1000);
@@ -1477,6 +1504,11 @@ function jxaRuntime(BROWSERS) {
       // left, so one unanswered execute can't carry navigate past its timeout.
       const run = function (js) { return execWithin(t, js, Math.max(0.1, Math.min(NAV_EXEC_SECS, (deadline - Date.now()) / 1000))); };
       let canEval = t.kind !== "arc" || isActive(t);
+      // Reads of the tab. A closed Chromium tab is stale_tab; Arc's are left as they
+      // fail, since a new Arc tab's url() fails for a while. `read` makes any other
+      // failure unknown (null).
+      const tabRead = function (f) { return t.kind === "chrome" ? onTab(t, f) : f(); };
+      const read = function (f) { try { return tabRead(f); } catch (e) { if (isStale(e)) throw e; return null; } };
       const token = "n" + Date.now() + Math.random().toString(36).slice(2, 6);
       // The page resolves the url against its own location, so a #fragment change is
       // recognized as same-document even when the two spellings differ.
@@ -1486,8 +1518,8 @@ function jxaRuntime(BROWSERS) {
       const fromPage = /^(https?:\/\/|about:blank$)/i.test(a.url);
       let r = null, wasLoading = false, preUrl = null;
       if (canEval && t.kind !== "safari") {
-        try { wasLoading = t.tab.loading(); } catch (e) {}
-        try { preUrl = String(t.tab.url()); } catch (e) {}
+        wasLoading = !!read(function () { return t.tab.loading(); });
+        preUrl = read(function () { return String(t.tab.url()); });
       }
       // Arc's execute hangs on its own arc: pages, so no page JS runs on one: none
       // before the tab has left it (an unreadable url counts), none when going to one.
@@ -1502,28 +1534,28 @@ function jxaRuntime(BROWSERS) {
           // page cancelled the load; a cancelled one falls back to the tab's url.
           (fromPage ? "var c=false,n=window.navigation,f=function(e){c=e.defaultPrevented};try{n.addEventListener('navigate',f)}catch(e){}" +
             "try{location.assign(" + q + ")}catch(e){return s}finally{try{n.removeEventListener('navigate',f)}catch(e){}}return c?s:s+'!'" : "return s") + "})()";
-        try { r = String(run(stamp)); } catch (e) {}
+        try { r = String(run(stamp)); } catch (e) { if (isStale(e)) throw e; }
       }
       // A reply lost as the new document replaced the old one still started the load:
       // the tab is loading, or a document without the stamp answers from another URL.
       // A tab already loading before the stamp shows both for its earlier load.
       let viaPage = /!$/.test(r || "");
       if (canEval && fromPage && r == null && t.kind !== "safari" && !wasLoading) {
-        try { viaPage = t.tab.loading() || (preUrl != null && String(t.tab.url()) !== preUrl && String(run("String(window.__perch_nav===" + JSON.stringify(token) + ")")) === "false"); } catch (e) {}
+        try { viaPage = tabRead(function () { return t.tab.loading(); }) || (preUrl != null && String(tabRead(function () { return t.tab.url(); })) !== preUrl && String(run("String(window.__perch_nav===" + JSON.stringify(token) + ")")) === "false"); } catch (e) { if (isStale(e)) throw e; }
       }
       const result = function (waited) {
         const o = { waited: waited, tabId: handleOf(t) };
         if (!viaPage && t.kind !== "safari") o.warning = "navigating from outside the page may bring the browser to the front";
         return o;
       };
-      if (!viaPage) t.tab.url = a.url;
+      if (!viaPage) onTab(t, function () { t.tab.url = a.url; });
       if (/^same/.test(r || "")) return result(true);
       // Until the url commits the tab still reads arc:. Arc can drop a url set while
       // its new-tab page is loading, so it is set once more after a second.
       const leftArcPage = function () {
         if (/^arc:/i.test(a.url)) return false;
         for (let i = 0; Date.now() < deadline; i++) {
-          let u = null; try { u = t.tab.url(); } catch (e) {}
+          const u = read(function () { return t.tab.url(); });
           if (u != null && !/^arc:/i.test(u)) return true;
           if (i === 20) { try { t.tab.url = a.url; } catch (e) {} }
           delay(0.05);
@@ -1540,7 +1572,7 @@ function jxaRuntime(BROWSERS) {
       // the bounded execute.
       if (t.kind !== "safari") {
         for (;;) {
-          let busy = false; try { busy = t.tab.loading(); } catch (e) {}
+          const busy = read(function () { return t.tab.loading(); });
           if (!busy || Date.now() - start >= NAV_GATE_MS || Date.now() >= deadline) break;
           delay(0.02);
         }
@@ -1548,13 +1580,14 @@ function jxaRuntime(BROWSERS) {
       let idle = 0;
       while (Date.now() < deadline) {
         let done = false;
-        try { done = JSON.parse(String(run(check))) === true; } catch (e) {}
+        try { done = JSON.parse(String(run(check))) === true; } catch (e) { if (isStale(e)) throw e; }
         if (done) return result(true);
         // A download or 204 never replaces the document; Chrome's `loading` settles.
         // So does a load the page dropped, so it counts only if the tab's URL moved.
         if (t.kind !== "safari" && Date.now() - start > 300) {
-          try { idle = t.tab.loading() ? 0 : idle + 1; } catch (e) {}
-          if (idle >= 2) { let u = preUrl; try { u = String(t.tab.url()); } catch (e) {} return result(preUrl != null && u !== preUrl); }
+          const busy = read(function () { return t.tab.loading(); });
+          if (busy != null) idle = busy ? 0 : idle + 1;
+          if (idle >= 2) { const u = read(function () { return String(t.tab.url()); }); return result(preUrl != null && (u == null ? preUrl : u) !== preUrl); }
         }
         delay(0.05);
       }
