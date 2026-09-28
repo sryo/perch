@@ -2479,6 +2479,37 @@ function pickNative(nat, text) {
   return { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
 }
 function mine(s, el) { return [s.ctl, s.input, s.box].some(function (m) { return m && (m === el || m.contains(el) || el.contains(m)); }); }
+// cmdk writes data-disabled="false" on enabled items; Radix marks disabled ones with a bare data-disabled.
+function optOff(o) { const d = o.getAttribute("data-disabled"); return attr(o, "aria-disabled") === "true" || d === "" || d === "true"; }
+// The texts a control shows as chosen: each element's own text (a chip, a value
+// span) and each comma part of the whole, never a placeholder or an icon.
+function shownParts(box) {
+  const out = [];
+  const add = function (t) { t = clip(t, 80); if (t && out.indexOf(t) < 0) out.push(t); };
+  if (!box || box.tagName === "INPUT") return out;
+  [box].concat(Array.from(box.querySelectorAll("*"))).forEach(function (el) {
+    if (el.closest("svg, [class*=placeholder], [data-placeholder]") || !vis(el)) return;
+    add(Array.prototype.filter.call(el.childNodes, function (n) { return n.nodeType === 3; }).map(function (n) { return n.nodeValue; }).join(""));
+  });
+  const whole = String(textOf(box));
+  if (/[,;\n]/.test(whole) && !box.querySelector("[class*=placeholder], [data-placeholder]")) whole.split(/[,;\n]/).forEach(add);
+  return out;
+}
+// A picked item that already shows as chosen; pressing it again would toggle it off.
+function chosenAlready(s, opt, key) {
+  return attr(opt, "aria-checked") === "true" || attr(opt, "data-state") === "checked" || (s.shown || []).some(function (t) { return norm(t) === key; });
+}
+// Still open: the control says so, or its own list still shows options.
+function stillOpen(s) {
+  return [s.ctl, s.input].some(function (e) { return attr(e, "aria-expanded") === "true"; }) || ownOptions(s).length > 0;
+}
+// Escape inside the open popup, where its own key handler listens (a document-level
+// one hears it too): the focused element there, else its search box, else the control.
+function escapeOwn(s) {
+  const a = document.activeElement;
+  const inPop = a && (linkedLists(s).some(function (m) { return m.contains(a); }) || (s.pop && s.pop.contains(a)));
+  pressEscape(inPop ? a : s.filter && s.filter.isConnected ? s.filter : s.input || s.ctl);
+}
 // The lists a control names as its own: aria-controls/aria-owns targets, and
 // react-select's listbox, whose id derives from its input id.
 function linkedLists(s) {
@@ -2526,7 +2557,11 @@ function ownOptions(s) {
     const o = within(p).filter(function (x) { return !mine(s, x); });
     if (o.length) return o;
   }
-  return s.opened ? within(document).filter(function (o) { return s.before.indexOf(o) < 0; }) : [];
+  if (!s.opened) return [];
+  const fresh = within(document).filter(function (o) { return s.before.indexOf(o) < 0; });
+  if (fresh.length && !s.pop) s.pop = fresh[0].closest("[data-radix-popper-content-wrapper], [cmdk-root], [role=dialog]");
+  if (s.pop && !s.input && !s.filter) s.filter = s.pop.querySelector("input");
+  return fresh;
 }
 `;
 
@@ -3052,7 +3087,8 @@ const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySele
 // that it empties after a pick, so read the surrounding control instead.
 const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
 const box = wrap || (ctl.tagName === "INPUT" ? ctl.parentElement : ctl);
-const s = { ctl: ctl, input: input, box: box, polls: 0 };
+// A bare input's box is its parent, which may hold only its label: its value is in the input.
+const s = { ctl: ctl, input: input, box: box, polls: 0, shown: wrap || ctl.tagName !== "INPUT" ? shownParts(box) : [] };
 // A text input's value and hidden companion go back after a miss: opening or
 // closing a typeahead may clear the text it holds.
 if (input && input.tagName === "INPUT") { s.prior = input.value; s.comp = taParts(input).comp; s.priorComp = s.comp && s.comp.value; }
@@ -3085,16 +3121,27 @@ return { pending: true };
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
 s.polls++;
-const opts = ownOptions(s);
+const all = ownOptions(s);
+const opts = all.filter(function (o) { return !optOff(o); });
 const texts = opts.map(textOf), keys = new Map();
 opts.forEach(function (o, i) { keys.set(o, norm(texts[i])); });
 if (!s.typed && opts.length) s.cands = texts.slice(0, 30).map(function (t) { return clip(t, 60); });
 const opt = bestMatch(opts, function (o) { return keys.get(o); }, wantN);
 if (opt) {
-  press(opt);
   s.picked = clip(textOf(opt), 80);
   s.pickedN = keys.get(opt);
+  if (chosenAlready(s, opt, s.pickedN)) s.already = true;
+  else press(opt);
   return { picked: true };
+}
+const off = !s.typed && bestMatch(all.filter(optOff), function (o) { return norm(textOf(o)); }, wantN);
+if (off) { s.disabled = clip(textOf(off), 60); return { settled: true }; }
+// A combobox that opens only on input events (Downshift) may have a toggle button
+// naming the same list; pressed once the press on the control has had a poll to show.
+if (s.opened && !all.length && !s.toggled && s.polls >= 2 && !stillOpen(s)) {
+  const ids = [s.ctl, s.input].map(function (e) { return attr(e, "aria-controls"); }).filter(Boolean);
+  const tog = ids.length && Array.from(document.querySelectorAll("button[aria-controls]")).find(function (b) { return b !== s.ctl && ids.indexOf(attr(b, "aria-controls")) >= 0; });
+  if (tog) { press(tog); s.toggled = true; return null; }
 }
 // A miss settles ({settled}) once the list has held: text:"" after 3 polls; a
 // no-match after 8 (about 400ms), and after a typed filter only once the list
@@ -3122,12 +3169,14 @@ return null;
   select_miss: SELECT_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
-const now = ownOptions(s).slice(0, 30).map(function (o) { return clip(textOf(o), 60); });
+const now = ownOptions(s).filter(function (o) { return !optOff(o); }).slice(0, 30).map(function (o) { return clip(textOf(o), 60); });
 const cands = s.cands || now;
 if (s.typed) { setNativeValue(s.typed, ""); fire(s.typed, ["input"]); }
-if (s.opened) pressEscape(s.input || s.ctl);
 if (s.prior != null && s.input.value !== s.prior) { setNativeValue(s.input, s.prior); fire(s.input, ["input", "change"]); }
 if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
+// Escape on a closed Downshift menu clears its selection, so only an open one gets it.
+if (s.opened && stillOpen(s)) escapeOwn(s);
+if (s.disabled) return { ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands };
 if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty; click it with trusted:true, then select again", candidates: [] };
 return { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands };
 `,
@@ -3135,14 +3184,18 @@ return { ok: false, error: wantN ? "no option of this control matched" : "empty 
   // Until the control shows the choice: null (keep polling); A.final reports anyway.
   select_read: SELECT_LIB + String.raw`
 const s = window.__perch_select;
+// A popup select opened and a pick left open (a multi-select) closes again.
+if (s.opened && !s.closed) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
 // An input's own value first: its wrapper may hold only its label.
 const iv = (s.input && s.input.value) || "";
 const full = (iv && norm(iv).indexOf(s.pickedN) >= 0 ? iv : textOf(s.box)) || iv;
-const shown = clip(full, 120);
+const parts = full === iv ? [] : shownParts(s.box);
+const shown = clip(parts.length > 1 && !/[,;\n]/.test(full) ? parts.join(", ") : full, 120);
 const seen = norm(full).indexOf(s.pickedN) >= 0;
 if (!seen && !A.final) return null;
 const out = { ok: true, selected: s.picked, el: ident(s.ctl), value: shown };
 if (!seen) out.unverified = true;
+if (s.already) out.note = "already chosen; not pressed again, since a press would toggle it off";
 return out;
 `,
 

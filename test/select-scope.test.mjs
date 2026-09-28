@@ -213,15 +213,17 @@ const RADIX_JS = `
     d.querySelectorAll('[cmdk-item]').forEach(it => it.addEventListener('click', () => { chosen.push(it.textContent); t.textContent = chosen.join(', '); }));
   });`;
 
-test("Radix popover + cmdk multi-select: picks items and keeps an open popover open", async () => {
+test("Radix popover + cmdk multi-select: picks items and closes the popover it opened, from inside it", async () => {
   const dom = onPage(RADIX, RADIX_JS);
   let o = await select({ selector: "#trigger", text: "spanish" });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.value, "Spanish");
+  assert.equal($(dom, "#trigger").getAttribute("aria-expanded"), "false");
   o = await select({ selector: "#trigger", text: "English" });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.value, "Spanish, English");
-  assert.equal(dom.opens, 1);
+  assert.equal(dom.opens, 2);
+  assert.equal($(dom, "[data-radix-popper-content-wrapper]"), null);
 });
 
 // A React 18 control: its focused state comes from its own focus event and lands a
