@@ -11,7 +11,7 @@ import vm from "node:vm";
 
 export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, frameMs = 0 } = {}) {
   const clock = { t: 1_000_000 };
-  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [] };
+  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [], shots: [] };
   const cgEntries = cg.map((entry) => ({ ...entry }));
   const posted = [];
   const counts = {}, geom = {};
@@ -186,7 +186,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     const win = {};
     Object.defineProperty(win, "tabs", { get: () => { bump("win.tabs", b.name); return coll; } });
     Object.defineProperty(win, "id", { get: () => () => { bump("win.id()", b.name); return spec.id; } });
-    win.name = () => spec.name ?? (w.tabs[spec.active]?.spec.title || "");
+    win.name = () => { bump("win.name()", b.name); return spec.name ?? (w.tabs[spec.active]?.spec.title || ""); };
     // Arc: the sidebar order of the active space (spec.sidebar ids), Favorites excluded.
     Object.defineProperty(win, "activeSpace", { get: () => {
       if (b.kind !== "arc") throw new Error("Can't get object.");
@@ -273,7 +273,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         }
         if (k === "byId") return (id) => specifier(() => { const w = wins.find((x) => String(x.spec.id) === String(id)); return w && w.win; });
         if (k === "id") return () => { bump(`windows.id()(${b.name})`, b.name); return wins.map((w) => w.spec.id); };
-        if (k === "name") return () => wins.map((w) => w.win.name());
+        if (k === "name") return () => { bump(`windows.name()(${b.name})`, b.name); return wins.map((w) => w.spec.name ?? (w.tabs[w.spec.active]?.spec.title || "")); };
         // Every window's elements in one event (nested arrays, one per window); counted like a per-window bulk read.
         if (k === "tabs") return {
           url: () => { bump("tabs.url()", b.name); return wins.map((w) => w.tabs.map((t) => t.shownUrl())); },
@@ -556,6 +556,42 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       AXIsProcessTrustedWithOptions: () => state.ax,
       kCFBooleanFalse: false,
       kAXTrustedCheckOptionPrompt: "prompt",
+      // Screen capture: CGWindowListCreateImage returns a CG entry's pixels at
+      // state.shotScale (default 2, a Retina display) times its frame, or an empty
+      // image for a window not in the list or with state.shotEmpty.
+      // state.capture false: no Screen Recording grant. Each capture is recorded
+      // in state.shots as {rect, opt, wid, imgOpt}, plus `scaled` (the bitmap
+      // context it was drawn into) and `encoded` ({type, props, w, h}).
+      CGPreflightScreenCaptureAccess: () => { bump("CGPreflight"); return state.capture !== false; },
+      CGRectNull: { x: Infinity, y: Infinity, w: 0, h: 0, isNull: true },
+      CGRectMake: (x, y, w, h) => ({ x, y, w, h }),
+      CGWindowListCreateImage: (rect, opt, wid, imgOpt) => {
+        bump("CGWindowListCreateImage");
+        const shot = { rect, opt, wid, imgOpt };
+        state.shots.push(shot);
+        const c = cgEntries.find((e) => (e.wid ?? 1) === wid);
+        const s = state.shotScale ?? 2;
+        return c && !state.shotEmpty ? { w: (c.w ?? 800) * s, h: (c.h ?? 600) * s, shot } : { w: 0, h: 0, shot };
+      },
+      CGImageGetWidth: (img) => (img ? img.w : 0),
+      CGImageGetHeight: (img) => (img ? img.h : 0),
+      CGImageGetColorSpace: () => ({ colorSpace: "image" }),
+      CGColorSpaceCreateDeviceRGB: () => ({ colorSpace: "rgb" }),
+      CGBitmapContextCreate: (_data, w, h, bpc, bpr, space, info) => ({ w, h, bpc, bpr, space, info }),
+      CGContextSetInterpolationQuality: (ctx, q) => { ctx.quality = q; },
+      CGContextDrawImage: (ctx, rect, img) => { ctx.rect = rect; ctx.img = img; img.shot.scaled = ctx; },
+      CGBitmapContextCreateImage: (ctx) => (ctx.img ? { w: ctx.w, h: ctx.h, shot: ctx.img.shot } : { w: 0, h: 0 }),
+      NSBitmapImageFileTypeJPEG: 3,
+      NSBitmapImageFileTypePNG: 4,
+      NSBitmapImageRep: { alloc: { initWithCGImage: (img) => ({
+        representationUsingTypeProperties: (type, props) => {
+          img.shot.encoded = { type, props: props ? JSON.parse(JSON.stringify(props.js)) : null, w: img.w, h: img.h };
+          const bytes = Buffer.alloc(33);
+          if (type === 4) { bytes.writeUInt32BE(0x89504e47, 0); bytes.writeUInt32BE(img.w, 16); bytes.writeUInt32BE(img.h, 20); }
+          else Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, img.h >> 8, img.h & 255, img.w >> 8, img.w & 255]).copy(bytes);
+          return { length: bytes.length, base64EncodedStringWithOptions: () => ({ js: bytes.toString("base64") }) };
+        },
+      }) } },
       CGWindowListCopyWindowInfo: () => {
         bump("CGWindowList");
         // A dialog's child window sits directly above its parent window.
