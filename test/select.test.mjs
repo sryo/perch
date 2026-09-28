@@ -163,3 +163,66 @@ test("listing a typeahead whose list opens only on typing leaves its text alone"
   assert.equal(dom.document.querySelector("#loc").value, "Spring");
   assert.equal(dom.document.querySelector("#sel").value, "keep");
 });
+
+// Settling early: a custom list's miss ends once more polling can't change the
+// answer, instead of the full 2.5s. Timings are on the fake world's clock.
+const spent = async (world, args) => {
+  const t0 = world.clock.t;
+  const { o } = await select(args);
+  return { o, ms: world.clock.t - t0 };
+};
+
+test("empty text lists a custom control's options once the list holds for a few polls", async () => {
+  const { world } = onPage(CUSTOM, CUSTOM_JS);
+  const { o, ms } = await spent(world, { label_pattern: "level", text: "" });
+  assert.deepEqual(o.candidates, ["Junior", "Senior"]);
+  assert.ok(ms < 400, `waited ${ms}ms`);
+});
+
+test("a custom list with nothing to type into and no match settles once it holds", async () => {
+  const { world } = onPage(CUSTOM, CUSTOM_JS);
+  const { o, ms } = await spent(world, { label_pattern: "level", text: "principal" });
+  assert.deepEqual(o.candidates, ["Junior", "Senior"]);
+  assert.ok(ms < 900, `waited ${ms}ms`);
+});
+
+// A search box whose list answers the typed filter with other suggestions.
+const SUGGEST = `<label id=sl>Office</label><input id=so role=combobox aria-labelledby=sl aria-controls=sm aria-expanded=false><ul id=sm role=listbox></ul>`;
+const SUGGEST_JS = (render) => `
+  const inp = document.getElementById('so'), ul = document.getElementById('sm');
+  const show = (xs) => { ul.innerHTML = xs.map((x) => '<li role=option>' + x + '</li>').join(''); inp.setAttribute('aria-expanded', 'true'); };
+  inp.addEventListener('focus', () => { if (!ul.children.length) show(['Berlin', 'Madrid']); });
+  inp.addEventListener('mousedown', () => { if (!ul.children.length) show(['Berlin', 'Madrid']); });
+  window.show = show; window.q = () => inp.value;
+  ${render}`;
+
+test("a typed filter's miss settles once the list has answered it and held", async () => {
+  const { world } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => show(['Lisbon', 'Porto']));`));
+  const { o, ms } = await spent(world, { label_pattern: "office", text: "Oslo" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.candidates, ["Berlin", "Madrid"]);
+  assert.ok(ms < 1100, `waited ${ms}ms`);
+});
+
+// Counts page evaluations, so a page update can land a set number of polls later.
+function evalHook(dom, fn) {
+  const orig = dom.eval.bind(dom);
+  let n = 0;
+  dom.eval = (js) => { fn(++n); return orig(js); };
+}
+
+test("a list unchanged since the filter was typed is still waited on (a debounce)", async () => {
+  const { dom } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => { window.typedAt = window.evals; });`));
+  evalHook(dom, (n) => { dom.evals = n; if (dom.typedAt && n === dom.typedAt + 15) dom.show(["Oslo", "Porto"]); });
+  const { o } = await select({ label_pattern: "office", text: "Oslo" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Oslo");
+});
+
+test("an empty list after typing is still waited on", async () => {
+  const { dom } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => { window.typedAt = window.evals; show([]); });`));
+  evalHook(dom, (n) => { dom.evals = n; if (dom.typedAt && n === dom.typedAt + 15) dom.show(["Oslo"]); });
+  const { o } = await select({ label_pattern: "office", text: "Oslo" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Oslo");
+});

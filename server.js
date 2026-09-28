@@ -2804,21 +2804,33 @@ const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
 s.polls++;
 const opts = ownOptions(s);
-if (!s.typed && opts.length) s.cands = opts.slice(0, 30).map(function (o) { return clip(textOf(o), 60); });
-const opt = bestMatch(opts, function (o) { return norm(textOf(o)); }, wantN);
+const texts = opts.map(textOf), keys = new Map();
+opts.forEach(function (o, i) { keys.set(o, norm(texts[i])); });
+if (!s.typed && opts.length) s.cands = texts.slice(0, 30).map(function (t) { return clip(t, 60); });
+const opt = bestMatch(opts, function (o) { return keys.get(o); }, wantN);
 if (opt) {
   press(opt);
   s.picked = clip(textOf(opt), 80);
-  s.pickedN = norm(textOf(opt));
+  s.pickedN = keys.get(opt);
   return { picked: true };
 }
+// A miss settles ({settled}) once the list has held: text:"" after 3 polls; a
+// no-match after 8 (about 400ms), and after a typed filter only once the list
+// has changed since typing, so a debounce's stale list is not the answer. An
+// empty list keeps waiting.
+const sig = opts.length ? Array.from(keys.values()).join("\n") : null;
+s.same = sig && sig === s.sig ? s.same + 1 : 0;
+s.sig = sig;
+if (s.typed && sig !== s.typedSig) s.answered = true;
 const box = s.input || s.filter;
+if (sig && s.same >= (wantN ? 8 : 3) && (!wantN || s.answered || !box)) return { settled: true };
 if (!s.typed && wantN && box && s.polls >= 4) {
   const q = String(A.text).trim().split(/[^\p{L}\p{N} ]/u)[0].trim() || String(A.text).trim();
   if (box.focus) box.focus();
   setNativeValue(box, q);
   fire(box, ["input"]);
   s.typed = box;
+  s.typedSig = sig;
 }
 return null;
 `,
