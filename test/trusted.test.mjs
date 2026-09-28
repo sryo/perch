@@ -56,6 +56,16 @@ test("trusted_cal drains the recorded mouse moves with client and screen coordin
   assert.equal(run(w, "trusted_cal", {}), null);
 });
 
+test("trusted_probe with label_pattern aims at the control click would pick", () => {
+  const w = page(`<button style="display:none">Apply</button><button>Apply now</button><button id=b>Apply</button>`);
+  withWindowMetrics(w, { screenX: 0, screenY: 0, outerWidth: 1000, innerWidth: 1000, outerHeight: 800, innerHeight: 800 });
+  const o = run(w, "trusted_probe", { label_pattern: "apply" });
+  assert.equal(o.el, `button "Apply"`);
+  w.document.getElementById("b").dispatchEvent(new w.MouseEvent("mousedown", { bubbles: true }));
+  assert.equal(run(w, "trusted_check", {}).hit, true, "armed on the resolved element");
+  assert.match(run(w, "trusted_probe", { label_pattern: "app" }).error, /^ambiguous/);
+});
+
 test("trusted_probe for fill skips checkboxes/hidden and refuses rich editors", () => {
   const w = page(`<label>Email <input type=checkbox></label><label>Email <input id=e></label><div contenteditable aria-label="Email body"></div>`);
   const o = run(w, "trusted_probe", { label_pattern: "email", forFill: true });
@@ -380,6 +390,42 @@ test("calibration ignores a mouse move recorded before its own post", async () =
   const o = JSON.parse(r.content[0].text);
   assert.deepEqual(o.calibration, [[0, 0]]);
   assert.deepEqual(downs(world), [{ x: 106, y: 167 }]);
+});
+
+// Terminal in front: the no-raise route, with the page's tab shown (active) or not.
+function backgroundTab(html, active) {
+  const dom = page(html);
+  withWindowMetrics(dom, METRICS);
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "about:blank", id: "other" }, { url: "about:blank", id: "t", dom }] }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600, ax: { web: [{ x: 56, y: 157, w: 798, h: 500 }] } }],
+  });
+  return { dom, world };
+}
+const LABELLED = `<button id=a>Apply now</button><button id=b>Apply</button>`;
+
+test("trusted click by label posts at the resolved control in a shown background tab", async () => {
+  const { dom, world } = backgroundTab(LABELLED, 1);
+  world.state.onPost = (e) => {
+    if (e.type === 1 && e.pt.x >= 0) dom.document.getElementById("b").dispatchEvent(new dom.MouseEvent("mousedown", { bubbles: true }));
+  };
+  const r = await handleCall("click", { trusted: true, label_pattern: "apply", target: { tabIndex: 1 } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.el, `button "Apply"`);
+  assert.equal(o.hit, true);
+  assert.deepEqual(world.posted.filter((e) => e.type === 1 && e.pt.x >= 0).map((e) => [e.via, e.pt]), [["skylight", { x: 106, y: 167 }]]);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+});
+
+test("trusted click by label in a hidden tab is tab_not_visible and activates nothing", async () => {
+  const { world } = backgroundTab(LABELLED, 0);
+  const r = await handleCall("click", { trusted: true, label_pattern: "apply", target: { tabIndex: 1 } });
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /tab_not_visible: /);
+  assert.equal(world.counts["win.activeTabIndex="], undefined);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+  assert.equal(world.posted.length, 0);
 });
 
 test("no mouse move reaches the page and Accessibility finds no page area: nothing is clicked", async () => {
