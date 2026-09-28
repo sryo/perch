@@ -16,6 +16,7 @@ function onPage(html, setup) {
   world.run(JXA_PRELUDE);
   DAEMONS.fast = world.daemon;
   DAEMONS.slow = world.daemon;
+  dom.world = world;
   return dom;
 }
 const select = async (args) => {
@@ -28,7 +29,8 @@ const $ = (dom, sel) => dom.document.querySelector(sel);
 // aria-controls only while open, a press on an open control closes it, typing filters.
 // o.strict: a filter with parentheses or commas empties the list. o.async: options only after typing.
 // o.portal: the menu renders at the end of body. o.syntheticIgnored: never opens from page JS.
-// o.sticky: ignores Escape.
+// o.sticky: ignores Escape. o.remote: a typed filter shows "Loading..." and a loading
+// indicator until window.load<id>() adds these options and renders.
 const RS_JS = `
 window.log = [];
 window.mkRS = function (id, options, o) {
@@ -51,7 +53,7 @@ window.mkRS = function (id, options, o) {
     const q = input.value.toLowerCase();
     const strict = o.strict && /[(),]/.test(q);
     const list = o.async && !q ? [] : options.filter(x => !strict && x.toLowerCase().includes(q));
-    m.innerHTML = '<div role=listbox id="react-select-' + id + '-listbox">' + (list.length ? list.map(x => '<div role=option>' + x + '</div>').join('') : '<div class=notice>No options</div>') + '</div>';
+    m.innerHTML = '<div role=listbox id="react-select-' + id + '-listbox">' + (list.length ? list.map(x => '<div role=option>' + x + '</div>').join('') : '<div class="select__menu-notice select__menu-notice--no-options">No options</div>') + '</div>';
     m.querySelectorAll('[role=option]').forEach(el => el.addEventListener('click', () => {
       window.log.push(id + ':' + el.textContent);
       if (o.multi) { const c = document.createElement('div'); c.className = 'select__multi-value'; c.textContent = el.textContent; box.querySelector('.select__value-container').prepend(c); }
@@ -65,7 +67,12 @@ window.mkRS = function (id, options, o) {
     if (e.button !== 0 || !e.view || o.syntheticIgnored) return;
     if (open && e.target !== input) close(); else if (!open) openMenu();
   });
-  input.addEventListener('input', () => { if (o.syntheticIgnored) return; if (!open) openMenu(); else render(); });
+  function loading() {
+    document.getElementById('react-select-' + id + '-listbox').innerHTML = '<div class="select__menu-notice select__menu-notice--loading">Loading...</div>';
+    ctl.insertAdjacentHTML('beforeend', '<div class=select__loading-indicator><span></span></div>');
+    window['load' + id] = () => { ctl.querySelector('.select__loading-indicator').remove(); options = options.concat(o.remote); o.remote = null; render(); };
+  }
+  input.addEventListener('input', () => { if (o.syntheticIgnored) return; if (!open) openMenu(); else render(); if (o.remote && input.value) loading(); });
   input.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !o.sticky) close(); });
   if (o.open) openMenu();
 };`;
@@ -135,6 +142,30 @@ test("an async list gets a typed filter; a miss clears it", async () => {
   o = await select({ label_pattern: "location", text: "Atlantis" });
   assert.equal(o.ok, false);
   assert.equal($(dom, "#react-select-5-input").value, "");
+});
+
+test("a typed filter answered with react-select's No options settles as a miss in about 0.5s", async () => {
+  const dom = onPage(rs(9, "Department"), RS_JS + `mkRS(9, ["Engineering", "Design", "Sales"]);`);
+  const t0 = dom.world.clock.t;
+  const o = await select({ label_pattern: "department", text: "zz" });
+  const ms = dom.world.clock.t - t0;
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.candidates, ["Engineering", "Design", "Sales"]);
+  assert.equal($(dom, "#react-select-9-input").value, "", "typed filter is cleared after a miss");
+  assert.equal($(dom, "#react-select-9-input").getAttribute("aria-expanded"), "false");
+  assert.equal(ms, 550, "typed at 150ms, then 8 empty polls");
+});
+
+test("react-select's Loading... message keeps an emptied list waited on until the answer lands", async () => {
+  const dom = onPage(rs(9, "Department"), RS_JS + `mkRS(9, ["Engineering", "Sales"], { remote: ["Design lead"] });`);
+  const orig = dom.eval.bind(dom);
+  let n = 0;
+  dom.eval = (js) => { if (dom.load9 && ++n === 16) dom.load9(); return orig(js); };
+  const t0 = dom.world.clock.t;
+  const o = await select({ label_pattern: "department", text: "Design lead" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.value, "Design lead");
+  assert.equal(dom.world.clock.t - t0, 950, "the answer lands on the 16th page call after Loading... shows");
 });
 
 test("a portaled menu is found through aria-controls, by a snapshot ref", async () => {

@@ -2532,6 +2532,21 @@ function chosenAlready(s, opt, key) {
   if (!s.multi) return (!!s.whole && s.whole === key) || (s.shown || []).some(function (t) { return norm(t) === key; });
   return (s.shown || []).some(function (t) { return norm(t) === key; }) || commaParts(s.whole).indexOf(key) >= 0;
 }
+// A list still loading: aria-busy, a progressbar, a status that is no
+// no-results notice, a loading or spinner class, or text starting "Loading",
+// visible on or inside one of roots.
+function loadingIn(roots) {
+  const none = /\bno\b|nothing|not found|\b0 results/i, word = /^(loading|searching|fetching)\b/i;
+  const busy = function (e) {
+    const cls = String(e.className && e.className.baseVal != null ? e.className.baseVal : e.className || "");
+    const st = attr(e, "role") === "status" ? norm(textOf(e)) : "";
+    return (attr(e, "aria-busy") === "true" || attr(e, "role") === "progressbar" || (st && !none.test(st)) ||
+      /loading|spinner/i.test(cls) || word.test(norm(ownText(e)))) && vis(e);
+  };
+  return roots.some(function (r) {
+    return !!r && r.isConnected && (attr(r, "aria-busy") === "true" || Array.prototype.some.call(r.querySelectorAll("*"), busy));
+  });
+}
 // Still open: the control says so, or its own list still shows options.
 function stillOpen(s) {
   return [s.ctl, s.input].some(function (e) { return attr(e, "aria-expanded") === "true"; }) || ownOptions(s).length > 0;
@@ -3208,12 +3223,18 @@ if (s.opened && !all.length && !s.toggled && s.polls >= 2 && !stillOpen(s)) {
 // A miss settles ({settled}) once the list has held: text:"" after 3 polls; a
 // no-match after 8 (about 400ms), and after a typed filter only once the list
 // has changed since typing, so a debounce's stale list is not the answer. An
-// empty list keeps waiting.
+// empty list keeps waiting, unless the filter emptied a list that had options
+// and it stays empty 8 polls with nothing loading; one empty before typing may
+// be an async list.
 const sig = opts.length ? Array.from(keys.values()).join("\n") : null;
 s.same = sig && sig === s.sig ? s.same + 1 : 0;
 s.sig = sig;
 if (s.typed && sig !== s.typedSig) s.answered = true;
 if (sig && s.same >= (wantN ? 8 : 3) && (!wantN || s.answered || !box)) return { settled: true };
+if (s.typed && s.typedSig && !sig) {
+  s.emptied = loadingIn([s.ctl, s.input, s.box, s.pop, s.listRoot].concat(linkedLists(s))) ? 0 : (s.emptied || 0) + 1;
+  if (s.emptied >= 8) return { settled: true };
+} else s.emptied = 0;
 if (!s.typed && wantN && box && s.polls >= 4) {
   const q = String(A.text).trim().split(/[^\p{L}\p{N} ]/u)[0].trim() || String(A.text).trim();
   if (box.focus) box.focus();
@@ -3221,6 +3242,7 @@ if (!s.typed && wantN && box && s.polls >= 4) {
   fire(box, ["input"]);
   s.typed = box;
   s.typedSig = sig;
+  if (opts.length) s.listRoot = opts[0].parentElement;
 }
 return null;
 `,
