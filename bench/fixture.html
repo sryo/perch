@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>perch bench fixture</title>
+<style>
+  body { font: 15px/1.5 -apple-system, sans-serif; margin: 24px; color: #222; background: #fff; }
+  form { display: grid; gap: 8px; max-width: 360px; }
+  label { display: grid; gap: 2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Field notes</h1>
+  <nav aria-label="Sections">
+    <a href="#notes">Notes</a> · <a href="#tasks">Tasks</a> · <a href="#contact">Contact</a>
+  </nav>
+</header>
+<main>
+  <section id="notes">
+    <h2>Notes</h2>
+    <p>The river rose two meters overnight and the lower path is closed until the water drops. Crews expect to reopen it by the end of the week, weather permitting.</p>
+    <p>Volunteers meet at the north gate at eight. Bring gloves, water and a hat; tools are provided on site. The morning group clears the trail and the afternoon group plants along the bank.</p>
+  </section>
+  <section id="tasks">
+    <h2>Tasks</h2>
+    <ul>
+      <li>Clear fallen branches from the upper trail</li>
+      <li>Replace the sign at the fork</li>
+      <li>Count the birds at the pond</li>
+      <li>Refill the first-aid kit</li>
+      <li>Photograph the washed-out culvert</li>
+    </ul>
+  </section>
+  <section id="contact">
+    <h2>Sign up</h2>
+    <form onsubmit="return false">
+      <label>Name <input name="name" autocomplete="off"></label>
+      <label>Email <input name="email" type="email" placeholder="you@example.test"></label>
+      <label>Shift
+        <select name="shift">
+          <option>Morning</option>
+          <option>Afternoon</option>
+        </select>
+      </label>
+      <label>Notes <textarea name="notes" rows="3"></textarea></label>
+      <label><input name="updates" type="checkbox"> Send me updates</label>
+      <button type="submit">Sign up</button>
+    </form>
+  </section>
+</main>
+</body>
+</html>

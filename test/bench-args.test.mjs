@@ -6,7 +6,7 @@ import { parseArgs } from "../scripts/bench.mjs";
 
 test("bench defaults", () => {
   assert.deepEqual(parseArgs([]), {
-    runs: 20, out: "bench/runs/bench.json", compare: "bench/baseline.json", app: undefined, navigate: false,
+    runs: 20, out: "bench/runs/bench.json", compare: "bench/baseline.json", app: undefined, tab: undefined, navigate: false,
   });
 });
 
