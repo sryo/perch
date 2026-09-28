@@ -3274,13 +3274,18 @@ function rbArm() {
 
 // file_upload's drop path. U is the upload's state, kept on window.__perch_up
 // between calls: the DataTransfer, the zone, the input under watch and its
-// MutationObserver, and how often the file name was on the page before.
+// MutationObserver, how often the file name was on the page before, and how
+// many fetch/XHR requests had completed (resource timing) before the file was set.
 const UPLOAD_LIB = String.raw`
 const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
 function nameCount(name) { return textOf(document.body).split(name).length - 1; }
+function upNet() {
+  try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
+  catch (e) { return 0; }
+}
 function uploadSeen(name, U) {
   if (U.obs && U.obs.takeRecords().some(function (r) { return r.target !== U.input; })) U.moved = true;
-  return U.moved || deepAll("input[type=file]").some(function (el) { return el !== U.input && has(el); }) || nameCount(name) > U.names;
+  return U.moved || (U.net != null && upNet() > U.net) || deepAll("input[type=file]").some(function (el) { return el !== U.input && has(el); }) || nameCount(name) > U.names;
 }
 // Not every engine takes dataTransfer in a DragEvent init, so it is pinned on
 // the event when it didn't stick.
@@ -3845,11 +3850,23 @@ const out = { ok: true, name: file.name, size: file.size, type: file.type };
 const U = { dt: dt, zone: zone, input: null, obs: null, moved: false, names: 0 };
 if (!input) { U.names = nameCount(A.name); window.__perch_up = U; return Object.assign(out, dropOn(U)); }
 const who = ident(input) + (input.id ? " #" + input.id : "");
-// A hidden input that no form submits may have no handler reading it; any page
-// change after change counts as handled, else Node falls back to a drop.
+// A hidden input that no form submits may have no handler reading it; a change
+// handler we can see, or any page change or completed fetch/XHR after change,
+// counts as handled, else Node falls back to a drop.
 const watch = !vis(input) && !(input.form && input.name) && typeof MutationObserver === "function";
+// Change handlers readable from this world: an onchange property, or the props
+// React (__reactProps$, __reactEventHandlers$ before 17) and Vue 3 (_vei) keep
+// on the element. An isolated world sees none of them.
+function heard(el) {
+  if (typeof el.onchange === "function") return true;
+  return Object.keys(el).some(function (k) {
+    const v = el[k];
+    return !!v && (/^__react(Props|EventHandlers)\$/.test(k) || k === "_vei") && typeof v.onChange === "function";
+  });
+}
 if (watch) {
   U.names = nameCount(A.name);
+  U.net = upNet();
   U.input = input;
   U.obs = new MutationObserver(function () {});
   U.obs.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
@@ -3869,7 +3886,7 @@ if (many) { out.ambiguous = true; out.el = who; }
 if (input.isConnected && has(input)) {
   if (watch) {
     if (!U.zone) for (let p = input.parentElement, k = 0; p && k < 3 && p !== document.body; p = p.parentElement, k++) if (vis(p)) { U.zone = p; break; }
-    if (U.zone && !uploadSeen(A.name, U)) { window.__perch_up = U; out.unwired = true; return out; }
+    if (U.zone && !heard(input) && !uploadSeen(A.name, U)) { window.__perch_up = U; out.unwired = true; return out; }
     U.obs.disconnect();
   }
   return out;

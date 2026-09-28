@@ -328,6 +328,50 @@ test("file_upload: a hidden input whose handler changes the page without the nam
   assert.equal(dom.eval("window.drops"), 0);
 });
 
+// Resource timing lists a request once it completes; the test's entries stand in for it.
+function fetchEntries(dom) {
+  const entries = [];
+  dom.performance.getEntriesByType = (k) => (k === "resource" ? entries.slice() : []);
+  return entries;
+}
+
+test("file_upload: a hidden input whose handler only starts a fetch gets no drop", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(HIDDEN, ZONE_JS);
+  const entries = fetchEntries(dom);
+  entries.push({ initiatorType: "fetch" }, { initiatorType: "img" });
+  dom.startUpload = () => dom.setTimeout(() => entries.push({ initiatorType: "fetch" }), 300);
+  dom.eval(`document.getElementById('f').addEventListener('change', () => window.startUpload());`);
+  const o = await upload({ path, selector: "#z" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, undefined);
+  assert.equal(dom.eval("window.drops"), 0);
+  assert.equal(dom.eval("document.getElementById('f').files.length"), 1, "the input keeps the file");
+});
+
+test("file_upload: requests that finished before the upload don't count as handled", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(HIDDEN, ZONE_JS);
+  const entries = fetchEntries(dom);
+  entries.push({ initiatorType: "fetch" }, { initiatorType: "xmlhttprequest" });
+  dom.setTimeout(() => entries.push({ initiatorType: "img" }), 200);
+  const o = await upload({ path, selector: "#z" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, true);
+  assert.equal(dom.eval("window.drops"), 1);
+});
+
+test("file_upload: a hidden input with a framework change handler in reach gets no drop", async (t) => {
+  // React keeps an element's props on an expando; a same-world eval can read its onChange.
+  const path = await cvFile(t);
+  const { dom } = onPage(HIDDEN, ZONE_JS);
+  dom.eval(`document.getElementById('f').__reactProps$x1 = { type: 'file', onChange: () => { window.took = 1; } };`);
+  const o = await upload({ path, selector: "#z" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, undefined);
+  assert.equal(dom.eval("window.drops"), 0);
+});
+
 test("file_upload: a hidden named input in a form keeps the file with no drop", async (t) => {
   const path = await cvFile(t);
   const { dom } = onPage(`<form><div id=z><input type=file name=cv id=f hidden>Choose a file</div></form>`,
