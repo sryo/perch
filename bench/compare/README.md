@@ -28,6 +28,7 @@ All runs: macOS 27.2, Chrome Canary. Times are median ms.
 | 2026-09-27 | perch | 3ba7188 | 5 calls, 245 | 2 calls, 99 | 196 | 50 | 50 | 50 | 189 | 70% |
 | 2026-09-27 | perch | 5996fd3 | 1 call, 14 | 1 call, 51 | 135 | 17 | 17 | 17 | 165 | 100% |
 | 2026-09-27 | perch | 39bf181 | 1 call, 15 | 1 call, 51 | 151 | 17 | 17 | 17 | 151 | 100% |
+| 2026-09-28 | perch | a33de49 | 1 call, 12 | 1 call, 31 | 135 | | | | 83 | 100% |
 | 2026-09-27 | Claude in Chrome | | 6 calls, 73 | 3 calls, 164 | 89 | 59 | 66 | 2 | 143 | 100% |
 
 - **5996fd3:** navigate no longer hangs, and `fill {fields}` and `click {readback}` do
@@ -36,6 +37,11 @@ All runs: macOS 27.2, Chrome Canary. Times are median ms.
   `click {selector: "#submit", trusted: true, readback: "#status"}` and Canary as the
   active tab, 10 of 10 aimed by `ax`, hit, and read back the right status. The median
   was 311ms for the whole call.
+- **a33de49:** screenshots are captured and encoded in the osascript runtime instead of
+  spawning screencapture and sips. A click readback, a custom select's miss and a
+  typeahead's miss end once the page holds still instead of waiting out their caps. Only
+  the numbers that moved are filled in. This run was without `--activate`, so the
+  Screenshot cell is the `bench` p50 on Canary's shown tab (149 before).
 
 ## Payload size
 
