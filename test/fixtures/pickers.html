@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>perch picker fixture</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  .field { margin: 0 0 16px; }
+  label { display: block; margin-bottom: 4px; }
+  button[aria-haspopup], button[role=combobox] { min-width: 240px; text-align: left; }
+  .badge { display: inline-block; padding: 0 6px; margin-right: 4px; border-radius: 8px; background: #e5e7eb; }
+  [data-radix-popper-content-wrapper] { position: fixed; left: 24px; top: 24px; z-index: 50; min-width: max-content; background: #fff; border: 1px solid #ccc; }
+  [cmdk-item][data-selected=true] { background: #eef; }
+  [cmdk-item][data-disabled=true] { color: #aaa; }
+  .check { margin-right: 4px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<!-- Radix Popover + cmdk, as a multi-select: the trigger names its content through
+     aria-controls, and chosen items show as badges inside the trigger. -->
+<div class="field"><label for="langs">Languages</label>
+  <button id="langs" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="radix-:r1:" data-state="closed" data-picker="multi" data-items="English|Spanish|Portuguese|French (Canada)|Klingon*"><span class="placeholder">Select all that apply</span></button></div>
+
+<!-- The same widget whose trigger links nothing: only this click's popover is its own.
+     Like a long list, it shows only its first items until searched. -->
+<div class="field"><label for="tools">Tools</label>
+  <button id="tools" type="button" aria-haspopup="dialog" aria-expanded="false" data-state="closed" data-picker="multi" data-limit="3" data-items="Figma|Sketch|Spanish tooling|Zeplin"><span class="placeholder">Select all that apply</span></button></div>
+
+<!-- shadcn's single Combobox: a role=combobox trigger that closes after a pick and
+     toggles the value off when the chosen item is picked again. -->
+<div class="field"><label for="country">Country</label>
+  <button id="country" type="button" role="combobox" aria-haspopup="dialog" aria-expanded="false" aria-controls="radix-:r3:" data-state="closed" data-picker="single" data-items="Argentina|Brazil|Spain"><span class="placeholder">Select country...</span></button></div>
+
+<!-- Downshift useCombobox: the menu opens only on input events or the toggle button,
+     Escape on a closed menu clears the selection, and blur puts back the selected text. -->
+<div class="field"><label id="downshift-:r0:-label" for="downshift-:r0:-input">Department</label>
+  <div><input id="downshift-:r0:-input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="downshift-:r0:-menu" aria-labelledby="downshift-:r0:-label" autocomplete="off"><button id="downshift-:r0:-toggle-button" type="button" tabindex="-1" aria-label="toggle menu" aria-controls="downshift-:r0:-menu" aria-expanded="false">&#9662;</button></div>
+  <ul id="downshift-:r0:-menu" role="listbox" aria-labelledby="downshift-:r0:-label"></ul></div>
+
+<script>
+(function () {
+  // Radix's DismissableLayer: Escape and a pointerdown outside close only the topmost layer.
+  const layers = [];
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && layers.length) layers[layers.length - 1].dismiss(); });
+  document.addEventListener("pointerdown", function (e) {
+    const top = layers[layers.length - 1];
+    if (top && !top.content.contains(e.target) && !top.trigger.contains(e.target)) top.dismiss();
+  });
+  window.pickerLog = [];
+  let seq = 10;
+
+  document.querySelectorAll("[data-picker]").forEach(function (trigger) {
+    const multi = trigger.dataset.picker === "multi";
+    const limit = Number(trigger.dataset.limit) || Infinity;
+    const items = trigger.dataset.items.split("|").map(function (x) { return { label: x.replace(/\*$/, ""), disabled: /\*$/.test(x) }; });
+    const placeholder = trigger.querySelector(".placeholder").textContent;
+    const contentId = trigger.getAttribute("aria-controls") || "radix-:r" + (seq++) + ":";
+    const chosen = [];
+    let layer = null;
+
+    function renderTrigger() {
+      if (!chosen.length) { trigger.innerHTML = '<span class="placeholder">' + placeholder + "</span>"; return; }
+      trigger.innerHTML = multi ? chosen.map(function (c) { return '<span class="badge">' + c + "</span>"; }).join("") : "<span>" + chosen[0] + "</span>";
+    }
+    function onSelect(label) {
+      window.pickerLog.push(trigger.id + ":" + label);
+      const i = chosen.indexOf(label);
+      if (multi) { if (i >= 0) chosen.splice(i, 1); else chosen.push(label); }
+      else chosen.splice(0, chosen.length, ...(i >= 0 ? [] : [label]));
+      renderTrigger();
+      if (!multi) close();
+      else if (layer) renderList();
+    }
+    function close() {
+      if (!layer) return;
+      layer.wrapper.remove();
+      layers.splice(layers.indexOf(layer), 1);
+      layer = null;
+      trigger.setAttribute("aria-expanded", "false");
+      trigger.dataset.state = "closed";
+      trigger.focus();
+    }
+    // cmdk: items that don't match the search unmount; the first enabled one is highlighted.
+    function renderList() {
+      const q = layer.input.value.toLowerCase();
+      const shown = items.filter(function (it) { return it.label.toLowerCase().indexOf(q) >= 0; }).slice(0, q ? items.length : limit);
+      const first = shown.find(function (it) { return !it.disabled; });
+      layer.group.innerHTML = shown.map(function (it, i) {
+        const hi = it === first;
+        return '<div cmdk-item role="option" id="' + contentId + "-i" + i + '" data-value="' + it.label.toLowerCase() + '" aria-disabled="' + it.disabled + '" data-disabled="' + it.disabled +
+          '" aria-selected="' + hi + '" data-selected="' + hi + '"><svg class="check" viewBox="0 0 24 24" width="14" height="14" style="opacity:' + (chosen.indexOf(it.label) >= 0 ? 1 : 0) + '"><path d="M20 6 9 17l-5-5" stroke="currentColor" fill="none"/></svg>' + it.label + "</div>";
+      }).join("");
+      layer.empty.hidden = shown.length > 0;
+      layer.group.querySelectorAll("[cmdk-item]").forEach(function (el, i) {
+        el.addEventListener("click", function () { if (!shown[i].disabled) onSelect(shown[i].label); });
+      });
+    }
+    function open() {
+      const wrapper = document.createElement("div");
+      wrapper.setAttribute("data-radix-popper-content-wrapper", "");
+      const listId = contentId + "-list";
+      wrapper.innerHTML = '<div role="dialog" id="' + contentId + '" data-state="open" tabindex="-1"><div cmdk-root>' +
+        '<div cmdk-input-wrapper><input cmdk-input role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="' + listId + '" autocomplete="off" placeholder="Search..."></div>' +
+        '<div cmdk-list role="listbox" id="' + listId + '" aria-label="Suggestions"><div cmdk-list-sizer><div cmdk-empty role="presentation" hidden>No results found.</div>' +
+        '<div cmdk-group role="presentation"><div cmdk-group-items role="group"></div></div></div></div></div></div>';
+      document.body.appendChild(wrapper);
+      const content = wrapper.firstChild;
+      layer = { wrapper: wrapper, content: content, trigger: trigger, dismiss: close,
+        input: wrapper.querySelector("[cmdk-input]"), group: wrapper.querySelector("[cmdk-group-items]"), empty: wrapper.querySelector("[cmdk-empty]") };
+      layers.push(layer);
+      layer.input.addEventListener("input", renderList);
+      content.addEventListener("keydown", function (e) {
+        if (e.key !== "Enter") return;
+        const hi = content.querySelector('[cmdk-item][data-selected="true"]');
+        if (hi) { e.preventDefault(); onSelect(hi.textContent); }
+      });
+      renderList();
+      trigger.setAttribute("aria-expanded", "true");
+      trigger.dataset.state = "open";
+      layer.input.focus();
+    }
+    trigger.addEventListener("click", function () { if (layer) close(); else open(); });
+  });
+
+  // Downshift useCombobox.
+  const input = document.getElementById("downshift-:r0:-input");
+  const toggle = document.getElementById("downshift-:r0:-toggle-button");
+  const menu = document.getElementById("downshift-:r0:-menu");
+  const depts = ["Engineering", "Design", "Product design lead", "Sales"];
+  const ds = { isOpen: false, selectedItem: null };
+  window.downshift = ds;
+  function dsRender() {
+    input.setAttribute("aria-expanded", String(ds.isOpen));
+    toggle.setAttribute("aria-expanded", String(ds.isOpen));
+    if (!ds.isOpen) { menu.innerHTML = ""; return; }
+    const q = input.value.toLowerCase();
+    const list = depts.filter(function (d) { return d.toLowerCase().indexOf(q) >= 0; });
+    menu.innerHTML = list.map(function (d, i) { return '<li role="option" id="downshift-:r0:-item-' + i + '" aria-selected="' + (d === ds.selectedItem) + '">' + d + "</li>"; }).join("");
+    menu.querySelectorAll("li").forEach(function (li) {
+      li.addEventListener("click", function () { ds.selectedItem = li.textContent; input.value = li.textContent; ds.isOpen = false; dsRender(); });
+    });
+  }
+  input.addEventListener("input", function () { ds.isOpen = true; dsRender(); });
+  toggle.addEventListener("click", function () { ds.isOpen = !ds.isOpen; dsRender(); });
+  input.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    if (!ds.isOpen) { ds.selectedItem = null; input.value = ""; }
+    ds.isOpen = false;
+    dsRender();
+  });
+  input.addEventListener("blur", function () { ds.isOpen = false; input.value = ds.selectedItem || ""; dsRender(); });
+})();
+</script>
+</body>
+</html>
