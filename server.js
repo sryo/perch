@@ -852,16 +852,16 @@ function jxaRuntime(BROWSERS) {
     return r ? r.value : readExec(t, a.readFinal);
   }
 
-  // wait {quiet}: timed here, where the clock isn't throttled with the page. A
-  // poll that fails or finds a new document restarts the quiet window.
+  // wait {quiet}: timed here, where the clock isn't throttled with the page. The
+  // window opens when a poll arms the observer (fresh); a poll that fails or
+  // finds a new document restarts it.
   function waitQuiet(a, start, interval) {
     const t = pageTarget(a.target, "wait");
-    let last = start, armed = false, quietFor = 0;
+    let last = start, quietFor = 0;
     const r = poll(t, a.js, a.timeout, interval, false, function (v) {
       const now = Date.now();
       if (v && v.__perch_error) return true;
-      if (!v || v.busy || (v.fresh && armed)) last = now;
-      if (v) armed = true;
+      if (!v || v.busy || v.fresh) last = now;
       quietFor = now - last;
       return quietFor >= a.quiet;
     });

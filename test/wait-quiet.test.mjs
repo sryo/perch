@@ -91,6 +91,21 @@ test("a mutation mid-wait restarts the quiet window", async () => {
   assert.ok(o.waited >= 7 * 50 + 500, `waited ${o.waited}`);
 });
 
+test("the quiet window starts when the observer is armed, not at the call", async () => {
+  // The first evaluation lands 100ms after the call and a mutation happens
+  // just before it arms the observer: none of that time was watched.
+  const { dom, world } = onPage();
+  let evals = 0;
+  beforeEvals(dom, (n) => {
+    evals = n;
+    if (n === 1) { world.clock.t += 100; dom.document.getElementById("s").textContent = "Saving"; }
+  });
+  const { r, t, o } = await call({ quiet: 50 });
+  assert.equal(r.isError, undefined, t);
+  assert.ok(evals >= 2, `resolved after ${evals} poll(s)`);
+  assert.ok(o.waited >= 150, `waited ${o.waited}`);
+});
+
 test("a new document mid-wait restarts the quiet window", async () => {
   // A fresh document has none of perch's state; dropping it stands in for a navigation.
   const { dom } = onPage();
