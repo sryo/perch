@@ -3432,7 +3432,17 @@ async function fill(args = {}) {
     if (trusted || raise) throw new Error("fill: `fields` does not take trusted/raise; fill trusted fields one at a time");
     return fillFields(fields, target);
   }
-  if (!text && !text_path) throw new Error("fill requires `text` or `text_path`");
+  const { checked, option } = args;
+  if (checked != null || option != null) {
+    if (text != null || text_path != null) throw new Error("fill: checked/option takes no `text` or `text_path`");
+    if (trusted || raise) throw new Error("fill: checked/option does not take trusted/raise");
+    if (checked != null && option != null) throw new Error("fill: pass one of `checked` or `option`");
+    if (checked != null && typeof checked !== "boolean") throw new Error("fill: `checked` must be a boolean");
+    if (!ref && !selector && !label_pattern) throw new Error("fill requires `ref`, `selector`, or `label_pattern`");
+    const r = await fillFields([{ ref, selector, label_pattern, checked, option }], target);
+    return r && Array.isArray(r.results) ? r.results[0] : r;
+  }
+  if (!text && !text_path) throw new Error("fill requires `text` or `text_path` (checked/option: use fields)");
   if (text && text_path) throw new Error("fill: pass `text` OR `text_path`, not both");
   if (!ref && !selector && !label_pattern) throw new Error("fill requires `ref`, `selector`, or `label_pattern`");
   if (label_pattern) validateLabelPattern("fill", label_pattern);

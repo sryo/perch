@@ -219,3 +219,42 @@ test("fill schema advertises fields", () => {
   const t = TOOLS.find((x) => x.name === "fill");
   assert.equal(t.inputSchema.properties.fields.type, "array");
 });
+
+// A single field with checked or option returns that field's own result, the
+// same flat shape a single text fill returns, rather than a {ok, results} list.
+test("fill with a single checked field returns that field's result", async () => {
+  const { dom } = onPage(FORM);
+  const { r, o } = await fill({ label_pattern: "agree", checked: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.deepEqual(o, { ok: true, kind: "check", el: `checkbox "I agree"`, checked: true });
+  assert.equal(dom.document.querySelector("[name=agree]").checked, true);
+});
+
+test("fill with a single option field picks it and returns that field's result", async () => {
+  const { dom } = onPage(FORM);
+  const { o } = await fill({ label_pattern: "country", option: "Brazil" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.results, undefined);
+  assert.equal(dom.document.querySelector("select").value, "br");
+});
+
+test("fill with a single custom combobox option goes through select", async () => {
+  const { dom } = onPage(CUSTOM, CUSTOM_JS);
+  const { o } = await fill({ label_pattern: "level", option: "senior" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.kind, "select");
+  assert.equal(dom.document.querySelector(".v").textContent, "Senior");
+});
+
+test("fill single checked/option refuses text, trusted and raise, and both at once", async () => {
+  onPage(FORM);
+  const err = async (args) => (await handleCall("fill", args)).content[0].text;
+  assert.match(await err({ label_pattern: "agree", checked: true, text: "x" }), /checked\/option.*`text`/);
+  assert.match(await err({ label_pattern: "agree", checked: true, text_path: "/tmp/x" }), /checked\/option.*`text`/);
+  assert.match(await err({ label_pattern: "agree", checked: true, trusted: true }), /checked\/option.*trusted/);
+  assert.match(await err({ label_pattern: "country", option: "Brazil", raise: true }), /checked\/option.*trusted/);
+  assert.match(await err({ label_pattern: "agree", checked: true, option: "x" }), /one of `checked` or `option`/);
+  assert.match(await err({ label_pattern: "agree", checked: "yes" }), /`checked` must be a boolean/);
+  assert.match(await err({ checked: true }), /`ref`, `selector`, or `label_pattern`/);
+  assert.match(await err({ selector: "#a" }), /fill requires `text` or `text_path` \(checked\/option: use fields\)/);
+});
