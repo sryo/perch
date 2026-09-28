@@ -534,7 +534,7 @@ function jxaRuntime(BROWSERS) {
   // The window's own pixels, captured and encoded here rather than by spawning
   // screencapture and sips. CGPreflightScreenCaptureAccess never prompts; without
   // the grant, or on an empty image, it returns null and screencapture (which
-  // asks for the grant itself) takes over. A failed downscale keeps full size.
+  // asks for the grant itself) takes over, as it does after a failed downscale.
   function capture(wid, format, maxWidth) {
     try {
       ObjC.import("CoreGraphics");
@@ -4048,7 +4048,7 @@ const TOOLS = [
     y: { type: "number" },
     trusted: { type: "boolean" },
     raise: { type: "boolean" },
-    readback: { type: "string", description: "CSS; its text once changed (2s cap): {readback,changed,url?}." },
+    readback: { type: "string", description: "CSS; its text once changed (2s cap; ~0.7s if the page goes quiet): {readback,changed,url?}." },
     hover: { type: "boolean" },
     target: TARGET,
   }),
