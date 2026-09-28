@@ -1676,29 +1676,70 @@ function jxaRuntime(BROWSERS) {
       // before the tab has left it (an unreadable url counts), none when going to one.
       const arcPage = t.kind === "arc" && canEval && (preUrl == null || /^arc:/i.test(preUrl) || /^arc:/i.test(a.url));
       if (arcPage) canEval = false;
-      if (canEval) {
-        const q = JSON.stringify(a.url);
-        const stamp = "(function(){var s='stamped';try{var u=new URL(" + q + ",location.href);" +
+      // Setting the url raises a Chromium window (Safari's did not, live), so without
+      // raise:true it is set only when that window is already the front one.
+      const mayRaise = function () {
+        if (a.raise || t.kind === "safari") return true;
+        const P = procs();
+        return P.front === t.app && !P.dupe[t.app] && t.w === 0;
+      };
+      const refuse = function (code, why) {
+        return new Error(code + ": " + why + "; loading it from outside the page would bring the browser to the front: pass raise:true to allow that, or activate_tab first");
+      };
+      if (!canEval && !mayRaise()) throw refuse("tab_not_visible", arcPage ? "navigate can't run page JS on the browser's own pages or load them from a page" : "navigate can't run page JS in a tab its window doesn't show");
+      if (canEval && !fromPage && !mayRaise()) throw refuse("tab_not_visible", "a page can only load an absolute http(s) URL or about:blank itself");
+      const q = JSON.stringify(a.url), tok = JSON.stringify(token);
+      // On a retry, a document without the stamp is the one the lost call's load
+      // committed when it shows the URL asked for (unless the tab already showed it),
+      // or, when the tab wasn't loading before, any other URL: a redirect.
+      const arrived = function () {
+        const pre = JSON.stringify(preUrl);
+        return "var h=null;try{h=new URL(" + q + ",location.href).href}catch(e){}" +
+          "if(location.href===h&&h!==" + pre + (wasLoading || preUrl == null ? "" : "||location.href!==" + pre) + ")return 'stamped!';";
+      };
+      // The stamp call keeps its answer on the page, so a retry that reaches the same
+      // document repeats that answer instead of starting a second load.
+      const stamp = function (retry) {
+        return "(function(){var o=window.__perch_navr;if(o&&o[0]===" + tok + ")return o[1];" + (retry ? arrived() : "") +
+          "var r=(function(){var s='stamped';try{var u=new URL(" + q + ",location.href);" +
           "if(u.hash&&u.href.split('#')[0]===location.href.split('#')[0])s='same'}catch(e){}" +
-          "if(s==='stamped')window.__perch_nav=" + JSON.stringify(token) + ";" +
+          "if(s==='stamped')window.__perch_nav=" + tok + ";" +
           // A Navigation API listener added after the page's own sees whether the
-          // page cancelled the load; a cancelled one falls back to the tab's url.
+          // page cancelled the load.
           (fromPage ? "var c=false,n=window.navigation,f=function(e){c=e.defaultPrevented};try{n.addEventListener('navigate',f)}catch(e){}" +
-            "try{location.assign(" + q + ")}catch(e){return s}finally{try{n.removeEventListener('navigate',f)}catch(e){}}return c?s:s+'!'" : "return s") + "})()";
-        try { r = String(run(stamp)); } catch (e) { if (isStale(e)) throw e; }
-      }
+            "try{location.assign(" + q + ")}catch(e){return s}finally{try{n.removeEventListener('navigate',f)}catch(e){}}return c?s:s+'!'" : "return s") +
+          "})();window.__perch_navr=[" + tok + ",r];return r})()";
+      };
+      let lastErr = null;
+      const tryRun = function (js, secs) {
+        try { return String(secs ? execWithin(t, js, Math.max(0.1, Math.min(secs, (deadline - Date.now()) / 1000))) : run(js)); }
+        catch (e) { if (isStale(e)) throw e; lastErr = e; return null; }
+      };
+      if (canEval) r = tryRun(stamp(false));
       // A reply lost as the new document replaced the old one still started the load:
       // the tab is loading, or a document without the stamp answers from another URL.
       // A tab already loading before the stamp shows both for its earlier load.
       let viaPage = /!$/.test(r || "");
       if (canEval && fromPage && r == null && t.kind !== "safari" && !wasLoading) {
-        try { viaPage = tabRead(function () { return t.tab.loading(); }) || (preUrl != null && String(tabRead(function () { return t.tab.url(); })) !== preUrl && String(run("String(window.__perch_nav===" + JSON.stringify(token) + ")")) === "false"); } catch (e) { if (isStale(e)) throw e; }
+        try { viaPage = tabRead(function () { return t.tab.loading(); }) || (preUrl != null && String(tabRead(function () { return t.tab.url(); })) !== preUrl && String(run("String(window.__perch_nav===" + tok + ")")) === "false"); } catch (e) { if (isStale(e)) throw e; }
+      }
+      // Still unproven: the page was busy, slow, or its reply was lost. Ask again with
+      // more time before anything loads the url from outside the page.
+      if (canEval && fromPage && r == null && !viaPage && t.kind !== "safari") {
+        for (let secs = POLL_EXEC_SECS; r == null && secs <= 2 * POLL_EXEC_SECS && Date.now() < deadline; secs *= 2) r = tryRun(stamp(true), secs);
+        viaPage = /!$/.test(r || "");
       }
       const result = function (waited) {
         const o = { waited: waited, tabId: handleOf(t) };
         if (!viaPage && t.kind !== "safari") o.warning = "navigating from outside the page may bring the browser to the front";
         return o;
       };
+      if (!viaPage && !mayRaise()) {
+        if (r != null) throw refuse("tab_not_visible", "the page refused or cancelled the load");
+        // A fast failure (JS from Apple Events off) reports its own error on the plain path.
+        if (lastErr && !isNoReply(lastErr)) exec(t, "1");
+        throw refuse("timeout", "the page didn't answer, so the load may or may not have started; check the tab's url before retrying");
+      }
       if (!viaPage) onTab(t, function () { t.tab.url = a.url; });
       if (/^same/.test(r || "")) return result(true);
       // Until the url commits the tab still reads arc:. Arc can drop a url set while
@@ -2320,8 +2361,8 @@ async function wait(args = {}) {
 const NAV_TIMEOUT = 15000;
 
 // Some handles follow the page's URL, so navigate returns the tab's current one.
-async function navigate(url, target) {
-  const r = await rt("navigate", { target, url, timeout: NAV_TIMEOUT }, { lane: "slow", timeout: NAV_TIMEOUT + JXA_OVERHEAD });
+async function navigate(url, target, raise) {
+  const r = await rt("navigate", { target, url, raise: !!raise, timeout: NAV_TIMEOUT }, { lane: "slow", timeout: NAV_TIMEOUT + JXA_OVERHEAD });
   // waited:false: the new page wasn't confirmed loaded (the timeout ran out, or
   // a background Arc tab can't be checked).
   const out = { ok: true, url, waited: !!(r && r.waited) };
@@ -4515,7 +4556,7 @@ const TOOLS = [
   }),
   tool("activate_tab", "Bring the target tab and its window to the front.", { target: TARGET }),
   tool("close_tab", "Close the tab with this handle. Never closes a window's last tab and never changes focus.", { tabId: { type: "string" } }, ["tabId"]),
-  tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading.", { url: { type: "string" }, target: TARGET }, ["url"]),
+  tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading. Where the page can't start the load itself (not http(s), page JS unavailable), it needs `raise:true`, which may bring the browser forward.", { url: { type: "string" }, raise: { type: "boolean" }, target: TARGET }, ["url"]),
   tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. Given both, `script_path` runs before `script`.", {
     script: { type: "string" },
     script_path: { type: "string", description: "Local .js file." },
@@ -4613,7 +4654,7 @@ export const HANDLERS = {
   new_tab:       (a) => newTab(a.url, a.app),
   activate_tab:  (a) => activateTab(a.target),
   close_tab:     (a) => closeTab(a),
-  navigate:      (a) => navigate(a.url, a.target),
+  navigate:      (a) => navigate(a.url, a.target, a.raise),
   eval_js:       async (a) => evalJs(await composeEvalScript(a), a.target, { awaitPromise: a.awaitPromise }),
   wait:          (a) => wait(a),
   screenshot:    (a) => screenshot(a),

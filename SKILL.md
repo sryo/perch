@@ -6,7 +6,7 @@ allowed-tools: mcp__perch__*
 
 # perch: macOS browser bridge
 
-Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `tabId` from `list_tabs` or `new_tab`: one opaque handle for any browser, valid while other tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loosely matched, e.g. `"canary"`) only filters `list_tabs` or picks the browser for `new_tab`.
+Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `tabId` from `list_tabs` or `new_tab`: one opaque handle for any browser, stable as tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loose, e.g. `"canary"`) only filters `list_tabs` or picks the browser for `new_tab`.
 
 ## Tools
 
@@ -16,7 +16,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `new_tab` | Unselected tab in a running browser, default the one in use. May focus the browser; defer while the user works. Returns `{app,tabId}`. |
 | `activate_tab` | Raise a tab and its window. |
 | `close_tab` | Close a tab by its required `tabId`. Refuses a window's last tab; never changes focus. |
-| `navigate` | Load a URL and wait for the new page. Returns the tab's current `tabId`; use it from then on. `waited:false`: load not confirmed. |
+| `navigate` | Load a URL from the page and wait for it; returns the tab's current `tabId`. `waited:false`: not confirmed. Other URLs, or no page JS: `raise:true` (may raise the browser). |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path`: a local file, run before `script` if both. `awaitPromise` for real async. |
 | `wait` | Until `selector` exists and `readyState` is reached, or `expression` is truthy (returned as `value`). |
 | `screenshot` | On-screen window image without raising it, plus `{window, image}`: `screenX = window.x + imageX * window.w / image.w`. Not for minimized windows. |
@@ -49,7 +49,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change; `option` also answers a radio group by question.
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
 - Page errors: `isError` with `__perch_error`, `__perch_error_name`, a stack head.
-- Other errors start with a code; branch on it. `tab_not_visible`: not the tab its window shows; `activate_tab` (takes focus) or retry later. `stale_tab`: re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `window_ambiguous`: move or resize a same-frame window. `no_browser`: none running or no window (never launched). `timeout`: re-list, retry once; if it may have run, check the page first. `tab_not_scriptable`: internal page; `navigate` first. `dialog_open`: see Dialogs.
+- Other errors start with a code; branch on it. `tab_not_visible`: not the tab its window shows; `activate_tab` (takes focus) or retry later. `stale_tab`: re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `window_ambiguous`: move or resize a same-frame window. `no_browser`: none running or no window. `timeout`: re-list, retry once; if it may have run, check the page first. `tab_not_scriptable`: internal page; `navigate` first. `dialog_open`: see Dialogs.
 
 ## Gotchas
 
