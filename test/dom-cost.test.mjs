@@ -99,3 +99,44 @@ test("large page: snapshot, text, names, fill, select, typeahead and match tiers
   for (const k of Object.keys(g)) assert.deepEqual(o[k], g[k], k);
   assert.deepEqual(Object.keys(o), Object.keys(g));
 });
+
+const FILL_BODY = PAGE_SCRIPTS.fill.slice(0, PAGE_SCRIPTS.fill.lastIndexOf("return fillOne(A);"));
+
+test("matchTier folds each item's key once, not once per tier", () => {
+  const w = page(`<ul>${Array.from({ length: 50 }, (_, i) => `<li>Item ${i}</li>`).join("")}</ul>`);
+  const r = runMatch(w, `
+    const list = Array.from(document.querySelectorAll("li"));
+    let n = 0;
+    const m = matchTier(list, function (x) { n++; return norm(x.textContent); }, "zzz");
+    const m2 = matchTier(list, function (x) { return norm(x.textContent); }, "item 7");
+    return [m.hits.length, n, m2.hits.length, m2.exact];`);
+  assert.deepEqual(r, [0, 50, 1, true]);
+});
+
+test("taMatch reads each option's text once, not once per tier", () => {
+  const w = page(`<ul>${Array.from({ length: 40 }, (_, i) => `<li role=option>City ${i}, Region</li>`).join("")}</ul>`);
+  const r = runMatch(w, `
+    const list = Array.from(document.querySelectorAll("li"));
+    let n = 0;
+    list.forEach(function (o) {
+      const t = o.textContent;
+      Object.defineProperty(o, "textContent", { configurable: true, get: function () { n++; return t; } });
+    });
+    const miss = taMatch(list, "zzz").hits.length, reads = n;
+    const hit = taMatch(list, "city 12, region");
+    return [miss, reads, hit.hits.length, hit.exact];`);
+  assert.deepEqual(r, [0, 40, 1, true]);
+});
+
+test("fill's label fallback reads each shared ancestor's text once", () => {
+  const w = page(`<section>Order<div id=d><p>Shipping</p>${"<input>".repeat(10)}</div></section>`);
+  const r = runBody(w, FILL_BODY + `
+    const t = document.getElementById("d").textContent;
+    let n = 0;
+    const test = RegExp.prototype.test;
+    RegExp.prototype.test = function (s) { if (s === t) n++; return test.call(this, s); };
+    const miss = fillOne({ label_pattern: "zzz", text: "x" }).ok, reads = n;
+    const hit = fillOne({ label_pattern: "shipping", text: "x" });
+    return [miss, reads, hit.ok, n];`);
+  assert.deepEqual(r, [false, 1, true, 2]);
+});
