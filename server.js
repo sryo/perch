@@ -2532,19 +2532,33 @@ function chosenAlready(s, opt, key) {
   if (!s.multi) return (!!s.whole && s.whole === key) || (s.shown || []).some(function (t) { return norm(t) === key; });
   return (s.shown || []).some(function (t) { return norm(t) === key; }) || commaParts(s.whole).indexOf(key) >= 0;
 }
-// A list still loading: aria-busy, a progressbar, a status that is no
-// no-results notice, a loading or spinner class, or text starting "Loading",
-// visible on or inside one of roots.
+// A list still loading, visible on or inside one of roots: aria-busy, a
+// progressbar, a loading or spinner class, a Tailwind animate-spin or
+// animate-pulse class word, text starting Loading/Searching/Fetching (an
+// aria-live region's whole text too), or a role=status that is neither a
+// no-results notice nor a live count ("3 results available"). A status asking
+// for more characters counts as loading, since a debounced search may still
+// replace it. Only elements that can carry a signal are queried, since a root
+// may be a whole dialog.
 function loadingIn(roots) {
-  const none = /\bno\b|nothing|not found|\b0 results/i, word = /^(loading|searching|fetching)\b/i;
+  const none = /^(no (results?|options?|match(es|ing)?|items?|suggestions?)|nothing (found|matche[sd])|0 (results?|options?|matches|items?)|not found)\b/i;
+  const count = /^\d+ (results?|options?|suggestions?|items?) (are )?available\b/i, word = /^(loading|searching|fetching)\b/i;
+  const SIGNS = "[aria-busy=true], [role=progressbar], [role=status], [aria-live], [class*=load], [class*=spin], [class*=animate-]";
   const busy = function (e) {
     const cls = String(e.className && e.className.baseVal != null ? e.className.baseVal : e.className || "");
     const st = attr(e, "role") === "status" ? norm(textOf(e)) : "";
-    return (attr(e, "aria-busy") === "true" || attr(e, "role") === "progressbar" || (st && !none.test(st)) ||
-      /loading|spinner/i.test(cls) || word.test(norm(ownText(e)))) && vis(e);
+    return (attr(e, "aria-busy") === "true" || attr(e, "role") === "progressbar" || (st && !none.test(st) && !count.test(st)) ||
+      /loading|spinner/i.test(cls) || cls.split(/\s+/).some(function (c) { return /^animate-(spin|pulse)$/.test(c.split(":").pop()); }) ||
+      (e.hasAttribute("aria-live") && word.test(norm(textOf(e))))) && vis(e);
+  };
+  const said = function (r) {
+    if (!/loading|searching|fetching/i.test(r.textContent)) return false;
+    const w = document.createTreeWalker(r, 4);
+    for (let n = w.nextNode(); n; n = w.nextNode()) if (word.test(norm(n.nodeValue)) && vis(n.parentElement)) return true;
+    return false;
   };
   return roots.some(function (r) {
-    return !!r && r.isConnected && (attr(r, "aria-busy") === "true" || Array.prototype.some.call(r.querySelectorAll("*"), busy));
+    return !!r && r.isConnected && ((r.matches && r.matches(SIGNS) && busy(r)) || Array.prototype.some.call(r.querySelectorAll(SIGNS), busy) || said(r));
   });
 }
 // Still open: the control says so, or its own list still shows options.
@@ -3237,12 +3251,13 @@ if (s.typed && s.typedSig && !sig) {
 } else s.emptied = 0;
 if (!s.typed && wantN && box && s.polls >= 4) {
   const q = String(A.text).trim().split(/[^\p{L}\p{N} ]/u)[0].trim() || String(A.text).trim();
+  // Taken before typing: a list that re-renders on input detaches its options at once.
+  if (opts.length) s.listRoot = opts[0].parentElement;
   if (box.focus) box.focus();
   setNativeValue(box, q);
   fire(box, ["input"]);
   s.typed = box;
   s.typedSig = sig;
-  if (opts.length) s.listRoot = opts[0].parentElement;
 }
 return null;
 `,

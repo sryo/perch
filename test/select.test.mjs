@@ -254,6 +254,11 @@ const LOADING = {
   "a spinner in the list": `ul.innerHTML = '<li><span class=spinner-border></span></li>';`,
   "a status in the list": `ul.innerHTML = '<li role=status>Fetching offices</li>';`,
   "a Loading message": `ul.innerHTML = '<li class=notice>Loading...</li>';`,
+  "a status that says no results yet": `ul.innerHTML = '<li role=status>Looking up offices, no results yet</li>';`,
+  "a status asking for more characters": `ul.innerHTML = '<li role=status>Type 3 or more characters</li>';`,
+  "a Tailwind animate-spin icon": `ul.innerHTML = '<li><svg class="motion-safe:animate-spin h-4 w-4"></svg></li>';`,
+  "a Tailwind animate-pulse skeleton": `ul.innerHTML = '<li><div class="animate-pulse h-4 bg-gray-200"></div></li>';`,
+  "an aria-live region saying Searching": `ul.innerHTML = '<li aria-live=polite><svg></svg>Searching <b>offices</b></li>';`,
 };
 for (const [name, busy] of Object.entries(LOADING)) {
   test(`an emptied list is waited on while it shows ${name}`, async () => {
@@ -270,6 +275,81 @@ for (const [name, busy] of Object.entries(LOADING)) {
     assert.equal(ms, 1000, "the answer lands 800ms after the poll that saw the filter");
   });
 }
+
+// Neither loading nor a no-results notice: a live count, or a class word only
+// containing a Tailwind animation name.
+const NOT_LOADING = {
+  "a status with a live result count": `ul.innerHTML = '<li role=status>2 results available</li>';`,
+  "a status saying No matches": `ul.innerHTML = '<li role=status>No matches for this search</li>';`,
+  "a longer class word holding animate-spin": `ul.innerHTML = '<li><span class="animate-spin-once">x</span></li>';`,
+};
+for (const [name, html] of Object.entries(NOT_LOADING)) {
+  test(`an emptied list showing ${name} settles in about 0.5s`, async () => {
+    const { world } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => { ${html} });`));
+    const { o, ms } = await spent(world, { label_pattern: "office", text: "zz" });
+    assert.deepEqual(o.candidates, ["Berlin", "Madrid"], JSON.stringify(o));
+    assert.equal(ms, 550);
+  });
+}
+
+test("an emptied list with no loading signal misses at 0.5s though the answer would land at 0.8s", async () => {
+  const { dom, world } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => { window.typed = true; show([]); });`));
+  afterTyping(dom, world, 800, () => dom.show(["Oslo"]));
+  const { o, ms } = await spent(world, { label_pattern: "office", text: "Oslo" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.candidates, ["Berlin", "Madrid"], "the list as it was before typing");
+  assert.equal(ms, 550);
+});
+
+// A portaled list the control does not name: select finds it as options that
+// appeared on opening, so its loading signal is only reachable through that list.
+test("a loading signal inside a list the control does not name keeps it waited on", async () => {
+  const html = `<div><label id=pl>Office</label><input id=po role=combobox aria-labelledby=pl aria-expanded=false></div>`;
+  const { dom, world } = onPage(html, `
+    const inp = document.getElementById('po');
+    let ul = null;
+    const show = (xs) => { ul.innerHTML = xs.map((x) => '<li role=option>' + x + '</li>').join(''); };
+    const open = () => { if (ul) return; ul = document.createElement('ul'); document.body.append(ul); inp.setAttribute('aria-expanded', 'true'); show(['Berlin', 'Madrid']); };
+    inp.addEventListener('focus', open); inp.addEventListener('mousedown', open);
+    inp.addEventListener('input', () => { window.typed = true; ul.innerHTML = '<li><span class=spinner></span></li>'; });
+    window.show = show;`);
+  afterTyping(dom, world, 800, () => dom.show(["Oslo"]));
+  const { o, ms } = await spent(world, { label_pattern: "office", text: "Oslo" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Oslo");
+  assert.equal(ms, 1000);
+});
+
+// A command palette dialog whose spinner sits beside its list, not inside it.
+test("a loading signal elsewhere in the popup dialog keeps it waited on, without walking every element", async () => {
+  const html = `<label id=bl>Office</label><button id=pb type=button aria-labelledby=bl aria-haspopup=dialog aria-expanded=false>Pick one</button>`;
+  const { dom, world } = onPage(html, `
+    const b = document.getElementById('pb');
+    let d = null;
+    const show = (xs) => { d.querySelector('[cmdk-list]').innerHTML = xs.map((x) => '<div cmdk-item role=option>' + x + '</div>').join(''); };
+    b.addEventListener('click', () => {
+      if (d) return;
+      d = document.createElement('div');
+      d.setAttribute('role', 'dialog');
+      d.innerHTML = '<input cmdk-input><div cmdk-list></div><footer></footer>' + '<p>row</p>'.repeat(50);
+      document.body.append(d);
+      window.dialog = d;
+      show(['Berlin', 'Madrid']);
+      d.querySelector('input').addEventListener('input', () => {
+        window.typed = true; show([]); d.querySelector('footer').innerHTML = '<span class=spinner></span>';
+        const all = d.querySelectorAll.bind(d);
+        window.stars = 0;
+        d.querySelectorAll = (sel) => { if (sel === '*') window.stars++; return all(sel); };
+      });
+    });
+    window.show = (xs) => { window.starsWhileEmpty = window.stars; d.querySelector('footer').innerHTML = ''; show(xs); };`);
+  afterTyping(dom, world, 800, () => dom.show(["Oslo"]));
+  const { o, ms } = await spent(world, { label_pattern: "office", text: "Oslo" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Oslo");
+  assert.ok(ms > 800, `answered after ${ms}ms`);
+  assert.equal(dom.starsWhileEmpty, 0, "empty polls never list every element of the dialog");
+});
 
 test("a list empty before the filter was typed is waited on past 0.5s (an async list)", async () => {
   const html = `<label id=al>Office</label><input id=ao role=combobox aria-labelledby=al aria-controls=am aria-expanded=false><ul id=am role=listbox></ul>`;
