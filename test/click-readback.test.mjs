@@ -7,12 +7,13 @@ import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
 
-function onPage(html, setup) {
+function onPage(html, setup, { frameMs = 0 } = {}) {
   const dom = page(html);
   if (setup) dom.eval(setup);
   const world = makeWorld({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: [{ url: "https://a.test/", id: "x", dom }] }] }],
     cg: [{ owner: "Google Chrome" }],
+    frameMs,
   });
   world.run(JXA_PRELUDE);
   DAEMONS.fast = world.daemon;
@@ -60,12 +61,93 @@ test("readback that never changes returns the current text with changed:false", 
   assert.deepEqual(await click({ selector: "#b", readback: "#s" }), { ok: true, el: `button "Submit"`, readback: "Idle", changed: false });
 });
 
-test("readback settle is bounded (about 2s of virtual time)", async () => {
-  const { world } = onPage(FORM);
+test("readback on a page gone quiet ends after 10 quiet polls, not the 2s cap", async () => {
+  const { world } = onPage(FORM, "", { frameMs: 16 });
   const t0 = world.clock.t;
-  await click({ selector: "#b", readback: "#s" });
+  assert.equal((await click({ selector: "#b", readback: "#s" })).changed, false);
   const spent = world.clock.t - t0;
-  assert.ok(spent >= 1500 && spent <= 2600, `spent ${spent}ms`);
+  assert.ok(spent >= 450 && spent <= 900, `spent ${spent}ms`);
+});
+
+test("DOM activity anywhere on the page keeps readback waiting, up to the 2s cap", async () => {
+  const { dom, world } = onPage(FORM + `<div id=spin></div>`);
+  let n = 0;
+  const orig = dom.eval.bind(dom);
+  dom.eval = (js) => { dom.document.getElementById("spin").textContent = String(n++); return orig(js); };
+  const t0 = world.clock.t;
+  assert.equal((await click({ selector: "#b", readback: "#s" })).changed, false);
+  const spent = world.clock.t - t0;
+  assert.ok(spent >= 1900 && spent <= 2600, `spent ${spent}ms`);
+});
+
+// Completed fetch/XHR requests show up as resource timing entries.
+function fetches(dom, every) {
+  const entries = [];
+  const orig = dom.eval.bind(dom);
+  let n = 0;
+  dom.performance.getEntriesByType = (t) => (t === "resource" ? entries.slice() : []);
+  dom.eval = (js) => { if (++n % every === 0) entries.push({ initiatorType: n % 2 ? "fetch" : "xmlhttprequest" }); return orig(js); };
+  return entries;
+}
+
+test("fetch or XHR requests completing keep readback waiting; other resources don't", async () => {
+  let { dom, world } = onPage(FORM);
+  fetches(dom, 3);
+  let t0 = world.clock.t;
+  assert.equal((await click({ selector: "#b", readback: "#s" })).changed, false);
+  assert.ok(world.clock.t - t0 >= 1900, `spent ${world.clock.t - t0}ms`);
+  ({ dom, world } = onPage(FORM));
+  const entries = [];
+  dom.performance.getEntriesByType = (t) => (t === "resource" ? entries.slice() : []);
+  const orig = dom.eval.bind(dom);
+  dom.eval = (js) => { entries.push({ initiatorType: "img" }); return orig(js); };
+  t0 = world.clock.t;
+  await click({ selector: "#b", readback: "#s" });
+  assert.ok(world.clock.t - t0 < 900, `spent ${world.clock.t - t0}ms`);
+});
+
+test("a change that lands after a long stretch of page activity is still caught", async () => {
+  const { dom } = onPage(FORM + `<div id=spin></div>`);
+  let n = 0;
+  const orig = dom.eval.bind(dom);
+  dom.eval = (js) => {
+    if (++n < 25) dom.document.getElementById("spin").textContent = String(n);
+    else if (n === 25) dom.document.getElementById("s").textContent = "Saved";
+    return orig(js);
+  };
+  assert.deepEqual(await click({ selector: "#b", readback: "#s" }), { ok: true, el: `button "Submit"`, readback: "Saved", changed: true });
+});
+
+// Every MutationObserver the page script creates, and whether it was disconnected.
+function observers(dom) {
+  const made = [];
+  const MO = dom.MutationObserver;
+  dom.MutationObserver = class extends MO {
+    constructor(cb) { super(cb); made.push(this); this.live = false; }
+    observe(...a) { this.live = true; return super.observe(...a); }
+    disconnect() { this.live = false; return super.disconnect(); }
+  };
+  return made;
+}
+
+test("readback's MutationObserver is disconnected whatever the outcome", async () => {
+  for (const [html, js] of [[FORM, SAVE], [FORM, ""], [FORM + `<div id=spin></div>`, null]]) {
+    const { dom } = onPage(html, js || "");
+    const made = observers(dom);
+    if (js === null) {
+      const orig = dom.eval.bind(dom);
+      let n = 0;
+      dom.eval = (s) => { dom.document.getElementById("spin").textContent = String(n++); return orig(s); };
+    }
+    await click({ selector: "#b", readback: "#s" });
+    assert.ok(made.length >= 1, "an observer was installed");
+    assert.deepEqual(made.map((m) => m.live), made.map(() => false));
+  }
+  // A bad selector installs none.
+  const { dom } = onPage(FORM);
+  const made = observers(dom);
+  await click({ selector: "#b", readback: "[[" });
+  assert.deepEqual(made.map((m) => m.live), made.map(() => false));
 });
 
 test("readback element that appears after the click counts as a change", async () => {

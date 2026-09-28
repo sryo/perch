@@ -2515,9 +2515,35 @@ function rbCls() {
     }).sort().join(" ");
   }).join("|");
 }
+// Page activity since the last poll: DOM mutations anywhere (takeRecords too,
+// since the observer's callback may not have run between polls) and completed
+// fetch/XHR requests, as resource timing entries. A state that is never read
+// stops its observer at the next mutation after 10s.
+function rbNet() {
+  try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
+  catch (e) { return 0; }
+}
+function rbBusy(s) {
+  if (s.obs) s.mut += s.obs.takeRecords().length;
+  const act = s.mut + ":" + rbNet(), busy = act !== s.act;
+  s.act = act;
+  return busy;
+}
+function rbStop(s) { if (s && s.obs) s.obs.disconnect(); }
 function rbArm() {
-  try { window.__perch_rb = { text: rbText(), sig: rbSig(), cls: rbCls(), url: location.href }; }
+  let s;
+  try { s = { text: rbText(), sig: rbSig(), cls: rbCls(), url: location.href }; }
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
+  rbStop(window.__perch_rb);
+  s.mut = 0; s.quiet = 0; s.at = Date.now(); s.act = "0:" + rbNet();
+  try {
+    s.obs = new MutationObserver(function (r) {
+      if (window.__perch_rb !== s || Date.now() - s.at > 10000) return s.obs.disconnect();
+      s.mut += r.length;
+    });
+    s.obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  } catch (e) { s.obs = null; }
+  window.__perch_rb = s;
   return null;
 }
 `;
@@ -2880,7 +2906,8 @@ return { ok: true, el: ident(r.el) };
 return rbArm() || { ok: true };
 `,
 
-  // null (keep polling) until the text or url moved; A.final settles for what's there.
+  // null (keep polling) until the text or url moved, or the page stayed quiet for
+  // 10 polls; A.final settles for what's there.
   // No state means a new document: wait for it to show the element, or give up at final.
   readback_read: READBACK_LIB + String.raw`
 const s = window.__perch_rb;
@@ -2895,7 +2922,10 @@ const cls = rbCls();
 const clsMoved = cls !== s.cls && cls === s.clsSeen;
 s.clsSeen = cls !== s.cls ? cls : null;
 const changed = moved || text !== s.text || rbSig() !== s.sig || clsMoved;
-if (!changed && !A.final) return null;
+// Ten polls in a row with no page activity (about 670ms live) settle it early.
+s.quiet = rbBusy(s) ? 0 : s.quiet + 1;
+if (!changed && !A.final && s.quiet < 10) return null;
+rbStop(s);
 delete window.__perch_rb;
 const out = { readback: text, changed: changed };
 if (moved) out.url = location.href;
