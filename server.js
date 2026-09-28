@@ -98,15 +98,14 @@ function jxaRuntime(BROWSERS) {
   }
 
   // AppKit's classes (NSRunningApplication, NSWorkspace, NSBitmapImageRep) exist
-  // only once it is imported. The import makes this osascript an app with a Dock
-  // icon, so it drops to the prohibited policy at once (2 is
-  // NSApplicationActivationPolicyProhibited; the named constant may not bridge).
+  // only once it is imported. The import alone leaves this osascript unregistered
+  // (no Dock icon); touching NSApplication.sharedApplication would register it as
+  // a regular app, so nothing here does.
   let appKitReady = false;
   function appKit() {
     if (appKitReady) return;
     ObjC.import("AppKit");
     appKitReady = true;
-    try { $.NSApplication.sharedApplication.setActivationPolicy(2); } catch (e) {}
   }
 
   // A browser's CG windows go by owner name, which a second instance of the same

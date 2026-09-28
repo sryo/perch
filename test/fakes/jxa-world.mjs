@@ -488,7 +488,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   // Every process is a regular app (activation policy 0) except a twin, which
   // defaults to 2 (prohibited: a headless instance, no Dock icon).
   // state.countFails: the instance count read throws. state.policies records
-  // this process's own setActivationPolicy calls.
+  // this process's own setActivationPolicy calls, state.sharedApp its
+  // NSApplication.sharedApplication reads (either would register it as an app).
   const appKit = {
     NSRunningApplication: {
       runningApplicationsWithBundleIdentifier: (bundle) => {
@@ -500,7 +501,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         return { isNil: () => false, activationPolicy: x ? x.policy ?? 2 : 0 };
       },
     },
-    NSApplication: { sharedApplication: { setActivationPolicy: (p) => { state.policies.push(p); return true; } } },
+    NSApplication: { get sharedApplication() { state.sharedApp = (state.sharedApp || 0) + 1; return { setActivationPolicy: (p) => { state.policies.push(p); return true; } }; } },
   };
   const sandbox = {
     Ref: () => [],

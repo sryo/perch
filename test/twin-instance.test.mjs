@@ -99,11 +99,12 @@ test("a fresh runtime's first page call with a twin imports AppKit and takes the
   assert.equal(world.counts.NSAppleScript || 0, 0);
 });
 
-test("importing AppKit makes the runtime a prohibited app, once", async () => {
+test("importing AppKit never registers the runtime as an app", async () => {
   await install();
   for (let i = 0; i < 2; i++) await call("wait", { expression: "1", timeout: 500, target: { tabId: handle } });
   assert.ok(world.state.imports.includes("AppKit"));
-  assert.deepEqual(world.state.policies, [2]);
+  assert.equal(world.state.sharedApp || 0, 0);
+  assert.deepEqual(world.state.policies, []);
 });
 
 test("an instance count that can't be read takes the plain path", async () => {
