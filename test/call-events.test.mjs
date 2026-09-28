@@ -155,7 +155,10 @@ test("a lazy Chrome handle retries only a missing tab, never another failure", a
   world.reset();
   const { r } = await call("eval_js", { script: "return 5", awaitPromise: true, target: { tabId: h } });
   assert.equal(r.isError, true);
-  assert.equal(world.counts["tab.execute"], 1);
+  // A bounded execute that fails fast is sent once more on the plain path, which
+  // reports the real error; the fake counts NSAppleScript's execute as tab.execute.
+  assert.equal(world.counts.NSAppleScript, 1);
+  assert.equal(world.counts["tab.execute"] - world.counts.NSAppleScript, 1);
   assert.equal(world.counts["tabs.id()"] || 0, 0);
 });
 
