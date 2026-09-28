@@ -1,57 +1,63 @@
 {
-  "rev": "6f40c69",
-  "date": "2026-09-28T03:54:17.155Z",
+  "rev": "6b87a90",
+  "date": "2026-09-27T23:12:27.677Z",
   "macos": "27.2",
   "browser": "Google Chrome Canary",
   "runs": 20,
   "results": {
     "list_tabs": {
-      "p50": 99.8,
-      "p95": 107.4,
-      "min": 95.6,
-      "bytes": 11403
+      "p50": 66.3,
+      "p95": 70.1,
+      "min": 60.3,
+      "bytes": 10955
     },
     "list_tabs limit:1": {
-      "p50": 102.4,
-      "p95": 118.7,
-      "min": 96.9,
-      "bytes": 231
+      "p50": 67.4,
+      "p95": 70.4,
+      "min": 62.9,
+      "bytes": 293
     },
     "eval_js explicit target": {
       "p50": 16.8,
-      "p95": 18.1,
-      "min": 15.6,
+      "p95": 18.4,
+      "min": 14.3,
       "bytes": 28
     },
     "eval_js awaitPromise": {
-      "p50": 33.4,
-      "p95": 37.2,
-      "min": 30.3,
+      "p50": 50,
+      "p95": 51.9,
+      "min": 47.8,
       "bytes": 28
     },
     "wait readyState": {
-      "p50": 16.7,
-      "p95": 18.7,
-      "min": 15.2,
-      "bytes": 53
+      "p50": 33.4,
+      "p95": 38,
+      "min": 28.2,
+      "bytes": 54
     },
     "accessibility_snapshot": {
-      "p50": 16.6,
-      "p95": 17.9,
-      "min": 12.2,
-      "bytes": 6668
+      "p50": 16.7,
+      "p95": 23.1,
+      "min": 14.8,
+      "bytes": 151
     },
     "get_text 2000": {
-      "p50": 16.7,
-      "p95": 19.1,
-      "min": 15.4,
-      "bytes": 2164
+      "p50": 16.8,
+      "p95": 17.9,
+      "min": 14.7,
+      "bytes": 34
     },
     "screenshot png": {
-      "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+      "p50": 149.1,
+      "p95": 158.4,
+      "min": 134.3,
+      "bytes": 422803
     },
     "screenshot jpeg": {
-      "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+      "p50": 134.7,
+      "p95": 164.3,
+      "min": 122.7,
+      "bytes": 261200
     },
     "schema": {
       "tools": 17,
