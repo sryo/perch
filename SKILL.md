@@ -40,7 +40,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 4 checkbox "I agree" checked
 ```
 
-Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`. Flags: `required`, `checked`, `disabled`, `expanded`. Refs die on the next snapshot or navigation (a stale ref errors).
+Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`. Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`. Refs die on the next snapshot or navigation.
 
 ## Results
 
