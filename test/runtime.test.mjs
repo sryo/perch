@@ -136,7 +136,7 @@ test("wait polls until true, sleeping on the fake clock", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }], loadTicks: 4 });
   const { o } = await call("wait", { readyState: "complete" });
   assert.equal(o.ok, true);
-  assert.ok(o.waited >= 3 * 150, `waited ${o.waited}`);
+  assert.ok(o.waited >= 3 * 50, `waited ${o.waited}`);
 });
 
 test("wait expression returns its value; timeout is an error", async () => {

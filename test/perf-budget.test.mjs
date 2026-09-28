@@ -76,12 +76,14 @@ test("Safari handle resolution reads its recorded window directly", async () => 
     cg: [{ owner: "Safari" }],
   });
   const h = (await listed("Safari")).find((t) => t.url === "https://s1.test/").tabId;
+  // Still loading at the first look, so wait resolves the handle to poll it.
+  world.tabsOf("Safari", 2)[1].page.ticks = 1;
   world.reset();
   const { r, t } = await call("wait", { readyState: "complete", target: { tabId: h } });
   assert.equal(r.isError, undefined, t);
   assert.equal(world.counts["win.id()"], undefined, "no window-id walk");
   assert.equal(world.counts["windows.length(Safari)"], undefined);
-  assert.equal(appleEvents(), 2, breakdown()); // tabs.url() + doJavaScript
+  assert.equal(appleEvents(), 3, breakdown()); // doJavaScript, then tabs.url() + doJavaScript
 });
 
 test("eval_js on a listed Chrome handle is one Apple Event and probes nothing else", async () => {
@@ -260,9 +262,9 @@ test("accessibility_snapshot: the default does no Accessibility work; frames:tru
   world.reset();
   ({ t } = await call("accessibility_snapshot", { frames: true }));
   assert.match(t, /\nf1 button "Pay" frame="pay\.test"$/);
-  // resolve (4), the tab's shown state (1) and the page script (1); the fake world
-  // doesn't count window geometry reads (2 more live).
-  assert.equal(events(), 6, breakdown());
+  // resolve (1, the front window's shown tab, so no separate shown check) and the
+  // page script (1); the fake world doesn't count window geometry reads (2 more live).
+  assert.equal(events(), 2, breakdown());
   // Window match (its geometry and CGWindowID) and page area, then role, name,
   // flags and frame per node.
   assert.equal(ax(), 35, breakdown());
@@ -287,7 +289,7 @@ test("the trusted click's hit test adds Accessibility reads only, no Apple Event
   // [Apple Events, AX reads] for background selector, background point, raised
   // selector. The Apple Events are what they were before the hit test; the AX
   // reads are the window match and page area (13) plus the hit test (4).
-  assert.deepEqual(cost, [[7, 17], [6, 17], [22, 17]]);
+  assert.deepEqual(cost, [[3, 17], [2, 17], [17, 17]]);
 });
 
 // Rows past `limit` are never returned, but `total` still counts them. A browser
