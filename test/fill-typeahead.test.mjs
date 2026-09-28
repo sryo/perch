@@ -481,3 +481,36 @@ test("typeahead: a tie in a list still growing waits for the list to settle", as
   assert.equal(o.selected, "Cordoba");
   assert.deepEqual([...dom.picks], ["Cordoba"]);
 });
+
+// A lookup that answers every query but one with the same unrelated suggestion
+// after `ticks` polls; `stale` shows that suggestion before anything is typed.
+const SUGGEST_JS = (ticks, stale) => LOCATION_JS()
+  .replace("cities.filter((c) => q && c.toLowerCase().startsWith(q))", "(q === 'zzyzx springs' ? ['Zzyzx Springs, CA'] : ['Toronto, ON, Canada'])")
+  .replace("}, 3);", `}, ${ticks});`) + (stale ? `dd.innerHTML = '<div class=dropdown-item>Toronto, ON, Canada</div>';` : "");
+
+test("typeahead: suggestions that answer the text without a match end the wait once they hold", async () => {
+  const { dom, world } = onPage(LOCATION, SUGGEST_JS(3));
+  const t0 = world.clock.t;
+  const o = await fill({ label_pattern: "location", text: "Zzyzx" });
+  const ms = world.clock.t - t0;
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /no suggestion/);
+  assert.deepEqual(o.candidates, ["Toronto, ON, Canada"]);
+  assert.equal($(dom, "#loc").value, "");
+  assert.ok(ms < 1200, "waited " + ms + "ms");
+});
+
+test("typeahead: a list already shown when typing is waited past until it changes", async () => {
+  const { dom } = onPage(LOCATION, SUGGEST_JS(14, true));
+  const o = await fill({ label_pattern: "location", text: "Zzyzx Springs" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Zzyzx Springs, CA");
+  assert.equal($(dom, "#loc").value, "Zzyzx Springs, CA");
+});
+
+test("typeahead: a list that empties after typing is waited on", async () => {
+  onPage(LOCATION, SUGGEST_JS(14, true) + `inp.addEventListener('input', () => later(() => { dd.innerHTML = ''; }, 2));`);
+  const o = await fill({ label_pattern: "location", text: "Zzyzx Springs" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Zzyzx Springs, CA");
+});

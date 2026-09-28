@@ -2660,12 +2660,16 @@ const m = taMatch(opts, s.text);
 const opt = m.hits.length === 1 || m.exact ? m.hits[0] : null;
 if (!opt) {
   if (opts.length) { s.cands = opts.slice(0, 8).map(function (o) { return clip(o.textContent, 60); }); s.tied = m.hits.length > 1; }
-  // A tie in a list unchanged for 8 polls (about 400ms, past a typical
-  // debounce that shows a stale list) is settled, so the miss runs now ({settled}).
-  const sig = s.tied ? opts.map(function (o) { return taNorm(o.textContent); }).join("\n") : null;
-  s.tieN = sig && sig === s.tieSig ? (s.tieN || 0) + 1 : 0;
-  s.tieSig = sig;
-  return sig && s.tieN >= 8 ? { settled: true } : null;
+  // A list unchanged for 8 polls (about 400ms, past a typical debounce that
+  // shows a stale list) is settled, so the miss runs now ({settled}): a tie at
+  // once, a list without a hit only once it changed from the first one seen
+  // after typing, which may be the stale one. An empty list keeps waiting.
+  const sig = opts.length ? opts.map(function (o) { return taNorm(o.textContent); }).join("\n") : null;
+  if (!("sig0" in s)) s.sig0 = sig;
+  if (sig !== s.sig0) s.answered = true;
+  s.same = sig && sig === s.sig ? s.same + 1 : 0;
+  s.sig = sig;
+  return sig && s.same >= 8 && (s.tied || s.answered) ? { settled: true } : null;
 }
 s.picked = clip(opt.textContent, 80);
 s.pickedN = taNorm(opt.textContent);
