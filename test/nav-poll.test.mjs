@@ -95,9 +95,11 @@ test("click readback: a final read that gets no reply is a coded timeout, and th
   assert.equal(world.page("Google Chrome", 1, 0).clicks, 1);
 });
 
-test("select whose start navigates settles on the new document's answer within its wait", async () => {
+test("select whose start navigates: the pick the navigation drops ends coded within its wait, sent once", async () => {
   await install();
-  const { out, took } = await timed(() => rt("select", {
+  const t0 = world.clock.t;
+  world.reset();
+  assert.throws(() => rt("select", {
     target: { tabId: handle },
     start: `window.__open = 1; location.assign(${JSON.stringify(NEXT)}); JSON.stringify({pending: true})`,
     pick: "JSON.stringify(window.__open ? null : {ok: false, error: 'the page navigated'})",
@@ -105,9 +107,9 @@ test("select whose start navigates settles on the new document's answer within i
     miss: "JSON.stringify({ok: false, error: 'miss'})",
     read: "JSON.stringify(null)",
     readFinal: "JSON.stringify(null)",
-  }));
-  assert.deepEqual(out, { ok: false, error: "the page navigated" });
-  assert.ok(took <= 2000 + 1000, `took ${took}ms`);
+  }), (e) => NO_RERUN.test(e.message));
+  assert.ok(world.clock.t - t0 <= 2000, `took ${world.clock.t - t0}ms`);
+  assert.equal(world.counts["tab.execute"], 2, "start and one pick");
 });
 
 test("select: a miss read that gets no reply is a coded timeout", async () => {
@@ -130,4 +132,122 @@ test("a poll on a tab that closed mid-poll is still stale_tab", async () => {
   const { r, t } = await call("wait", { expression: "false", timeout: 2000, target: { tabId: handle } });
   assert.equal(r.isError, true);
   assert.match(t, /stale_tab/);
+});
+
+// A tab with no navigation in flight, for page JS that is merely slow.
+const calm = () => { world.state.linger = 0; world.state.dropWhilePending = false; };
+const assigns = () => world.log.filter(([k]) => k === "assign").length;
+const NO_RERUN = /^(error: )?timeout: .*navigating; retry after checking the page/;
+
+test("eval_js {awaitPromise} whose code runs 1.5s before its first await answers, and runs once", async () => {
+  await install();
+  calm();
+  const { r, t } = await call("eval_js", {
+    script: "__busy(1500); window.runs = (window.runs || 0) + 1; await 0; return 7",
+    awaitPromise: true, timeout: 5000, target: { tabId: handle },
+  });
+  assert.equal(r.isError, undefined, t);
+  assert.equal(t, "7");
+  assert.equal(world.page("Google Chrome", 1, 0).runs, 1);
+});
+
+test("eval_js {awaitPromise}: after a slow kick's dropped reply, a promise still pending is waited for", async () => {
+  await install();
+  calm();
+  // Resolved by the first poll, so it settles only after that poll has read the slot.
+  world.state.afterExecute = () => { world.page("Google Chrome", 1, 0).__go(9); };
+  const { r, t } = await call("eval_js", {
+    script: "__busy(1500); return await new Promise((res) => { window.__go = res; })",
+    awaitPromise: true, timeout: 5000, target: { tabId: handle },
+  });
+  assert.equal(r.isError, undefined, t);
+  assert.equal(t, "9");
+});
+
+test("eval_js {awaitPromise} whose kick reply a navigation drops ends coded within its timeout, having run once", async () => {
+  await install();
+  world.state.dropAfterAssign = true;
+  const { out: { r, t }, took } = await timed(() => call("eval_js", {
+    script: `location.assign(${JSON.stringify(NEXT)}); return 1`,
+    awaitPromise: true, timeout: 5000, target: { tabId: handle },
+  }));
+  assert.equal(r.isError, true);
+  assert.match(t, NO_RERUN);
+  assert.ok(took <= 5000, `took ${took}ms`);
+  assert.equal(assigns(), 1);
+});
+
+test("wait {expression} that takes 1.5s per evaluation still answers", async () => {
+  await install();
+  calm();
+  const { r, o, t } = await call("wait", { expression: "(__busy(1500), 'slow')", timeout: 8000, target: { tabId: handle } });
+  assert.equal(r.isError, undefined, t);
+  assert.equal(o.value, "slow");
+});
+
+test("a poll dropped by a navigation costs about one second, not a doubled wait", async () => {
+  await install();
+  await startNav();
+  const { out: { o }, took } = await timed(() => call("wait", { expression: "location.href", timeout: 5000, target: { tabId: handle } }));
+  assert.equal(o.value, NEXT);
+  assert.ok(took <= 1200, `took ${took}ms`);
+});
+
+test("a select pick (and fill's typeahead pick) whose reply is dropped is not run again", async () => {
+  await install();
+  world.state.dropWhilePending = false;
+  world.state.dropAfterAssign = true;
+  const { out: thrown, took } = await timed(async () => {
+    try {
+      rt("select", {
+        target: { tabId: handle }, tool: "fill", wait: 3000,
+        pick: `location.assign(${JSON.stringify(NEXT)}); JSON.stringify({ok: true})`,
+        miss: "JSON.stringify({ok: false, error: 'miss'})",
+      });
+    } catch (e) { return e; }
+    return null;
+  });
+  assert.match(String(thrown && thrown.message), NO_RERUN);
+  assert.ok(took <= 3000, `took ${took}ms`);
+  assert.equal(assigns(), 1);
+});
+
+test("a select start whose reply is dropped is not run again", async () => {
+  await install();
+  world.state.dropWhilePending = false;
+  world.state.dropAfterAssign = true;
+  assert.throws(() => rt("select", {
+    target: { tabId: handle },
+    start: `location.assign(${JSON.stringify(NEXT)}); JSON.stringify({pending: true})`,
+    pick: "JSON.stringify({ok: true})", miss: "JSON.stringify({ok: false, error: 'miss'})",
+  }), (e) => NO_RERUN.test(e.message));
+  assert.equal(assigns(), 1);
+});
+
+test("a click whose reply is dropped ends coded within a second, clicked once", async () => {
+  await install();
+  world.state.dropWhilePending = false;
+  world.state.dropAfterAssign = true;
+  const t0 = world.clock.t;
+  assert.throws(() => rt("click", {
+    target: { tabId: handle },
+    click: `location.assign(${JSON.stringify(NEXT)}); JSON.stringify({ok: true})`,
+    read: "JSON.stringify(null)", readFinal: "JSON.stringify({changed: false})", settle: 300,
+  }), (e) => NO_RERUN.test(e.message));
+  assert.ok(world.clock.t - t0 <= 1200, `took ${world.clock.t - t0}ms`);
+  assert.equal(assigns(), 1);
+});
+
+test("a window raised mid-poll: the `window N` run falls back to the plain path and polls the right tab", async () => {
+  await install();
+  calm();
+  world.state.afterExecute = () => { world.run(`Application("Google Chrome").windows[1].index = 1`); };
+  const { r, o, t } = await call("wait", {
+    expression: "(window.polls = (window.polls || 0) + 1) >= 2 && location.href", timeout: 3000, target: { tabId: handle },
+  });
+  assert.equal(r.isError, undefined, t);
+  assert.equal(o.value, "https://c0.test/");
+  assert.equal(world.winSpec("Google Chrome", 0).id, 2, "window 2 is now in front");
+  assert.equal(world.page("Google Chrome", 1, 0).polls, undefined, "the other window's tab was never polled");
+  assert.ok((world.counts.NSAppleScript || 0) >= 2, "the poll took the `window N` path");
 });

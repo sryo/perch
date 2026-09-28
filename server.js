@@ -490,18 +490,32 @@ function jxaRuntime(BROWSERS) {
     return exec(t, js);
   }
   const readExec = function (t, js) { return JSON.parse(String(pollExec(t, js, POLL_EXEC_SECS))); };
+  // A step with side effects (opening, typing, pressing) is never sent twice: a
+  // dropped reply may mean it ran and the page is leaving.
+  const MAY_HAVE_RUN = "; it may have run, and the page may be navigating; retry after checking the page";
+  function stepExec(t, js, secs) {
+    try { return pollExec(t, js, secs); }
+    catch (e) { throw isNoReply(e) ? new Error(NO_REPLY + secs + "s" + MAY_HAVE_RUN) : e; }
+  }
+  const stepRead = function (t, js) { return JSON.parse(String(stepExec(t, js, POLL_EXEC_SECS))); };
 
   function pollValue(r) {
     try { return r != null && r !== "" ? JSON.parse(String(r)) : null; } catch (e) { return null; }
   }
   // Re-runs `js` (which returns a JSON string) until it yields non-null/non-false.
-  // A failed run counts as not yet, except a closed tab.
-  function poll(t, js, timeout, interval) {
+  // A failed run counts as not yet, except a closed tab. A dropped reply doubles
+  // the next run's cap, so a slow read still answers while a navigation costs
+  // one POLL_EXEC_SECS. `step`: `js` has side effects, so a dropped reply ends it.
+  function poll(t, js, timeout, interval, step) {
     const start = Date.now();
+    let cap = POLL_EXEC_SECS;
     for (;;) {
       let v = null;
-      const secs = Math.max(0.1, Math.min(POLL_EXEC_SECS, (timeout - (Date.now() - start)) / 1000));
-      try { v = pollValue(pollExec(t, js, secs)); } catch (e) { if (isStale(e)) throw e; }
+      const secs = Math.max(0.1, Math.min(cap, (timeout - (Date.now() - start)) / 1000));
+      try { v = pollValue(step ? stepExec(t, js, secs) : pollExec(t, js, secs)); } catch (e) {
+        if (isStale(e) || (step && isNoReply(e))) throw e;
+        if (isNoReply(e)) cap *= 2;
+      }
       if (v !== null && v !== false) return { value: v, waited: Date.now() - start };
       if (Date.now() - start >= timeout) return null;
       delay(interval / 1000);
@@ -1492,10 +1506,15 @@ function jxaRuntime(BROWSERS) {
       return exec(t, a.js);
     },
     evalAsync(a) {
-      const t = pageTarget(a.target, "eval_js");
-      pollExec(t, a.kick, POLL_EXEC_SECS);
-      const r = poll(t, a.poll, a.timeout, 50);
+      const t = pageTarget(a.target, "eval_js"), start = Date.now();
+      // The kick is never sent twice. It sets its result slot before the user's
+      // code runs, so after a dropped reply the polls tell a kick still running
+      // (slot set) from one whose document is gone (slot missing).
+      try { pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000))); }
+      catch (e) { if (!isNoReply(e)) throw e; }
+      const r = poll(t, a.poll, Math.max(0, a.timeout - (Date.now() - start)), 50);
       if (!r) throw new Error("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms; background tabs throttle timers, so avoid page sleeps or activate the tab");
+      if (r.value.__perch_gone) throw new Error("timeout: eval_js (awaitPromise) lost its result before the promise settled" + MAY_HAVE_RUN);
       return r.value;
     },
     // One event when the page is already there; then polls every 50ms.
@@ -1718,12 +1737,12 @@ function jxaRuntime(BROWSERS) {
     select(a) {
       const t = pageTarget(a.target, a.tool || "select");
       // No start: the caller's own page call already opened the control.
-      const r = a.start ? readExec(t, a.start) : { pending: true };
+      const r = a.start ? stepRead(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
       // a.short: give up early unless a.probe says a list or companion is there.
       // A pick step answering {settled} has found nothing more worth waiting for.
-      let picked = poll(t, a.pick, a.short || a.wait || 2500, 50);
-      if (!picked && a.short && readExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50);
+      let picked = poll(t, a.pick, a.short || a.wait || 2500, 50, true);
+      if (!picked && a.short && readExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50, true);
       if (picked && picked.value.settled) picked = null;
       if (!picked && !a.missFinal) return readExec(t, a.miss);
       if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : readExec(t, a.missFinal); }
@@ -1734,7 +1753,7 @@ function jxaRuntime(BROWSERS) {
     // Plain click with readback: click (arming the pre-click text), then poll.
     click(a) {
       const t = pageTarget(a.target, "click");
-      const r = parseExec(t, a.click);
+      const r = stepRead(t, a.click);
       if (!r || r.ok !== true) return r;
       return Object.assign(r, readback(t, a));
     },
@@ -2140,12 +2159,12 @@ export function buildEvalWrapper(js) {
 // AppleScript can't await, so async code stashes its outcome on window[key] and JXA polls it.
 function buildAsyncKickoff(js, key) {
   const k = JSON.stringify(key);
-  return `(function(){var __E=${ERROR_SHAPE};(async function(){try{var __r=await (async function(){${js}\n})();window[${k}]={value:__r===undefined?null:__r}}catch(e){window[${k}]=__E(e)}})();return "1"})()`;
+  return `(function(){var __E=${ERROR_SHAPE};window[${k}]=0;(async function(){try{var __r=await (async function(){${js}\n})();window[${k}]={value:__r===undefined?null:__r}}catch(e){window[${k}]=__E(e)}})();return "1"})()`;
 }
 
 function buildAsyncPoll(key) {
   const k = JSON.stringify(key);
-  return `(function(){var v=window[${k}];if(v===undefined)return "null";delete window[${k}];return JSON.stringify(v)})()`;
+  return `(function(){var v=window[${k}];if(v===undefined)return '{"__perch_gone":1}';if(v===0)return "null";delete window[${k}];return JSON.stringify(v)})()`;
 }
 
 const parsePage = (raw) => { if (raw === "") return null; try { return JSON.parse(raw); } catch { return raw; } };

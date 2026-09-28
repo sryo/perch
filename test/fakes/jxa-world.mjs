@@ -58,6 +58,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     page.ctx.__ready = () => (page.ticks-- > 0 ? "loading" : "complete");
     page.ctx.location = { href: url, assign: (u) => go(/^[a-z]+:/i.test(u) ? u : new URL(u, page.url).href, "page") };
     page.ctx.URL = URL;
+    // __busy(ms): the script holds the page's thread that long (see tab.execute).
+    page.ctx.__busy = (ms) => { page.busy = (page.busy || 0) + ms; };
     return page;
   }
 
@@ -128,12 +130,18 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (!present()) throw gone();
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
       if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
-      settle();
-      if (tab.pending && tab.pending.n-- <= 0) { tab.page = mk(tab.pending.url); tab.pending = null; }
+      const limit = ae.timeoutMs ?? 120000, sent = clock.t;
       const unanswered = () => {
-        clock.t += ae.timeoutMs ?? 120000;
+        clock.t = sent + limit;
         return Object.assign(new Error("AppleEvent timed out."), { errorNumber: -1712 });
       };
+      // An execute sent while an earlier script still holds the page's thread waits for it.
+      if (tab.busyUntil > clock.t) {
+        if (tab.busyUntil - clock.t >= limit) throw unanswered();
+        clock.t = tab.busyUntil;
+      }
+      settle();
+      if (tab.pending && tab.pending.n-- <= 0) { tab.page = mk(tab.pending.url); tab.pending = null; }
       // state.dropWhilePending: Chrome never replies to an execute that lands while
       // a navigation replaces the document; the navigation commits meanwhile.
       if (state.dropWhilePending && tab.pending) { const e = unanswered(); tab.page = mk(tab.pending.url); tab.pending = null; throw e; }
@@ -145,8 +153,15 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // Browser prompts that only look like one (permission, FedCM, passkey) omit it.
       if (state.dialogs.some((d) => d.blocks != null && String(d.blocks) === String(spec.id))) throw unanswered();
       // spec.dom: a happy-dom Window standing in for the page.
-      const before = tab.pending;
+      const before = tab.pending, ran = tab.page;
+      ran.busy = 0;
       const r = spec.dom ? spec.dom.eval(javascript) : vm.runInContext(javascript, tab.page.ctx);
+      // A script busy past the caller's timeout ran, but its reply never arrives.
+      if (ran.busy) {
+        tab.busyUntil = clock.t + ran.busy;
+        if (tab.busyUntil - sent >= limit) throw unanswered();
+        clock.t = tab.busyUntil;
+      }
       // state.dropAfterAssign: the reply to the execute that started a navigation is lost.
       if (state.dropAfterAssign && tab.pending && tab.pending !== before) throw unanswered();
       afterExecute(spec);
