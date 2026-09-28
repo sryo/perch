@@ -488,8 +488,9 @@ function jxaRuntime(BROWSERS) {
   const NAV_EXEC_SECS = 0.5;
   // How long navigate holds page JS while the tab reports loading.
   const NAV_GATE_MS = 2000;
-  // A poll's page JS answers in tens of ms; a reply dropped mid-navigation costs at most this.
-  const POLL_EXEC_SECS = 1;
+  // A poll's page JS answers in tens of ms, or seconds on a loaded machine; a reply
+  // dropped mid-navigation costs at most this.
+  const POLL_EXEC_SECS = 2;
   const asQuote = function (s) { return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; };
   const NO_REPLY = "timeout: page JS got no reply within ";
   const isNoReply = function (e) { return !!e && e.message.indexOf(NO_REPLY) === 0; };
@@ -532,12 +533,28 @@ function jxaRuntime(BROWSERS) {
     catch (e) { if (isNoReply(e)) throw e; }
     return exec(t, js);
   }
-  const readExec = function (t, js) { return JSON.parse(String(pollExec(t, js, POLL_EXEC_SECS))); };
+  // A one-shot read, sent once more with twice the cap after a dropped reply: it
+  // is read-only, and after a navigation drop the new document answers at once.
+  function readExec(t, js) {
+    let r;
+    try { r = pollExec(t, js, POLL_EXEC_SECS); }
+    catch (e) { if (!isNoReply(e)) throw e; r = pollExec(t, js, 2 * POLL_EXEC_SECS); }
+    return JSON.parse(String(r));
+  }
   // A step with side effects (opening, typing, pressing) is never sent twice: a
   // dropped reply may mean it ran and the page is leaving.
   const MAY_HAVE_RUN = "; it may have run, and the page may be navigating; retry after checking the page";
-  // A click handler may run long synchronously; a dropped reply costs at most this.
-  const CLICK_EXEC_SECS = 5;
+  // A step may run long synchronously (a click handler, a picker opening), and a
+  // loaded machine answers late; a step's dropped reply costs at most this.
+  const STEP_EXEC_SECS = 5;
+  // Reads that follow a `tool` step which ran: their dropped reply must not read as
+  // "retry", which would repeat the step.
+  function afterStep(tool, f) {
+    try { return f(); } catch (e) {
+      if (!isNoReply(e) || e.message.indexOf(MAY_HAVE_RUN) >= 0) throw e;
+      throw new Error("timeout: the " + tool + " ran but its result got no reply; the page may be navigating; don't " + tool + " again, check the page");
+    }
+  }
   // pollExec for steps. A fast failure's error is never read (see asExecute), so the
   // step is resent on the plain path only when that failure proves it never ran:
   // the tab is not in the window named (a raised window moved it), or page JS is
@@ -554,7 +571,7 @@ function jxaRuntime(BROWSERS) {
     const w = t.winId != null ? app(t.app).windows.byId(t.winId) : app(t.app).windows[t.w];
     try { w.tabs.byId(t.tabId).id(); return true; } catch (e) { if (noSuchObject(e)) return false; throw e; }
   }
-  const stepRead = function (t, js, secs) { return JSON.parse(String(stepExec(t, js, secs || POLL_EXEC_SECS))); };
+  const stepRead = function (t, js, secs) { return JSON.parse(String(stepExec(t, js, secs || STEP_EXEC_SECS))); };
 
   function pollValue(r) {
     try { return r != null && r !== "" ? JSON.parse(String(r)) : null; } catch (e) { return null; }
@@ -570,7 +587,7 @@ function jxaRuntime(BROWSERS) {
       let v = null;
       // A step run gets the full cap even near the deadline: cutting it short would
       // turn a pick that answered null in time into "may have run".
-      const secs = step ? POLL_EXEC_SECS : Math.max(0.1, Math.min(cap, (timeout - (Date.now() - start)) / 1000));
+      const secs = step ? STEP_EXEC_SECS : Math.max(0.1, Math.min(cap, (timeout - (Date.now() - start)) / 1000));
       try { v = pollValue(step ? stepExec(t, js, secs) : pollExec(t, js, secs)); } catch (e) {
         if (isStale(e) || (step && isNoReply(e))) throw e;
         if (isNoReply(e)) cap *= 2;
@@ -847,8 +864,10 @@ function jxaRuntime(BROWSERS) {
   // After a click armed with readback: the first changed text/url within a.settle ms,
   // else what the element shows now. Polled here because page timers are throttled.
   function readback(t, a) {
-    const r = poll(t, a.read, a.settle, 50);
-    return r ? r.value : readExec(t, a.readFinal);
+    return afterStep("click", function () {
+      const r = poll(t, a.read, a.settle, 50);
+      return r ? r.value : readExec(t, a.readFinal);
+    });
   }
 
   // A refusal when the screen point falls on one of the page's embedded frames,
@@ -1570,10 +1589,11 @@ function jxaRuntime(BROWSERS) {
       // The kick is never sent twice. It sets its result slot before the user's
       // code runs, so after a dropped reply the polls tell a kick still running
       // (slot set) from one whose document is gone (slot missing).
+      let ran = true;
       try { pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000))); }
-      catch (e) { if (!isNoReply(e)) throw e; }
+      catch (e) { if (!isNoReply(e)) throw e; ran = false; }
       const r = poll(t, a.poll, Math.max(0, a.timeout - (Date.now() - start)), 50);
-      if (!r) throw new Error("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms; background tabs throttle timers, so avoid page sleeps or activate the tab");
+      if (!r) throw new Error("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again; background tabs throttle timers, so avoid page sleeps or activate the tab");
       if (r.value.__perch_gone) throw new Error("timeout: eval_js (awaitPromise) lost its result before the promise settled" + MAY_HAVE_RUN);
       return r.value;
     },
@@ -1799,21 +1819,23 @@ function jxaRuntime(BROWSERS) {
       // No start: the caller's own page call already opened the control.
       const r = a.start ? stepRead(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
-      // a.short: give up early unless a.probe says a list or companion is there.
-      // A pick step answering {settled} has found nothing more worth waiting for.
-      let picked = poll(t, a.pick, a.short || a.wait || 2500, 50, true);
-      if (!picked && a.short && readExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50, true);
-      if (picked && picked.value.settled) picked = null;
-      if (!picked && !a.missFinal) return readExec(t, a.miss);
-      if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : readExec(t, a.missFinal); }
-      if (picked.value.ok === false) return picked.value;
-      const read = poll(t, a.read, 500, 50);
-      return read ? read.value : readExec(t, a.readFinal);
+      return afterStep(a.tool || "select", function () {
+        // a.short: give up early unless a.probe says a list or companion is there.
+        // A pick step answering {settled} has found nothing more worth waiting for.
+        let picked = poll(t, a.pick, a.short || a.wait || 2500, 50, true);
+        if (!picked && a.short && readExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50, true);
+        if (picked && picked.value.settled) picked = null;
+        if (!picked && !a.missFinal) return readExec(t, a.miss);
+        if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : readExec(t, a.missFinal); }
+        if (picked.value.ok === false) return picked.value;
+        const read = poll(t, a.read, 500, 50);
+        return read ? read.value : readExec(t, a.readFinal);
+      });
     },
     // Plain click with readback: click (arming the pre-click text), then poll.
     click(a) {
       const t = pageTarget(a.target, "click");
-      const r = stepRead(t, a.click, CLICK_EXEC_SECS);
+      const r = stepRead(t, a.click);
       if (!r || r.ok !== true) return r;
       return Object.assign(r, readback(t, a));
     },

@@ -72,7 +72,7 @@ test("click readback whose click navigates reports the new document", async () =
     target: { tabId: handle },
     click: `window.__perch_rb = 1; location.assign(${JSON.stringify(NEXT)}); JSON.stringify({ok: true})`,
     read: "JSON.stringify(window.__perch_rb ? null : {changed: true, navigated: true, url: location.href})",
-    readFinal: "JSON.stringify({changed: false})",
+    readFinal: "JSON.stringify(window.__perch_rb ? {changed: false} : {changed: true, navigated: true, url: location.href})",
     settle: 2000,
   }));
   assert.deepEqual(out, { ok: true, changed: true, navigated: true, url: NEXT });
@@ -80,7 +80,7 @@ test("click readback whose click navigates reports the new document", async () =
   assert.equal(newPage().location.href, NEXT);
 });
 
-test("click readback: a final read that gets no reply is a coded timeout, and the click ran once", async () => {
+test("click readback: a final read that gets no reply says the click ran, and the click ran once", async () => {
   await install();
   world.state.afterExecute = () => { world.state.hung = true; };
   const t0 = world.clock.t;
@@ -90,8 +90,8 @@ test("click readback: a final read that gets no reply is a coded timeout, and th
     read: "JSON.stringify(null)",
     readFinal: "JSON.stringify({changed: false})",
     settle: 300,
-  }), (e) => /timeout: .*navigating; retry/.test(e.message) && !/AppleEvent timed out/.test(e.message));
-  assert.ok(world.clock.t - t0 <= 300 + 1000 + 200, `took ${world.clock.t - t0}ms`);
+  }), (e) => RAN("click").test(e.message) && !/AppleEvent timed out/.test(e.message));
+  assert.ok(world.clock.t - t0 <= 300 + 2000 + 4000 + 200, `took ${world.clock.t - t0}ms`);
   assert.equal(world.page("Google Chrome", 1, 0).clicks, 1);
 });
 
@@ -108,20 +108,20 @@ test("select whose start navigates: the pick the navigation drops ends coded wit
     read: "JSON.stringify(null)",
     readFinal: "JSON.stringify(null)",
   }), (e) => NO_RERUN.test(e.message));
-  assert.ok(world.clock.t - t0 <= 2000, `took ${world.clock.t - t0}ms`);
+  assert.ok(world.clock.t - t0 <= 5000, `took ${world.clock.t - t0}ms`);
   assert.equal(world.counts["tab.execute"], 2, "start and one pick");
 });
 
-test("select: a miss read that gets no reply is a coded timeout", async () => {
+test("select: a miss read that gets no reply is a coded timeout saying the select ran", async () => {
   await install();
-  world.state.hung = true;
+  world.state.afterExecute = () => { world.state.hung = true; };
   const t0 = world.clock.t;
   assert.throws(() => rt("select", {
     target: { tabId: handle },
-    pick: "JSON.stringify(null)", wait: 300,
+    pick: "JSON.stringify({settled: true})", wait: 300,
     miss: "JSON.stringify({ok: false, error: 'miss'})",
-  }), (e) => /^timeout: .*navigating; retry/.test(e.message));
-  assert.ok(world.clock.t - t0 <= 300 + 1000 + 200, `took ${world.clock.t - t0}ms`);
+  }), (e) => RAN("select").test(e.message));
+  assert.ok(world.clock.t - t0 <= 2000 + 4000 + 200, `took ${world.clock.t - t0}ms`);
 });
 
 test("a poll on a tab that closed mid-poll is still stale_tab", async () => {
@@ -185,12 +185,12 @@ test("wait {expression} that takes 1.5s per evaluation still answers", async () 
   assert.equal(o.value, "slow");
 });
 
-test("a poll dropped by a navigation costs about one second, not a doubled wait", async () => {
+test("a poll dropped by a navigation costs one POLL_EXEC_SECS (2s), not a doubled wait", async () => {
   await install();
   await startNav();
   const { out: { o }, took } = await timed(() => call("wait", { expression: "location.href", timeout: 5000, target: { tabId: handle } }));
   assert.equal(o.value, NEXT);
-  assert.ok(took <= 1200, `took ${took}ms`);
+  assert.ok(took <= 2200, `took ${took}ms`);
 });
 
 test("a select pick (and fill's typeahead pick) whose reply is dropped is not run again", async () => {
@@ -208,7 +208,7 @@ test("a select pick (and fill's typeahead pick) whose reply is dropped is not ru
     return null;
   });
   assert.match(String(thrown && thrown.message), NO_RERUN);
-  assert.ok(took <= 3000, `took ${took}ms`);
+  assert.ok(took <= 5000, `took ${took}ms`);
   assert.equal(assigns(), 1);
 });
 
@@ -321,4 +321,68 @@ test("a window raised mid-poll: the `window N` run falls back to the plain path 
   assert.equal(world.winSpec("Google Chrome", 0).id, 2, "window 2 is now in front");
   assert.equal(world.page("Google Chrome", 1, 0).polls, undefined, "the other window's tab was never polled");
   assert.ok((world.counts.NSAppleScript || 0) >= 2, "the poll took the `window N` path");
+});
+
+// A slow machine: page JS that is alive but answers late must not fail a step.
+test("a select start and pick that each hold the page 1.5s still answer", async () => {
+  await install();
+  calm();
+  const out = rt("select", {
+    target: { tabId: handle },
+    start: "__busy(1500); window.starts = (window.starts || 0) + 1; JSON.stringify({pending: true})",
+    pick: "__busy(1500); window.picks = (window.picks || 0) + 1; JSON.stringify({ok: true})",
+    miss: "JSON.stringify({ok: false, error: 'miss'})",
+    read: "JSON.stringify({ok: true, value: 'B'})", readFinal: "JSON.stringify(null)",
+  });
+  assert.deepEqual(out, { ok: true, value: "B" });
+  assert.equal(world.page("Google Chrome", 1, 0).starts, 1);
+  assert.equal(world.page("Google Chrome", 1, 0).picks, 1);
+});
+
+test("a read that takes 1.5s answers on its first run", async () => {
+  await install();
+  calm();
+  const { o, t } = await call("wait", { expression: "(__busy(1500), 'slow')", timeout: 5000, target: { tabId: handle } });
+  assert.equal(o.value, "slow", t);
+  assert.equal(world.counts.NSAppleScript, 1);
+});
+
+test("a one-shot read that takes 2.5s still answers", async () => {
+  await install();
+  calm();
+  const out = rt("click", {
+    target: { tabId: handle }, click: COUNT_CLICK,
+    read: "JSON.stringify(null)", readFinal: "__busy(2500); JSON.stringify({changed: false})", settle: 100,
+  });
+  assert.deepEqual(out, { ok: true, changed: false });
+  assert.equal(world.page("Google Chrome", 1, 0).clicks, 1);
+});
+
+const RAN = (tool) => new RegExp(`^timeout: the ${tool} ran but .*don't ${tool} again`);
+
+test("a click whose readback gets no reply says the click ran", async () => {
+  await install();
+  calm();
+  world.state.afterExecute = () => { world.state.hung = true; };
+  assert.throws(() => rt("click", clickArgs(COUNT_CLICK)), (e) => RAN("click").test(e.message));
+  assert.equal(world.page("Google Chrome", 1, 0).clicks, 1);
+});
+
+test("a fill whose typeahead miss read gets no reply says the fill ran", async () => {
+  await install();
+  calm();
+  world.state.afterExecute = () => { world.state.hung = true; };
+  assert.throws(() => rt("select", {
+    target: { tabId: handle }, tool: "fill", wait: 300,
+    pick: "JSON.stringify({settled: true})",
+    miss: "JSON.stringify({ok: false, error: 'miss'})",
+  }), (e) => RAN("fill").test(e.message));
+});
+
+test("eval_js {awaitPromise} that times out says its code ran", async () => {
+  await install();
+  calm();
+  const { r, t } = await call("eval_js", { script: "await new Promise(() => {})", awaitPromise: true, target: { tabId: handle } });
+  assert.equal(r.isError, true);
+  assert.match(t, /timed out after \d+ms; the code ran/);
 });
