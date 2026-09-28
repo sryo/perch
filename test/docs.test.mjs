@@ -13,8 +13,7 @@ test("SKILL.md covers every tool and stays short", async () => {
 
 test("docs don't mention removed tools, params or shapes", async () => {
   const stale = ["get_html", "page_state", "include_bounds", "clickCount", "`clear`", "bare array", "wait: false", "targetClause", "FRONTMOST", "{level, ts, args"];
-  // GOALS.md is a decision log and names removed tools on purpose.
-  for (const f of ["SKILL.md", "AGENTS.md", "README.md"]) {
+  for (const f of ["SKILL.md", "AGENTS.md", "README.md", "GOALS.md"]) {
     const s = await read(f);
     for (const w of stale) assert.ok(!s.includes(w), `${f} still mentions ${w}`);
   }
