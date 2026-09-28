@@ -258,3 +258,19 @@ lives in AGENTS.md.
   an async typeahead that shows nothing for 1s keeps its text as plain; a
   restored companion's framework state may not follow. Deferred: a real
   site's portaled suggestion list with no aria-controls, Arc.
+- **Round 11 (2026-09): a typeahead miss is read after the blur settles.**
+  React 18 clears unpicked text in a microtask after the blurring script, so
+  fill blurs in one page call and reads the field in later polls (300ms);
+  react-select without a hidden input now reports its cleared text as
+  withdrawn instead of kept. A control that showed its own suggestions, none
+  matching, expects a pick: `ok:false` with `candidates`. `compare.mjs` lets
+  the last repeated flag win, like `bench.mjs`. Live in Canary's background
+  and shown tabs: every round 9-10 fixture still landed, the free-text field
+  keeps its text (about 300ms slower), and a field with fuzzy suggestions now
+  fails with candidates. Front app, key process and cursor never moved from
+  perch. Bench unchanged but `list_tabs` (+55%, the same on the previous
+  commit with more tabs open). Budgets unchanged. Accepted: Downshift that
+  filters to nothing shows no list and keeps its text on blur, so it is kept
+  as `plain`, indistinguishable from a free-text field; a clear later than
+  300ms after blur still reads as kept. Deferred: Safari (no scratch tab), the
+  `CSS.escape` repeated-id path on a real twin react-select.
