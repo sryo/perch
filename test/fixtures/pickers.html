@@ -156,19 +156,20 @@
   });
   input.addEventListener("blur", function () { ds.isOpen = false; input.value = ds.selectedItem || ""; dsRender(); });
 
-  // Trusted-only location lookup, debounced.
+  // Trusted-only location lookup, debounced. The count lives on the DOM (data-lookups)
+  // since an isolated-world eval cannot see page globals.
   const loc = document.getElementById("loc");
   const locHidden = document.getElementById("selected-location");
   const locList = document.querySelector(".loc .dropdown-container");
   const cities = ["Rosario, Santa Fe, Argentina", "Rosario del Tala, Entre Rios", "Toronto, ON, Canada"];
   let locTimer = 0;
-  window.locLookups = 0;
+  loc.dataset.lookups = "0";
   loc.addEventListener("input", function (e) {
     locHidden.value = "";
     if (!e.isTrusted) return;
     clearTimeout(locTimer);
     locTimer = setTimeout(function () {
-      window.locLookups++;
+      loc.dataset.lookups = String(Number(loc.dataset.lookups) + 1);
       const q = loc.value.toLowerCase();
       locList.innerHTML = cities.filter(function (c) { return q && c.toLowerCase().indexOf(q) === 0; })
         .map(function (c, i) { return '<div class="dropdown-item" data-id="' + i + '">' + c + "</div>"; }).join("");
