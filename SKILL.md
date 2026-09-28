@@ -24,7 +24,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `accessibility_snapshot` | Page outline with refs (below), open shadow roots included. Filter with `role` or `query` (regex per line); `max: 0`: header only. |
 | `console_capture` | `start`, `read` drains `"level: text"`, `stop` restores; navigation clears it. `network` drains finished requests as `"status type ms size url"`. |
 | `click` | By `ref` / `selector` / `label_pattern` (button/link name; ties: `candidates`, no click). `readback: css` adds `{readback, changed, url?}`: its text once changed (2s; 0.7s if quiet). `hover: true`: hover events only (JS menus, not CSS `:hover`). `trusted`: below. |
-| `press` | `key` (`Enter`, `Escape`, `Tab`, `ArrowDown`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
+| `press` | `key` (`Enter`, `Escape`, `Tab`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | Inputs, textareas, rich editors; verifies it landed. `text_path` for long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>` or custom combobox, own list only; reads back. Miss or `text:""`: `candidates`. |
 | `file_upload` | Put a local file on an `<input type=file>`; the bytes skip context. |
@@ -47,27 +47,27 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 - `{ok: false, error}` is an outcome (no match, value didn't land), not a crash; read it.
 - `fill` returns `{ok, kind: "plain"|"rich"|"typeahead", el, len, ambiguous?}`. A typeahead picks a suggestion (`selected`) or fails; free text stays (`note`). `ok: true` is proof.
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change; `option` also answers a radio group by question.
-- `fill {trusted:true}` returns `{ok, trusted, value, el}`. Require both `ok` and `trusted`.
+- `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
 - Page errors: `isError` with `__perch_error`, `__perch_error_name`, a stack head.
-- Other errors start with a code; branch on it. `tab_not_visible`: not the tab its window shows; `activate_tab` (takes focus) or retry later. `stale_tab`: re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `window_ambiguous`: move or resize a same-frame window. `no_browser`: none running or no window (never launched). `timeout`: re-list, retry once. `tab_not_scriptable`: internal page; `navigate` first. `dialog_open`: see Dialogs.
+- Other errors start with a code; branch on it. `tab_not_visible`: not the tab its window shows; `activate_tab` (takes focus) or retry later. `stale_tab`: re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `window_ambiguous`: move or resize a same-frame window. `no_browser`: none running or no window (never launched). `timeout`: re-list, retry once; if it may have run, check the page first. `tab_not_scriptable`: internal page; `navigate` first. `dialog_open`: see Dialogs.
 
 ## Gotchas
 
-- **Page globals may be invisible.** Some browsers eval in an isolated world: the DOM is shared, the page's JS globals aren't. Read page state through the DOM.
+- **Page globals may be invisible.** Some browsers eval in an isolated world: read page state through the DOM.
 - **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait`.
 - **Return summaries, not state.**
-- **Dialogs.** A call stuck behind a page's alert/confirm/prompt fails in ~3s with `dialog_open`. Answer with `press {key:"Enter"|"Escape", dialog:true, target:{tabId}}` (a string fills a prompt), no raise, then re-read the page. Only the tab's own JS dialog is answered; sign-in, permission or passkey prompts go to the user.
+- **Dialogs.** A call stuck behind a page's alert/confirm/prompt fails in ~3s with `dialog_open`. Answer with `press {key:"Enter"|"Escape", dialog:true, target:{tabId}}` (a string fills a prompt), no raise, then re-read the page. Only the tab's own JS dialog is answered; other browser prompts go to the user.
 
 ## Trusted input
 
-`fill {trusted: true}` edits a plain input or textarea through the browser's editing command, verifying a trusted `input` event and the exact value. It works wherever page JS runs, minimized windows included, without selecting the tab or taking key focus. `click {trusted: true}` reaches an on-screen, unminimized window without activating it or moving the cursor; its tab must be the one its window shows (else `tab_not_visible`). Plain `click` works in any tab; verify the outcome. `raise: true` takes focus briefly (HID route), cursor restored.
+`fill {trusted: true}` edits a plain input or textarea through the browser's editing command, verifying a trusted `input` event and the exact value. It works wherever page JS runs, minimized too, without selecting the tab or taking focus. `click {trusted: true}` reaches an on-screen window without activating it or moving the cursor; its tab must be the one its window shows (else `tab_not_visible`). Plain `click` works in any tab; verify the outcome. `raise: true` takes focus briefly (HID), cursor restored.
 
 `accessibility_snapshot {frames:true}` adds iframe controls as `fN` rows, never values. `fN` takes only `click {trusted:true}`; read its `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's.
 
 ## Permissions
 
-The server names the exact toggle on first failure; show it to the user and wait.
+On first failure the server names the exact toggle; show the user and wait.
 
 - Chromium family and Arc: View > Developer > Allow JavaScript from Apple Events (per profile).
 - Safari: Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.
-- macOS Automation (first call prompts) and, for trusted input and dialogs, Accessibility: System Settings > Privacy & Security, for the controlling app.
+- macOS Automation (first call prompts) and, for trusted input and dialogs, Accessibility: System Settings > Privacy & Security, for the host app.
