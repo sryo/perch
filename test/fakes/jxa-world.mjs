@@ -362,7 +362,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       return true;
     };
     return {
-      compileAndReturnError: () => compile(),
+      // state.compileFails: the handler doesn't compile, so the bounded execute fails fast.
+      compileAndReturnError: () => !state.compileFails && compile(),
       executeAppleEventError: (ev, err) => {
         compile();
         const P = ev.params;

@@ -1776,6 +1776,13 @@ function jxaRuntime(BROWSERS) {
         for (let secs = POLL_EXEC_SECS; r == null && secs <= 2 * POLL_EXEC_SECS && Date.now() < deadline; secs *= 2) r = tryRun(stamp(true), secs);
         viaPage = /!$/.test(r || "");
       }
+      // A bounded execute that failed fast (its handler didn't compile) says nothing
+      // about the page, so the stamp goes once more on the plain path; a page that
+      // already took it repeats its answer.
+      if (canEval && r == null && !viaPage && t.kind === "chrome" && lastErr && !isNoReply(lastErr)) {
+        try { r = String(exec(t, stamp(true))); } catch (e) { if (isStale(e)) throw e; lastErr = e; }
+        viaPage = /!$/.test(r || "");
+      }
       const result = function (waited) {
         const o = { waited: waited, tabId: handleOf(t) };
         if (!viaPage && t.kind !== "safari") o.warning = "navigating from outside the page may bring the browser to the front";

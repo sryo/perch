@@ -239,6 +239,16 @@ test("navigate on Chrome: another of its windows raised while the page doesn't a
   assert.equal(world.counts["tab.url="], undefined, "set the url of a tab whose window is no longer in front");
 });
 
+test("navigate on Chrome: a bounded execute that fails fast loads from page JS on the plain path, once", () => {
+  install(away(fixture()));
+  world.state.compileFails = true;
+  const r = navWith({ url: "https://next.test/" });
+  assert.equal(r.warning, undefined);
+  assert.deepEqual(paths(), [["assign", "Google Chrome", "https://next.test/"]]);
+  assert.equal(world.counts["tab.url="], undefined);
+  assert.equal(world.page("Google Chrome", 0, 0).location.href, "https://next.test/");
+});
+
 test("navigate tool: refusal is an error naming the opt-in, and raise:true passes through with the warning", async () => {
   install(away(fixture()));
   const res = await handleCall("navigate", { url: "data:text/html,x" });
