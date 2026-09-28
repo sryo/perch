@@ -309,9 +309,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
 
   // NSAppleScript understands one shape: the runtime's bounded execute,
   // `with timeout of S seconds / tell application "A" to execute tab id "T" of
-  // window id "W" javascript "JS" / end timeout`.
+  // window id "W" javascript "JS" / end timeout`, where the window may instead be
+  // `window N` (1-based, front first).
   const asString = String.raw`"((?:[^"\\]|\\.)*)"`;
-  const asExecute = new RegExp(String.raw`^with timeout of ([\d.]+) seconds\ntell application ${asString} to execute tab id ${asString} of window id ${asString} javascript ${asString}\nend timeout$`);
+  const asExecute = new RegExp(String.raw`^with timeout of ([\d.]+) seconds\ntell application ${asString} to execute tab id ${asString} of window (?:id ${asString}|(\d+)) javascript ${asString}\nend timeout$`);
   const unquote = (s) => s.replace(/\\(.)/g, "$1");
   // A failure returns nil; the error Ref is left holding a value that throws when
   // read, since live osascript segfaults reading it after a timeout.
@@ -319,12 +320,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     bump("NSAppleScript");
     const m = asExecute.exec(src);
     if (!m) throw new Error("fake NSAppleScript: unsupported source " + JSON.stringify(src));
-    const [secs, appName, tabId, winId, js] = [Number(m[1]), ...m.slice(2).map(unquote)];
+    const [secs, appName, tabId, winId, winIndex, js] = [Number(m[1]), ...m.slice(2).map((x) => x == null ? x : unquote(x))];
     const nil = () => {
       Object.defineProperty(err, 0, { get: () => { state.segv = true; throw new Error("SEGV: read a freed error Ref"); } });
       return { isNil: () => true };
     };
-    const w = (winsByApp[appName] || []).find((x) => String(x.spec.id) === winId);
+    const wins = winsByApp[appName] || [];
+    const w = winIndex != null ? wins[Number(winIndex) - 1] : wins.find((x) => String(x.spec.id) === winId);
     const tab = w && w.tabs.find((x) => String(x.spec.id) === tabId);
     if (!tab) return nil();
     try {

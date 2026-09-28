@@ -459,17 +459,37 @@ function jxaRuntime(BROWSERS) {
   const NAV_EXEC_SECS = 0.5;
   // How long navigate holds page JS while the tab reports loading.
   const NAV_GATE_MS = 2000;
+  // A poll's page JS answers in tens of ms; a reply dropped mid-navigation costs at most this.
+  const POLL_EXEC_SECS = 1;
+  const asQuote = function (s) { return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; };
+  const NO_REPLY = "timeout: page JS got no reply within ";
+  const isNoReply = function (e) { return !!e && e.message.indexOf(NO_REPLY) === 0; };
+  // `win` is an AppleScript window specifier.
+  function asExecute(t, js, secs, win) {
+    const src = "with timeout of " + secs + " seconds\ntell application " + asQuote(t.app) +
+      " to execute tab id " + asQuote(t.tabId) + " of " + win + " javascript " + asQuote(js) + "\nend timeout";
+    const start = Date.now();
+    const d = $.NSAppleScript.alloc.initWithSource(src).executeAndReturnError(Ref());
+    if (d.isNil()) throw new Error(Date.now() - start >= secs * 900 ? NO_REPLY + secs + "s; the page may be navigating; retry" : "page JS failed");
+    return ObjC.unwrap(d.stringValue);
+  }
   function execWithin(t, js, secs) {
     if (t.kind !== "chrome" || t.tabId == null) return exec(t, js);
     if (t.winId == null) t.winId = t.win.id();
-    const q = function (s) { return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; };
-    const src = "with timeout of " + secs + " seconds\ntell application " + q(t.app) +
-      " to execute tab id " + q(t.tabId) + " of window id " + q(t.winId) + " javascript " + q(js) + "\nend timeout";
-    const start = Date.now();
-    const d = $.NSAppleScript.alloc.initWithSource(src).executeAndReturnError(Ref());
-    if (d.isNil()) throw new Error(Date.now() - start >= secs * 900 ? "timeout: page JS got no reply within " + secs + "s" : "page JS failed");
-    return ObjC.unwrap(d.stringValue);
+    return asExecute(t, js, secs, "window id " + asQuote(t.winId));
   }
+  // execWithin for polls and the reads after them, one Apple Event like exec: with
+  // no window id at hand the window goes by position (`window N` is JXA's
+  // windows[N-1], the window the plain path's specifier names). A fast failure (a
+  // raised window moved the tab's window, JS from Apple Events off) takes the
+  // plain path, which re-finds a moved tab and reports the real error.
+  function pollExec(t, js, secs) {
+    if (t.kind !== "chrome" || t.tabId == null || (t.winId == null && t.w == null)) return exec(t, js);
+    try { return asExecute(t, js, secs, t.winId != null ? "window id " + asQuote(t.winId) : "window " + (t.w + 1)); }
+    catch (e) { if (isNoReply(e)) throw e; }
+    return exec(t, js);
+  }
+  const readExec = function (t, js) { return JSON.parse(String(pollExec(t, js, POLL_EXEC_SECS))); };
 
   function pollValue(r) {
     try { return r != null && r !== "" ? JSON.parse(String(r)) : null; } catch (e) { return null; }
@@ -480,7 +500,8 @@ function jxaRuntime(BROWSERS) {
     const start = Date.now();
     for (;;) {
       let v = null;
-      try { v = pollValue(exec(t, js)); } catch (e) { if (isStale(e)) throw e; }
+      const secs = Math.max(0.1, Math.min(POLL_EXEC_SECS, (timeout - (Date.now() - start)) / 1000));
+      try { v = pollValue(pollExec(t, js, secs)); } catch (e) { if (isStale(e)) throw e; }
       if (v !== null && v !== false) return { value: v, waited: Date.now() - start };
       if (Date.now() - start >= timeout) return null;
       delay(interval / 1000);
@@ -753,7 +774,7 @@ function jxaRuntime(BROWSERS) {
   // else what the element shows now. Polled here because page timers are throttled.
   function readback(t, a) {
     const r = poll(t, a.read, a.settle, 50);
-    return r ? r.value : parseExec(t, a.readFinal);
+    return r ? r.value : readExec(t, a.readFinal);
   }
 
   // A refusal when the screen point falls on one of the page's embedded frames,
@@ -1472,7 +1493,7 @@ function jxaRuntime(BROWSERS) {
     },
     evalAsync(a) {
       const t = pageTarget(a.target, "eval_js");
-      exec(t, a.kick);
+      pollExec(t, a.kick, POLL_EXEC_SECS);
       const r = poll(t, a.poll, a.timeout, 50);
       if (!r) throw new Error("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms; background tabs throttle timers, so avoid page sleeps or activate the tab");
       return r.value;
@@ -1481,7 +1502,10 @@ function jxaRuntime(BROWSERS) {
     wait(a) {
       const start = Date.now(), interval = a.interval || 50;
       let q = null, r = null;
-      try { q = quickExec(a.target, a.js); } catch (e) {}
+      // A hinted Chromium handle's first poll is quickExec's one event, bounded.
+      const w = a.target || {};
+      const hinted = w.tabId != null && w.windowId == null && w.tabIndex == null && hints[w.tabId];
+      if (!hinted) { try { q = quickExec(a.target, a.js); } catch (e) {} }
       const v = q && pollValue(q.v);
       if (v != null && v !== false) r = { value: v, waited: 0 };
       else {
@@ -1694,18 +1718,18 @@ function jxaRuntime(BROWSERS) {
     select(a) {
       const t = pageTarget(a.target, a.tool || "select");
       // No start: the caller's own page call already opened the control.
-      const r = a.start ? parseExec(t, a.start) : { pending: true };
+      const r = a.start ? readExec(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
       // a.short: give up early unless a.probe says a list or companion is there.
       // A pick step answering {settled} has found nothing more worth waiting for.
       let picked = poll(t, a.pick, a.short || a.wait || 2500, 50);
-      if (!picked && a.short && parseExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50);
+      if (!picked && a.short && readExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50);
       if (picked && picked.value.settled) picked = null;
-      if (!picked && !a.missFinal) return parseExec(t, a.miss);
-      if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : parseExec(t, a.missFinal); }
+      if (!picked && !a.missFinal) return readExec(t, a.miss);
+      if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : readExec(t, a.missFinal); }
       if (picked.value.ok === false) return picked.value;
       const read = poll(t, a.read, 500, 50);
-      return read ? read.value : parseExec(t, a.readFinal);
+      return read ? read.value : readExec(t, a.readFinal);
     },
     // Plain click with readback: click (arming the pre-click text), then poll.
     click(a) {
