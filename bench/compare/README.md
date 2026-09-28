@@ -29,7 +29,6 @@ All runs: macOS 27.2, Chrome Canary. Times are median ms.
 | 2026-09-27 | perch | 5996fd3 | 1 call, 14 | 1 call, 51 | 135 | 17 | 17 | 17 | 165 | 100% |
 | 2026-09-27 | perch | 39bf181 | 1 call, 15 | 1 call, 51 | 151 | 17 | 17 | 17 | 151 | 100% |
 | 2026-09-28 | perch | a33de49 | 1 call, 12 | 1 call, 31 | 135 | | | | 83 | 100% |
-| 2026-09-28 | perch | 62625a5 | | | | | | | | |
 | 2026-09-27 | Claude in Chrome | | 6 calls, 73 | 3 calls, 164 | 89 | 59 | 66 | 2 | 143 | 100% |
 
 - **5996fd3:** navigate no longer hangs, and `fill {fields}` and `click {readback}` do
@@ -43,12 +42,6 @@ All runs: macOS 27.2, Chrome Canary. Times are median ms.
   typeahead's miss end once the page holds still instead of waiting out their caps. Only
   the numbers that moved are filled in. This run was without `--activate`, so the
   Screenshot cell is the `bench` p50 on Canary's shown tab (149 before).
-- **62625a5:** no compare-suite op moved. On the 2720-node page from
-  `test/fixtures/large-dom.mjs`, served on 127.0.0.1 in Canary's shown tab, a fill whose
-  `label_pattern` matches nothing went from 29.5 to 22.0 and from 44.5 to 23.8 in two
-  runs against b986dd6 (medians of 10). Snapshots, a fill that matches, a select miss and
-  a typeahead fill stayed within noise, with identical outputs. The bench baseline now
-  records `bench/fixture.html`'s sha256, so its byte counts compare like-for-like.
 
 ## Payload size
 
