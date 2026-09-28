@@ -968,6 +968,26 @@ function jxaRuntime(BROWSERS) {
     }
   }
 
+  // A trusted click on the element a.probe arms: aim, the hit test, `before` (a
+  // result with ok:false stops it), the post, then a.check's `hit`. {stop} is a
+  // refusal with nothing posted. The cursor is home again on return.
+  function aimedClick(T, a, tool, before) {
+    const home = T.background ? null : cursorAt();
+    try {
+      const A = aim(T, a, tool);
+      if (A.out) return { stop: A.out };
+      const bad = before && before();
+      if (bad && bad.ok === false) return { stop: bad };
+      if (T.background) skyClick(T.I, A.pt);
+      else leftClick(T.I, A.pt);
+      delay(0.05);
+      const check = parseExec(T.t, a.check);
+      return { out: Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" }, check) };
+    } finally {
+      if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
+    }
+  }
+
   // The page's screen rect from the Accessibility tree, in the target window.
   // Chrome can show more than one web area (a side panel's is one too); the page's
   // is the one whose shape matches the viewport the probe measured, and its width
@@ -1799,16 +1819,39 @@ function jxaRuntime(BROWSERS) {
       // No start: the caller's own page call already opened the control.
       const r = a.start ? stepRead(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
+      // a.trusted: a control whose synthetic open shows no list of its own gets a
+      // trusted click (the tab its window shows only; never raised). A refused or
+      // missed click fails closed.
+      const X = a.trusted, used = [];
+      const done = function (o) { if (used.length && o) o.trusted = used; return o; };
+      let T = null;
+      const selectClick = function (part) {
+        if (!T) T = trustedTarget({ target: a.target }, "select {trusted:true}");
+        const c = aimedClick(T, { probe: part, check: X.check }, "select");
+        if (c.stop) return c.stop.gone ? null : c.stop;
+        if (!c.out.ok) return { ok: false, hit: c.out.hit, el: c.out.el, error: "the trusted click on " + c.out.el + " did not land on it (hit: " + c.out.hit + "); nothing was picked" };
+        used.push(part === X.option ? "option" : "control");
+        return null;
+      };
+      if (X && !poll(t, X.open, 400, 50)) {
+        const c = selectClick(X.control);
+        if (c) return c;
+      }
       // a.short: give up early unless a.probe says a list or companion is there.
       // A pick step answering {settled} has found nothing more worth waiting for.
       let picked = poll(t, a.pick, a.short || a.wait || 2500, 50, true);
       if (!picked && a.short && readExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50, true);
       if (picked && picked.value.settled) picked = null;
-      if (!picked && !a.missFinal) return readExec(t, a.miss);
+      if (!picked && !a.missFinal) return done(readExec(t, a.miss));
       if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : readExec(t, a.missFinal); }
-      if (picked.value.ok === false) return picked.value;
+      if (picked.value.ok === false) return done(picked.value);
+      // A pick that doesn't show while the popup stays open gets a trusted click on the option.
+      if (X && !poll(t, X.keep, 500, 50)) {
+        const c = selectClick(X.option);
+        if (c) return done(c);
+      }
       const read = poll(t, a.read, 500, 50);
-      return read ? read.value : readExec(t, a.readFinal);
+      return done(read ? read.value : readExec(t, a.readFinal));
     },
     // Plain click with readback: click (arming the pre-click text), then poll.
     click(a) {
@@ -1819,11 +1862,11 @@ function jxaRuntime(BROWSERS) {
     },
     trustedClick(a) {
       const T = trustedTarget(a);
-      const home = T.background ? null : cursorAt();
       const arm = function () { return a.arm ? parseExec(T.t, a.arm) : null; };
       let out;
-      try {
-        if (a.x != null) {
+      if (a.x != null) {
+        const home = T.background ? null : cursorAt();
+        try {
           const f = parseExec(T.t, a.frames);
           const framed = pointOnFrame(T, a, f) || offPage(T, f, { x: a.x, y: a.y });
           if (framed) return framed;
@@ -1832,19 +1875,13 @@ function jxaRuntime(BROWSERS) {
           if (T.background) skyClick(T.I, { x: a.x, y: a.y });
           else leftClick(T.I, { x: a.x, y: a.y });
           out = { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" };
-        } else {
-          const A = aim(T, a, "click");
-          if (A.out) return A.out;
-          const bad = arm();
-          if (bad && bad.ok === false) return bad;
-          if (T.background) skyClick(T.I, A.pt);
-          else leftClick(T.I, A.pt);
-          delay(0.05);
-          const check = parseExec(T.t, a.check);
-          out = Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" }, check);
+        } finally {
+          if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
         }
-      } finally {
-        if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
+      } else {
+        const c = aimedClick(T, a, "click", arm);
+        if (c.stop) return c.stop;
+        out = c.out;
       }
       // The cursor is already home, so the settle wait doesn't hold it.
       return a.arm ? Object.assign(out, readback(T.t, a)) : out;
@@ -3468,6 +3505,7 @@ if (!open) {
   pressFocus(wrap || ctl, input || ctl);
   s.opened = true;
 }
+s.openEl = wrap || ctl;
 window.__perch_select = s;
 return { pending: true };
 `,
@@ -3488,6 +3526,7 @@ const opt = bestMatch(opts, function (o) { return keys.get(o); }, wantN);
 if (opt) {
   s.picked = clip(textOf(opt), 80);
   s.pickedN = keys.get(opt);
+  s.optEl = opt;
   s.multi = isMulti(s, opt);
   if (chosenAlready(s, opt, s.pickedN)) s.already = true;
   else press(opt);
@@ -3548,15 +3587,22 @@ if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
 // Escape on a closed Downshift menu clears its selection, so only an open one gets it.
 if (s.opened && stillOpen(s)) escapeOwn(s);
 if (s.disabled) return { ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands };
-if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty; click it with trusted:true, then select again", candidates: [] };
+if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [] };
 return { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands };
 `,
 
+  // select {trusted}: whether the synthetic open showed the control's own list.
+  select_open: SELECT_LIB + String.raw`
+const s = window.__perch_select;
+return !!s && stillOpen(s);
+`,
+
   // Until the control shows the choice: null (keep polling); A.final reports anyway.
+  // A.keep leaves an open popup alone, so a pick that didn't show can still be clicked.
   select_read: SELECT_LIB + String.raw`
 const s = window.__perch_select;
 // A popup select opened and a pick left open (a multi-select) closes again.
-if (s.opened && !s.closed) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
+if (s.opened && !s.closed && !A.keep) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
 // An input's own value first: its wrapper may hold only its label.
 const iv = (s.input && s.input.value) || "";
 const has = function (t) { return s.multi ? norm(t).indexOf(s.pickedN) >= 0 : norm(t) === s.pickedN; };
@@ -3852,7 +3898,13 @@ return out;
   trusted_probe: String.raw`
 if (document.visibilityState === "hidden") return { ok: false, retry: "hidden" };
 let el;
-if (A.ref || A.selector || !A.forFill) {
+if (A.select) {
+  // select {trusted}: the control select pressed, or the option it picked (gone once its list closed).
+  const s = window.__perch_select;
+  if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
+  el = A.select === "option" ? s.optEl : s.openEl;
+  if (A.select === "option" && !(el && el.isConnected && vis(el))) return { ok: false, gone: true };
+} else if (A.ref || A.selector || !A.forFill) {
   const r = A.ref || A.selector ? resolveEl(A) : clickableByLabel(A);
   if (r.out) return r.out;
   el = r.el;
@@ -4424,16 +4476,20 @@ const pickSuggestion = (target) => rt("select", {
 }, { lane: "slow" });
 
 async function select(args = {}) {
-  const { ref = null, selector = null, label_pattern = null, text = null, target } = args;
+  const { ref = null, selector = null, label_pattern = null, text = null, trusted = false, target } = args;
   if (text == null) throw new Error("select requires `text` (the option to choose)");
   if (!ref && !selector && !label_pattern) throw new Error("select requires `ref`, `selector`, or `label_pattern`");
   if (label_pattern) validateLabelPattern("select", label_pattern);
-  const A = { ref, selector, label_pattern, text: String(text) };
+  const A = { ref, selector, label_pattern, text: String(text), ...(trusted ? { trusted: true } : {}) };
   const step = (name, extra = {}) => pageFn(name, { ...A, ...extra });
   return rt("select", {
     target,
     start: step("select_start"), pick: step("select_pick"), miss: step("select_miss"),
     read: step("select_read"), readFinal: step("select_read", { final: true }),
+    ...(trusted ? { trusted: {
+      open: step("select_open"), keep: step("select_read", { keep: true }), check: pageFn("trusted_check", {}),
+      control: pageFn("trusted_probe", { select: "control" }), option: pageFn("trusted_probe", { select: "option" }),
+    } } : {}),
   }, { lane: "slow" });
 }
 
@@ -4547,11 +4603,12 @@ const TOOLS = [
     raise: { type: "boolean" },
     target: TARGET,
   }),
-  tool("select", "Choose an option in a native <select> or custom combobox (react-select, Downshift, cmdk), from that control's own list only, and read back what's shown. Exact text or value, then whole word, then word prefix. A miss returns the control's options as `candidates`; `text:\"\"` just lists them.", {
+  tool("select", "Choose an option in a native <select> or custom combobox (react-select, Downshift, cmdk), from that control's own list only, and read back what's shown. Exact text or value, then whole word, then word prefix. A miss returns the control's options as `candidates`; `text:\"\"` just lists them. `trusted`: a control that won't open gets a real click (shown tab; check `trusted`).", {
     text: { type: "string" },
     ref: REF,
     selector: SEL,
     label_pattern: LABEL,
+    trusted: { type: "boolean" },
     target: TARGET,
   }, ["text"]),
 ];
