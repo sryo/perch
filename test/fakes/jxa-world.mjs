@@ -2,15 +2,31 @@
 // browsers, windows, tabs, per-tab page contexts, a CoreGraphics window list,
 // and a fake clock. Every accessor counts its calls so tests can assert on
 // Apple Event traffic. System Events throws: the runtime must never touch it.
+// world.aeLog lists every Apple Event to a browser as [appName, key], and
+// aeBy(app) its keys for one browser. With frameMs, an Apple Event to a browser
+// returns at that browser's next frame boundary; each browser has its own phase,
+// so events to different browsers overlap, as they do live. frameMs 0 (the
+// default) leaves the clock alone.
 import vm from "node:vm";
 
-export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } = {}) {
+export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, frameMs = 0 } = {}) {
   const clock = { t: 1_000_000 };
   const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [] };
   const cgEntries = cg.map((entry) => ({ ...entry }));
   const posted = [];
   const counts = {}, geom = {};
-  const bump = (k) => { counts[k] = (counts[k] || 0) + 1; };
+  const aeLog = [];
+  // Building a specifier is lazy in JXA, and running() asks LaunchServices: no Apple Event.
+  const notAe = /^(win\.tabs|tabs\.byId|win\.activeTab|windows\[\d+\]\(.*\)|running\(.*\))$/;
+  const phase = (app) => (browsers.findIndex((b) => b.name === app) * frameMs) / browsers.length;
+  const ae = (app, k) => {
+    aeLog.push([app, k]);
+    if (frameMs > 0) { const p = phase(app); clock.t = p + (Math.floor((clock.t - p) / frameMs) + 1) * frameMs; }
+  };
+  const bump = (k, app) => {
+    counts[k] = (counts[k] || 0) + 1;
+    if (app != null && !notAe.test(k)) ae(app, k);
+  };
   const log = [];
   // What JXA throws when a specifier resolves to nothing (errAENoSuchObject).
   const gone = () => Object.assign(new Error("Can't get object."), { errorNumber: -1728 });
@@ -50,7 +66,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       set page(p) { spec._page = p; },
       get _active() { return w.spec.active === w.tabs.indexOf(tab); },
     };
-    const fn = (name, get) => Object.defineProperty(tab, name, { get: () => { bump(`tab.${name}`); return get; }, configurable: true });
+    const fn = (name, get) => Object.defineProperty(tab, name, { get: () => { bump(`tab.${name}`, b.name); return get; }, configurable: true });
     fn("id", () => spec.id);
     fn("title", () => spec.title || "");
     fn("name", () => spec.title || "");
@@ -65,7 +81,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     tab.shownUrl = () => { const u = tab.pending ? tab.pending.url : tab.page.url; return b.kind === "safari" && u === "about:blank" ? null : u; };
     Object.defineProperty(tab, "url", {
       get: () => () => {
-        bump("tab.url");
+        bump("tab.url", b.name);
         // state.arcSlowUrl = {throws, reads}: a new Arc tab's url() first throws, then
         // keeps showing arc://newtab until `reads` more reads, then the set URL commits.
         if (tab.slow) {
@@ -75,7 +91,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
         return tab.shownUrl();
       },
       set: (u) => {
-        bump("tab.url=");
+        bump("tab.url=", b.name);
         if (tab.slow) { tab.slow.target = u; return; }
         go(u, "url");
       },
@@ -98,7 +114,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     // `ae.timeoutMs` is the caller's Apple Event timeout; plain JXA commands have
     // none, so an unanswered one blocks for the 2-minute default.
     tab.execute = ({ javascript }, ae = {}) => {
-      bump("tab.execute");
+      bump("tab.execute", b.name);
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
       if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
       settle();
@@ -124,10 +140,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       if (state.dropAfterAssign && tab.pending && tab.pending !== before) throw unanswered();
       return b.kind === "arc" ? JSON.stringify(r) : r;
     };
-    tab.select = () => { bump("tab.select"); w.spec.active = w.tabs.indexOf(tab); };
+    tab.select = () => { bump("tab.select", b.name); w.spec.active = w.tabs.indexOf(tab); };
     // Closing removes the tab; a window keeps showing the same tab, or its neighbour.
     tab.close = () => {
-      bump("tab.close");
+      bump("tab.close", b.name);
       const i = w.tabs.indexOf(tab);
       if (i < 0) throw gone();
       const shown = w.tabs[w.spec.active];
@@ -143,12 +159,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     spec.tabs.forEach((t) => w.tabs.push(makeTab(t, b, w)));
     const coll = new Proxy([], {
       get(_, k) {
-        if (k === "length") { bump("tabs.length"); return w.tabs.length; }
-        if (k === "url") return () => { bump("tabs.url()"); return w.tabs.map((t) => t.shownUrl()); };
-        if (k === "title" || k === "name") return () => { bump("tabs.title()"); return w.tabs.map((t) => t.spec.title || ""); };
-        if (k === "id") return () => { bump("tabs.id()"); if (state.tabIdsFail) throw new Error("Can't get object."); return w.tabs.map((t) => t.spec.id); };
-        if (k === "location") return () => { bump("tabs.location()"); return w.tabs.map((t) => t.spec.location || "unpinned"); };
-        if (k === "byId") return (id) => { bump("tabs.byId"); return w.tabs.find((t) => String(t.spec.id) === String(id)) || missing; };
+        if (k === "length") { bump("tabs.length", b.name); return w.tabs.length; }
+        if (k === "url") return () => { bump("tabs.url()", b.name); return w.tabs.map((t) => t.shownUrl()); };
+        if (k === "title" || k === "name") return () => { bump("tabs.title()", b.name); return w.tabs.map((t) => t.spec.title || ""); };
+        if (k === "id") return () => { bump("tabs.id()", b.name); if (state.tabIdsFail) throw new Error("Can't get object."); return w.tabs.map((t) => t.spec.id); };
+        if (k === "location") return () => { bump("tabs.location()", b.name); return w.tabs.map((t) => t.spec.location || "unpinned"); };
+        if (k === "byId") return (id) => { bump("tabs.byId", b.name); return w.tabs.find((t) => String(t.spec.id) === String(id)) || missing; };
         if (k === "index") return () => w.tabs.map((_, i) => i + 1);
         if (k === "push") return (t) => {
           // Arc's `make new tab` rejects about: and data: URLs (they can be set afterwards).
@@ -168,34 +184,34 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
       },
     });
     const win = {};
-    Object.defineProperty(win, "tabs", { get: () => { bump("win.tabs"); return coll; } });
-    Object.defineProperty(win, "id", { get: () => () => { bump("win.id()"); return spec.id; } });
+    Object.defineProperty(win, "tabs", { get: () => { bump("win.tabs", b.name); return coll; } });
+    Object.defineProperty(win, "id", { get: () => () => { bump("win.id()", b.name); return spec.id; } });
     win.name = () => spec.name ?? (w.tabs[spec.active]?.spec.title || "");
     // Arc: the sidebar order of the active space (spec.sidebar ids), Favorites excluded.
     Object.defineProperty(win, "activeSpace", { get: () => {
       if (b.kind !== "arc") throw new Error("Can't get object.");
       const side = spec.sidebar || w.tabs.filter((t) => t.spec.location !== "topApp").map((t) => t.spec.id);
-      return { tabs: { id: () => { bump("space.tabs.id()"); return side.slice(); } } };
+      return { tabs: { id: () => { bump("space.tabs.id()", b.name); return side.slice(); } } };
     } });
     // Raising a window reorders the app's window list, like the real `index = 1`.
     Object.defineProperty(win, "index", { set: (v) => {
-      bump("win.index=");
+      bump("win.index=", b.name);
       spec.raised = v === 1;
       if (v === 1) { const all = winsByApp[b.name]; all.splice(all.indexOf(w), 1); all.unshift(w); }
     } });
     // Chrome Canary and Safari answer `bounds`; live, Canary fails `position`
     // ("Can't convert types") and Arc has neither. Each read, failed or not, costs
     // an Apple Event; `geom` counts them apart so other budgets stay as they are.
-    win.position = () => { geom.position = (geom.position || 0) + 1; throw new Error("Can't convert types."); };
-    win.size = () => { geom.size = (geom.size || 0) + 1; throw new Error("Can't convert types."); };
-    win.bounds = () => { geom.bounds = (geom.bounds || 0) + 1; if (b.kind === "arc") throw new Error("no bounds"); return { x: spec.x ?? 0, y: spec.y ?? 0, width: spec.w ?? 800, height: spec.h ?? 600 }; };
+    win.position = () => { geom.position = (geom.position || 0) + 1; ae(b.name, "win.position()"); throw new Error("Can't convert types."); };
+    win.size = () => { geom.size = (geom.size || 0) + 1; ae(b.name, "win.size()"); throw new Error("Can't convert types."); };
+    win.bounds = () => { geom.bounds = (geom.bounds || 0) + 1; ae(b.name, "win.bounds()"); if (b.kind === "arc") throw new Error("no bounds"); return { x: spec.x ?? 0, y: spec.y ?? 0, width: spec.w ?? 800, height: spec.h ?? 600 }; };
     Object.defineProperty(win, "activeTabIndex", {
-      get: () => () => { bump("win.activeTabIndex()"); if (b.kind !== "chrome") throw new Error("Can't convert types"); return spec.active + 1; },
-      set: (v) => { bump("win.activeTabIndex="); spec.active = v - 1; },
+      get: () => () => { bump("win.activeTabIndex()", b.name); if (b.kind !== "chrome") throw new Error("Can't convert types"); return spec.active + 1; },
+      set: (v) => { bump("win.activeTabIndex=", b.name); spec.active = v - 1; },
     });
     Object.defineProperty(win, "activeTab", {
       get: () => {
-        bump("win.activeTab");
+        bump("win.activeTab", b.name);
         if (b.kind === "safari") throw new Error("no activeTab");
         // A fresh Arc window shows no tab; its activeTab can't be read.
         if (spec.active == null || !w.tabs[spec.active]) return { id: () => { throw new Error("Can't get object."); } };
@@ -206,10 +222,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     Object.defineProperty(win, "currentTab", {
       // Called, it fetches the tab; uncalled, it is a specifier (`currentTab.index()`).
       get: () => Object.assign(() => { if (b.kind !== "safari") throw new Error("Can't convert types"); return w.tabs[spec.active]; }, {
-        index: () => { bump("win.currentTab.index()"); if (b.kind !== "safari") throw new Error("Can't convert types"); return spec.active + 1; },
+        index: () => { bump("win.currentTab.index()", b.name); if (b.kind !== "safari") throw new Error("Can't convert types"); return spec.active + 1; },
         __specifier: true,
       }),
-      set: (t) => { bump("win.currentTab="); if (b.kind !== "safari") throw new Error("Can't convert types"); spec.active = w.tabs.indexOf(t); },
+      set: (t) => { bump("win.currentTab=", b.name); if (b.kind !== "safari") throw new Error("Can't convert types"); spec.active = w.tabs.indexOf(t); },
     });
     w.win = win;
     return w;
@@ -226,16 +242,16 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     const wins = (b.windows || []).map((ws) => makeWindow(ws, b));
     winsByApp[b.name] = wins;
     const a = {
-      running: () => { bump(`running(${b.name})`); return b.running !== false; },
+      running: () => { bump(`running(${b.name})`, b.name); return b.running !== false; },
       activate: () => {
-        bump(`activate(${b.name})`); log.push(["activate", b.name]);
+        bump(`activate(${b.name})`, b.name); log.push(["activate", b.name]);
         // Another app can keep the front (a modal, a full-screen space).
         if (state.activateFails) return;
         const i = cgEntries.findIndex((entry) => entry.owner === b.name);
         if (i > 0) cgEntries.unshift(cgEntries.splice(i, 1)[0]);
       },
       doJavaScript: (js, { in: tab }) => {
-        bump("doJavaScript");
+        bump("doJavaScript", b.name);
         if (tab && tab.__specifier) tab = tab();
         if (!tab) throw gone();
         // Live on macOS 27.2 Safari runs JS in any tab; state.safariCurrentOnly
@@ -249,28 +265,28 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
     };
     a.windows = new Proxy([], {
       get(_, k) {
-        if (k === "length") { bump(`windows.length(${b.name})`); return wins.length; }
+        if (k === "length") { bump(`windows.length(${b.name})`, b.name); return wins.length; }
         // JXA specifiers are lazy: windows[k] means "whatever is k-th when used".
         if (/^\d+$/.test(String(k))) {
-          bump(`windows[${k}](${b.name})`);
+          bump(`windows[${k}](${b.name})`, b.name);
           return specifier(() => wins[Number(k)] && wins[Number(k)].win);
         }
         if (k === "byId") return (id) => specifier(() => { const w = wins.find((x) => String(x.spec.id) === String(id)); return w && w.win; });
-        if (k === "id") return () => { bump(`windows.id()(${b.name})`); return wins.map((w) => w.spec.id); };
+        if (k === "id") return () => { bump(`windows.id()(${b.name})`, b.name); return wins.map((w) => w.spec.id); };
         if (k === "name") return () => wins.map((w) => w.win.name());
         // Every window's elements in one event (nested arrays, one per window); counted like a per-window bulk read.
         if (k === "tabs") return {
-          url: () => { bump("tabs.url()"); return wins.map((w) => w.tabs.map((t) => t.shownUrl())); },
-          title: () => { bump("tabs.title()"); return wins.map((w) => w.tabs.map((t) => t.spec.title || "")); },
-          name: () => { bump("tabs.title()"); return wins.map((w) => w.tabs.map((t) => t.spec.title || "")); },
-          id: () => { bump("tabs.id()"); return wins.map((w) => w.tabs.map((t) => t.spec.id)); },
-          location: () => { bump("tabs.location()"); return wins.map((w) => w.tabs.map((t) => t.spec.location || "unpinned")); },
+          url: () => { bump("tabs.url()", b.name); return wins.map((w) => w.tabs.map((t) => t.shownUrl())); },
+          title: () => { bump("tabs.title()", b.name); return wins.map((w) => w.tabs.map((t) => t.spec.title || "")); },
+          name: () => { bump("tabs.title()", b.name); return wins.map((w) => w.tabs.map((t) => t.spec.title || "")); },
+          id: () => { bump("tabs.id()", b.name); return wins.map((w) => w.tabs.map((t) => t.spec.id)); },
+          location: () => { bump("tabs.location()", b.name); return wins.map((w) => w.tabs.map((t) => t.spec.location || "unpinned")); },
         };
         // Arc: a window showing no tab reads as null here, though its own activeTab.id() throws.
-        if (k === "activeTab") return { id: () => { bump(`windows.activeTab.id()(${b.name})`); if (b.kind !== "arc" || state.arcBulkFails) throw new Error("Can't convert types"); return wins.map((w) => (w.tabs[w.spec.active] ? w.tabs[w.spec.active].spec.id : null)); } };
-        if (k === "activeSpace") return { tabs: { id: () => { bump("space.tabs.id()"); if (b.kind !== "arc") throw new Error("Can't get object."); return wins.map((w) => w.spec.sidebar || w.tabs.filter((t) => t.spec.location !== "topApp").map((t) => t.spec.id)); } } };
-        if (k === "activeTabIndex") return () => { bump(`windows.activeTabIndex()(${b.name})`); if (b.kind !== "chrome") throw new Error("Can't convert types"); return wins.map((w) => w.spec.active + 1); };
-        if (k === "currentTab") return { index: () => { bump(`windows.currentTab.index()(${b.name})`); if (b.kind !== "safari") throw new Error("Can't convert types"); return wins.map((w) => w.spec.active + 1); } };
+        if (k === "activeTab") return { id: () => { bump(`windows.activeTab.id()(${b.name})`, b.name); if (b.kind !== "arc" || state.arcBulkFails) throw new Error("Can't convert types"); return wins.map((w) => (w.tabs[w.spec.active] ? w.tabs[w.spec.active].spec.id : null)); } };
+        if (k === "activeSpace") return { tabs: { id: () => { bump("space.tabs.id()", b.name); if (b.kind !== "arc") throw new Error("Can't get object."); return wins.map((w) => w.spec.sidebar || w.tabs.filter((t) => t.spec.location !== "topApp").map((t) => t.spec.id)); } } };
+        if (k === "activeTabIndex") return () => { bump(`windows.activeTabIndex()(${b.name})`, b.name); if (b.kind !== "chrome") throw new Error("Can't convert types"); return wins.map((w) => w.spec.active + 1); };
+        if (k === "currentTab") return { index: () => { bump(`windows.currentTab.index()(${b.name})`, b.name); if (b.kind !== "safari") throw new Error("Can't convert types"); return wins.map((w) => w.spec.active + 1); } };
         return undefined;
       },
     });
@@ -567,11 +583,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0 } 
   };
   const ctx = vm.createContext(sandbox);
   return {
-    ctx, counts, geom, log, clock, apps, posted, cg: cgEntries,
+    ctx, counts, geom, log, clock, apps, posted, cg: cgEntries, aeLog,
+    aeBy: (app) => aeLog.filter(([a]) => a === app).map(([, k]) => k),
     // Reorder a window's tabs in place: tabs[w] is the live list the runtime reads.
     tabsOf: (name, w) => winsByApp[name][w].tabs,
     winSpec: (name, w) => winsByApp[name][w].spec,
-    reset() { for (const o of [counts, geom]) for (const k of Object.keys(o)) delete o[k]; log.length = 0; },
+    reset() { for (const o of [counts, geom]) for (const k of Object.keys(o)) delete o[k]; log.length = 0; aeLog.length = 0; },
     state,
     page: (name, w, t) => winsByApp[name][w].tabs[t].page.ctx,
     run: (src) => vm.runInContext(src, ctx),
