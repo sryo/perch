@@ -1,5 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { OsaDaemon, jxa, ERR } from "../server.js";
 import { fakeSpawner } from "./fakes/fake-repl.mjs";
 
@@ -142,6 +147,84 @@ test("jxa falls back to one-shot at once when the daemon is disabled", async () 
   assert.ok(performance.now() - t < 20);
   assert.equal(shots, 2);
   d.kill();
+});
+
+// ---- warm start ----
+
+test("warm spawns and handshakes once; the first call then reuses the REPL", async () => {
+  const { d, f } = daemonWith({}, { prelude: "globalThis.__pre = 7;" });
+  d.warm();
+  d.warm();
+  assert.equal(f.spawned.length, 1, "a second warm is a no-op");
+  assert.match(f.spawned[0].lines[0], /__pre|%5F%5Fpre/, "the warm line is the prelude handshake");
+  assert.equal(await d.run("__pre", 1000), "7");
+  assert.equal(f.spawned.length, 1);
+  assert.equal(f.spawned[0].lines.length, 2, "handshake plus the call, no second handshake");
+  d.warm();
+  assert.equal(f.spawned.length, 1, "warm on a live REPL spawns nothing");
+  d.kill();
+});
+
+test("a call that lands mid-handshake waits for it instead of hanging", async () => {
+  const { d, f } = daemonWith({ chunk: 2 });
+  d.warm();
+  assert.equal(await d.run("'x'", 1000), "x");
+  assert.equal(f.spawned.length, 1);
+  d.kill();
+});
+
+test("warm swallows a spawn failure and the next call spawns again", async () => {
+  const f = fakeSpawner();
+  let fail = true;
+  const d = new OsaDaemon({ spawn: (...a) => { if (fail) throw new Error("EAGAIN"); return f.spawnFn(...a); } });
+  d.warm();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(d.proc, null);
+  assert.equal(d.disabled, null);
+  fail = false;
+  assert.equal(await d.run("1", 1000), "1");
+  assert.equal(f.spawned.length, 1);
+  d.kill();
+});
+
+test("warm on a deaf REPL disables it; a call queued behind the handshake falls back", async () => {
+  const { d, f } = daemonWith({ mode: "deaf" }, { handshakeTimeout: 50 });
+  d.warm();
+  await assert.rejects(d.run("1", 1000), (e) => e.notSent === true);
+  assert.ok(d.disabled);
+  d.warm();
+  assert.equal(f.spawned.length, 1, "a disabled daemon never warms again");
+  d.kill();
+});
+
+// The entry block, run for real with a fake `osascript` on PATH that records each spawn.
+async function startServer(t, env = {}) {
+  const dir = await mkdtemp(join(tmpdir(), "perch-warm-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const log = join(dir, "spawns");
+  await writeFile(join(dir, "osascript"), `#!/bin/sh\necho spawn >> "${log}"\nexec cat > /dev/null\n`);
+  await chmod(join(dir, "osascript"), 0o755);
+  const server = fileURLToPath(new URL("../server.js", import.meta.url));
+  const p = spawn(process.execPath, [server], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, ...env }, stdio: ["pipe", "pipe", "ignore"] });
+  const exited = new Promise((r) => p.on("exit", r));
+  t.after(async () => { p.stdin.end(); await exited; });
+  const replied = new Promise((r) => p.stdout.once("data", r));
+  p.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) + "\n");
+  await replied;
+  const spawns = () => readFile(log, "utf8").then((s) => s.split("\n").filter(Boolean).length, () => 0);
+  return { spawns };
+}
+
+test("the server warms both lanes once it is connected", async (t) => {
+  const { spawns } = await startServer(t);
+  for (let i = 0; i < 100 && (await spawns()) < 2; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(await spawns(), 2);
+});
+
+test("PERCH_DAEMON=0 warms nothing", async (t) => {
+  const { spawns } = await startServer(t, { PERCH_DAEMON: "0" });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await spawns(), 0);
 });
 
 // Runs by default on macOS: it's the only guard against a REPL that stops answering.

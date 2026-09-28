@@ -3,7 +3,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execFile, spawn } from "node:child_process";
-import { readFile, unlink } from "node:fs/promises";
+import { readFile, stat, unlink } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
@@ -1874,6 +1874,12 @@ export class OsaDaemon {
     this._drain();
     return true;
   }
+  // Spawns and handshakes ahead of the first call. It never throws: a spawn
+  // failure leaves no process, so the next call spawns again; a handshake
+  // timeout disables the daemon as it would on a first call.
+  warm() {
+    if (!this.disabled) this._drain(true);
+  }
   kill() {
     const p = this.proc;
     this.proc = null;
@@ -1894,8 +1900,8 @@ export class OsaDaemon {
     // Handshake instead of a fixed settle: the prelude (or a no-op) must round-trip first.
     return new Promise((resolve, reject) => this._send({ script: this.prelude + ";1", timeout: this.handshakeTimeout, resolve, reject, handshake: true }));
   }
-  async _drain() {
-    if (this.current || this.queue.length === 0) return;
+  async _drain(warm = false) {
+    if (this.current || (this.queue.length === 0 && !warm)) return;
     if (!this.proc) this.ready = this._spawn();
     const ready = this.ready;
     try { await ready; }
@@ -3687,12 +3693,16 @@ const MIME_BY_EXT = {
   jpeg: "image/jpeg",
 };
 
-async function readUserFile(p, encoding) {
+// `cap(abs, size)` sees the size from a stat before anything is read, and may throw.
+async function readUserFile(p, encoding, cap) {
   const abs = p.startsWith("~")
     ? resolvePath(homedir(), p.slice(p.startsWith("~/") ? 2 : 1))
     : resolvePath(p);
-  try { return { abs, data: await readFile(abs, encoding) }; }
-  catch (e) { throw new Error(`cannot read ${abs}: ${e.message}`); }
+  try {
+    if (cap) cap(abs, (await stat(abs)).size);
+    return { abs, data: await readFile(abs, encoding) };
+  }
+  catch (e) { throw e.cap ? e : new Error(`cannot read ${abs}: ${e.message}`); }
 }
 
 // Splits text into <= max UTF-16 unit chunks without cutting a surrogate pair.
@@ -3748,10 +3758,25 @@ async function trustedFill({ ref, selector, label_pattern, text, raise, target }
 
 // How long file_upload looks for the file name after the site took the file.
 const UPLOAD_SHOWN_WAIT = 1000;
+// The file crosses the bridge base64 in one script. A one-shot osascript takes
+// that script as an argument, so without the daemons the kernel's ~1MB argument
+// limit caps it (700KB grows to ~930KB).
+const UPLOAD_MAX = 25 << 20, UPLOAD_MAX_ONESHOT = 700 << 10;
+function uploadCap(abs, size) {
+  const d = DAEMONS.fast;
+  const daemon = !!d && !d.disabled;
+  const max = daemon ? UPLOAD_MAX : UPLOAD_MAX_ONESHOT;
+  if (size <= max) return;
+  const mb = (n) => (n / (1 << 20)).toFixed(1) + "MB";
+  const msg = daemon
+    ? `file_upload: ${abs} is ${mb(size)}, over the 25MB cap`
+    : `file_upload: ${abs} is ${Math.ceil(size / 1024)}KB, over the 700KB cap without the osascript daemon (PERCH_DAEMON=0 or it failed to start)`;
+  throw Object.assign(new Error(msg), { cap: true });
+}
 async function fileUpload(args = {}) {
   const { selector, ref, path, target } = args;
   if (!path) throw new Error("file_upload requires `path`");
-  const { abs, data } = await readUserFile(path);
+  const { abs, data } = await readUserFile(path, undefined, uploadCap);
   const name = abs.split("/").pop();
   const mime = MIME_BY_EXT[name.split(".").pop().toLowerCase()] || "application/octet-stream";
   const r = await runPage("file_upload", "file_upload", { selector, ref, b64: data.toString("base64"), name, mime }, target);
@@ -4127,4 +4152,6 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   process.stdin.on("close", shutdown);
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(sig, shutdown);
   await server.connect(new StdioServerTransport());
+  // Pays the JXA bridge startup now instead of on each lane's first call.
+  for (const d of Object.values(DAEMONS)) d.warm();
 }
