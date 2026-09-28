@@ -22,6 +22,7 @@ function onPage(setup, extra = "") {
   world.run(JXA_PRELUDE);
   DAEMONS.fast = world.daemon;
   DAEMONS.slow = world.daemon;
+  dom.world = world;
   return dom;
 }
 const select = async (args) => {
@@ -154,8 +155,11 @@ test("Downshift: its toggle button lists the items, typing opens it to pick, and
   assert.deepEqual(o.candidates, ["Design", "Product design lead"], JSON.stringify(o));
   assert.equal(dom.downshift.selectedItem, "Design", "listing never clears the selection");
   assert.equal(input.value, "Design");
+  const t0 = dom.world.clock.t;
   o = await select({ label_pattern: "department", text: "zz" });
   assert.equal(o.ok, false);
+  assert.deepEqual(o.candidates, ["Design", "Product design lead"], JSON.stringify(o));
+  assert.equal(dom.world.clock.t - t0, 550, "typed at 150ms, then 8 empty polls");
   assert.equal(dom.downshift.selectedItem, "Design");
   assert.equal(input.value, "Design");
   assert.equal(input.getAttribute("aria-expanded"), "false");

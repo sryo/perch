@@ -219,10 +219,67 @@ test("a list unchanged since the filter was typed is still waited on (a debounce
   assert.equal(o.selected, "Oslo");
 });
 
-test("an empty list after typing is still waited on", async () => {
-  const { dom } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => { window.typedAt = window.evals; show([]); });`));
-  evalHook(dom, (n) => { dom.evals = n; if (dom.typedAt && n === dom.typedAt + 15) dom.show(["Oslo"]); });
-  const { o } = await select({ label_pattern: "office", text: "Oslo" });
+// Runs fn once, ms of fake-clock time after the page set window.typed.
+function afterTyping(dom, world, ms, fn) {
+  const orig = dom.eval.bind(dom);
+  let t0 = null, done = false;
+  dom.eval = (js) => {
+    if (dom.typed && t0 == null) t0 = world.clock.t;
+    if (!done && t0 != null && world.clock.t - t0 >= ms) { done = true; fn(); }
+    return orig(js);
+  };
+}
+
+test("a typed filter that empties a list which had options settles as a miss in about 0.5s", async () => {
+  const { dom, world } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => show(['Berlin', 'Madrid'].filter((x) => x.toLowerCase().includes(inp.value.toLowerCase()))));`));
+  const { o, ms } = await spent(world, { label_pattern: "office", text: "zz" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.error, "no option of this control matched");
+  assert.deepEqual(o.candidates, ["Berlin", "Madrid"]);
+  assert.equal(dom.document.getElementById("so").value, "", "the typed filter is cleared");
+  assert.equal(ms, 550, "typed at 150ms, then 8 empty polls");
+});
+
+test("a status saying nothing matched is no loading signal", async () => {
+  const { world } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => { ul.innerHTML = '<li role=status>No results found</li>'; });`));
+  const { o, ms } = await spent(world, { label_pattern: "office", text: "zz" });
+  assert.deepEqual(o.candidates, ["Berlin", "Madrid"]);
+  assert.equal(ms, 550);
+});
+
+// Loading signals on or inside the control or its list: an emptied list is still waited on.
+const LOADING = {
+  "aria-busy on the list": `ul.setAttribute('aria-busy', 'true'); show([]);`,
+  "aria-busy on the control": `inp.setAttribute('aria-busy', 'true'); show([]);`,
+  "a spinner in the list": `ul.innerHTML = '<li><span class=spinner-border></span></li>';`,
+  "a status in the list": `ul.innerHTML = '<li role=status>Fetching offices</li>';`,
+  "a Loading message": `ul.innerHTML = '<li class=notice>Loading...</li>';`,
+};
+for (const [name, busy] of Object.entries(LOADING)) {
+  test(`an emptied list is waited on while it shows ${name}`, async () => {
+    const { dom, world } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => { window.typed = true; ${busy} });`));
+    afterTyping(dom, world, 800, () => {
+      const d = dom.document;
+      d.getElementById("sm").removeAttribute("aria-busy");
+      d.getElementById("so").removeAttribute("aria-busy");
+      dom.show(["Oslo"]);
+    });
+    const { o, ms } = await spent(world, { label_pattern: "office", text: "Oslo" });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    assert.equal(o.selected, "Oslo");
+    assert.equal(ms, 1000, "the answer lands 800ms after the poll that saw the filter");
+  });
+}
+
+test("a list empty before the filter was typed is waited on past 0.5s (an async list)", async () => {
+  const html = `<label id=al>Office</label><input id=ao role=combobox aria-labelledby=al aria-controls=am aria-expanded=false><ul id=am role=listbox></ul>`;
+  const { dom, world } = onPage(html, `
+    const inp = document.getElementById('ao'), ul = document.getElementById('am');
+    window.show = (xs) => { ul.innerHTML = xs.map((x) => '<li role=option>' + x + '</li>').join(''); inp.setAttribute('aria-expanded', 'true'); };
+    inp.addEventListener('input', () => { window.typed = true; });`);
+  afterTyping(dom, world, 800, () => dom.show(["Oslo", "Porto"]));
+  const { o, ms } = await spent(world, { label_pattern: "office", text: "Oslo" });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.selected, "Oslo");
+  assert.equal(ms, 1000, "the answer lands 800ms after the poll that saw the filter");
 });
