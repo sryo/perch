@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFile, mkdtemp, rm } from "node:fs/promises";
+import { writeFile, mkdtemp, rm, truncate } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
@@ -168,4 +168,57 @@ test("file_upload: a name shown at once needs no wait", async (t) => {
   assert.equal(o.shown, true);
   assert.equal(o.cleared, true);
   assert.equal(world.clock.t - t0, 0, "no follow-up poll");
+});
+
+// ---- size cap: checked from a stat, before a byte is read or an Apple Event sent ----
+
+async function sizedFile(t, bytes) {
+  const dir = await mkdtemp(join(tmpdir(), "perch-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const f = join(dir, "big.pdf");
+  await writeFile(f, "");
+  await truncate(f, bytes);
+  return f;
+}
+const refusal = async (args) => {
+  const r = await handleCall("file_upload", args);
+  assert.equal(r.isError, true, r.content[0].text);
+  return r.content[0].text;
+};
+
+test("file_upload: a file over 25MB is refused before any Apple Event", async (t) => {
+  const path = await sizedFile(t, 25 * 1024 * 1024 + 1);
+  const { world } = onPage(`<input type=file id=f>`);
+  world.aeLog.length = 0;
+  assert.match(await refusal({ path, selector: "#f" }), /^error: file_upload: .*big\.pdf is 25\.0MB, over the 25MB cap/);
+  assert.deepEqual(world.aeLog, []);
+});
+
+test("file_upload: over 700KB still goes through the daemon", async (t) => {
+  const path = await sizedFile(t, 700 * 1024 + 1);
+  onPage(`<input type=file id=f>`);
+  assert.equal((await upload({ path, selector: "#f" })).ok, true);
+});
+
+test("file_upload: without the daemons the cap drops to 700KB, the one-shot argument limit", async (t) => {
+  const path = await sizedFile(t, 700 * 1024 + 1);
+  const { world } = onPage(`<input type=file id=f>`);
+  const saved = { ...DAEMONS };
+  delete DAEMONS.fast; delete DAEMONS.slow;
+  t.after(() => Object.assign(DAEMONS, saved));
+  world.aeLog.length = 0;
+  assert.match(await refusal({ path, selector: "#f" }), /over the 700KB cap.*PERCH_DAEMON=0/);
+  assert.deepEqual(world.aeLog, []);
+});
+
+test("file_upload: a daemon that disabled itself counts as no daemon", async (t) => {
+  const path = await sizedFile(t, 700 * 1024 + 1);
+  const { world } = onPage(`<input type=file id=f>`);
+  world.daemon.disabled = "osascript failed to start: timeout";
+  assert.match(await refusal({ path, selector: "#f" }), /over the 700KB cap/);
+});
+
+test("file_upload: a missing file still reads as cannot read", async () => {
+  onPage(`<input type=file id=f>`);
+  assert.match(await refusal({ path: "/nonexistent/perch-none.pdf" }), /cannot read \/nonexistent\/perch-none\.pdf/);
 });
