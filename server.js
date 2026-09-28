@@ -494,12 +494,40 @@ function jxaRuntime(BROWSERS) {
   const asQuote = function (s) { return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; };
   const NO_REPLY = "timeout: page JS got no reply within ";
   const isNoReply = function (e) { return !!e && e.message.indexOf(NO_REPLY) === 0; };
+  // NSAppleScript compiles on its first run, which live costs about as much as
+  // the execute itself, so each (browser, tab, window) gets one compiled handler
+  // taking the JS and the timeout as parameters, kept across calls. A few
+  // entries cover a session's tabs; the cache starts over past AS_CACHE_MAX.
+  const AS_CACHE_MAX = 32;
+  let asScripts = {}, asCount = 0;
+  function asScript(app, tabId, win) {
+    const key = app + "\n" + tabId + "\n" + win;
+    if (asScripts[key]) return asScripts[key];
+    if (++asCount > AS_CACHE_MAX) { asScripts = {}; asCount = 1; }
+    const src = "on perch_exec(js, ms)\nwith timeout of (ms / 1000) seconds\ntell application " + asQuote(app) +
+      " to execute tab id " + asQuote(tabId) + " of " + win + " javascript js\nend timeout\nend perch_exec";
+    const s = $.NSAppleScript.alloc.initWithSource(src);
+    if (!s.compileAndReturnError(Ref())) return null;
+    return (asScripts[key] = s);
+  }
+  // A subroutine Apple Event ('ascr'/'psbr') calling perch_exec with {js, ms};
+  // 'snam' names the handler and '----' holds the arguments.
+  function asCall(js, ms) {
+    const D = $.NSAppleEventDescriptor;
+    const ev = D.appleEventWithEventClassEventIDTargetDescriptorReturnIDTransactionID(0x61736372, 0x70736272, D.nullDescriptor, -1, 0);
+    ev.setParamDescriptorForKeyword(D.descriptorWithString("perch_exec"), 0x736e616d);
+    const args = D.listDescriptor;
+    args.insertDescriptorAtIndex(D.descriptorWithString(js), 1);
+    args.insertDescriptorAtIndex(D.descriptorWithInt32(ms), 2);
+    ev.setParamDescriptorForKeyword(args, 0x2d2d2d2d);
+    return ev;
+  }
   // `win` is an AppleScript window specifier.
   function asExecute(t, js, secs, win) {
-    const src = "with timeout of " + secs + " seconds\ntell application " + asQuote(t.app) +
-      " to execute tab id " + asQuote(t.tabId) + " of " + win + " javascript " + asQuote(js) + "\nend timeout";
+    const s = asScript(t.app, t.tabId, win);
+    if (!s) throw new Error("page JS failed");
     const start = Date.now();
-    const d = $.NSAppleScript.alloc.initWithSource(src).executeAndReturnError(Ref());
+    const d = s.executeAppleEventError(asCall(js, Math.round(secs * 1000)), Ref());
     if (d.isNil()) throw new Error(Date.now() - start >= secs * 900 ? NO_REPLY + secs + "s; the page may be navigating; retry" : "page JS failed");
     return ObjC.unwrap(d.stringValue);
   }

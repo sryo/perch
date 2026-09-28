@@ -335,20 +335,42 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     apps[b.name] = a;
   }
 
-  // NSAppleScript understands one shape: the runtime's bounded execute,
-  // `with timeout of S seconds / tell application "A" to execute tab id "T" of
-  // window id "W" javascript "JS" / end timeout`, where the window may instead be
-  // `window N` (1-based, front first).
+  // NSAppleScript understands one shape: the runtime's bounded execute, a handler
+  // `on perch_exec(js, ms) / with timeout of (ms / 1000) seconds / tell application
+  // "A" to execute tab id "T" of window id "W" javascript js / end timeout / end
+  // perch_exec`, where the window may instead be `window N` (1-based, front first),
+  // called by a subroutine Apple Event whose direct object is the list {js, ms}.
+  // state.compiles counts compilations (a live compile costs about as much as the
+  // execute), apart from `counts`, which the Apple Event budgets sum.
   const asString = String.raw`"((?:[^"\\]|\\.)*)"`;
-  const asExecute = new RegExp(String.raw`^with timeout of ([\d.]+) seconds\ntell application ${asString} to execute tab id ${asString} of window (?:id ${asString}|(\d+)) javascript ${asString}\nend timeout$`);
+  const asHandler = new RegExp(String.raw`^on perch_exec\(js, ms\)\nwith timeout of \(ms / 1000\) seconds\ntell application ${asString} to execute tab id ${asString} of window (?:id ${asString}|(\d+)) javascript js\nend timeout\nend perch_exec$`);
   const unquote = (s) => s.replace(/\\(.)/g, "$1");
+  state.compiles = 0;
+  function appleScript(src) {
+    let m = null;
+    const compile = () => {
+      if (m) return true;
+      state.compiles++;
+      m = asHandler.exec(src);
+      if (!m) throw new Error("fake NSAppleScript: unsupported source " + JSON.stringify(src));
+      return true;
+    };
+    return {
+      compileAndReturnError: () => compile(),
+      executeAppleEventError: (ev, err) => {
+        compile();
+        const P = ev.params;
+        if (ev.cls !== 0x61736372 || ev.id !== 0x70736272 || P[0x736e616d].s !== "perch_exec") throw new Error("fake NSAppleScript: not a perch_exec call");
+        const [jsD, msD] = P[0x2d2d2d2d].items;
+        return runAppleScript(m, jsD.s, msD.n, err);
+      },
+    };
+  }
   // A failure returns nil; the error Ref is left holding a value that throws when
   // read, since live osascript segfaults reading it after a timeout.
-  function runAppleScript(src, err) {
+  function runAppleScript(m, js, ms, err) {
     bump("NSAppleScript");
-    const m = asExecute.exec(src);
-    if (!m) throw new Error("fake NSAppleScript: unsupported source " + JSON.stringify(src));
-    const [secs, appName, tabId, winId, winIndex, js] = [Number(m[1]), ...m.slice(2).map((x) => x == null ? x : unquote(x))];
+    const [appName, tabId, winId, winIndex] = m.slice(1).map((x) => x == null ? x : unquote(x));
     const nil = () => {
       Object.defineProperty(err, 0, { get: () => { state.segv = true; throw new Error("SEGV: read a freed error Ref"); } });
       return { isNil: () => true };
@@ -361,12 +383,28 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     const tab = w && w.tabs.find((x) => String(x.spec.id) === tabId);
     if (!tab) return nil();
     try {
-      const r = tab.execute({ javascript: js }, { timeoutMs: secs * 1000 });
+      const r = tab.execute({ javascript: js }, { timeoutMs: ms });
       return { isNil: () => false, stringValue: r == null ? r : String(r) };
     } catch (e) {
       return nil();
     }
   }
+  // NSAppleEventDescriptor, enough to build that subroutine event.
+  const aeDesc = {
+    appleEventWithEventClassEventIDTargetDescriptorReturnIDTransactionID: (cls, id) => {
+      const ev = { cls, id, params: {} };
+      ev.setParamDescriptorForKeyword = (d, k) => { ev.params[k] = d; };
+      return ev;
+    },
+    get nullDescriptor() { return { null: true }; },
+    get listDescriptor() {
+      const l = { items: [] };
+      l.insertDescriptorAtIndex = (d, i) => { l.items[i - 1] = d; };
+      return l;
+    },
+    descriptorWithString: (s) => ({ s: String(s) }),
+    descriptorWithInt32: (n) => ({ n }),
+  };
 
   const axList = (items) => ({ count: items.length, objectAtIndex: (i) => items[i] });
   // AXValue's bridge only offers its description, e.g. "{value = x:917.000000 y:57.000000 ...}".
@@ -560,7 +598,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       CGEventGetLocation: () => ({ ...state.cursor }),
       CGWarpMouseCursorPosition: (pt) => { state.cursor = { x: pt.x, y: pt.y }; state.warps.push({ x: pt.x, y: pt.y }); },
       NSDictionary: { dictionaryWithObjectForKey: () => ({}) },
-      NSAppleScript: { alloc: { initWithSource: (src) => ({ executeAndReturnError: (err) => runAppleScript(src, err) }) } },
+      NSAppleScript: { alloc: { initWithSource: (src) => appleScript(src) } },
+      NSAppleEventDescriptor: aeDesc,
       NSString: { stringWithString: (str) => nsString(str) },
       AXIsProcessTrusted: () => state.ax,
       // Accessibility tree: a CG entry's `ax: { web: [{x,y,w,h}, ...] }` lists the

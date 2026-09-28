@@ -386,3 +386,15 @@ test("eval_js {awaitPromise} that times out says its code ran", async () => {
   assert.equal(r.isError, true);
   assert.match(t, /timed out after \d+ms; the code ran/);
 });
+
+test("the bounded execute compiles once per tab and window, not once per poll", async () => {
+  await install();
+  calm();
+  const args = { ...clickArgs(COUNT_CLICK), settle: 1000 };
+  assert.equal(rt("click", args).ok, true);
+  const runs = world.counts.NSAppleScript;
+  assert.ok(runs >= 10, `only ${runs} bounded runs`);
+  assert.equal(world.state.compiles, 1);
+  assert.equal(rt("click", args).ok, true);
+  assert.equal(world.state.compiles, 1, "a later call reuses the compiled script");
+});
