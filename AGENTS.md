@@ -11,8 +11,8 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 ├── server.js        # the whole MCP server (single file)
 ├── test/            # node:test unit tests (npm test), no browser needed
 │   ├── fakes/       # fake osascript REPL, fake JXA world (browsers, tabs, CGWindowList)
-│   ├── fixtures/    # widget pages the unit tests load, servable as is for live checks
-│   └── helpers/     # happy-dom page runner for page scripts
+│   ├── fixtures/    # widget pages servable as is for live checks; large-DOM page and its golden outputs
+│   └── helpers/     # happy-dom page runner for page scripts; dom-bench.mjs times them on the large page
 ├── scripts/
 │   ├── smoke.mjs    # live stdio smoke test (npm run smoke)
 │   ├── trusted-live.mjs  # live trusted click/fill/press check (--yes; --background)

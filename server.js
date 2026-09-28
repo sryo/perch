@@ -2438,8 +2438,9 @@ function matchTier(list, key, want) {
   const pre = new RegExp("(?:^|[^\\p{L}\\p{N}])" + esc, "u");
   const tiers = [function (t) { return t === want; }, function (t) { return word.test(t); }, function (t) { return pre.test(t); },
     function (t) { return inOrder(wordsOf(t), ws); }];
+  const keys = list.map(function (x) { return fold(key(x)); });
   for (let i = 0; i < tiers.length; i++) {
-    const hits = list.filter(function (x) { return tiers[i](fold(key(x))); });
+    const hits = list.filter(function (x, j) { return tiers[i](keys[j]); });
     if (hits.length) return { hits: hits, exact: i === 0 };
   }
   return { hits: [], exact: false };
@@ -2664,8 +2665,9 @@ function taMatch(opts, text) {
   const pre = new RegExp("(?:^|[^\\p{L}\\p{N}])" + reEsc(w), "u");
   const tiers = [function (t) { return t === w; }, function (t) { return inOrder(parts(t), wp); }, function (t) { return t.indexOf(w) === 0; },
     function (t) { return pre.test(t); }, function (t) { return inOrder(wordsOf(t), ws); }];
+  const keys = w ? opts.map(function (o) { return fold(taNorm(o.textContent)); }) : [];
   if (w) for (let i = 0; i < tiers.length; i++) {
-    const hits = opts.filter(function (o) { return tiers[i](fold(taNorm(o.textContent))); });
+    const hits = opts.filter(function (o, j) { return tiers[i](keys[j]); });
     if (hits.length) return { hits: hits, exact: i === 0 };
   }
   return { hits: [], exact: false };
@@ -2743,6 +2745,12 @@ function fillOne(a) {
   // hidden one and text never lands silently in the wrong element.
   const re = new RegExp(a.label_pattern, "i");
   const scored = [];
+  // Fields share ancestors: test each ancestor's text once.
+  const near = new Map();
+  const nearHit = function (p) {
+    if (!near.has(p)) near.set(p, re.test(p.textContent || ""));
+    return near.get(p);
+  };
   deepAll("textarea, input, [contenteditable], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe").forEach(function (el) {
     if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return;
     if (el.hasAttribute("contenteditable") && !editable(el)) return;
@@ -2753,7 +2761,7 @@ function fillOne(a) {
     else if (re.test(hintText(el))) s = 40;
     else {
       let p = el, hit = false;
-      for (let i = 0; i < 6 && p; i++, p = p.parentElement) if (re.test(p.textContent || "")) { hit = true; break; }
+      for (let i = 0; i < 6 && p; i++, p = p.parentElement) if (nearHit(p)) { hit = true; break; }
       if (!hit) return;
       s = 10;
     }
