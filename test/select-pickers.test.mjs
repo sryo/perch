@@ -187,6 +187,26 @@ test("options that appear inside a form dialog never make its prefilled field th
   assert.equal(dom.nameFocus, 0, "the field is never focused");
 });
 
+// The dialog also holds an empty combobox of its own, whose list is not the one select picks from.
+const FORM_COMBO = `document.body.insertAdjacentHTML("beforeend", '<div role="dialog" aria-modal="true"><label for="city">City</label><input id="city" role="combobox" aria-controls="citymenu" aria-expanded="false"><ul id="citymenu" role="listbox"></ul>' +
+  '<label for="t">Color</label><button id="t" type="button" aria-haspopup="listbox" aria-expanded="false">Pick a color</button><div id="opts"></div></div>');
+window.cityLog = [];
+const city = document.getElementById("city");
+city.addEventListener("focus", function () { window.cityLog.push("focus"); });
+city.addEventListener("input", function () { window.cityLog.push(city.value); });
+document.getElementById("t").addEventListener("click", function () {
+  document.getElementById("opts").innerHTML = '<div role="option">Red</div><div role="option">Blue</div>';
+  this.setAttribute("aria-expanded", "true");
+});`;
+
+test("another combobox in the dialog, naming a list select is not picking from, is never the search box", async () => {
+  const dom = onPage(FORM_COMBO);
+  const o = await select({ selector: "#t", text: "Green" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.candidates, ["Red", "Blue"]);
+  assert.deepEqual([...dom.cityLog], [], "never focused or typed into");
+});
+
 // A portaled popup dialog that holds its own unrelated form field beside the options.
 const POPUP_FORM = `document.body.insertAdjacentHTML("beforeend", '<label for="t2">Color</label><button id="t2" type="button" aria-haspopup="dialog" aria-expanded="false">Pick a color</button>');
 window.noteFocus = 0;
@@ -247,4 +267,40 @@ test("a disabled word-prefix match does not hide an enabled match the search box
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.selected, "Spanish");
   assert.deepEqual([...dom.pickerLog], ["speak:Spanish"]);
+});
+
+// Single selects whose trigger holds more than the value: a label, or the value in a pill.
+const SINGLES = `window.singleLog = [];
+function single(id, inner, set) {
+  document.body.insertAdjacentHTML("beforeend", '<button id="' + id + '" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="' + id + '-l">' + inner + '</button>');
+  const t = document.getElementById(id);
+  t.addEventListener("click", function () {
+    document.body.insertAdjacentHTML("beforeend", '<div id="' + id + '-l" role="listbox"><div role="option">Berlin</div><div role="option">Paris</div><div role="option">Paris, Texas</div></div>');
+    document.querySelectorAll("#" + id + "-l [role=option]").forEach(function (o) { o.addEventListener("click", function () { window.singleLog.push(id + ":" + o.textContent); set(t, o.textContent); document.getElementById(id + "-l").remove(); t.setAttribute("aria-expanded", "false"); }); });
+    t.setAttribute("aria-expanded", "true");
+  });
+}
+single("lab", '<b>Country:</b> <span>Paris</span>', function (t, v) { t.querySelector("span").textContent = v; });
+single("twin", '<span class="v">Paris, Texas</span> <span class="v">Change:</span>', function (t, v) { t.querySelector(".v").textContent = v; });
+single("pill", '<span class="badge rounded-pill">Paris, Texas</span>', function (t, v) { t.querySelector(".badge").textContent = v; });`;
+
+test("a single select with a label in its trigger verifies the pick and does not press it twice", async () => {
+  const dom = onPage(SINGLES);
+  let o = await select({ selector: "#lab", text: "Berlin" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.unverified, undefined, JSON.stringify(o));
+  o = await select({ selector: "#lab", text: "Berlin" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.match(o.note || "", /already chosen/);
+  assert.deepEqual([...dom.singleLog], ["lab:Berlin"]);
+});
+
+test("a label and value alike in tag and class, or one pill, do not make a single select multi", async () => {
+  const dom = onPage(SINGLES);
+  for (const id of ["twin", "pill"]) {
+    const o = await select({ selector: "#" + id, text: "Paris" });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    assert.equal(o.note, undefined, id + ": " + JSON.stringify(o));
+  }
+  assert.deepEqual([...dom.singleLog], ["twin:Paris", "pill:Paris"]);
 });

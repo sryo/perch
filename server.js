@@ -2499,14 +2499,21 @@ function shownParts(box) {
 function commaParts(t) { return String(t || "").split(/[,;\n]/).map(function (x) { return norm(x); }).filter(Boolean); }
 // What the box shows as a whole, or "" while it shows a placeholder.
 function shownWhole(box) { return !box || box.tagName === "INPUT" || box.querySelector("[class*=placeholder], [data-placeholder]") ? "" : norm(textOf(box)); }
-const CHIP = "[class*=badge], [class*=chip], [class*=multi-value], [class*=multiValue], [class*=token], [class*=pill], [class~=tag], [class*=tag-], [class*=-tag]";
-// Chips in the box, or several value elements alike in tag and class under one parent.
-function multiBox(box) {
+// A class word (split at -, _ and camelCase) naming a chip: badge, chip, tag, multi-value.
+function chipLike(el) {
+  return String(el.className && el.className.baseVal != null ? el.className.baseVal : el.className || "").split(/\s+/).some(function (c) {
+    const w = c.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[-_ ]+/);
+    return w.some(function (x) { return /^(badge|chip|tag)$/.test(x); }) || w.join(" ").indexOf("multi value") >= 0;
+  });
+}
+// Two or more value elements that are chips, or alike in tag and class under one
+// parent; a label (text ending in ":", or the control's own label) is no value.
+function multiBox(box, label) {
   if (!box || box.tagName === "INPUT") return false;
-  if (box.querySelector(CHIP)) return true;
+  const vals = shownEls(box).filter(function (el) { const t = norm(ownText(el)); return el !== box && !/:$/.test(t) && t !== norm(label); });
+  if (vals.filter(chipLike).length > 1) return true;
   const seen = new Map();
-  return shownEls(box).some(function (el) {
-    if (el === box) return false;
+  return vals.some(function (el) {
     const k = el.tagName + "." + el.className;
     const sibs = seen.get(el.parentElement) || [];
     if (sibs.indexOf(k) >= 0) return true;
@@ -2522,7 +2529,7 @@ function isMulti(s, opt) {
 // A multi-select shows each choice apart; a single one shows the whole value.
 function chosenAlready(s, opt, key) {
   if (attr(opt, "aria-checked") === "true" || attr(opt, "data-state") === "checked") return true;
-  if (!s.multi) return !!s.whole && s.whole === key;
+  if (!s.multi) return (!!s.whole && s.whole === key) || (s.shown || []).some(function (t) { return norm(t) === key; });
   return (s.shown || []).some(function (t) { return norm(t) === key; }) || commaParts(s.whole).indexOf(key) >= 0;
 }
 // Still open: the control says so, or its own list still shows options.
@@ -2569,8 +2576,9 @@ function ownOptions(s) {
   if (attr(s.ctl, "role") === "listbox") return within(s.ctl);
   const lists = linkedLists(s);
   if (lists.length) {
-    lists.forEach(function (m) { if (!s.input && !s.filter) s.filter = popSearch(m); });
-    return lists.reduce(function (out, m) { return out.concat(m.matches(OPT) ? [m] : within(m)); }, []);
+    const opts = lists.reduce(function (out, m) { return out.concat(m.matches(OPT) ? [m] : within(m)); }, []);
+    lists.forEach(function (m) { if (!s.input && !s.filter) s.filter = popSearch(m, lists, opts); });
+    return opts;
   }
   const rs = s.input && /^(react-select-.+)-input$/.exec(s.input.id);
   if (rs) {
@@ -2586,19 +2594,20 @@ function ownOptions(s) {
   if (!s.opened) return [];
   const fresh = within(document).filter(function (o) { return s.before.indexOf(o) < 0; });
   if (fresh.length && !s.pop) s.pop = fresh[0].closest("[data-radix-popper-content-wrapper], [cmdk-root], [role=dialog]");
-  if (s.pop && !s.input && !s.filter) s.filter = popSearch(s.pop);
+  if (s.pop && !s.input && !s.filter) s.filter = popSearch(s.pop, [], fresh);
   return fresh;
 }
 // A popup's own search box, empty: cmdk's, one inside a Radix popper or cmdk root,
-// or a combobox/searchbox naming a list of options. Never another field of a form.
-function popSearch(root) {
+// or a combobox/searchbox naming the list select picks from (one of lists, or one
+// holding opts). Never another field of a form.
+function popSearch(root, lists, opts) {
   return Array.from(root.querySelectorAll("input")).find(function (i) {
     if (i.value || !vis(i)) return false;
     if (i.matches("[cmdk-input]") || i.closest("[data-radix-popper-content-wrapper], [cmdk-root]")) return true;
     if (!/^(combobox|searchbox)$/.test(attr(i, "role"))) return false;
     return attr(i, "aria-controls").split(/\s+/).some(function (id) {
       const m = id && document.getElementById(id);
-      return m && (m.matches(OPT) || attr(m, "role") === "listbox" || !!m.querySelector(OPT));
+      return m && (lists.indexOf(m) >= 0 || opts.some(function (o) { return m === o || m.contains(o); }));
     });
   }) || null;
 }
@@ -3135,7 +3144,7 @@ const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], 
 const box = wrap || (ctl.tagName === "INPUT" ? ctl.parentElement : ctl);
 // A bare input's box is its parent, which may hold only its label: its value is in the input.
 const shows = wrap || ctl.tagName !== "INPUT";
-const s = { ctl: ctl, input: input, box: box, polls: 0, shown: shows ? shownParts(box) : [], whole: shows ? shownWhole(box) : "", multiBox: shows && multiBox(box) };
+const s = { ctl: ctl, input: input, box: box, polls: 0, shown: shows ? shownParts(box) : [], whole: shows ? shownWhole(box) : "", multiBox: shows && multiBox(box, labelText(ctl)) };
 // A text input's value and hidden companion go back after a miss: opening or
 // closing a typeahead may clear the text it holds.
 if (input && input.tagName === "INPUT") { s.prior = input.value; s.comp = taParts(input).comp; s.priorComp = s.comp && s.comp.value; }
@@ -3248,7 +3257,7 @@ const shown = clip(parts.length > 1 && !/[,;\n]/.test(full) ? parts.join(", ") :
 // multi-select without chips, so its newest element or comma part counts.
 const now = norm(full);
 const grew = !s.multi && s.whole && now !== s.whole && now.indexOf(s.whole) === 0;
-const seen = has(full) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; })));
+const seen = has(full) || (!s.multi && parts.some(function (t) { return norm(t) === s.pickedN; })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; })));
 if (!seen && !A.final) return null;
 const out = { ok: true, selected: s.picked, el: ident(s.ctl), value: shown };
 if (!seen) out.unverified = true;
