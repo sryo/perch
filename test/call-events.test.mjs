@@ -237,3 +237,26 @@ test("trusted press and point clicks refuse an Arc arc: page before any page JS"
     assert.ok(world.clock.t - t0 < 1000, tool);
   }
 });
+
+// ---- hints from list_tabs and new_tab ----
+
+test("an Arc tab list_tabs saw shown takes 3 events on its first page call", async () => {
+  arcTwo();
+  await call("list_tabs", {});
+  world.reset();
+  assert.equal((await call("eval_js", { script: "return location.href", target: { tabId: "arc:b1" } })).o, "https://b1.test/");
+  assert.deepEqual(world.aeBy("Arc"), ["tab.id", "tab.url", "tab.execute"]);
+});
+
+test("an Arc tab new_tab made behind the shown one leaves no hint to spend a read on", async () => {
+  const spec = () => ({ browsers: [arc([{ id: "W1", active: 0, tabs: tabs(2, "a") }])], cg: [{ owner: "Terminal" }, { owner: "Arc" }] });
+  install(spec());
+  const { o } = await call("new_tab", { url: "https://n.test/", app: "Arc" });
+  const made = o.tabId;
+  world.reset();
+  await call("eval_js", { script: "return 1", target: { tabId: made } });
+  const withNew = world.aeBy("Arc");
+  install({ browsers: [arc([{ id: "W1", active: 0, tabs: [...tabs(2, "a"), { url: "https://n.test/", title: "", id: made.slice(4) }] }])], cg: [{ owner: "Terminal" }, { owner: "Arc" }] });
+  await call("eval_js", { script: "return 1", target: { tabId: made } });
+  assert.deepEqual(withNew, world.aeBy("Arc"));
+});

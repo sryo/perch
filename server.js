@@ -1148,69 +1148,100 @@ function jxaRuntime(BROWSERS) {
     return has(url, a.urlContains) && has(title, a.titleContains);
   }
 
-  // How many of a browser's tabs match, for one past list_tabs' limit: its urls
-  // or titles (one read each), plus Arc's tab ids, since its windows share tabs.
-  // null when a read fails or the lists don't line up; the caller lists it instead.
-  function countTabs(ap, kind, a) {
-    try {
-      const W = ap.windows;
-      const ids = kind === "arc" ? W.tabs.id() : null;
-      const urls = a.urlContains || !(a.titleContains || ids) ? W.tabs.url() : null;
-      const titles = a.titleContains ? (kind === "safari" ? W.tabs.name() : W.tabs.title()) : null;
-      const base = urls || titles || ids, seen = {};
-      const lists = [base, titles, ids].filter(Boolean);
-      if (lists.some(function (l) { return l.length !== base.length || l.some(function (x, w) { return !Array.isArray(x) || x.length !== base[w].length; }); })) return null;
-      let n = 0;
-      base.forEach(function (win, w) {
-        win.forEach(function (_, i) {
-          if (ids) { if (seen[ids[w][i]]) return; seen[ids[w][i]] = true; }
-          if (matches(a, urls && urls[w][i], titles && titles[w][i])) n++;
-        });
-      });
-      return n;
-    } catch (e) { return null; }
+  // One list_tabs read of every window of a browser in one Apple Event (nested
+  // arrays, one per window).
+  function bulkRead(W, kind, k) {
+    if (k === "url") return W.tabs.url();
+    if (k === "title") return kind === "safari" ? W.tabs.name() : W.tabs.title();
+    if (k === "id") return W.tabs.id();
+    if (k === "wid") return W.id();
+    if (k === "loc") return W.tabs.location();
+    if (k === "side") return W.activeSpace.tabs.id();
+    return kind === "chrome" ? W.activeTabIndex() : kind === "safari" ? W.currentTab.index() : W.activeTab.id();
   }
 
-  // Reads each Arc window on its own; a window sharing an earlier one's tabs reuses its reads.
-  function arcWindows(ap) {
+  // What counting a browser's matches takes: the lists its filters look at (urls
+  // when there is none), plus Arc's tab ids, since its windows share tabs.
+  function countNeeds(kind, a) {
+    const need = [];
+    if (a.urlContains || !(a.titleContains || kind === "arc")) need.push("url");
+    if (a.titleContains) need.push("title");
+    if (kind === "arc") need.push("id");
+    return need;
+  }
+
+  // How many of a browser's tabs match, from the reads in `r`, for one past
+  // list_tabs' limit. null when the lists don't line up; the caller lists it instead.
+  function countTabs(kind, a, r, need) {
+    const base = r[need[0]], ids = kind === "arc" ? r.id : null, seen = {};
+    const off = function (l) { return !Array.isArray(l) || l.length !== base.length || l.some(function (x, w) { return !Array.isArray(x) || !Array.isArray(base[w]) || x.length !== base[w].length; }); };
+    if (!Array.isArray(base) || need.some(function (k) { return off(r[k]); })) return null;
+    let n = 0;
+    base.forEach(function (win, w) {
+      win.forEach(function (_, i) {
+        if (ids) { if (seen[ids[w][i]]) return; seen[ids[w][i]] = true; }
+        if (matches(a, r.url && r.url[w][i], r.title && r.title[w][i])) n++;
+      });
+    });
+    return n;
+  }
+
+  // Matching rows a browser is sure to list, from its first read alone: exact
+  // for Chromium and Safari; for Arc, its distinct ids or the most matches in any
+  // one window (a window's tabs are distinct). 0 while a second filter is unread.
+  function surely(kind, a, list, key) {
+    if (a.urlContains && a.titleContains) return 0;
+    const q = key === "url" ? a.urlContains : key === "title" ? a.titleContains : null, seen = {};
+    let n = 0;
+    (list || []).forEach(function (win) {
+      if (!Array.isArray(win)) return;
+      const hit = win.filter(function (v) { return !q || String(v || "").toLowerCase().indexOf(String(q).toLowerCase()) >= 0; });
+      if (kind !== "arc") n += hit.length;
+      else if (key === "id") hit.forEach(function (id) { if (!seen[id]) { seen[id] = true; n++; } });
+      else n = Math.max(n, hit.length);
+    });
+    return n;
+  }
+
+  // Reads each Arc window on its own; a window sharing an earlier one's tabs
+  // reuses its reads. Yields after each Apple Event; returns the windows.
+  function* arcWindows(ap) {
     const wins = [];
     let n = 0;
     try { n = ap.windows.length; } catch (e) {}
+    yield;
     for (let w = 0; w < n; w++) {
       const win = ap.windows[w];
-      let o;
-      try { o = arcOrder(win); } catch (e) { continue; }
-      let act = null; try { act = win.activeTab.id(); } catch (e) {}
-      const same = wins.filter(function (x) { return x.o.ids.join() === o.ids.join(); })[0];
-      let urls = [], titles = [];
+      let ids = null, loc = [], side = [], act = null;
+      try { ids = win.tabs.id(); } catch (e) {}
+      yield;
+      if (!ids) continue;
+      try { loc = win.tabs.location(); } catch (e) {}
+      yield;
+      try { side = win.activeSpace.tabs.id(); } catch (e) {}
+      yield;
+      try { act = win.activeTab.id(); } catch (e) {}
+      yield;
+      const same = wins.filter(function (x) { return x.o.ids.join() === ids.join(); })[0];
+      let urls = null, titles = [];
       if (same) { urls = same.urls; titles = same.titles; }
       else {
-        try { urls = win.tabs.url(); } catch (e) { continue; }
+        try { urls = win.tabs.url(); } catch (e) {}
+        yield;
+        if (!urls) continue;
         try { titles = win.tabs.title(); } catch (e) {}
+        yield;
       }
-      wins.push({ o: o, act: act, urls: urls, titles: titles });
+      wins.push({ o: arcSort(ids, loc, side), act: act, urls: urls, titles: titles, w: w });
     }
     return wins;
   }
 
   // One row per Arc tab, in sidebar order. Windows on one space share their tabs,
-  // so a shared tab is listed once, under the frontmost window showing it. All
-  // windows are read at once (six events); a failed bulk read reads each window.
-  function listArc(ap, name, out, a) {
-    let wins;
-    try {
-      const W = ap.windows, urls = W.tabs.url();
-      if (misses(a.urlContains, urls)) return;
-      const titles = W.tabs.title();
-      if (misses(a.titleContains, titles)) return;
-      const ids = W.tabs.id(), loc = W.tabs.location(), side = W.activeSpace.tabs.id(), acts = W.activeTab.id();
-      wins = ids.map(function (x, w) {
-        if (!Array.isArray(urls[w]) || urls[w].length !== x.length) throw new Error("misaligned");
-        return { o: arcSort(x, loc[w] || [], side[w] || []), act: acts[w], urls: urls[w], titles: titles[w] || [] };
-      });
-    } catch (e) { wins = arcWindows(ap); }
+  // so a shared tab is listed once, under the frontmost window showing it.
+  function arcRows(name, wins, out) {
     const owner = {};
-    wins.forEach(function (x) { if (x.act != null && !owner[x.act]) owner[x.act] = x; });
+    wins.forEach(function (x) { if (x.act != null && !owner[x.act]) { owner[x.act] = x; hint(name, x.act, x.w); } });
     const done = {};
     wins.forEach(function (x) {
       x.o.order.forEach(function (i) {
@@ -1226,40 +1257,103 @@ function jxaRuntime(BROWSERS) {
     });
   }
 
-  // Every window of a Chromium or Safari app in four events, instead of five or
-  // six per window. Window ids are read only for Safari handles and Chromium tabs
-  // without an id. false (nothing pushed) when a bulk read fails or the
-  // per-window arrays don't line up; the caller then walks the windows.
-  function listBulk(ap, name, kind, out, a) {
-    let wids = null, urls, titles, tids = null, acts;
-    try {
-      const W = ap.windows;
-      urls = W.tabs.url();
-      if (misses(a.urlContains, urls)) return true;
-      titles = kind === "safari" ? W.tabs.name() : W.tabs.title();
-      if (misses(a.titleContains, titles)) return true;
-      if (kind === "chrome") tids = W.tabs.id();
-      const idless = function (x) { return !Array.isArray(x) || x.some(function (v) { return v == null; }); };
-      if (!tids || tids.some(idless)) wids = W.id();
-      acts = kind === "chrome" ? W.activeTabIndex() : W.currentTab.index();
-    } catch (e) { return false; }
-    const n = urls.length;
+  // Chromium and Safari rows from the bulk reads; false (nothing pushed) when
+  // the per-window arrays don't line up.
+  function bulkRows(name, kind, r, out) {
+    const n = r.url.length;
     const lined = function (x) { return Array.isArray(x) && x.length === n; };
-    if (!lined(urls) || !lined(titles) || !lined(acts) || (tids && !lined(tids)) || (wids && !lined(wids))) return false;
-    for (let w = 0; w < n; w++) if (!Array.isArray(urls[w])) return false;
+    if (!lined(r.url) || !lined(r.title) || !lined(r.act) || (r.id && !lined(r.id)) || (r.wid && !lined(r.wid))) return false;
+    for (let w = 0; w < n; w++) if (!Array.isArray(r.url[w])) return false;
     for (let w = 0; w < n; w++) {
-      const u = urls[w], ti = titles[w] || [], ids = tids ? tids[w] || [] : [];
+      const u = r.url[w], ti = r.title[w] || [], ids = r.id ? r.id[w] || [] : [];
       for (let i = 0; i < u.length; i++) {
         const row = { app: name };
-        if (kind === "safari") row.tabId = safariHandle(wids[w], i, u[i]);
+        if (kind === "safari") row.tabId = safariHandle(r.wid[w], i, u[i]);
         else if (ids[i] != null) { row.tabId = handle(name, ids[i]); hint(name, ids[i], w); }
-        else { row.windowId = wids[w]; row.tabIndex = i; }
+        else { row.windowId = r.wid[w]; row.tabIndex = i; }
         row.url = u[i] || ""; row.title = ti[i] || "";
-        if (i === acts[w] - 1) row.active = true;
+        if (i === r.act[w] - 1) row.active = true;
         out.push(row);
       }
     }
     return true;
+  }
+
+  // Chromium or Safari one window at a time, when a bulk read fails or its
+  // per-window arrays don't line up. Yields after each Apple Event.
+  function* walkWindows(ap, name, kind, out) {
+    let n = 0;
+    try { n = ap.windows.length; } catch (e) {}
+    yield;
+    for (let w = 0; w < n; w++) {
+      const win = ap.windows[w];
+      let id; try { id = win.id(); } catch (e) { id = w; }
+      yield;
+      let urls = null, titles = [], tabIds = [];
+      try { urls = win.tabs.url(); } catch (e) {}
+      yield;
+      if (!urls) continue;
+      try { titles = kind === "safari" ? win.tabs.name() : win.tabs.title(); } catch (e) {}
+      yield;
+      if (kind === "chrome") { try { tabIds = win.tabs.id(); } catch (e) {} yield; }
+      // `active` marks the tab each window shows (one extra read per window).
+      const act = activeIndex(kind, win, win.tabs);
+      yield;
+      for (let i = 0; i < urls.length; i++) {
+        if (kind === "chrome") hint(name, tabIds[i], w);
+        const row = { app: name };
+        if (kind === "safari") row.tabId = safariHandle(id, i, urls[i]);
+        else if (tabIds[i] != null) row.tabId = handle(name, tabIds[i]);
+        else { row.windowId = id; row.tabIndex = i; }
+        row.url = urls[i] || ""; row.title = titles[i] || "";
+        if (i === act) row.active = true;
+        out.push(row);
+      }
+    }
+  }
+
+  // One browser's part of list_tabs, into its slot `s`: rows, or only the count
+  // `s.more` once past() says earlier browsers fill the limit. Every window is
+  // read at once, four events on Chromium and Safari and six on Arc (window ids
+  // only for Safari handles and Chromium tabs without an id). What the filters
+  // look at is read first, so a browser none of whose tabs can match stops at
+  // one event, and a count reuses what listing already read. `s.sure` is how
+  // many matching rows the slot is sure to hold. Yields after each Apple Event.
+  function* lister(ap, name, kind, a, s, past) {
+    const r = {}, need = countNeeds(kind, a);
+    const rest = kind === "arc" ? ["url", "title", "id", "loc", "side", "act"] : kind === "chrome" ? ["url", "title", "id", "wid", "act"] : ["url", "title", "wid", "act"];
+    const order = need.concat(rest.filter(function (k) { return need.indexOf(k) < 0; }));
+    const idless = function (x) { return !Array.isArray(x) || x.some(function (v) { return v == null; }); };
+    let counts = true, bulk = true;
+    for (let j = 0; j < order.length && bulk; j++) {
+      const k = order[j];
+      if (k === "wid" && kind === "chrome" && r.id && !r.id.some(idless)) continue;
+      if (j > 0) yield;
+      if (counts && past() && need.every(function (x) { return r[x]; })) {
+        const n = countTabs(kind, a, r, need);
+        if (n != null) { s.more = n; return; }
+        counts = false;
+      }
+      try { r[k] = bulkRead(ap.windows, kind, k); } catch (e) { bulk = false; }
+      if (bulk && ((k === "url" && misses(a.urlContains, r.url)) || (k === "title" && misses(a.titleContains, r.title)))) return;
+      if (bulk && j === 0) s.sure = surely(kind, a, r[k], k);
+    }
+    if (!bulk) yield;
+    if (kind === "arc") {
+      let wins = null;
+      if (bulk) {
+        try {
+          wins = r.id.map(function (x, w) {
+            if (!Array.isArray(r.url[w]) || r.url[w].length !== x.length) throw new Error("misaligned");
+            return { o: arcSort(x, r.loc[w] || [], r.side[w] || []), act: r.act[w], urls: r.url[w], titles: r.title[w] || [], w: w };
+          });
+        } catch (e) { wins = null; }
+      }
+      arcRows(name, wins || (yield* arcWindows(ap)), s.rows);
+    } else if (!bulk || !bulkRows(name, kind, r, s.rows)) {
+      yield* walkWindows(ap, name, kind, s.rows);
+    }
+    s.sure = s.rows.filter(function (row) { return matches(a, row.url, row.title); }).length;
   }
 
   globalThis.__perch = {
@@ -1269,42 +1363,25 @@ function jxaRuntime(BROWSERS) {
     answerDialog: answerDialog,
     // Node filters and cuts the rows at `limit`; `more` counts matches past it.
     listTabs(a) {
-      const P = procs();
-      const out = [];
-      let more = 0;
-      const names = candidates(P, a.app);
-      for (const name of names) {
-        const ap = app(name), kind = KIND[name];
-        if (a.limit != null && out.filter(function (r) { return matches(a, r.url, r.title); }).length >= a.limit) {
-          const n = countTabs(ap, kind, a);
-          if (n != null) { more += n; continue; }
-        }
-        if (kind === "arc") { listArc(ap, name, out, a); continue; }
-        if (listBulk(ap, name, kind, out, a)) continue;
-        let n;
-        try { n = ap.windows.length; } catch (e) { continue; }
-        for (let w = 0; w < n; w++) {
-          const win = ap.windows[w];
-          let id; try { id = win.id(); } catch (e) { id = w; }
-          let urls, titles = [], tabIds = [];
-          try { urls = win.tabs.url(); } catch (e) { continue; }
-          try { titles = kind === "safari" ? win.tabs.name() : win.tabs.title(); } catch (e) {}
-          if (kind === "chrome") { try { tabIds = win.tabs.id(); } catch (e) {} }
-          // `active` marks the tab each window shows (one extra read per window).
-          const act = activeIndex(kind, win, win.tabs);
-          for (let i = 0; i < urls.length; i++) {
-            if (kind === "chrome") hint(name, tabIds[i], w);
-            const row = { app: name };
-            if (kind === "safari") row.tabId = safariHandle(id, i, urls[i]);
-            else if (tabIds[i] != null) row.tabId = handle(name, tabIds[i]);
-            else { row.windowId = id; row.tabIndex = i; }
-            row.url = urls[i] || ""; row.title = titles[i] || "";
-            if (i === act) row.active = true;
-            out.push(row);
-          }
-        }
-      }
-      return { rows: out, more: more };
+      const P = procs(), names = candidates(P, a.app);
+      const slots = names.map(function () { return { rows: [], more: 0, sure: 0 }; });
+      // Earlier browsers are sure to fill `limit`, so none of slot k's rows would show.
+      const past = function (k) {
+        if (a.limit == null) return false;
+        let n = 0;
+        for (let j = 0; j < k; j++) n += slots[j].sure;
+        return n >= a.limit;
+      };
+      // Browsers take turns, one Apple Event each: each answers at its own next
+      // display frame, so the turns overlap instead of queueing.
+      let live = names.map(function (name, k) {
+        return lister(app(name), name, KIND[name], a, slots[k], function () { return past(k); });
+      });
+      while (live.length) live = live.filter(function (g) { return !g.next().done; });
+      return {
+        rows: slots.reduce(function (out, s) { return out.concat(s.rows); }, []),
+        more: slots.reduce(function (n, s) { return n + s.more; }, 0),
+      };
     },
     evalJs(a) {
       const q = quickExec(a.target, a.js);
@@ -1494,7 +1571,11 @@ function jxaRuntime(BROWSERS) {
         if (kind === "safari") {
           const i = win.tabs.length - 1;
           tabId = safariHandle(win.id(), i, win.tabs[i].url() || a.url);
-        } else if (newId != null) { tabId = handle(name, newId); hint(name, newId, 0); }
+        } else if (newId != null) {
+          tabId = handle(name, newId);
+          // Arc's new tab is put behind the one shown, so it has no window to hint.
+          if (kind === "chrome") hint(name, newId, 0);
+        }
       } catch (e) {}
       const out = { app: name, tabId };
       if (P.front !== name && procs().front === name) out.warning = "creating the tab brought the browser to the front";
