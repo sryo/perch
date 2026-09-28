@@ -2822,6 +2822,13 @@ out.shown = deepAll("input[type=file]").some(has) || textOf(document.body).index
 return out;
 `,
 
+  // Polled from Node after a cleared/detached upload read shown:false: many sites
+  // render the file name on a later tick. null keeps polling.
+  file_upload_shown: String.raw`
+const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
+return deepAll("input[type=file]").some(has) || textOf(document.body).indexOf(A.name) >= 0 || null;
+`,
+
   // Chrome runs this in an isolated world, whose console the page never calls. A
   // <script> patches the main world's console and relays entries as perch:console
   // events (DOM events cross worlds). If CSP blocks it, the local console is patched.
@@ -3312,13 +3319,22 @@ async function trustedFill({ ref, selector, label_pattern, text, raise, target }
   });
 }
 
+// How long file_upload looks for the file name after the site took the file.
+const UPLOAD_SHOWN_WAIT = 1000;
 async function fileUpload(args = {}) {
   const { selector, ref, path, target } = args;
   if (!path) throw new Error("file_upload requires `path`");
   const { abs, data } = await readUserFile(path);
   const name = abs.split("/").pop();
   const mime = MIME_BY_EXT[name.split(".").pop().toLowerCase()] || "application/octet-stream";
-  return runPage("file_upload", "file_upload", { selector, ref, b64: data.toString("base64"), name, mime }, target);
+  const r = await runPage("file_upload", "file_upload", { selector, ref, b64: data.toString("base64"), name, mime }, target);
+  if (!r || r.ok !== true || r.shown !== false) return r;
+  // Best effort: the file is already on the page, so a failed poll leaves shown:false.
+  try {
+    await rt("wait", { target, js: pageFn("file_upload_shown", { name }), timeout: UPLOAD_SHOWN_WAIT, interval: 50 }, { lane: "slow" });
+    r.shown = true;
+  } catch {}
+  return r;
 }
 
 async function click(args = {}) {
