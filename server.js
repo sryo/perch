@@ -563,7 +563,8 @@ function jxaRuntime(BROWSERS) {
   // A failed run counts as not yet, except a closed tab. A dropped reply doubles
   // the next run's cap, so a slow read still answers while a navigation costs
   // one POLL_EXEC_SECS. `step`: `js` has side effects, so a dropped reply ends it.
-  function poll(t, js, timeout, interval, step) {
+  // `done(v)`, if given, decides instead and sees every run, a failed one as null.
+  function poll(t, js, timeout, interval, step, done) {
     const start = Date.now();
     let cap = POLL_EXEC_SECS;
     for (;;) {
@@ -575,7 +576,7 @@ function jxaRuntime(BROWSERS) {
         if (isStale(e) || (step && isNoReply(e))) throw e;
         if (isNoReply(e)) cap *= 2;
       }
-      if (v !== null && v !== false) return { value: v, waited: Date.now() - start };
+      if (done ? done(v) : v !== null && v !== false) return { value: v, waited: Date.now() - start };
       if (Date.now() - start >= timeout) return null;
       delay(interval / 1000);
     }
@@ -849,6 +850,24 @@ function jxaRuntime(BROWSERS) {
   function readback(t, a) {
     const r = poll(t, a.read, a.settle, 50);
     return r ? r.value : readExec(t, a.readFinal);
+  }
+
+  // wait {quiet}: timed here, where the clock isn't throttled with the page. A
+  // poll that fails or finds a new document restarts the quiet window.
+  function waitQuiet(a, start, interval) {
+    const t = pageTarget(a.target, "wait");
+    let last = start, armed = false, quietFor = 0;
+    const r = poll(t, a.js, a.timeout, interval, false, function (v) {
+      const now = Date.now();
+      if (v && v.__perch_error) return true;
+      if (!v || v.busy || (v.fresh && armed)) last = now;
+      if (v) armed = true;
+      quietFor = now - last;
+      return quietFor >= a.quiet;
+    });
+    if (!r) throw new Error("timeout: wait timed out after " + a.timeout + "ms; the page never stayed quiet for " + a.quiet + "ms");
+    if (r.value.__perch_error) throw new Error("wait: " + r.value.__perch_error);
+    return { waited: Date.now() - start, quietFor: quietFor };
   }
 
   // A refusal when the screen point falls on one of the page's embedded frames,
@@ -1580,6 +1599,7 @@ function jxaRuntime(BROWSERS) {
     // One event when the page is already there; then polls every 50ms.
     wait(a) {
       const start = Date.now(), interval = a.interval || 50;
+      if (a.quiet) return waitQuiet(a, start, interval);
       let q = null, r = null;
       // A hinted Chromium handle's first poll is quickExec's one event, bounded.
       const w = a.target || {};
@@ -2259,12 +2279,23 @@ async function evalJs(script, target, { awaitPromise = false, timeout = 30000, t
 }
 
 async function wait(args = {}) {
-  const { selector, readyState = "complete", expression, timeout = 10000, target } = args;
+  const { selector, readyState = "complete", expression, timeout = 10000, target, quiet } = args;
+  if (quiet != null) return waitQuiet(args, timeout);
   const js = expression
     ? `(function(){try{var __r=(${expression});return JSON.stringify(__r===undefined?null:__r)}catch(e){return "null"}})()`
     : buildEvalWrapper(pageScript("wait_check", { selector, readyState }));
   const r = await rt("wait", { target, js, timeout }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
   return expression ? { ok: true, waited: r.waited, value: r.value } : { ok: true, waited: r.waited };
+}
+
+async function waitQuiet({ quiet, selector, expression, target }, timeout) {
+  if (typeof quiet !== "number" || !(quiet > 0)) throw new Error("wait: `quiet` must be a positive number of ms");
+  if (!(quiet < timeout)) throw new Error("wait: `quiet` must be shorter than `timeout`");
+  if (selector != null || expression != null) throw new Error("wait: `quiet` takes no selector or expression");
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const js = buildEvalWrapper(pageScript("wait_quiet", { id, life: timeout }));
+  const r = await rt("wait", { target, js, timeout, quiet }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+  return { ok: true, waited: r.waited, quietFor: r.quietFor };
 }
 
 const NAV_TIMEOUT = 15000;
@@ -3128,13 +3159,44 @@ function fillOne(a) {
 }
 `;
 
+// Page activity since the last poll, for click {readback} and wait {quiet}: DOM
+// mutations anywhere (takeRecords too, since the observer's callback may not
+// have run between polls) and completed fetch/XHR requests, as resource timing
+// entries. A request still in flight shows only once it completes. rbWatch keeps
+// the state on window[key]; one that is never read again stops its observer at
+// the first mutation after `life` ms.
+const QUIET_LIB = String.raw`
+function rbNet() {
+  try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
+  catch (e) { return 0; }
+}
+function rbBusy(s) {
+  if (s.obs) s.mut += s.obs.takeRecords().length;
+  const act = s.mut + ":" + rbNet(), busy = act !== s.act;
+  s.act = act;
+  return busy;
+}
+function rbStop(s) { if (s && s.obs) s.obs.disconnect(); }
+function rbWatch(s, key, life) {
+  s.mut = 0; s.at = Date.now(); s.act = "0:" + rbNet();
+  try {
+    s.obs = new MutationObserver(function (r) {
+      if (window[key] !== s || Date.now() - s.at > life) return s.obs.disconnect();
+      s.mut += r.length;
+    });
+    s.obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  } catch (e) { s.obs = null; }
+  window[key] = s;
+}
+`;
+
 // click {readback}: the pre-click text, state and url live on window.__perch_rb until read.
 // The state catches toggles that change no text: ARIA flags, disabled and the
 // checked/selected/value of controls on the element and its first 50
 // descendants. Classes count only when they are state names (not hover, focus
 // or animation ones) and still hold on the next poll, so transient effects
 // don't pass for a change.
-const READBACK_LIB = String.raw`
+const READBACK_LIB = QUIET_LIB + String.raw`
 function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
 function rbSig() {
   const n = document.querySelector(A.readback);
@@ -3158,35 +3220,13 @@ function rbCls() {
     }).sort().join(" ");
   }).join("|");
 }
-// Page activity since the last poll: DOM mutations anywhere (takeRecords too,
-// since the observer's callback may not have run between polls) and completed
-// fetch/XHR requests, as resource timing entries. A state that is never read
-// stops its observer at the next mutation after 10s.
-function rbNet() {
-  try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
-  catch (e) { return 0; }
-}
-function rbBusy(s) {
-  if (s.obs) s.mut += s.obs.takeRecords().length;
-  const act = s.mut + ":" + rbNet(), busy = act !== s.act;
-  s.act = act;
-  return busy;
-}
-function rbStop(s) { if (s && s.obs) s.obs.disconnect(); }
 function rbArm() {
   let s;
   try { s = { text: rbText(), sig: rbSig(), cls: rbCls(), url: location.href }; }
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
   rbStop(window.__perch_rb);
-  s.mut = 0; s.quiet = 0; s.at = Date.now(); s.act = "0:" + rbNet();
-  try {
-    s.obs = new MutationObserver(function (r) {
-      if (window.__perch_rb !== s || Date.now() - s.at > 10000) return s.obs.disconnect();
-      s.mut += r.length;
-    });
-    s.obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-  } catch (e) { s.obs = null; }
-  window.__perch_rb = s;
+  s.quiet = 0;
+  rbWatch(s, "__perch_rb", 10000);
   return null;
 }
 `;
@@ -4016,6 +4056,17 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
   // What a frame click needs from the page: its URL and viewport.
   viewport: "return { url: location.href, iw: innerWidth, ih: innerHeight };",
 
+  // wait {quiet}: whether the page was busy since the last poll. With no state
+  // for this wait (A.id) it arms one and answers fresh: on the first poll, or on
+  // a new document.
+  wait_quiet: QUIET_LIB + String.raw`
+const s = window.__perch_quiet;
+if (s && s.id === A.id) return { busy: rbBusy(s) };
+rbStop(s);
+rbWatch({ id: A.id }, "__perch_quiet", A.life);
+return { fresh: true };
+`,
+
   wait_check: String.raw`
 const order = { loading: 0, interactive: 1, complete: 2 };
 if (A.readyState && order[document.readyState] < order[A.readyState]) return false;
@@ -4472,10 +4523,11 @@ const TOOLS = [
     awaitPromise: { type: "boolean", description: "Await async code (30s cap)." },
     target: TARGET,
   }),
-  tool("wait", "Wait until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`).", {
+  tool("wait", "Wait until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`), or `quiet`.", {
     selector: SEL,
     readyState: { type: "string", enum: ["loading", "interactive", "complete"], description: "Default complete." },
     expression: { type: "string" },
+    quiet: { type: "number", description: "ms with no DOM change or fetch/XHR finishing: {ok,waited,quietFor}." },
     timeout: { type: "number", description: "ms, default 10000." },
     target: TARGET,
   }),
