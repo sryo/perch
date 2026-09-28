@@ -134,6 +134,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (state.onExecute) state.onExecute(spec);
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
       if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
+      // Chromium runs no page JS on its own pages (chrome://newtab, settings).
+      if (b.kind === "chrome" && /^(chrome|edge|brave):/.test(tab.page.url)) { state.internalExecs = (state.internalExecs || 0) + 1; throw new Error("Chromium internal page execute"); }
       const limit = ae.timeoutMs ?? 120000, sent = clock.t;
       const unanswered = () => {
         clock.t = sent + limit;

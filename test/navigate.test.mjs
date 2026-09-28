@@ -249,6 +249,67 @@ test("navigate on Chrome: a bounded execute that fails fast loads from page JS o
   assert.equal(world.page("Google Chrome", 0, 0).location.href, "https://next.test/");
 });
 
+// With the handler not compiling, the stamp goes on the plain path, which has no
+// Apple Event timeout. Live the runtime's own timeout ends that first (coded
+// timeout:); either way the error must carry the code.
+test("navigate on Chrome: a page that hangs after the bounded execute failed fast is refused as a timeout", () => {
+  install(away(fixture()));
+  world.state.compileFails = true;
+  world.state.hung = true;
+  assert.throws(() => navWith({ url: "https://next.test/" }), (e) => /^timeout: /.test(e.message) && OPT_IN.test(e.message));
+  assert.equal(world.counts["tab.url="], undefined);
+});
+
+// A one-off fast failure says nothing about the page; the resend stays bounded.
+test("navigate on Chrome: after a one-off fast failure, a hung page costs a bounded resend, not the 2-minute default", () => {
+  install(fixture());
+  let n = 0;
+  world.state.onExecute = () => { if (++n === 1) { world.state.hung = true; throw new Error("Some other AppleScript error."); } };
+  const t0 = world.clock.t;
+  const r = navWith({ url: "data:text/html,x" });
+  assert.equal(r.warning, RAISE);
+  assert.ok(world.clock.t - t0 <= NAV_TIMEOUT + 200, `took ${world.clock.t - t0}ms`);
+  assert.deepEqual(paths(), [["navigate", "Google Chrome", "data:text/html,x"]]);
+});
+
+test("navigate on Chrome: a url the page can't load, refused because its window left the front, says so", () => {
+  install({
+    browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://front.test/", id: 5 }] }, { id: 2, active: 0, tabs: [{ url: "https://other.test/", id: 7 }] }])],
+    cg: [{ owner: "Google Chrome" }],
+  });
+  world.state.onExecute = () => { world.apps["Google Chrome"].windows[1].index = 1; };
+  assert.throws(() => navWith({ url: "data:text/html,x", target: { tabId: "chrome:5" } }),
+    (e) => /^tab_not_visible: .*no longer in front/.test(e.message) && !/refused or cancelled/.test(e.message) && OPT_IN.test(e.message));
+  assert.equal(world.counts["tab.url="], undefined);
+});
+
+// Chromium's own pages run no page JS, so navigate sends none from one: in the
+// background it refuses up front, as for Arc's arc: pages.
+const newTabFixture = () => ({
+  browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "chrome://newtab/", id: 7 }] }])],
+  cg: [{ owner: "Google Chrome" }],
+});
+test("navigate on Chrome: from its own new-tab page in the background is refused as not scriptable, naming raise:true", () => {
+  install(away(newTabFixture()));
+  assert.throws(() => navWith({ url: "https://next.test/" }), (e) => /^tab_not_scriptable: /.test(e.message) && OPT_IN.test(e.message));
+  assert.equal(world.counts["tab.url="], undefined);
+  assert.equal(world.counts["tab.execute"] || 0, 0);
+  const r = navWith({ url: "https://next.test/", raise: true });
+  assert.equal(r.warning, RAISE);
+  assert.equal(r.waited, true);
+  assert.deepEqual(paths(), [["navigate", "Google Chrome", "https://next.test/"]]);
+  assert.equal(world.state.internalExecs || 0, 0, "page JS sent to the new-tab page");
+});
+
+test("navigate on Chrome: from its own new-tab page with its window in front sets the url and waits", () => {
+  install(newTabFixture());
+  const r = navWith({ url: "https://next.test/" });
+  assert.equal(r.waited, true);
+  assert.equal(r.warning, RAISE);
+  assert.deepEqual(paths(), [["navigate", "Google Chrome", "https://next.test/"]]);
+  assert.equal(world.state.internalExecs || 0, 0, "page JS sent to the new-tab page");
+});
+
 test("navigate tool: refusal is an error naming the opt-in, and raise:true passes through with the warning", async () => {
   install(away(fixture()));
   const res = await handleCall("navigate", { url: "data:text/html,x" });

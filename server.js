@@ -372,7 +372,7 @@ function jxaRuntime(BROWSERS) {
   function arcPageGuard(t, tool) {
     if (t.kind !== "arc") return;
     let url = ""; try { url = t.tab.url(); } catch (e) {}
-    if (/^arc:/i.test(url)) throw new Error("tab_not_scriptable: " + tool + " can't run on the browser's own pages (new tab, settings); navigate the tab to a web page first");
+    if (/^arc:/i.test(url)) throw new Error("tab_not_scriptable: " + tool + " can't run on the browser's own pages (new tab, settings); navigate the tab to a web page first (with raise:true, unless its window is in front)");
     t.pageOk = true;
   }
 
@@ -486,6 +486,8 @@ function jxaRuntime(BROWSERS) {
   // dictionary, and reading it segfaults osascript.
   // navigate's page JS answers in tens of ms; a dropped reply costs at most this.
   const NAV_EXEC_SECS = 0.5;
+  // Schemes of Chromium browsers' own pages (new tab, settings, devtools).
+  const BROWSER_PAGE = /^(chrome|chrome-untrusted|chrome-search|devtools|edge|brave|vivaldi|opera):/i;
   // How long navigate holds page JS while the tab reports loading.
   const NAV_GATE_MS = 2000;
   // A poll's page JS answers in tens of ms, or seconds on a loaded machine; a reply
@@ -1720,7 +1722,9 @@ function jxaRuntime(BROWSERS) {
       // Arc's execute hangs on its own arc: pages, so no page JS runs on one: none
       // before the tab has left it (an unreadable url counts), none when going to one.
       const arcPage = t.kind === "arc" && canEval && (preUrl == null || /^arc:/i.test(preUrl) || /^arc:/i.test(a.url));
-      if (arcPage) canEval = false;
+      // Chromium runs no page JS on its own pages either (new tab, settings).
+      const ownPage = t.kind === "chrome" && canEval && preUrl != null && BROWSER_PAGE.test(preUrl);
+      if (arcPage || ownPage) canEval = false;
       // Setting the url raises a Chromium window (Safari's did not, live), so without
       // raise:true it is set only when that window is already the front one.
       // `now`: re-read the front window, since the page's retries can outlast the
@@ -1739,6 +1743,7 @@ function jxaRuntime(BROWSERS) {
       const refuse = function (code, why) {
         return new Error(code + ": " + why + "; loading it from outside the page would bring the browser to the front: pass raise:true to allow that, or activate_tab first");
       };
+      if (ownPage && !mayRaise()) throw refuse("tab_not_scriptable", "navigate can't run page JS on the browser's own pages (new tab, settings)");
       if (!canEval && !mayRaise()) throw refuse("tab_not_visible", arcPage ? "navigate can't run page JS on the browser's own pages or load them from a page" : "navigate can't run page JS in a tab its window doesn't show");
       if (canEval && !fromPage && !mayRaise()) throw refuse("tab_not_visible", "a page can only load an absolute http(s) URL or about:blank itself");
       const q = JSON.stringify(a.url), tok = JSON.stringify(token);
@@ -1782,11 +1787,19 @@ function jxaRuntime(BROWSERS) {
         for (let secs = POLL_EXEC_SECS; r == null && secs <= 2 * POLL_EXEC_SECS && Date.now() < deadline; secs *= 2) r = tryRun(stamp(true), secs);
         viaPage = /!$/.test(r || "");
       }
-      // A bounded execute that failed fast (its handler didn't compile) says nothing
-      // about the page, so the stamp goes once more on the plain path; a page that
-      // already took it repeats its answer.
-      if (canEval && r == null && !viaPage && t.kind === "chrome" && lastErr && !isNoReply(lastErr)) {
-        try { r = String(exec(t, stamp(true))); } catch (e) { if (isStale(e)) throw e; lastErr = e; }
+      // A bounded execute that failed fast says nothing about the page, so the stamp
+      // goes once more, bounded; a page that already took it repeats its answer. Only
+      // a failure that repeats (the handler didn't compile, JS from Apple Events off)
+      // takes the plain path, whose error says which. It has no Apple Event timeout,
+      // so a page hung there is ended by the runtime's own, coded timeout.
+      if (canEval && r == null && !viaPage && pinned(t) && lastErr && !isNoReply(lastErr)) {
+        r = tryRun(stamp(true), POLL_EXEC_SECS);
+        if (r == null && !isNoReply(lastErr)) {
+          try { r = String(exec(t, stamp(true))); } catch (e) {
+            if (isStale(e)) throw e;
+            lastErr = e && e.errorNumber === -1712 ? new Error(NO_REPLY + "the Apple Event timeout") : e;
+          }
+        }
         viaPage = /!$/.test(r || "");
       }
       const result = function (waited) {
@@ -1795,9 +1808,17 @@ function jxaRuntime(BROWSERS) {
         return o;
       };
       if (!viaPage && !mayRaise(true)) {
+        // Only a page-started load can have begun; anything else went nowhere.
+        if (!canEval || !fromPage) throw refuse("tab_not_visible", "the tab's window is no longer in front");
         if (r != null) throw refuse("tab_not_visible", "the page refused or cancelled the load");
-        // A fast failure (JS from Apple Events off) reports its own error on the plain path.
-        if (lastErr && !isNoReply(lastErr)) exec(t, "1");
+        // A fast failure the page itself doesn't answer through either (JS from Apple
+        // Events off) is reported as the plain path's error; a page that answers, or
+        // is only slow, is a timeout.
+        if (lastErr && !isNoReply(lastErr)) {
+          let answers = true;
+          try { execWithin(t, "1", Math.max(0.1, Math.min(NAV_EXEC_SECS, (deadline - Date.now()) / 1000))); } catch (e) { if (isStale(e)) throw e; answers = isNoReply(e); }
+          if (!answers) throw lastErr;
+        }
         throw refuse("timeout", "the page didn't answer, so the load may or may not have started; check the tab's url before retrying");
       }
       if (!viaPage) onTab(t, function () { t.tab.url = a.url; });
@@ -1814,7 +1835,7 @@ function jxaRuntime(BROWSERS) {
         }
         return false;
       };
-      if (!canEval && !(arcPage && leftArcPage())) return result(false);
+      if (!canEval && !(arcPage ? leftArcPage() : ownPage)) return result(false);
       const check = "(function(){try{return JSON.stringify(window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete')}catch(e){return 'false'}})()";
       const start = Date.now();
       // Page JS sent before the new document commits may never be answered, and
@@ -4779,7 +4800,7 @@ export const INSTRUCTIONS = `perch drives the user's own macOS browsers over App
 Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab; it works for every browser and survives other tabs opening and closing. With no target, tools use the active tab of the topmost browser window.
 Elements: prefer \`ref\` (from accessibility_snapshot) over \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
-Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first), dialog_open (a JS alert/confirm/prompt is open: press {dialog}). Only activate_tab and raise:true take focus.`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS alert/confirm/prompt is open: press {dialog}). Only activate_tab and raise:true take focus.`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
 const TARGET = { type: "object", properties: { tabId: { type: ["string", "number"] }, app: { type: "string" } } };
