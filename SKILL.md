@@ -12,22 +12,22 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 
 | Tool | Use |
 |---|---|
-| `list_tabs` | `{tabs:[{app,tabId,url,title,active?}], total}`. `active`: the tab its window shows. Filter with `app`, `urlContains`, `titleContains`. |
+| `list_tabs` | `{tabs:[{app,tabId,url,title,active?}], total}`. `active`: the tab its window shows. Filter: `app`, `urlContains`, `titleContains`. |
 | `new_tab` | Unselected tab in a running browser, default the one in use. May focus the browser; defer while the user works. Returns `{app,tabId}`. |
 | `activate_tab` | Raise a tab and its window. |
-| `close_tab` | Close a tab by its required `tabId`. Refuses a window's last tab; never changes focus. |
-| `navigate` | Load a URL and wait for the new page. Returns the tab's current `tabId`; use it from then on. `waited:false`: load not confirmed. |
+| `close_tab` | Close a tab by `tabId` (required). Refuses a window's last tab; never changes focus. |
+| `navigate` | Load a URL, wait for the new page. Returns the tab's current `tabId`; use it from then on. `waited:false`: load not confirmed. |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path`: a local file, run before `script` if both. `awaitPromise` for real async. |
 | `wait` | Until `selector` exists at `readyState`, `expression` is truthy (as `value`), or `quiet` ms pass with no DOM change or fetch/XHR end. |
 | `screenshot` | On-screen window image without raising it, plus `{window, image}`: `screenX = window.x + imageX * window.w / image.w`. |
 | `get_text` | innerText, or outerHTML with `html: true`. Paged by `offset` / `maxChars`. |
-| `accessibility_snapshot` | Page outline with refs (below), open shadow roots included. Filter with `role` or `query` (regex per line); `max: 0`: header only. |
+| `accessibility_snapshot` | Page outline with refs (below), open shadow roots too. Filter with `role` or `query` (regex per line); `max: 0`: header only. |
 | `console_capture` | `start`, `read` drains `"level: text"`, `stop` restores; navigation clears it. `network` drains finished requests as `"status type ms size url"`. |
-| `click` | By `ref` / `selector` / `label_pattern` (button/link name; ties: `candidates`, no click). `readback: css` adds `{readback, changed, url?}`: its text once changed (2s cap). `hover: true`: hover events only (JS menus, not CSS `:hover`). `trusted`: below. |
+| `click` | By `ref` / `selector` / `label_pattern` (button/link name; ties: `candidates`, no click). `readback: css` adds `{readback, changed, url?}`: its text once changed (2s; 0.7s if quiet). `hover: true`: hover events only (JS menus, not CSS `:hover`). `trusted`: below. |
 | `press` | `key` (`Enter`, `Escape`, `Tab`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | Inputs, textareas, rich editors; verifies it landed. `text_path` for long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>` or custom combobox, own list only; reads back. Miss or `text:""`: `candidates`. `trusted`: below. |
-| `file_upload` | Put a local file on an `<input type=file>`; the bytes skip context. |
+| `file_upload` | File onto an `<input type=file>` or drop zone (`dropped`); bytes skip context. |
 | `notify` | macOS notification for the user. |
 
 ## Snapshot format
@@ -53,10 +53,10 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Gotchas
 
-- **Page globals may be invisible.** Some browsers eval in an isolated world: read page state through the DOM.
+- **Page globals may be invisible.** Some browsers eval in an isolated world: read page state via the DOM.
 - **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait` (`quiet` to let it settle).
 - **Return summaries, not state.**
-- **Dialogs.** A call stuck behind a page's alert/confirm/prompt fails in ~3s with `dialog_open`. Answer with `press {key:"Enter"|"Escape", dialog:true, target:{tabId}}` (a string fills a prompt), no raise, then re-read the page. Only the tab's own JS dialog is answered; other browser prompts go to the user.
+- **Dialogs.** A call stuck behind a page's alert/confirm/prompt fails in ~3s with `dialog_open`. Answer with `press {key:"Enter"|"Escape", dialog:true, target:{tabId}}` (a string fills a prompt), no raise, then re-read. Only the tab's own JS dialog is answered; other browser prompts go to the user.
 
 ## Trusted input
 
@@ -66,7 +66,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Permissions
 
-On first failure the server names the exact toggle; show the user and wait.
+On first failure the server names the toggle; show the user and wait.
 
 - Chromium family and Arc: View > Developer > Allow JavaScript from Apple Events (per profile).
 - Safari: Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.
