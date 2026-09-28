@@ -3191,6 +3191,34 @@ function rbArm() {
 }
 `;
 
+// file_upload's drop path. U is the upload's state, kept on window.__perch_up
+// between calls: the DataTransfer, the zone, the input under watch and its
+// MutationObserver, and how often the file name was on the page before.
+const UPLOAD_LIB = String.raw`
+const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
+function nameCount(name) { return textOf(document.body).split(name).length - 1; }
+function uploadSeen(name, U) {
+  if (U.obs && U.obs.takeRecords().some(function (r) { return r.target !== U.input; })) U.moved = true;
+  return U.moved || deepAll("input[type=file]").some(function (el) { return el !== U.input && has(el); }) || nameCount(name) > U.names;
+}
+// Not every engine takes dataTransfer in a DragEvent init, so it is pinned on
+// the event when it didn't stick.
+function dropOn(U) {
+  const b = U.zone.getBoundingClientRect();
+  const init = { bubbles: true, cancelable: true, composed: true, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2 };
+  ["dragenter", "dragover", "drop"].forEach(function (t) {
+    let ev;
+    try { ev = new DragEvent(t, Object.assign({ dataTransfer: U.dt }, init)); } catch (e) { ev = new Event(t, init); }
+    if (ev.dataTransfer !== U.dt) Object.defineProperty(ev, "dataTransfer", { value: U.dt });
+    U.zone.dispatchEvent(ev);
+  });
+  const seen = uploadSeen(A.name, U);
+  const r = { ok: seen, dropped: true, el: ident(U.zone), shown: seen };
+  if (!seen) r.error = "nothing took the file dropped on " + r.el + ": no file name shown and no file input holds it";
+  return r;
+}
+`;
+
 export const PAGE_SCRIPTS = {
   get_text: String.raw`
 const r = resolveEl(A, A.html ? "html" : "body");
@@ -3663,56 +3691,100 @@ const P = typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
 return { ok: true, el: ident(r.el) };
 `,
 
-  file_upload: String.raw`
+  file_upload: UPLOAD_LIB + String.raw`
 const isFile = function (el) { return el.tagName === "INPUT" && (el.type || "").toLowerCase() === "file"; };
 const ext = "." + A.name.split(".").pop().toLowerCase(), mime = A.mime.toLowerCase();
 function fits(el) {
   const acc = attr(el, "accept").toLowerCase().split(",").map(function (s) { return s.trim(); }).filter(Boolean);
   return !acc.length || acc.some(function (a) { return a === ext || a === mime || (/\/\*$/.test(a) && mime.indexOf(a.slice(0, -1)) === 0); });
 }
+const words = function (el) { return [labelText(el), attr(el, "aria-label"), attr(el, "name"), el.id].join(" ").replace(/[_-]/g, " "); };
 // Accept fit first, then a resume/CV name; an autofill/parser input is someone else's field.
 function score(el) {
-  const w = [labelText(el), attr(el, "aria-label"), attr(el, "name"), el.id].join(" ").replace(/[_-]/g, " ");
+  const w = words(el);
   return (fits(el) ? 4 : 0) + (/resume|résumé|\bcv\b|curriculum/i.test(w) ? 2 : 0) - (/auto ?fill|pars(e|er|ing)|import/i.test(w) ? 3 : 0);
 }
-let input, many = false;
+const best = function (files) { return files.map(function (el, i) { return { el: el, s: score(el), i: i }; }).sort(function (a, b) { return b.s - a.s || a.i - b.i; })[0].el; };
+// A zone's own file input: one inside it, else the only one within 3 ancestors.
+function inputFor(z) {
+  const inner = deepAll("input[type=file]", z);
+  if (inner.length) return { input: best(inner), many: inner.length > 1 };
+  for (let p = z.parentElement, k = 0; p && k < 3 && p !== document.body; p = p.parentElement, k++) {
+    const f = p.querySelectorAll("input[type=file]");
+    if (f.length === 1) return { input: f[0] };
+    if (f.length > 1) break;
+  }
+  return {};
+}
+window.__perch_up = null;
+let input = null, zone = null, many = false;
 if (A.ref) {
   const r = resolveEl(A);
   if (r.out) return r.out;
-  input = r.el;
+  if (isFile(r.el)) input = r.el; else zone = r.el;
+} else if (A.label_pattern) {
+  const re = new RegExp(A.label_pattern, "i"), pat = "/" + A.label_pattern + "/i";
+  const files = deepAll("input[type=file]").filter(function (el) { return re.test(words(el)); });
+  if (files.length) { many = files.length > 1; input = best(files); }
+  else {
+    const hits = [];
+    const add = function (el) { if (el && hits.indexOf(el) < 0 && !/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(el.tagName) && vis(el)) hits.push(el); };
+    const tw = document.createTreeWalker(document.body, 4);
+    while (tw.nextNode()) if (re.test(tw.currentNode.nodeValue)) add(tw.currentNode.parentElement);
+    deepAll("[aria-label]").forEach(function (el) { if (re.test(attr(el, "aria-label"))) add(el); });
+    if (!hits.length) return { ok: false, error: "no file input or drop zone matched " + pat };
+    if (hits.length > 1) return { ok: false, ambiguous: true, error: "several elements matched " + pat + "; narrow it, or use a selector or ref", candidates: hits.slice(0, 8).map(ident) };
+    zone = hits[0];
+  }
 } else {
   const sel = A.selector || "input[type=file]";
   let all;
   try { all = deepAll(sel); } catch (e) { return { ok: false, error: "bad selector: " + sel }; }
-  if (!all.length) return { ok: false, error: "no element for selector " + sel };
+  if (!all.length) return { ok: false, error: "no element for selector " + sel + (A.selector ? "" : "; for a drop zone pass its selector, ref or label_pattern") };
   const files = all.filter(isFile);
-  if (!files.length) return { ok: false, error: "not an <input type=file>: " + ident(all[0]) };
-  many = files.length > 1;
-  input = files.map(function (el, i) { return { el: el, s: score(el), i: i }; }).sort(function (a, b) { return b.s - a.s || a.i - b.i; })[0].el;
+  if (files.length) { many = files.length > 1; input = best(files); } else zone = all[0];
 }
-if (!isFile(input)) return { ok: false, error: "not an <input type=file>: " + ident(input) };
-const who = ident(input) + (input.id ? " #" + input.id : "");
+if (zone) { const f = inputFor(zone); input = f.input || null; many = many || !!f.many; }
 const bin = atob(A.b64);
 const arr = new Uint8Array(bin.length);
 for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
 const file = new File([arr], A.name, { type: A.mime });
 const dt = new DataTransfer();
 dt.items.add(file);
+const out = { ok: true, name: file.name, size: file.size, type: file.type };
+const U = { dt: dt, zone: zone, input: null, obs: null, moved: false, names: 0 };
+if (!input) { U.names = nameCount(A.name); window.__perch_up = U; return Object.assign(out, dropOn(U)); }
+const who = ident(input) + (input.id ? " #" + input.id : "");
+// A hidden input that no form submits may have no handler reading it; any page
+// change after change counts as handled, else Node falls back to a drop.
+const watch = !vis(input) && !(input.form && input.name) && typeof MutationObserver === "function";
+if (watch) {
+  U.names = nameCount(A.name);
+  U.input = input;
+  U.obs = new MutationObserver(function () {});
+  U.obs.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+}
 // CSS-hidden inputs reject .files assignment; unhide with !important, then restore.
 const orig = { display: input.style.display, visibility: input.style.visibility, hidden: input.hidden };
 input.hidden = false;
 input.style.setProperty("display", "block", "important");
 input.style.setProperty("visibility", "visible", "important");
-const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
 input.files = dt.files;
 const set = has(input);
 let changed = false;
 input.addEventListener("change", function () { changed = true; }, { once: true });
 fire(input, ["change", "input", "blur"]);
 setTimeout(function () { input.hidden = orig.hidden; input.style.display = orig.display; input.style.visibility = orig.visibility; }, 150);
-const out = { ok: true, name: file.name, size: file.size, type: file.type };
 if (many) { out.ambiguous = true; out.el = who; }
-if (input.isConnected && has(input)) return out;
+if (input.isConnected && has(input)) {
+  if (watch) {
+    if (!U.zone) for (let p = input.parentElement, k = 0; p && k < 3 && p !== document.body; p = p.parentElement, k++) if (vis(p)) { U.zone = p; break; }
+    if (U.zone && !uploadSeen(A.name, U)) { window.__perch_up = U; out.unwired = true; return out; }
+    U.obs.disconnect();
+  }
+  return out;
+}
+if (U.obs) U.obs.disconnect();
 if (!set || !changed) return Object.assign(out, { ok: false, error: "the input did not take the file: " + who });
 // Sites often swap or empty the input once their change handler has the file.
 if (!input.isConnected) out.detached = true; else out.cleared = true;
@@ -3721,10 +3793,22 @@ return out;
 `,
 
   // Polled from Node after a cleared/detached upload read shown:false: many sites
-  // render the file name on a later tick. null keeps polling.
-  file_upload_shown: String.raw`
-const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
+  // render the file name on a later tick. null keeps polling. A.up reads the
+  // drop state file_upload left instead.
+  file_upload_shown: UPLOAD_LIB + String.raw`
+const U = window.__perch_up;
+if (A.up) return (!!U && uploadSeen(A.name, U)) || null;
 return deepAll("input[type=file]").some(has) || textOf(document.body).indexOf(A.name) >= 0 || null;
+`,
+
+  // The fallback for a hidden input nothing reacted to: empty it, drop on its zone.
+  file_upload_drop: UPLOAD_LIB + String.raw`
+const U = window.__perch_up;
+if (!U || !U.zone || !U.zone.isConnected) return { ok: false, error: "the drop zone left the page" };
+if (U.obs) { U.obs.disconnect(); U.obs = null; }
+if (U.input && U.input.isConnected) U.input.files = new DataTransfer().files;
+U.input = null;
+return dropOn(U);
 `,
 
   // Chrome runs this in an isolated world, whose console the page never calls. A
@@ -4245,19 +4329,36 @@ function uploadCap(abs, size) {
     : `file_upload: ${abs} is ${Math.ceil(size / 1024)}KB, over the 700KB cap without the osascript daemon (PERCH_DAEMON=0 or it failed to start)`;
   throw Object.assign(new Error(msg), { cap: true });
 }
+async function uploadShown(target, name, up) {
+  try {
+    await rt("wait", { target, js: pageFn("file_upload_shown", { name, up }), timeout: UPLOAD_SHOWN_WAIT, interval: 50 }, { lane: "slow" });
+    return true;
+  } catch { return false; }
+}
 async function fileUpload(args = {}) {
-  const { selector, ref, path, target } = args;
+  const { selector, ref, label_pattern, path, target } = args;
   if (!path) throw new Error("file_upload requires `path`");
+  if (label_pattern != null) {
+    if (ref || selector) throw new Error("file_upload: pass `label_pattern` alone, without `ref` or `selector`");
+    validateLabelPattern("file_upload", label_pattern);
+  }
   const { abs, data } = await readUserFile(path, undefined, uploadCap);
   const name = abs.split("/").pop();
   const mime = MIME_BY_EXT[name.split(".").pop().toLowerCase()] || "application/octet-stream";
-  const r = await runPage("file_upload", "file_upload", { selector, ref, b64: data.toString("base64"), name, mime }, target);
-  if (!r || r.ok !== true || r.shown !== false) return r;
-  // Best effort: the file is already on the page, so a failed poll leaves shown:false.
-  try {
-    await rt("wait", { target, js: pageFn("file_upload_shown", { name }), timeout: UPLOAD_SHOWN_WAIT, interval: 50 }, { lane: "slow" });
+  let r = await runPage("file_upload", "file_upload", { selector, ref, label_pattern, b64: data.toString("base64"), name, mime }, target);
+  // A hidden input nothing reacted to within the wait gets a drop on its zone instead.
+  if (r && r.unwired) {
+    delete r.unwired;
+    if (await uploadShown(target, name, true)) return r;
+    r = { ...r, ...(await runPage("file_upload", "file_upload_drop", { name }, target)) };
+  }
+  if (!r || r.shown !== false || !(r.ok === true || r.dropped)) return r;
+  // Best effort: an input already holds the file, so a failed poll leaves shown:false.
+  // A drop nothing showed stays {ok:false}.
+  if (await uploadShown(target, name, !!r.dropped)) {
     r.shown = true;
-  } catch {}
+    if (r.dropped) { r.ok = true; delete r.error; }
+  }
   return r;
 }
 
@@ -4510,10 +4611,11 @@ const TOOLS = [
     subtitle: { type: "string" },
     sound: { type: "string", description: "Default Glass." },
   }, ["message"]),
-  tool("file_upload", "Put a local file on an <input type=file> without the bytes entering context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). detached/cleared: the site took the file. {ok:false}: hand off, don't retry.", {
+  tool("file_upload", "Put a local file on an <input type=file> without the bytes entering context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. {ok:false}: hand off, don't retry.", {
     path: { type: "string" },
     ref: REF,
     selector: SEL,
+    label_pattern: { type: "string", description: "Regex over a file input's label or a drop zone's text." },
     target: TARGET,
   }, ["path"]),
   tool("click", "Click by ref/selector/label_pattern (el.click(); ties refuse); `hover` fires hover events instead. `trusted`: real click without focus (needs Accessibility), `raise:true` in the foreground; check `hit`. Only trusted takes screen `x`/`y`.", {

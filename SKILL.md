@@ -27,7 +27,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `press` | `key` (`Enter`, `Escape`, `Tab`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | Inputs, textareas, rich editors; verifies it landed. `text_path` for long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>` or custom combobox, own list only; reads back. Miss or `text:""`: `candidates`. |
-| `file_upload` | Put a local file on an `<input type=file>`; the bytes skip context. |
+| `file_upload` | File onto an `<input type=file>` or drop zone (`dropped`); bytes skip context. |
 | `notify` | macOS notification for the user. |
 
 ## Snapshot format
