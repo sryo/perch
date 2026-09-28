@@ -90,3 +90,26 @@ test("two regular instances with windows: window lookups refuse with a code", as
   ] });
   assert.throws(() => rt("shotGeom", { target: { tabId: handle } }), /^Error: window_ambiguous: /);
 });
+
+test("a fresh runtime's first page call with a twin imports AppKit and takes the plain path", async () => {
+  await install({ cg: [] });
+  assert.equal(world.state.imports.includes("AppKit"), false, "nothing before the page call needed AppKit");
+  const w = await call("wait", { expression: "location.href", timeout: 2000, target: { tabId: handle } });
+  assert.equal(w.o.value, "https://a0.test/", w.t);
+  assert.equal(world.counts.NSAppleScript || 0, 0);
+});
+
+test("importing AppKit makes the runtime a prohibited app, once", async () => {
+  await install();
+  for (let i = 0; i < 2; i++) await call("wait", { expression: "1", timeout: 500, target: { tabId: handle } });
+  assert.ok(world.state.imports.includes("AppKit"));
+  assert.deepEqual(world.state.policies, [2]);
+});
+
+test("an instance count that can't be read takes the plain path", async () => {
+  await install({ twin: null });
+  world.state.countFails = true;
+  const w = await call("wait", { expression: "location.href", timeout: 2000, target: { tabId: handle } });
+  assert.equal(w.o.value, "https://a0.test/", w.t);
+  assert.equal(world.counts.NSAppleScript || 0, 0);
+});

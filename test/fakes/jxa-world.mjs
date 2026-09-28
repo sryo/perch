@@ -11,7 +11,7 @@ import vm from "node:vm";
 
 export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, frameMs = 0 } = {}) {
   const clock = { t: 1_000_000 };
-  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [], shots: [] };
+  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [], shots: [], imports: [], policies: [] };
   const cgEntries = cg.map((entry) => ({ ...entry }));
   const twinOf = (name) => (state.twins || []).find((x) => x.name === name);
   const posted = [];
@@ -484,6 +484,24 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     return null;
   }
 
+  // state.twins: [{name, bundle, pid, policy?}], second instances of a browser.
+  // Every process is a regular app (activation policy 0) except a twin, which
+  // defaults to 2 (prohibited: a headless instance, no Dock icon).
+  // state.countFails: the instance count read throws. state.policies records
+  // this process's own setActivationPolicy calls.
+  const appKit = {
+    NSRunningApplication: {
+      runningApplicationsWithBundleIdentifier: (bundle) => {
+        if (state.countFails) throw new Error("count read failed");
+        return { count: 1 + (state.twins || []).filter((x) => x.bundle === bundle).length };
+      },
+      runningApplicationWithProcessIdentifier: (pid) => {
+        const x = (state.twins || []).find((y) => y.pid === pid);
+        return { isNil: () => false, activationPolicy: x ? x.policy ?? 2 : 0 };
+      },
+    },
+    NSApplication: { sharedApplication: { setActivationPolicy: (p) => { state.policies.push(p); return true; } } },
+  };
   const sandbox = {
     Ref: () => [],
     Application: (name) => {
@@ -495,7 +513,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     delay: (s) => { clock.t += Math.round(s * 1000); },
     Date: { now: () => clock.t },
     ObjC: {
-      import: () => {},
+      // AppKit's classes exist only once it is imported, as in real osascript.
+      import: (name) => { state.imports.push(name); if (name === "AppKit") Object.assign(sandbox.$, appKit); },
       castRefToObject: (x) => x,
       deepUnwrap: (x) => { bump("deepUnwrap"); return x; },
       unwrap: (x) => x,
@@ -540,16 +559,6 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       CGEventGetLocation: () => ({ ...state.cursor }),
       CGWarpMouseCursorPosition: (pt) => { state.cursor = { x: pt.x, y: pt.y }; state.warps.push({ x: pt.x, y: pt.y }); },
       NSDictionary: { dictionaryWithObjectForKey: () => ({}) },
-      // state.twins: [{name, bundle, pid, policy?}], second instances of a browser.
-      // Every process is a regular app (activation policy 0) except a twin, which
-      // defaults to 2 (prohibited: a headless instance, no Dock icon).
-      NSRunningApplication: {
-        runningApplicationsWithBundleIdentifier: (bundle) => ({ count: 1 + (state.twins || []).filter((x) => x.bundle === bundle).length }),
-        runningApplicationWithProcessIdentifier: (pid) => {
-          const x = (state.twins || []).find((y) => y.pid === pid);
-          return { isNil: () => false, activationPolicy: x ? x.policy ?? 2 : 0 };
-        },
-      },
       NSAppleScript: { alloc: { initWithSource: (src) => ({ executeAndReturnError: (err) => runAppleScript(src, err) }) } },
       NSString: { stringWithString: (str) => nsString(str) },
       AXIsProcessTrusted: () => state.ax,

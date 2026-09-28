@@ -97,21 +97,35 @@ function jxaRuntime(BROWSERS) {
     (KIND[name] === "arc" ? arcHints : hints)[handle(name, id)] = { w: w, id: id };
   }
 
-  // One CGWindowList read replaces System Events: z-order of on-screen browsers,
-  // the frontmost app, pids and CGWindowIDs. ~4ms vs ~60ms for a System Events
-  // `frontmost` query, and it needs no extra permission.
+  // AppKit's classes (NSRunningApplication, NSWorkspace, NSBitmapImageRep) exist
+  // only once it is imported. The import makes this osascript an app with a Dock
+  // icon, so it drops to the prohibited policy at once (2 is
+  // NSApplicationActivationPolicyProhibited; the named constant may not bridge).
+  let appKitReady = false;
+  function appKit() {
+    if (appKitReady) return;
+    ObjC.import("AppKit");
+    appKitReady = true;
+    try { $.NSApplication.sharedApplication.setActivationPolicy(2); } catch (e) {}
+  }
+
   // A browser's CG windows go by owner name, which a second instance of the same
   // app shares (another tool's headless copy). Only a regular app (activation
   // policy 0, a Dock icon) is the user's; a pid's policy is read once, over ObjC.
+  // A failed read counts as the user's but is not remembered.
   const userPid = {};
   function isUserPid(pid) {
-    if (!(pid in userPid)) {
-      let ok = true;
-      try { const a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid); ok = a.isNil() || Number(a.activationPolicy) === 0; } catch (e) {}
-      userPid[pid] = ok;
-    }
-    return userPid[pid];
+    if (pid in userPid) return userPid[pid];
+    try {
+      appKit();
+      const a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+      return (userPid[pid] = a.isNil() || Number(a.activationPolicy) === 0);
+    } catch (e) { return true; }
   }
+
+  // One CGWindowList read replaces System Events: z-order of on-screen browsers,
+  // the frontmost app, pids and CGWindowIDs. ~4ms vs ~60ms for a System Events
+  // `frontmost` query, and it needs no extra permission.
   function procs() {
     // `byPid` keeps every layer-0 window of a pid, small ones too, front to back.
     // `dupe[owner]`: windows of two regular instances, which geometry can't separate.
@@ -495,8 +509,9 @@ function jxaRuntime(BROWSERS) {
   // the plain one. One ObjC read per call, no Apple Event.
   function soleInstance(t) {
     if (t.solo == null) {
-      t.solo = true;
-      try { t.solo = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(BUNDLE[t.app]).count <= 1; } catch (e) {}
+      // Fails closed: a count that can't be read takes the plain path.
+      t.solo = false;
+      try { appKit(); t.solo = Number($.NSRunningApplication.runningApplicationsWithBundleIdentifier(BUNDLE[t.app]).count) <= 1; } catch (e) {}
     }
     return t.solo;
   }
@@ -646,7 +661,7 @@ function jxaRuntime(BROWSERS) {
   function capture(wid, format, maxWidth) {
     try {
       ObjC.import("CoreGraphics");
-      ObjC.import("AppKit");
+      appKit();
       ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]);
       if (!$.CGPreflightScreenCaptureAccess()) return null;
       // kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming (no shadow, as screencapture -o).
@@ -1286,7 +1301,7 @@ function jxaRuntime(BROWSERS) {
   function defaultBrowser(P) {
     if (P.z.length) return P.z[0];
     try {
-      ObjC.import("AppKit");
+      appKit();
       const u = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL($.NSURL.URLWithString("https://example.com"));
       const id = ObjC.unwrap($.NSBundle.bundleWithURL(u).bundleIdentifier);
       const b = BROWSERS.filter(function (x) { return x.bundle === id; })[0];
