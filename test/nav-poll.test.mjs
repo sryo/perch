@@ -392,6 +392,22 @@ test("a fill whose typeahead miss read gets no reply says the fill ran", async (
   }), (e) => RAN("fill").test(e.message));
 });
 
+// Hangs the page after its next n scripts have answered.
+const hangAfter = (n) => { world.state.afterExecute = () => { if (--n > 0) hangAfter(n); else world.state.hung = true; }; };
+
+test("select {trusted} whose readback gets no reply after the pick says the select ran", async () => {
+  await install();
+  calm();
+  hangAfter(4);
+  assert.throws(() => rt("select", {
+    target: { tabId: handle },
+    start: "JSON.stringify({pending: true})",
+    trusted: { open: "JSON.stringify(true)", keep: "JSON.stringify(true)" },
+    pick: "JSON.stringify({ok: true})",
+    read: "JSON.stringify(null)", readFinal: "JSON.stringify(null)",
+  }), (e) => RAN("select").test(e.message));
+});
+
 test("eval_js {awaitPromise} that times out says its code ran", async () => {
   await install();
   calm();
