@@ -2125,15 +2125,31 @@ const pressFocus = function (target, el) {
   el.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
 };
 const pressEscape = function (el) { el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true })); };
-// Exact text, then a whole-word hit, then a word prefix; never mid-word. Ties go to the shortest.
+// Accents fold away for comparison only, so "Cordoba" matches "Córdoba".
+const fold = function (s) { return String(s || "").normalize("NFD").replace(/\p{M}+/gu, ""); };
+const wordsOf = function (s) { return String(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean); };
+const reEsc = function (s) { return s.replace(/[.*+?^$(){}|[\]\\/]/g, "\\$&"); };
+// Each of want's items equals one of have's, in the same order.
+function inOrder(have, want) {
+  let i = 0;
+  for (const w of want) {
+    while (i < have.length && have[i] !== w) i++;
+    if (i++ >= have.length) return false;
+  }
+  return want.length > 0;
+}
+// Exact text, then a whole-word hit, then a word prefix, then every typed word
+// whole and in order; never mid-word. Ties go to the shortest.
 function bestMatch(list, key, want) {
+  want = fold(want);
   if (!want) return null;
-  const esc = want.replace(/[.*+?^$(){}|[\]\\/]/g, "\\$&");
+  const esc = reEsc(want), ws = wordsOf(want);
   const word = new RegExp("(?:^|[^\\p{L}\\p{N}])" + esc + "(?:$|[^\\p{L}\\p{N}])", "u");
   const pre = new RegExp("(?:^|[^\\p{L}\\p{N}])" + esc, "u");
-  const tiers = [function (t) { return t === want; }, function (t) { return word.test(t); }, function (t) { return pre.test(t); }];
+  const tiers = [function (t) { return t === want; }, function (t) { return word.test(t); }, function (t) { return pre.test(t); },
+    function (t) { return inOrder(wordsOf(t), ws); }];
   for (const f of tiers) {
-    const hits = list.filter(function (x) { return f(key(x)); });
+    const hits = list.filter(function (x) { return f(fold(key(x))); });
     if (hits.length) return hits.sort(function (a, b) { return key(a).length - key(b).length; })[0];
   }
   return null;
@@ -2282,11 +2298,37 @@ function taScopes(s) {
 }
 function taOptions(s) {
   const ITEM = "[role=option], li, [class*=option], [class*=item], [class*=result]";
+  const shown = function (o) { return vis(o) && taNorm(o.textContent); };
   return taScopes(s).reduce(function (out, scope) {
     let opts = scope.matches("[role=option]") ? [scope] : Array.from(scope.querySelectorAll("[role=option]"));
-    if (!opts.length) opts = Array.from(scope.querySelectorAll(ITEM)).filter(function (o) { return !o.querySelector(ITEM); });
-    return out.concat(opts.filter(function (o) { return vis(o) && taNorm(o.textContent); }));
+    if (!opts.length) {
+      opts = Array.from(scope.querySelectorAll(ITEM)).filter(function (o) { return !o.querySelector(ITEM); }).filter(shown);
+      // A lone match can be the results wrapper ("results" in its class) around
+      // plain item elements: its repeated children are the suggestions.
+      const kids = opts.length === 1 ? Array.from(opts[0].children).filter(shown) : [];
+      const texts = kids.map(function (k) { return taNorm(k.textContent); });
+      if (kids.length > 1 && texts.every(function (t, i) { return texts.indexOf(t) === i; }) &&
+          !opts[0].querySelector("input, select, textarea, button")) opts = kids;
+    }
+    return out.concat(opts.filter(shown));
   }, []);
+}
+// The options best matching text, most specific tier first: exact; each typed
+// comma part equal to one of the option's parts, in order; a prefix of the whole
+// option; a prefix of one of its words; every typed word whole and in order.
+// Accents fold. -> {hits, exact}
+function taMatch(opts, text) {
+  const w = fold(taNorm(text));
+  const parts = function (t) { return t.split(",").map(function (p) { return p.trim(); }).filter(Boolean); };
+  const wp = parts(w), ws = wordsOf(w);
+  const pre = new RegExp("(?:^|[^\\p{L}\\p{N}])" + reEsc(w), "u");
+  const tiers = [function (t) { return t === w; }, function (t) { return inOrder(parts(t), wp); }, function (t) { return t.indexOf(w) === 0; },
+    function (t) { return pre.test(t); }, function (t) { return inOrder(wordsOf(t), ws); }];
+  if (w) for (let i = 0; i < tiers.length; i++) {
+    const hits = opts.filter(function (o) { return tiers[i](fold(taNorm(o.textContent))); });
+    if (hits.length) return { hits: hits, exact: i === 0 };
+  }
+  return { hits: [], exact: false };
 }
 `;
 
@@ -2483,17 +2525,18 @@ return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "
 
   fill: FILL_LIB + "return fillOne(A);",
 
-  // null = keep polling; exact text first, then prefix. A.probe: is a pick worth
+  // null = keep polling; the best tier of taMatch. A.probe: is a pick worth
   // waiting longer for (a hidden companion, an open or non-empty list)?
   fill_ta_pick: TA_PICK_LIB + String.raw`
 const s = window.__perch_ta;
 if (!s) return { ok: false, kind: "typeahead", error: "fill state lost (did the page navigate?)" };
 if (A.probe) return !!(s.comp || attr(s.el, "aria-expanded") === "true" || taScopes(s).some(function (r) { return vis(r) && taNorm(r.textContent); }));
-const w = taNorm(s.text);
 const opts = taOptions(s);
-const opt = opts.find(function (o) { return taNorm(o.textContent) === w; }) || opts.find(function (o) { return taNorm(o.textContent).indexOf(w) === 0; });
+const m = taMatch(opts, s.text);
+// Several equal hits short of exact are a tie, never settled by list order.
+const opt = m.hits.length === 1 || m.exact ? m.hits[0] : null;
 if (!opt) {
-  if (opts.length) s.cands = opts.slice(0, 8).map(function (o) { return clip(o.textContent, 60); });
+  if (opts.length) { s.cands = opts.slice(0, 8).map(function (o) { return clip(o.textContent, 60); }); s.tied = m.hits.length > 1; }
   return null;
 }
 s.picked = clip(opt.textContent, 80);
@@ -2527,6 +2570,7 @@ else {
   out = { ok: false, kind: "typeahead", el: ident(el), error: "no suggestion matched " + JSON.stringify(s.text) + "; the text was withdrawn" };
 }
 if (s.cands) out.candidates = s.cands;
+if (s.tied && !out.ok) out.ambiguous = true;
 return out;
 `,
 
@@ -2585,7 +2629,7 @@ return { results: results };
 
   // select runs in phases polled from JXA (runtime `select`), never with page
   // timers: Chrome throttles those to ~1/s in background tabs.
-  select_start: SELECT_LIB + String.raw`
+  select_start: TYPEAHEAD_LIB + SELECT_LIB + String.raw`
 const c = findCtl(A);
 if (c.out) return c.out;
 const ctl = c.el;
@@ -2597,6 +2641,9 @@ const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySele
 const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
 const box = wrap || (ctl.tagName === "INPUT" ? ctl.parentElement : ctl);
 const s = { ctl: ctl, input: input, box: box, polls: 0 };
+// A text input's value and hidden companion go back after a miss: opening or
+// closing a typeahead may clear the text it holds.
+if (input && input.tagName === "INPUT") { s.prior = input.value; s.comp = taParts(input).comp; s.priorComp = s.comp && s.comp.value; }
 // Other open menus would cover this one or grab its keys: Escape them first, but
 // not a combobox inside this control's own popup (cmdk's search box).
 const popups = [ctl, input].filter(Boolean).map(function (e) { return document.getElementById(attr(e, "aria-controls")); }).filter(Boolean);
@@ -2655,6 +2702,8 @@ const now = ownOptions(s).slice(0, 30).map(function (o) { return clip(textOf(o),
 const cands = s.cands || now;
 if (s.typed) { setNativeValue(s.typed, ""); fire(s.typed, ["input"]); }
 if (s.opened) pressEscape(s.input || s.ctl);
+if (s.prior != null && s.input.value !== s.prior) { setNativeValue(s.input, s.prior); fire(s.input, ["input", "change"]); }
+if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
 if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty; click it with trusted:true, then select again", candidates: [] };
 return { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands };
 `,

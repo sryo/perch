@@ -110,3 +110,30 @@ test("readback verifies options longer than the 80-char display clip", async () 
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.unverified, undefined, JSON.stringify(o));
 });
+
+test("custom combobox: accents fold, and typed words match in order as a last resort", async () => {
+  const js = CUSTOM_JS.replace("'<div role=option>Junior</div><div role=option>Senior</div>'",
+    "'<div role=option>Córdoba, Spain</div><div role=option>Córdoba, Córdoba, Argentina</div><div role=option>México</div>'");
+  onPage(CUSTOM, js);
+  assert.equal((await select({ label_pattern: "level", text: "Cordoba Argentina" })).o.selected, "Córdoba, Córdoba, Argentina");
+  onPage(CUSTOM, js);
+  assert.equal((await select({ label_pattern: "level", text: "mexico" })).o.selected, "México");
+  onPage(CUSTOM, js);
+  assert.equal((await select({ label_pattern: "level", text: "Argentina Cordoba" })).o.ok, false);
+});
+
+// A plain text input whose suggestions appear only after typing, with a hidden
+// companion; Escape clears both the query and the companion.
+const TYPED_LIST = `<form><div class=field><label for=loc>Location</label><input id=loc name=location value=Spring>
+  <input type=hidden id=sel name=selectedLocation value=keep><div class=dropdown-container><div class=dropdown-results></div></div></div></form>`;
+const TYPED_LIST_JS = `
+  const inp = document.getElementById('loc');
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Escape') { inp.value = ''; document.getElementById('sel').value = ''; } });`;
+
+test("listing a typeahead whose list opens only on typing leaves its text alone", async () => {
+  const { dom } = onPage(TYPED_LIST, TYPED_LIST_JS);
+  const { o } = await select({ selector: "#loc", text: "" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(dom.document.querySelector("#loc").value, "Spring");
+  assert.equal(dom.document.querySelector("#sel").value, "keep");
+});
