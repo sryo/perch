@@ -1532,6 +1532,9 @@ function jxaRuntime(BROWSERS) {
   }
 
   globalThis.__perch = {
+    // Run by the daemons' handshake, so no call pays the AppKit import; one-shot
+    // runs keep it lazy.
+    warm() { try { appKit(); } catch (e) {} },
     dialogs(a) {
       return provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
     },
@@ -1933,6 +1936,7 @@ function jxaRuntime(BROWSERS) {
 }
 
 export const JXA_PRELUDE = `(${jxaRuntime})(${JSON.stringify(BROWSERS)})`;
+export const DAEMON_PRELUDE = JXA_PRELUDE + ";__perch.warm()";
 
 export const ERR = {
   jsOff: "JavaScript-from-AppleEvents is off. Enable it: Chromium-family → View > Developer > Allow JavaScript from Apple Events. " +
@@ -2123,8 +2127,8 @@ const JXA_DEFAULT_TIMEOUT = 30000;
 const JXA_OVERHEAD = 5000;
 
 export const DAEMONS = process.env.PERCH_DAEMON === "0" ? {} : {
-  fast: new OsaDaemon({ prelude: JXA_PRELUDE }),
-  slow: new OsaDaemon({ prelude: JXA_PRELUDE }),
+  fast: new OsaDaemon({ prelude: DAEMON_PRELUDE }),
+  slow: new OsaDaemon({ prelude: DAEMON_PRELUDE }),
 };
 
 export async function jxa(script, { timeout = JXA_DEFAULT_TIMEOUT, lane = "fast", daemons = DAEMONS, oneShot = jxaOneShot, token } = {}) {
