@@ -132,23 +132,30 @@ async function shoot(args, width = 3000) {
 }
 
 test("screenshot: image block then {window,image} meta; 1568 default, maxWidth:0 keeps full size, jpeg (form agent vision)", async () => {
-  canary(tabs(1));
-  let { r, calls } = await shoot({});
-  assert.equal(r.content.length, 2);
-  assert.equal(r.content[0].type, "image");
-  assert.equal(r.content[0].mimeType, "image/png");
-  const meta = JSON.parse(r.content[1].text);
-  assert.deepEqual(Object.keys(meta.window).sort(), ["h", "w", "x", "y"]);
-  assert.deepEqual(meta.image, { w: 1568, h: 1000 });
-  assert.deepEqual(calls.find((c) => c[0] === "sips").slice(1, 3), ["--resampleWidth", "1568"]);
+  // The runtime's own capture (a 2x Retina image of the 800x620 CG frame), then
+  // the screencapture fallback without the Screen Recording grant.
+  for (const capture of [true, false]) {
+    const world = canary(tabs(1));
+    world.state.capture = capture;
+    const full = capture ? { w: 1600, h: 1240 } : { w: 3000, h: 1000 };
+    let { r, calls } = await shoot({});
+    assert.equal(r.content.length, 2);
+    assert.equal(r.content[0].type, "image");
+    assert.equal(r.content[0].mimeType, "image/png");
+    const meta = JSON.parse(r.content[1].text);
+    assert.deepEqual(meta.window, { x: 10, y: 0, w: 800, h: 620 });
+    // The fake sips resamples the width alone.
+    assert.deepEqual(meta.image, { w: 1568, h: capture ? 1215 : 1000 });
+    if (!capture) assert.deepEqual(calls.find((c) => c[0] === "sips").slice(1, 3), ["--resampleWidth", "1568"]);
 
-  ({ r, calls } = await shoot({ maxWidth: 0 }));
-  assert.deepEqual(JSON.parse(r.content[1].text).image, { w: 3000, h: 1000 });
-  assert.equal(calls.some((c) => c[0] === "sips"), false);
+    ({ r, calls } = await shoot({ maxWidth: 0 }));
+    assert.deepEqual(JSON.parse(r.content[1].text).image, full);
+    assert.equal(calls.some((c) => c[0] === "sips"), false);
 
-  ({ r, calls } = await shoot({ format: "jpeg" }, 1000));
-  assert.equal(r.content[0].mimeType, "image/jpeg");
-  assert.ok(calls[0].includes("jpg"), calls[0].join(" "));
+    ({ r, calls } = await shoot({ format: "jpeg" }, 1000));
+    assert.equal(r.content[0].mimeType, "image/jpeg");
+    if (!capture) assert.ok(calls[0].includes("jpg"), calls[0].join(" "));
+  }
 });
 
 // ---- accessibility_snapshot, read by the form agent's line parser ----

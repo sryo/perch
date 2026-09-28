@@ -465,7 +465,9 @@ function jxaRuntime(BROWSERS) {
   // routing need. Chromium and Safari answer bounds() (Chromium fails position(), and a
   // failed read costs a full Apple Event); Arc has neither, so its frame comes
   // from its own CG entry. AppleScript reports inner-content bounds while CG
-  // includes the titlebar, so the closest CG entry wins.
+  // includes the titlebar, so the closest CG entry wins, if it is close enough:
+  // only y and h may differ by the titlebar and toolbar. A minimized window has no
+  // entry, and the nearest one is then another window.
   function ids(t) {
     let geom = null;
     if (t.kind !== "arc") { try { const b = t.win.bounds(); geom = { x: b.x, y: b.y, w: b.width, h: b.height }; } catch (e) {} }
@@ -477,8 +479,9 @@ function jxaRuntime(BROWSERS) {
       cands.forEach(function (c) { if (score(c) < bestScore) { bestScore = score(c); best = c; } });
       // Another entry about as close: geometry can't say which CGWindowID is ours.
       ambiguous = cands.some(function (c) { return c !== best && score(c) <= bestScore + 2; });
+      if (best && (Math.abs(best.x - geom.x) > 4 || Math.abs(best.w - geom.w) > 4 || Math.abs(best.y - geom.y) > 120 || Math.abs(best.h - geom.h) > 120)) { best = null; ambiguous = false; }
     } else {
-      best = byTitle(t, cands) || cands[t.w] || cands[0] || null;
+      best = byTitle(t, cands);
       if (best) geom = { x: best.x, y: best.y, w: best.w, h: best.h };
     }
     if (!geom) throw new Error(OFFSCREEN);
@@ -500,16 +503,63 @@ function jxaRuntime(BROWSERS) {
   }
 
   // Arc has no geometry verbs, so its window is matched to a CG entry by title.
-  // Both lists run front to back, so same-titled windows pair up in order.
+  // Both lists run front to back, so same-titled windows pair up in order, but
+  // only while each of them is on screen (a minimized one has no entry). CG titles
+  // are empty without the Screen Recording grant; then every window must be.
+  // t.win is windows[t.w], so one bulk name read covers the target and the rest.
   function byTitle(t, cands) {
     try {
-      const wins = app(t.app).windows;
-      const pos = wins.id().map(String).indexOf(String(t.win.id()));
-      const names = wins.name();
-      if (pos < 0 || !names[pos]) return null;
-      const rank = names.slice(0, pos).filter(function (n) { return n === names[pos]; }).length;
-      const same = cands.filter(function (c) { return c.name === names[pos]; });
-      return same[rank] || same[0] || null;
+      const names = app(t.app).windows.name(), name = names[t.w];
+      const count = function (list, n) { return list.filter(function (x) { return x === n; }).length; };
+      if (name && count(cands.map(function (c) { return c.name; }), name) === count(names, name)) {
+        return cands.filter(function (c) { return c.name === name; })[count(names.slice(0, t.w), name)];
+      }
+      return names.length === cands.length ? cands[t.w] || null : null;
+    } catch (e) { return null; }
+  }
+
+  // Only the active tab of a window is rendered. Never switch tabs implicitly:
+  // that can put Chrome's window into focus even without app.activate().
+  function shotGeom(a) {
+    const t = resolve(a.target);
+    if (a.raise) { focus(t); delay(0.25); t.P = procs(); }
+    else if (a.target && (a.target.tabIndex != null || a.target.tabId != null) && !isActive(t)) {
+      throw new Error(notVisible("a background screenshot") + ", or pass raise:true");
+    }
+    const I = ids(t);
+    if (I.windowNumber == null) throw new Error(OFFSCREEN);
+    return I;
+  }
+
+  // The window's own pixels, captured and encoded here rather than by spawning
+  // screencapture and sips. CGPreflightScreenCaptureAccess never prompts; without
+  // the grant, or on an empty image, it returns null and screencapture (which
+  // asks for the grant itself) takes over. A failed downscale keeps full size.
+  function capture(wid, format, maxWidth) {
+    try {
+      ObjC.import("CoreGraphics");
+      ObjC.import("AppKit");
+      ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]);
+      if (!$.CGPreflightScreenCaptureAccess()) return null;
+      // kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming (no shadow, as screencapture -o).
+      let img = $.CGWindowListCreateImage($.CGRectNull, 8, wid, 1);
+      let w = Number($.CGImageGetWidth(img)), h = Number($.CGImageGetHeight(img));
+      if (!w || !h) return null;
+      if (maxWidth > 0 && w > maxWidth) {
+        const sh = Math.round(h * maxWidth / w);
+        // kCGImageAlphaPremultipliedLast, kCGInterpolationHigh.
+        const ctx = $.CGBitmapContextCreate(null, maxWidth, sh, 8, 0, $.CGImageGetColorSpace(img), 1);
+        $.CGContextSetInterpolationQuality(ctx, 3);
+        $.CGContextDrawImage(ctx, $.CGRectMake(0, 0, maxWidth, sh), img);
+        const small = $.CGBitmapContextCreateImage(ctx);
+        if (Number($.CGImageGetWidth(small)) === maxWidth) { img = small; w = maxWidth; h = sh; }
+      }
+      const rep = $.NSBitmapImageRep.alloc.initWithCGImage(img);
+      const data = format === "jpeg"
+        ? rep.representationUsingTypeProperties($.NSBitmapImageFileTypeJPEG, $({ NSImageCompressionFactor: 0.8 }))
+        : rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $());
+      if (!data || !Number(data.length)) return null;
+      return { data: data.base64EncodedStringWithOptions(0).js, image: { w: w, h: h } };
     } catch (e) { return null; }
   }
 
@@ -1597,16 +1647,12 @@ function jxaRuntime(BROWSERS) {
       if (t.tabId != null) delete hints[handle(t.app, t.tabId)];
       return { ok: true, closed: a.target.tabId };
     },
-    // Only the active tab of a window is rendered. Never switch tabs implicitly:
-    // that can put Chrome's window into focus even without app.activate().
-    shotGeom(a) {
-      const t = resolve(a.target);
-      if (a.raise) { focus(t); delay(0.25); t.P = procs(); }
-      else if (a.target && (a.target.tabIndex != null || a.target.tabId != null) && !isActive(t)) {
-        throw new Error(notVisible("a background screenshot") + ", or pass raise:true");
-      }
-      const I = ids(t);
-      if (I.windowNumber == null) throw new Error(OFFSCREEN);
+    shotGeom(a) { return shotGeom(a); },
+    // The geometry plus, when the runtime could capture, `data` (base64) and
+    // `image` {w,h}; without them the caller runs screencapture.
+    shot(a) {
+      const I = shotGeom(a), c = capture(I.windowNumber, a.format, a.maxWidth);
+      if (c) { I.data = c.data; I.image = c.image; }
       return I;
     },
     select(a) {
@@ -1988,7 +2034,7 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
 // Without the daemon it looks once, when the call times out. Entries that never
 // run page JS, and the dialog entries themselves, are not watched.
 const DIALOG_PROBE_MS = 1500, DIALOG_REPROBE_MS = 2000;
-const DIALOG_BLIND = new Set(["listTabs", "newTab", "closeTab", "activate", "shotGeom", "dialogs", "answerDialog"]);
+const DIALOG_BLIND = new Set(["listTabs", "newTab", "closeTab", "activate", "shotGeom", "shot", "dialogs", "answerDialog"]);
 
 const probeDialogs = async (target) => JSON.parse(await jxaOneShot(`JSON.stringify(__perch.dialogs(${JSON.stringify({ target })}))`, { timeout: 5000 }));
 
@@ -2130,8 +2176,11 @@ export const deps = { exec, dialogs: probeDialogs };
 
 async function screenshot(args = {}) {
   const { raise = false, target, format = "png", maxWidth = 1568 } = args;
-  const g = await rt("shotGeom", { target, raise });
+  const g = await rt("shot", { target, raise, format, maxWidth });
   const ext = format === "jpeg" ? "jpg" : "png";
+  // Both captures cover the CG bounds (titlebar included), not AppleScript's inner geom.
+  const rect = g.cgBounds || g.geom;
+  if (g.data) return { __image: true, data: g.data, mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: { window: rect, image: g.image } };
   const base = join(tmpdir(), `perch-${process.pid}-${Date.now().toString(36)}`);
   const files = [`${base}.${ext}`];
   try {
@@ -2149,8 +2198,6 @@ async function screenshot(args = {}) {
         dims = imageDims(buf);
       } catch {}
     }
-    // -l pixels cover the CG bounds (titlebar included), not AppleScript's inner geom.
-    const rect = g.cgBounds || g.geom;
     return { __image: true, data: buf.toString("base64"), mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: dims ? { window: rect, image: dims } : undefined };
   } finally {
     await Promise.all(files.map((f) => unlink(f).catch(() => {})));
