@@ -3644,7 +3644,7 @@ return A.reset || !moves.length ? null : { moves: moves };
   // Chrome's editing command emits a trusted input event in an inactive tab,
   // including when its window has no on-screen CG entry. It needs no mouse
   // event, tab selection, window geometry, or AppKit focus change.
-  trusted_fill_background: String.raw`
+  trusted_fill_background: TYPEAHEAD_LIB + String.raw`
 let el;
 if (A.ref || A.selector) {
   const r = resolveEl(A);
@@ -3665,12 +3665,19 @@ let trusted = false;
 const onInput = function (e) { if (e.target === el && e.isTrusted) trusted = true; };
 el.addEventListener("input", onInput, true);
 try {
+  // A typeahead keeps only a picked suggestion: Node picks after the lookup.
+  const ta = isTypeahead(el) && taParts(el);
+  if (ta) window.__perch_ta = { el: el, comp: ta.comp, pop: ta.pop, text: A.text, prior: el.value, priorComp: ta.comp && ta.comp.value };
   el.focus({ preventScroll: true });
   if (document.activeElement !== el) return { ok: false, error: ident(el) + " did not accept focus" };
   if (el.select) el.select();
   const accepted = document.execCommand(A.text ? "insertText" : "delete", false, A.text);
   const value = String(el.value || "");
   const ok = accepted === true && trusted && value === A.text;
+  if (ok && ta) {
+    el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: A.text.slice(-1) }));
+    return { pending: true, trusted: true };
+  }
   return { ok: ok, trusted: trusted, value: value, el: ident(el), ...(ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
 } finally { el.removeEventListener("input", onInput, true); }
 `,
@@ -4121,10 +4128,11 @@ async function fill(args = {}) {
   let body = text;
   if (text_path) ({ data: body } = await readUserFile(text_path, "utf8"));
   if (!body || !body.trim()) throw new Error("fill: empty body");
-  if (trusted) return trustedFill({ ref, selector, label_pattern, text: body, raise, target });
-  const r = await runPage("fill", "fill", { ref, selector, label_pattern, text: body }, target);
+  const r = trusted
+    ? await trustedFill({ ref, selector, label_pattern, text: body, raise, target })
+    : await runPage("fill", "fill", { ref, selector, label_pattern, text: body }, target);
   if (!r || !r.pending) return r;
-  const out = await pickSuggestion(target);
+  const out = { ...await pickSuggestion(target), ...(r.trusted ? { trusted: true } : {}) };
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
 }
 

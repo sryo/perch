@@ -514,3 +514,63 @@ test("typeahead: a list that empties after typing is waited on", async () => {
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.selected, "Zzyzx Springs, CA");
 });
+
+// A lookup that runs only on trusted input, and a browser editing command that
+// delivers one (as Chrome's insertText does in a background tab).
+const TRUSTED_ONLY_JS = (lookup = LOCATION_JS()) => lookup.replace("inp.addEventListener('input', () => {", "inp.addEventListener('input', (e) => { if (!e.isTrusted) return;") + `
+  document.execCommand = (_command, _ui, text) => {
+    const el = document.activeElement;
+    el.value = el.value.slice(0, el.selectionStart) + text + el.value.slice(el.selectionEnd);
+    const ev = new Event('input', { bubbles: true });
+    Object.defineProperty(ev, 'isTrusted', { value: true });
+    el.dispatchEvent(ev);
+    return true;
+  };`;
+
+test("typeahead: a lookup that ignores synthetic input misses on a plain fill", async () => {
+  const { dom } = onPage(LOCATION, TRUSTED_ONLY_JS());
+  const o = await fill({ label_pattern: "location", text: "Rosario" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(dom.lookups, 0);
+  assert.equal($(dom, "#loc").value, "");
+});
+
+test("typeahead: a trusted fill types through the editing command and picks the suggestion", async () => {
+  const { dom, world } = onPage(LOCATION, TRUSTED_ONLY_JS());
+  const o = await fill({ label_pattern: "location", text: "Rosario", trusted: true });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.kind, "typeahead");
+  assert.equal(o.trusted, true);
+  assert.equal(o.selected, "Rosario, Santa Fe, Argentina");
+  assert.equal($(dom, "#loc").value, "Rosario, Santa Fe, Argentina");
+  assert.equal($(dom, "#selected-location").value, "loc-0");
+  assert.equal(dom.lookups, 1);
+  assert.equal(world.counts["win.activeTabIndex="], undefined);
+  assert.equal(world.posted.length, 0);
+});
+
+test("typeahead: a trusted fill with no suggestion withdraws the text, never ok", async () => {
+  const { dom } = onPage(
+    LOCATION.replace("id=loc name=location type=text", "id=loc name=location type=text value=Lyon").replace("name=selectedLocation>", "name=selectedLocation value=loc-9>"),
+    TRUSTED_ONLY_JS(LOCATION_JS().replace("cities.filter((c) => q && c.toLowerCase().startsWith(q))", "[]")));
+  const o = await fill({ label_pattern: "location", text: "Zzyzx", trusted: true });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kind, "typeahead");
+  assert.equal(o.trusted, true);
+  assert.match(o.error, /no suggestion/);
+  assert.equal($(dom, "#loc").value, "Lyon");
+  assert.equal($(dom, "#selected-location").value, "loc-9");
+});
+
+test("trusted_fill_background: a typeahead is left pending with its state recorded", () => {
+  const dom = page(LOCATION);
+  dom.eval(TRUSTED_ONLY_JS().replace(/later\(/g, "(fn => fn)("));
+  let keyup = null;
+  $(dom, "#loc").addEventListener("keyup", (e) => { keyup = e.key; });
+  const o = run(dom, "trusted_fill_background", { selector: "#loc", text: "Rosario" });
+  assert.deepEqual(o, { pending: true, trusted: true });
+  assert.equal(keyup, "o");
+  assert.equal(dom.__perch_ta.text, "Rosario");
+  assert.equal(dom.__perch_ta.prior, "");
+  assert.equal(dom.__perch_ta.comp, $(dom, "#selected-location"));
+});

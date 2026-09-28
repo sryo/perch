@@ -37,6 +37,12 @@
   <div><input id="downshift-:r0:-input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="downshift-:r0:-menu" aria-labelledby="downshift-:r0:-label" autocomplete="off"><button id="downshift-:r0:-toggle-button" type="button" tabindex="-1" aria-label="toggle menu" aria-controls="downshift-:r0:-menu" aria-expanded="false">&#9662;</button></div>
   <ul id="downshift-:r0:-menu" role="listbox" aria-labelledby="downshift-:r0:-label"></ul></div>
 
+<!-- A location typeahead whose lookup runs only on trusted input: a hidden companion
+     holds the pick, and blur clears text that was never picked. -->
+<div class="field"><div class="loc"><label for="loc">Location (City)</label>
+  <input id="loc" name="location" type="text" autocomplete="off">
+  <input type="hidden" id="selected-location" name="selectedLocation"><div class="dropdown-container"></div></div></div>
+
 <script>
 (function () {
   // Radix's DismissableLayer: Escape and a pointerdown outside close only the topmost layer.
@@ -149,6 +155,29 @@
     dsRender();
   });
   input.addEventListener("blur", function () { ds.isOpen = false; input.value = ds.selectedItem || ""; dsRender(); });
+
+  // Trusted-only location lookup, debounced.
+  const loc = document.getElementById("loc");
+  const locHidden = document.getElementById("selected-location");
+  const locList = document.querySelector(".loc .dropdown-container");
+  const cities = ["Rosario, Santa Fe, Argentina", "Rosario del Tala, Entre Rios", "Toronto, ON, Canada"];
+  let locTimer = 0;
+  window.locLookups = 0;
+  loc.addEventListener("input", function (e) {
+    locHidden.value = "";
+    if (!e.isTrusted) return;
+    clearTimeout(locTimer);
+    locTimer = setTimeout(function () {
+      window.locLookups++;
+      const q = loc.value.toLowerCase();
+      locList.innerHTML = cities.filter(function (c) { return q && c.toLowerCase().indexOf(q) === 0; })
+        .map(function (c, i) { return '<div class="dropdown-item" data-id="' + i + '">' + c + "</div>"; }).join("");
+      locList.querySelectorAll(".dropdown-item").forEach(function (o) {
+        o.addEventListener("mousedown", function () { loc.value = o.textContent; locHidden.value = "loc-" + cities.indexOf(o.textContent); locList.innerHTML = ""; });
+      });
+    }, 250);
+  });
+  loc.addEventListener("blur", function () { clearTimeout(locTimer); locList.innerHTML = ""; if (!locHidden.value) loc.value = ""; });
 })();
 </script>
 </body>
