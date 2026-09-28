@@ -4,7 +4,7 @@
 // NSAppleScript path, and CG lookups by owner name must keep to the user's pid.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
+import { JXA_PRELUDE, DAEMON_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 
 const FRAME = { x: 0, y: 57, w: 854, h: 600 };
@@ -97,6 +97,18 @@ test("a fresh runtime's first page call with a twin imports AppKit and takes the
   const w = await call("wait", { expression: "location.href", timeout: 2000, target: { tabId: handle } });
   assert.equal(w.o.value, "https://a0.test/", w.t);
   assert.equal(world.counts.NSAppleScript || 0, 0);
+});
+
+test("a daemon's handshake imports AppKit, so its first page call does not", async () => {
+  await install({ cg: [] });
+  world.run(DAEMON_PRELUDE + ";1");
+  assert.ok(world.state.imports.includes("AppKit"), "the handshake imports AppKit");
+  world.state.imports.length = 0;
+  const w = await call("wait", { expression: "location.href", timeout: 2000, target: { tabId: handle } });
+  assert.equal(w.o.value, "https://a0.test/", w.t);
+  assert.deepEqual(world.state.imports.filter((n) => n === "AppKit"), []);
+  assert.equal(world.state.sharedApp || 0, 0);
+  assert.deepEqual(world.state.policies, []);
 });
 
 test("importing AppKit never registers the runtime as an app", async () => {
