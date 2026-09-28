@@ -2410,6 +2410,60 @@ function resolveEl(a, dflt) {
   try { el = document.querySelector(sel) || deepAll(sel)[0]; } catch (e) { return { out: { ok: false, error: "bad selector: " + sel } }; }
   return el ? { el: el } : { out: { ok: false, error: "no element for selector " + sel } };
 }
+const CLICKABLE = "button, a[href], [role=button], [role=link], [role=menuitem], [role=tab], [role=checkbox], [role=radio], [role=option], input[type=submit], input[type=button], input[type=reset], summary";
+function isDisabled(el) { return el.disabled === true || attr(el, "aria-disabled") === "true"; }
+const WORD_CH = /[\p{L}\p{N}_]/u;
+// How well a pattern names s: 0 the whole name (whole matches the anchored
+// pattern), 1 a match that starts and ends on word boundaries, 2 any other
+// match, 3 none. re carries the "g" flag.
+function nameTier(whole, re, s) {
+  if (whole.test(s)) return 0;
+  let best = 3;
+  re.lastIndex = 0;
+  for (let m; (m = re.exec(s)); ) {
+    if (!m[0]) { re.lastIndex++; continue; }
+    const a = m.index, b = a + m[0].length;
+    const cutIn = WORD_CH.test(s[a - 1] || "") && WORD_CH.test(m[0][0]);
+    const cutOut = WORD_CH.test(s[b] || "") && WORD_CH.test(m[0][m[0].length - 1]);
+    best = Math.min(best, cutIn || cutOut ? 2 : 1);
+  }
+  return best;
+}
+// The one control whose accessible name (or button value) best fits a.label_pattern:
+// enabled and visible ones first, then by nameTier. A tie refuses rather than guess.
+function clickableByLabel(a) {
+  const whole = new RegExp("^(?:" + a.label_pattern + ")$", "i"), re = new RegExp(a.label_pattern, "gi");
+  const tierOf = function (el) {
+    const t = nameTier(whole, re, accName(el));
+    return t && el.tagName === "INPUT" && el.value ? Math.min(t, nameTier(whole, re, clip(el.value, 120))) : t;
+  };
+  const rank = function (pool) {
+    let tier = 3, hits = [];
+    pool.forEach(function (el) {
+      const t = tierOf(el);
+      if (t < tier) { tier = t; hits = [el]; } else if (t === tier && t < 3) hits.push(el);
+    });
+    // A control inside another hit (a button in a link) is the same target.
+    return hits.filter(function (el) { return !hits.some(function (o) { return o !== el && el.contains(o); }); });
+  };
+  const pat = "/" + a.label_pattern + "/i";
+  let all = Array.from(document.querySelectorAll(CLICKABLE)), hits = [];
+  for (let pass = 0; pass < 2 && !hits.length; pass++) {
+    // Open shadow roots only when the light DOM has no enabled match.
+    if (pass) all = deepAll(CLICKABLE);
+    const on = all.filter(function (el) { return !isDisabled(el); });
+    hits = rank(on.filter(vis));
+    if (!hits.length) hits = rank(on);
+  }
+  if (hits.length === 1) return { el: hits[0] };
+  if (hits.length > 1) return { out: { ok: false, error: "ambiguous: " + pat + " names " + hits.length + " controls equally; narrow it, or use a selector or ref", candidates: hits.slice(0, 8).map(ident) } };
+  const off = rank(all.filter(isDisabled));
+  if (off.length) return { out: { ok: false, error: pat + " matches only disabled: " + off.slice(0, 3).map(ident).join(", ") } };
+  const names = [];
+  all.filter(function (el) { return vis(el) && !isDisabled(el); }).forEach(function (el) { const n = accName(el); if (n && names.indexOf(n) < 0 && names.length < 8) names.push(n); });
+  return { out: { ok: false, error: "no button or link matched " + pat, names: names } };
+}
+function resolveClick(a) { return a.label_pattern ? clickableByLabel(a) : resolveEl(a); }
 `;
 
 const SELECT_LIB = String.raw`
@@ -3439,7 +3493,7 @@ return out;
 `,
 
   click: READBACK_LIB + String.raw`
-const r = resolveEl(A);
+const r = resolveClick(A);
 if (r.out) return r.out;
 if (A.readback) { const bad = rbArm(); if (bad) return bad; }
 r.el.click();
@@ -3515,7 +3569,7 @@ return { ok: true, el: ident(el), prevented: prevented, focus: f && f !== docume
 
   // JS-driven hover menus listen for these; CSS :hover needs a real pointer.
   hover: String.raw`
-const r = resolveEl(A);
+const r = resolveClick(A);
 if (r.out) return r.out;
 const b = r.el.getBoundingClientRect();
 const at = { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, pointerType: "mouse", composed: true };
@@ -3715,8 +3769,8 @@ return out;
   trusted_probe: String.raw`
 if (document.visibilityState === "hidden") return { ok: false, retry: "hidden" };
 let el;
-if (A.ref || A.selector) {
-  const r = resolveEl(A);
+if (A.ref || A.selector || !A.forFill) {
+  const r = A.ref || A.selector ? resolveEl(A) : clickableByLabel(A);
   if (r.out) return r.out;
   el = r.el;
 } else {
@@ -4062,12 +4116,12 @@ const readbackSteps = (readback) => readback ? {
   settle: READBACK_SETTLE,
 } : {};
 
-async function trustedClick({ ref, selector, x, y, raise, target, readback }) {
-  if (!ref && !selector && (x == null || y == null)) throw new Error("click {trusted:true} requires `ref`, `selector`, or both `x` and `y`");
-  const probing = !!(ref || selector);
+async function trustedClick({ ref, selector, label_pattern, x, y, raise, target, readback }) {
+  if (!ref && !selector && !label_pattern && (x == null || y == null)) throw new Error("click {trusted:true} requires `ref`, `selector`, `label_pattern`, or both `x` and `y`");
+  const probing = !!(ref || selector || label_pattern);
   return rt("trustedClick", {
     target, raise, x, y,
-    probe: probing ? pageFn("trusted_probe", { ref, selector }) : null,
+    probe: probing ? pageFn("trusted_probe", { ref, selector, label_pattern }) : null,
     frames: probing ? null : pageFn("trusted_frames", {}),
     cal: probing ? pageFn("trusted_cal", {}) : null,
     calReset: probing ? pageFn("trusted_cal", { reset: true }) : null,
@@ -4125,18 +4179,23 @@ async function fileUpload(args = {}) {
 }
 
 async function click(args = {}) {
-  const { ref = null, selector = null, x = null, y = null, trusted = false, raise = false, hover = false, target, readback = null } = args;
+  const { ref = null, selector = null, label_pattern = null, x = null, y = null, trusted = false, raise = false, hover = false, target, readback = null } = args;
   if (readback != null && (typeof readback !== "string" || !readback.trim())) throw new Error("click: `readback` must be a CSS selector");
   if (hover && (trusted || readback || x != null || y != null)) throw new Error("click: hover is untrusted and element-only");
+  if (label_pattern != null) {
+    if (ref || selector || x != null || y != null) throw new Error("click: pass `label_pattern` alone, without `ref`, `selector` or `x`/`y`");
+    validateLabelPattern("click", label_pattern);
+  }
   if (trusted && ref != null && FRAME_REF.test(String(ref))) {
     if (readback) throw new Error("click: frame refs take no readback");
     return frameClick({ ref, raise, target });
   }
-  if (trusted) return trustedClick({ ref, selector, x, y, raise, target, readback });
-  if (!ref && !selector) throw new Error("click requires `ref` or `selector` (x/y is screen coords, trusted:true only)");
-  if (hover) return runPage("click", "hover", { ref, selector }, target);
-  if (!readback) return runPage("click", "click", { ref, selector }, target);
-  return rt("click", { target, click: pageFn("click", { ref, selector, readback }), ...readbackSteps(readback) }, { lane: "slow" });
+  if (trusted) return trustedClick({ ref, selector, label_pattern, x, y, raise, target, readback });
+  if (!ref && !selector && !label_pattern) throw new Error("click requires `ref`, `selector`, or `label_pattern` (x/y is screen coords, trusted:true only)");
+  const A = { ref, selector, label_pattern };
+  if (hover) return runPage("click", "hover", A, target);
+  if (!readback) return runPage("click", "click", A, target);
+  return rt("click", { target, click: pageFn("click", { ...A, readback }), ...readbackSteps(readback) }, { lane: "slow" });
 }
 
 const KEY_CODES = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, Delete: 46, Space: 32, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34 };
@@ -4374,9 +4433,10 @@ const TOOLS = [
     selector: SEL,
     target: TARGET,
   }, ["path"]),
-  tool("click", "Click by ref/selector (el.click()); `hover` fires hover events instead. `trusted`: real click without focus (needs Accessibility), `raise:true` in the foreground; check `hit`. Only trusted takes screen `x`/`y`.", {
+  tool("click", "Click by ref/selector/label_pattern (el.click(); ties refuse); `hover` fires hover events instead. `trusted`: real click without focus (needs Accessibility), `raise:true` in the foreground; check `hit`. Only trusted takes screen `x`/`y`.", {
     ref: REF,
     selector: SEL,
+    label_pattern: LABEL,
     x: { type: "number" },
     y: { type: "number" },
     trusted: { type: "boolean" },
