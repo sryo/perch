@@ -1548,7 +1548,7 @@ function jxaRuntime(BROWSERS) {
       // half a second.
       const same = function (s) { return JSON.stringify(Object.assign({}, s, { focused: 0 })) === JSON.stringify(Object.assign({}, before, { focused: 0 })); };
       let after, waited = 0;
-      do { delay(0.1); waited += 100; after = frameState(row); } while (waited < 500 && same(after));
+      do { delay(0.05); waited += 50; after = frameState(row); } while (waited < 500 && same(after));
       return { ok: true, tabId: tabId, point: pt, aim: "ax", delivery: T.background ? "skylight" : "hid", before: before, after: after, hit: null };
     },
     trustedFill(a) {

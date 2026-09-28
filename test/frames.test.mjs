@@ -191,6 +191,17 @@ test("after waits for Accessibility to catch up with a slow state change", async
   assert.equal(o.after.focused, true);
 });
 
+test("after is re-read every 50ms, so a quick change returns without a longer wait", async () => {
+  const { world, pay } = frameWorld();
+  await snap();
+  let at = null;
+  world.state.onPost = (e) => { if (e.type === 2 && e.pt.x >= 0) at = world.clock.t; };
+  Object.defineProperty(pay.kids[2], "value", { get: () => (at != null && world.clock.t - at >= 30 ? 0 : 1), configurable: true });
+  const { o } = await click({ ref: "f3" });
+  assert.equal(o.after.checked, false);
+  assert.ok(world.clock.t - at <= 60, `returned ${world.clock.t - at}ms after the click`);
+});
+
 test("after gives up waiting within half a second when nothing changes", async () => {
   const { world } = frameWorld();
   await snap();
