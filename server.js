@@ -2450,14 +2450,31 @@ function bestMatch(list, key, want) {
   const hits = matchTier(list, key, want).hits;
   return hits.length ? hits.sort(function (a, b) { return key(a).length - key(b).length; })[0] : null;
 }
-// -> {el} (the select or combobox) or {out}.
-function findCtl(a) {
-  if (a.ref || a.selector) return resolveEl(a);
+// -> {el} (the select or combobox), {group} (a radio group, only when groups,
+// a function listing them, is given) or {out}. A select and a radio group both
+// matching, or two radio groups, is ambiguous; among selects the first wins.
+function findCtl(a, groups) {
+  if (a.ref || a.selector) {
+    const r = resolveEl(a);
+    const g = r.el && groups && (r.el.closest(RADIO_OPT) || r.el.querySelector(RADIO_OPT)) && groupOf(r.el, groups());
+    return g ? { group: g } : r;
+  }
   const re = new RegExp(a.label_pattern, "i");
   const cands = Array.from(document.querySelectorAll("select, [role=combobox], [aria-haspopup=listbox], [aria-haspopup=dialog], [role=listbox]"));
   const hit = function (el) { return re.test(labelText(el)) || re.test(hintText(el)); };
   const el = cands.filter(vis).find(hit) || cands.find(hit);
-  return el ? { el: el } : { out: { ok: false, error: "no select/combobox matched /" + a.label_pattern + "/i" } };
+  const gs = groups ? groups().filter(function (g) { return re.test(g.q); }) : [];
+  const shownGs = gs.filter(function (g) { return g.shown; });
+  const anyShown = (el && vis(el)) || shownGs.length > 0;
+  const sel = el && (!anyShown || vis(el)) ? el : null;
+  const pool = anyShown ? shownGs : gs;
+  if ((sel ? 1 : 0) + pool.length > 1) {
+    const c = (sel ? [ident(sel)] : []).concat(pool.map(function (g) { return "radiogroup " + JSON.stringify(clip(g.q, 80)); }));
+    return { out: { ok: false, ambiguous: true, error: "several controls matched /" + a.label_pattern + "/i; give a more specific label_pattern", candidates: c.slice(0, 30) } };
+  }
+  if (sel) return { el: sel };
+  if (pool.length) return { group: pool[0] };
+  return { out: { ok: false, error: "no " + (groups ? "select, combobox or radio group" : "select/combobox") + " matched /" + a.label_pattern + "/i" } };
 }
 function nativeOf(ctl) { return ctl.tagName === "SELECT" ? ctl : (ctl.querySelector && ctl.querySelector("select")) || null; }
 function pickNative(nat, text) {
@@ -2668,6 +2685,100 @@ function checkOne(a) {
   el.click();
   if (isOn(el) !== want) return { ok: false, kind: "check", el: out.el, error: "state did not change after click", checked: isOn(el) };
   return out;
+}
+// Radio groups, each asked by a question: a [role=radiogroup] (its accessible
+// name), else a same-name radio set in one form (a fieldset legend or an
+// aria-label(ledby) on an ancestor holding no other group's radios, else the
+// nearest question text before it that is neither a control nor an option).
+const RADIO_OPT = "input[type=radio], [role=radio]";
+function radioGroups() {
+  const out = [], taken = new Set(), sets = [];
+  const outermost = function (opts) { return opts.filter(function (o) { return !opts.some(function (p) { return p !== o && p.contains(o); }); }); };
+  Array.from(document.querySelectorAll("[role=radiogroup]")).forEach(function (box) {
+    const opts = outermost(Array.from(box.querySelectorAll(RADIO_OPT)).filter(function (o) { return !taken.has(o); }));
+    box.querySelectorAll(RADIO_OPT).forEach(function (o) { taken.add(o); });
+    if (opts.length) out.push(radioGroup(box, opts));
+  });
+  Array.from(document.querySelectorAll("input[type=radio]")).forEach(function (r) {
+    if (taken.has(r)) return;
+    const scope = r.name ? r.form || document : r.closest("fieldset") || r;
+    let s = sets.find(function (x) { return x.name === r.name && x.scope === scope; });
+    if (!s) sets.push(s = { name: r.name, scope: scope, opts: [] });
+    s.opts.push(r);
+  });
+  sets.forEach(function (s) {
+    let box = s.opts[0].parentElement;
+    while (box && !s.opts.every(function (o) { return box.contains(o); })) box = box.parentElement;
+    out.push(radioGroup(box || document.body, s.opts));
+  });
+  return out;
+}
+function radioGroup(box, opts) {
+  const names = opts.map(optName);
+  const shown = opts.some(function (o) { return vis(o) || Array.from(o.labels || []).concat(o.closest("label") || []).some(vis); });
+  return { box: box, opts: opts, names: names, shown: shown, q: groupQuestion(box, opts) };
+}
+function optName(o) {
+  if (o.tagName !== "INPUT") return accName(o);
+  const l = labelText(o);
+  if (l) return l;
+  const n = o.nextSibling;
+  const t = !n ? "" : n.nodeType === 3 ? n.nodeValue : n.nodeType === 1 && !n.matches(FIELD_CTL) && !n.querySelector(FIELD_CTL) ? textOf(n) : "";
+  return clip(t || o.value, 120);
+}
+function groupQuestion(box, opts) {
+  const others = function (n) { return Array.prototype.some.call(n.querySelectorAll(RADIO_OPT), function (r) { return opts.indexOf(r) < 0 && !opts.some(function (o) { return o.contains(r); }); }); };
+  for (let n = box, up = 0; n && up < 4 && n !== document.body && !others(n); n = n.parentElement, up++) {
+    if (attr(n, "aria-labelledby") || attr(n, "aria-label")) { const t = labelText(n); if (t) return t; }
+    if (n.tagName === "FIELDSET") {
+      const lg = Array.prototype.find.call(n.children, function (c) { return c.tagName === "LEGEND"; });
+      if (lg && textOf(lg).trim()) return clip(textOf(lg), 120);
+    }
+    if (n.tagName === "FORM") break;
+  }
+  const isOpt = function (el) {
+    const f = el.tagName === "LABEL" && attr(el, "for") && document.getElementById(attr(el, "for"));
+    return opts.some(function (o) { return el === o || el.contains(o) || f === o; });
+  };
+  let n = opts[0];
+  while (n.parentElement && n.parentElement !== box) n = n.parentElement;
+  for (let up = 0; n && up < 4 && !/^(FIELDSET|FORM|BODY)$/.test(n.tagName); up++, n = n.parentElement) {
+    let sib = n.previousElementSibling;
+    for (let k = 0; sib && k < 3; sib = sib.previousElementSibling) {
+      if (isOpt(sib)) continue;
+      k++;
+      if (sib.matches(FIELD_CTL) || sib.querySelector(FIELD_CTL)) return "";
+      if (!vis(sib)) continue;
+      const parts = [];
+      const tw = document.createTreeWalker(sib, 4);
+      while (parts.length < 40 && tw.nextNode()) parts.push(tw.currentNode.nodeValue);
+      const t = clip(parts.join(" "), 120);
+      if (t) return t;
+    }
+  }
+  return "";
+}
+// The group el is an option of, or the box of.
+function groupOf(el, gs) {
+  return gs.find(function (g) { return g.box === el || g.opts.some(function (o) { return o === el || o.contains(el); }); }) || null;
+}
+// Picks by select's match tiers, through the option's own click so page
+// handlers run, then reads back which option the group shows checked.
+function pickRadio(g, text) {
+  const el = "radiogroup " + JSON.stringify(clip(g.q, 80));
+  const m = matchTier(g.opts.map(function (o, i) { return i; }), function (i) { return norm(g.names[i]); }, norm(text));
+  if (m.hits.length !== 1) {
+    const out = { ok: false, kind: "radio", el: el, error: m.hits.length ? "several options matched " + JSON.stringify(String(text)) + " equally; give a more specific text" : "no matching option" };
+    if (m.hits.length) out.ambiguous = true;
+    out.candidates = g.names.slice(0, 30).map(function (n) { return clip(n, 60); });
+    return out;
+  }
+  const i = m.hits[0], o = g.opts[i];
+  if (!isOn(o)) o.click();
+  const on = g.opts.filter(isOn);
+  if (on.length === 1 && on[0] === o) return { ok: true, kind: "radio", selected: clip(g.names[i], 80), el: el };
+  return { ok: false, kind: "radio", el: el, error: "clicked " + JSON.stringify(clip(g.names[i], 80)) + " but it did not stick; the group reverted it",
+    selected: on.length ? clip(g.names[g.opts.indexOf(on[0])], 80) : null };
 }
 `;
 
@@ -3136,8 +3247,9 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
   let o, kind;
   if (f.option != null) {
     kind = "select";
-    const c = findCtl(f);
+    const c = findCtl(f, radioGroups);
     if (c.out) o = c.out;
+    else if (c.group) o = pickRadio(c.group, f.option);
     else {
       const nat = nativeOf(c.el);
       if (!nat) return { results: results, defer: i };
@@ -4250,7 +4362,7 @@ const TOOLS = [
     target: TARGET,
   }, ["key"]),
   tool("fill", "Set text in inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies it landed: {ok,kind,el,len}. `fields`: many in one call. `trusted`: trusted input event, no key focus; `raise:true` types foreground keys.", {
-    fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]" },
+    fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]; option: a select or radio group" },
     text: { type: "string" },
     text_path: { type: "string", description: "Local text file." },
     ref: REF,
