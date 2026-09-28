@@ -129,6 +129,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     tab.execute = ({ javascript }, ae = {}) => {
       bump("tab.execute", b.name);
       if (!present()) throw gone();
+      // state.onExecute(tabSpec) runs as each page script is sent: a world change
+      // (another window raised) that lands while page JS goes unanswered.
+      if (state.onExecute) state.onExecute(spec);
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
       if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
       const limit = ae.timeoutMs ?? 120000, sent = clock.t;

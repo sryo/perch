@@ -1721,10 +1721,14 @@ function jxaRuntime(BROWSERS) {
       if (arcPage) canEval = false;
       // Setting the url raises a Chromium window (Safari's did not, live), so without
       // raise:true it is set only when that window is already the front one.
-      const mayRaise = function () {
+      // `now`: re-read the front window, since the page's retries can outlast the
+      // window order resolve saw.
+      const mayRaise = function (now) {
         if (a.raise || t.kind === "safari") return true;
         const P = procs();
-        return P.front === t.app && !P.dupe[t.app] && t.w === 0;
+        if (P.front !== t.app || P.dupe[t.app] || t.w !== 0) return false;
+        if (!now) return true;
+        try { return String(app(t.app).windows[0].tabs.byId(t.tabId).id()) === String(t.tabId); } catch (e) { return false; }
       };
       const refuse = function (code, why) {
         return new Error(code + ": " + why + "; loading it from outside the page would bring the browser to the front: pass raise:true to allow that, or activate_tab first");
@@ -1777,7 +1781,7 @@ function jxaRuntime(BROWSERS) {
         if (!viaPage && t.kind !== "safari") o.warning = "navigating from outside the page may bring the browser to the front";
         return o;
       };
-      if (!viaPage && !mayRaise()) {
+      if (!viaPage && !mayRaise(true)) {
         if (r != null) throw refuse("tab_not_visible", "the page refused or cancelled the load");
         // A fast failure (JS from Apple Events off) reports its own error on the plain path.
         if (lastErr && !isNoReply(lastErr)) exec(t, "1");

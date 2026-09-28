@@ -226,6 +226,19 @@ test("navigate on Chrome: the browser in front is not enough when the tab's wind
   assert.equal(world.counts["tab.url="], undefined);
 });
 
+test("navigate on Chrome: another of its windows raised while the page doesn't answer is refused, nothing set", () => {
+  install({
+    browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://front.test/", id: 5 }] }, { id: 2, active: 0, tabs: [{ url: "https://other.test/", id: 7 }] }])],
+    cg: [{ owner: "Google Chrome" }],
+  });
+  world.state.hung = true;
+  let n = 0;
+  world.state.onExecute = () => { if (++n === 2) world.apps["Google Chrome"].windows[1].index = 1; };
+  assert.throws(() => navWith({ url: "https://next.test/", target: { tabId: "chrome:5" } }), (e) => /^timeout: .*raise:true/.test(e.message));
+  assert.ok(n >= 2, "the page was asked again");
+  assert.equal(world.counts["tab.url="], undefined, "set the url of a tab whose window is no longer in front");
+});
+
 test("navigate tool: refusal is an error naming the opt-in, and raise:true passes through with the warning", async () => {
   install(away(fixture()));
   const res = await handleCall("navigate", { url: "data:text/html,x" });
