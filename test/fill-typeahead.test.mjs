@@ -442,13 +442,28 @@ test("typeahead: accents fold and typed words match in order", async () => {
 
 test("typeahead: several suggestions equally matching the text pick nothing and say so", async () => {
   for (const companion of [true, false]) {
-    const { dom } = onPage(ACCENT_HTML(companion), ACCENT_JS);
+    const { dom, world } = onPage(ACCENT_HTML(companion), ACCENT_JS);
+    const t0 = world.clock.t;
     const o = await fill({ selector: "#city", text: "Cordoba" });
     assert.equal(o.ok, false, JSON.stringify(o));
     assert.equal(o.ambiguous, true);
-    assert.match(o.error, /^no suggestion matched/);
+    assert.match(o.error, /^several suggestions matched "Cordoba" equally; give a more specific text/);
+    assert.ok(world.clock.t - t0 < 1000, "a stable tie returns without the full wait: " + (world.clock.t - t0) + "ms");
     assert.deepEqual(o.candidates, ACCENTS);
     assert.equal(dom.picks.length, 0);
     assert.equal($(dom, "#city").value, "");
   }
+});
+
+test("typeahead: a tie in a list still growing waits for the list to settle", async () => {
+  const { dom } = onPage(ACCENT_HTML(true), ACCENT_JS + `
+    const add = (t) => {
+      ul.insertAdjacentHTML('beforeend', '<div role=option>' + t + '</div>');
+      ul.lastChild.addEventListener('click', () => { window.picks.push(t); document.querySelector('.select__single-value').textContent = t; hid.value = t; inp.value = ''; ul.innerHTML = ''; });
+    };
+    inp.addEventListener('input', () => { later(() => add('Córdoba, Chile'), 4); later(() => add('Cordoba'), 5); });`);
+  const o = await fill({ selector: "#city", text: "Cordoba" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Cordoba");
+  assert.deepEqual([...dom.picks], ["Cordoba"]);
 });

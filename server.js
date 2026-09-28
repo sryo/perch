@@ -1451,8 +1451,10 @@ function jxaRuntime(BROWSERS) {
       const r = a.start ? parseExec(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
       // a.short: give up early unless a.probe says a list or companion is there.
+      // A pick step answering {settled} has found nothing more worth waiting for.
       let picked = poll(t, a.pick, a.short || a.wait || 2500, 50);
       if (!picked && a.short && parseExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50);
+      if (picked && picked.value.settled) picked = null;
       if (!picked && !a.missFinal) return parseExec(t, a.miss);
       if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : parseExec(t, a.missFinal); }
       if (picked.value.ok === false) return picked.value;
@@ -2174,21 +2176,26 @@ function inOrder(have, want) {
   }
   return want.length > 0;
 }
-// Exact text, then a whole-word hit, then a word prefix, then every typed word
-// whole and in order; never mid-word. Ties go to the shortest.
-function bestMatch(list, key, want) {
+// The best tier's hits: exact text, then a whole-word hit, then a word prefix,
+// then every typed word whole and in order; never mid-word. -> {hits, exact}
+function matchTier(list, key, want) {
   want = fold(want);
-  if (!want) return null;
+  if (!want) return { hits: [], exact: false };
   const esc = reEsc(want), ws = wordsOf(want);
   const word = new RegExp("(?:^|[^\\p{L}\\p{N}])" + esc + "(?:$|[^\\p{L}\\p{N}])", "u");
   const pre = new RegExp("(?:^|[^\\p{L}\\p{N}])" + esc, "u");
   const tiers = [function (t) { return t === want; }, function (t) { return word.test(t); }, function (t) { return pre.test(t); },
     function (t) { return inOrder(wordsOf(t), ws); }];
-  for (const f of tiers) {
-    const hits = list.filter(function (x) { return f(fold(key(x))); });
-    if (hits.length) return hits.sort(function (a, b) { return key(a).length - key(b).length; })[0];
+  for (let i = 0; i < tiers.length; i++) {
+    const hits = list.filter(function (x) { return tiers[i](fold(key(x))); });
+    if (hits.length) return { hits: hits, exact: i === 0 };
   }
-  return null;
+  return { hits: [], exact: false };
+}
+// Ties go to the shortest.
+function bestMatch(list, key, want) {
+  const hits = matchTier(list, key, want).hits;
+  return hits.length ? hits.sort(function (a, b) { return key(a).length - key(b).length; })[0] : null;
 }
 // -> {el} (the select or combobox) or {out}.
 function findCtl(a) {
@@ -2203,7 +2210,17 @@ function nativeOf(ctl) { return ctl.tagName === "SELECT" ? ctl : (ctl.querySelec
 function pickNative(nat, text) {
   const w = norm(text);
   const opts = Array.from(nat.options);
-  const opt = (w && opts.find(function (o) { return norm(o.value) === w; })) || bestMatch(opts, function (o) { return norm(o.text); }, w);
+  let opt = w && opts.find(function (o) { return norm(o.value) === w; });
+  if (!opt) {
+    // Several equal hits short of exact are a tie, never settled by length or
+    // order; of exact ones (equal once accents fold) the unfolded match goes first.
+    const m = matchTier(opts, function (o) { return norm(o.text); }, w);
+    if (m.hits.length > 1 && !m.exact) {
+      return { ok: false, ambiguous: true, error: "several options matched " + JSON.stringify(String(text)) + " equally; give a more specific text",
+        candidates: m.hits.slice(0, 30).map(function (o) { return clip(o.text, 60); }) };
+    }
+    opt = m.hits.find(function (o) { return norm(o.text) === w; }) || m.hits[0];
+  }
   if (!opt) return { ok: false, error: "no matching option", candidates: opts.slice(0, 30).map(function (o) { return clip(o.text, 60); }) };
   setNativeValue(nat, opt.value);
   fire(nat, ["input", "change"]);
@@ -2469,8 +2486,9 @@ function fillOne(a) {
 `;
 
 // click {readback}: the pre-click text, state and url live on window.__perch_rb until read.
-// The state catches toggles that change no text: ARIA flags, classes and the
-// checked/value of inputs on the element and its first 50 descendants.
+// The state catches toggles that change no text: ARIA flags, disabled and the
+// checked/selected/value of controls on the element and its first 50
+// descendants. Classes stay out: hover, focus and animation flip them.
 const READBACK_LIB = String.raw`
 function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
 function rbSig() {
@@ -2478,8 +2496,10 @@ function rbSig() {
   if (!n) return null;
   const els = [n].concat(Array.prototype.slice.call(n.querySelectorAll("*"), 0, 50));
   return els.map(function (el) {
-    const f = ["aria-pressed", "aria-checked", "aria-selected", "aria-expanded", "class"].map(function (k) { return el.getAttribute(k); });
+    const f = ["aria-pressed", "aria-checked", "aria-selected", "aria-expanded"].map(function (k) { return el.getAttribute(k); });
+    f.push(!!el.disabled);
     if (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA") f.push(el.checked, el.type === "password" ? el.value.length : el.value);
+    if (el.tagName === "OPTION") f.push(el.selected);
     return JSON.stringify(f);
   }).join("|");
 }
@@ -2628,6 +2648,11 @@ const m = taMatch(opts, s.text);
 const opt = m.hits.length === 1 || m.exact ? m.hits[0] : null;
 if (!opt) {
   if (opts.length) { s.cands = opts.slice(0, 8).map(function (o) { return clip(o.textContent, 60); }); s.tied = m.hits.length > 1; }
+  // A tie in a list unchanged since the last poll is settled: waiting longer
+  // won't break it, so the miss runs now ({settled}).
+  const sig = s.tied ? opts.map(function (o) { return taNorm(o.textContent); }).join("\n") : null;
+  if (sig && sig === s.tieSig) return { settled: true };
+  s.tieSig = sig;
   return null;
 }
 s.picked = clip(opt.textContent, 80);
@@ -2658,7 +2683,9 @@ else {
   setNativeValue(el, s.prior);
   fire(el, ["input", "change"]);
   if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
-  out = { ok: false, kind: "typeahead", el: ident(el), error: "no suggestion matched " + JSON.stringify(s.text) + "; the text was withdrawn" };
+  out = { ok: false, kind: "typeahead", el: ident(el), error: s.tied
+    ? "several suggestions matched " + JSON.stringify(s.text) + " equally; give a more specific text (the text was withdrawn)"
+    : "no suggestion matched " + JSON.stringify(s.text) + "; the text was withdrawn" };
 }
 if (s.cands) out.candidates = s.cands;
 if (s.tied && !out.ok) out.ambiguous = true;

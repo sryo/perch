@@ -157,9 +157,26 @@ test("readback counts an attribute-only change inside the element as changed", a
   assert.equal(dom.__perch_rb, undefined, "readback state is cleaned up");
 });
 
-test("readback sees a class change on the element itself", async () => {
-  onPage(`<button id=b>Go</button><div id=t>Tab</div>`, `document.getElementById('b').addEventListener('click', () => document.getElementById('t').className = 'selected');`);
+test("readback ignores class flips from hover, focus or animation", async () => {
+  const { dom, world } = onPage(`<button id=b>Go</button><div id=t class=idle>Tab <span class=spin></span><input type=checkbox></div>`,
+    `document.getElementById('b').addEventListener('click', () => { document.getElementById('t').className = 'idle hover'; });`);
+  let n = 0;
+  const orig = dom.eval.bind(dom);
+  dom.eval = (js) => { dom.document.querySelector("#t span").className = "spin f" + (n++ % 2); return orig(js); };
+  const t0 = world.clock.t;
+  const o = await click({ selector: "#b", readback: "#t" });
+  assert.equal(o.changed, false, JSON.stringify(o));
+  assert.ok(world.clock.t - t0 >= 1900, "waited out the settle");
+});
+
+test("readback sees an element becoming disabled", async () => {
+  onPage(`<div id=t><button id=b>Send</button></div>`, `document.getElementById('b').addEventListener('click', (e) => { e.currentTarget.disabled = true; });`);
   assert.equal((await click({ selector: "#b", readback: "#t" })).changed, true);
+});
+
+test("readback sees aria-pressed alone flip on a toggle", async () => {
+  onPage(YESNO, `document.getElementById('y').addEventListener('click', (e) => e.currentTarget.setAttribute('aria-pressed', 'true'));`);
+  assert.equal((await click({ selector: "#y", readback: ".yesno" })).changed, true);
 });
 
 test("readback sees an input value change inside the element", async () => {

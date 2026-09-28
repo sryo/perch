@@ -36,6 +36,32 @@ test("native select: exact text, value, word prefix, never mid-word; candidates 
   assert.deepEqual(miss.candidates, ["Pick", "Argentina", "Brazil"]);
 });
 
+test("native select: equally good options are a tie, never settled by length or order", async () => {
+  const html = `<label>Visa <select><option value="">Pick</option><option value=1>Yes, I need sponsorship</option><option value=2>Yes, I have a visa</option><option value=3>No</option></select></label>`;
+  const { dom } = onPage(html);
+  const { o } = await select({ label_pattern: "visa", text: "yes" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.ambiguous, true);
+  assert.match(o.error, /^several options matched "yes" equally; give a more specific text/);
+  assert.deepEqual(o.candidates, ["Yes, I need sponsorship", "Yes, I have a visa"]);
+  assert.equal(dom.document.querySelector("select").value, "");
+  // In-order words and folded accents tie too.
+  onPage(`<label>City <select><option>Córdoba, Spain</option><option>Cordoba, Argentina</option></select></label>`);
+  assert.equal((await select({ label_pattern: "city", text: "cordoba" })).o.ambiguous, true);
+  onPage(`<label>Team <select><option>Data platform team</option><option>Data science team</option><option>Design</option></select></label>`);
+  assert.equal((await select({ label_pattern: "team", text: "data team" })).o.ambiguous, true);
+  // A more specific text settles it; an exact option still wins over longer ones.
+  onPage(html);
+  assert.equal((await select({ label_pattern: "visa", text: "yes, I have" })).o.selected, "Yes, I have a visa");
+  onPage(`<label>Country <select><option>United States</option><option>United States Minor Outlying Islands</option></select></label>`);
+  assert.equal((await select({ label_pattern: "country", text: "united states" })).o.selected, "United States");
+  // Options equal once accents fold: the one matching as typed wins.
+  for (const text of ["Cordoba", "Córdoba"]) {
+    onPage(`<label>City <select><option value=a>Cordoba</option><option value=b>Córdoba</option></select></label>`);
+    assert.equal((await select({ label_pattern: "city", text })).o.selected, text);
+  }
+});
+
 // A react-select-like widget: opens only for a left-button press with a view,
 // renders options on open, and shows the choice in the control.
 const CUSTOM = `<label id=lab>Level</label><div class="select__control"><div role=combobox aria-labelledby=lab aria-expanded=false tabindex=0><span class=v>Choose</span></div></div><div id=menu></div>`;
