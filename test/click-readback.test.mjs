@@ -140,6 +140,45 @@ test("readback must be a non-empty string", async () => {
   assert.match(r.content[0].text, /readback/);
 });
 
+// A toggle whose click only flips attributes and a hidden input, not its text.
+const YESNO = `<div class=yesno><button id=y aria-pressed=false data-option=yes>Yes</button><button id=n aria-pressed=false>No</button><input type=checkbox tabindex=-1 style='display:none'></div>`;
+const YESNO_JS = `document.getElementById('y').addEventListener('click', (e) => {
+  e.currentTarget.setAttribute('aria-pressed', 'true');
+  e.currentTarget.classList.add('active');
+  document.querySelector('.yesno input').checked = true;
+});`;
+
+test("readback counts an attribute-only change inside the element as changed", async () => {
+  const { dom } = onPage(YESNO, YESNO_JS);
+  const o = await click({ selector: "#y", readback: ".yesno" });
+  assert.equal(o.changed, true);
+  assert.match(o.readback, /^Yes\s*No$/, "readback stays the element's text");
+  assert.deepEqual(Object.keys(o).sort(), ["changed", "el", "ok", "readback"]);
+  assert.equal(dom.__perch_rb, undefined, "readback state is cleaned up");
+});
+
+test("readback sees a class change on the element itself", async () => {
+  onPage(`<button id=b>Go</button><div id=t>Tab</div>`, `document.getElementById('b').addEventListener('click', () => document.getElementById('t').className = 'selected');`);
+  assert.equal((await click({ selector: "#b", readback: "#t" })).changed, true);
+});
+
+test("readback sees an input value change inside the element", async () => {
+  onPage(`<button id=b>Go</button><div id=t>Amount <input value=1></div>`, `document.getElementById('b').addEventListener('click', () => document.querySelector('#t input').value = '2');`);
+  assert.equal((await click({ selector: "#b", readback: "#t" })).changed, true);
+});
+
+test("readback sees a hidden checkbox inside the element being checked", async () => {
+  onPage(YESNO, `document.getElementById('y').addEventListener('click', () => { document.querySelector('.yesno input').checked = true; });`);
+  assert.equal((await click({ selector: "#y", readback: ".yesno" })).changed, true);
+});
+
+test("readback with no state change on the element stays changed:false", async () => {
+  onPage(YESNO, `document.getElementById('n').addEventListener('click', () => document.body.classList.add('x'));`);
+  const o = await click({ selector: "#n", readback: ".yesno" });
+  assert.equal(o.changed, false);
+  assert.match(o.readback, /^Yes\s*No$/);
+});
+
 // ---- trusted click ----
 
 function trustedTab(html, setup) {

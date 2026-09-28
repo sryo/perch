@@ -2468,11 +2468,23 @@ function fillOne(a) {
 }
 `;
 
-// click {readback}: the pre-click text and url live on window.__perch_rb until read.
+// click {readback}: the pre-click text, state and url live on window.__perch_rb until read.
+// The state catches toggles that change no text: ARIA flags, classes and the
+// checked/value of inputs on the element and its first 50 descendants.
 const READBACK_LIB = String.raw`
 function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
+function rbSig() {
+  const n = document.querySelector(A.readback);
+  if (!n) return null;
+  const els = [n].concat(Array.prototype.slice.call(n.querySelectorAll("*"), 0, 50));
+  return els.map(function (el) {
+    const f = ["aria-pressed", "aria-checked", "aria-selected", "aria-expanded", "class"].map(function (k) { return el.getAttribute(k); });
+    if (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA") f.push(el.checked, el.type === "password" ? el.value.length : el.value);
+    return JSON.stringify(f);
+  }).join("|");
+}
 function rbArm() {
-  try { window.__perch_rb = { text: rbText(), url: location.href }; }
+  try { window.__perch_rb = { text: rbText(), sig: rbSig(), url: location.href }; }
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
   return null;
 }
@@ -2817,7 +2829,7 @@ if (!s) {
   return { readback: text, changed: true, navigated: true, url: location.href };
 }
 const moved = location.href !== s.url;
-const changed = moved || text !== s.text;
+const changed = moved || text !== s.text || rbSig() !== s.sig;
 if (!changed && !A.final) return null;
 delete window.__perch_rb;
 const out = { readback: text, changed: changed };
@@ -2930,6 +2942,13 @@ if (!set || !changed) return Object.assign(out, { ok: false, error: "the input d
 if (!input.isConnected) out.detached = true; else out.cleared = true;
 out.shown = deepAll("input[type=file]").some(has) || textOf(document.body).indexOf(A.name) >= 0;
 return out;
+`,
+
+  // Polled from Node after a cleared/detached upload read shown:false: many sites
+  // render the file name on a later tick. null keeps polling.
+  file_upload_shown: String.raw`
+const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
+return deepAll("input[type=file]").some(has) || textOf(document.body).indexOf(A.name) >= 0 || null;
 `,
 
   // Chrome runs this in an isolated world, whose console the page never calls. A
@@ -3422,13 +3441,22 @@ async function trustedFill({ ref, selector, label_pattern, text, raise, target }
   });
 }
 
+// How long file_upload looks for the file name after the site took the file.
+const UPLOAD_SHOWN_WAIT = 1000;
 async function fileUpload(args = {}) {
   const { selector, ref, path, target } = args;
   if (!path) throw new Error("file_upload requires `path`");
   const { abs, data } = await readUserFile(path);
   const name = abs.split("/").pop();
   const mime = MIME_BY_EXT[name.split(".").pop().toLowerCase()] || "application/octet-stream";
-  return runPage("file_upload", "file_upload", { selector, ref, b64: data.toString("base64"), name, mime }, target);
+  const r = await runPage("file_upload", "file_upload", { selector, ref, b64: data.toString("base64"), name, mime }, target);
+  if (!r || r.ok !== true || r.shown !== false) return r;
+  // Best effort: the file is already on the page, so a failed poll leaves shown:false.
+  try {
+    await rt("wait", { target, js: pageFn("file_upload_shown", { name }), timeout: UPLOAD_SHOWN_WAIT, interval: 50 }, { lane: "slow" });
+    r.shown = true;
+  } catch {}
+  return r;
 }
 
 async function click(args = {}) {
@@ -3554,7 +3582,17 @@ async function fill(args = {}) {
     if (trusted || raise) throw new Error("fill: `fields` does not take trusted/raise; fill trusted fields one at a time");
     return fillFields(fields, target);
   }
-  if (!text && !text_path) throw new Error("fill requires `text` or `text_path`");
+  const { checked, option } = args;
+  if (checked != null || option != null) {
+    if (text != null || text_path != null) throw new Error("fill: checked/option takes no `text` or `text_path`");
+    if (trusted || raise) throw new Error("fill: checked/option does not take trusted/raise");
+    if (checked != null && option != null) throw new Error("fill: pass one of `checked` or `option`");
+    if (checked != null && typeof checked !== "boolean") throw new Error("fill: `checked` must be a boolean");
+    if (!ref && !selector && !label_pattern) throw new Error("fill requires `ref`, `selector`, or `label_pattern`");
+    const r = await fillFields([{ ref, selector, label_pattern, checked, option }], target);
+    return r && Array.isArray(r.results) ? r.results[0] : r;
+  }
+  if (!text && !text_path) throw new Error("fill requires `text` or `text_path` (checked/option: use fields)");
   if (text && text_path) throw new Error("fill: pass `text` OR `text_path`, not both");
   if (!ref && !selector && !label_pattern) throw new Error("fill requires `ref`, `selector`, or `label_pattern`");
   if (label_pattern) validateLabelPattern("fill", label_pattern);
