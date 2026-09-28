@@ -2013,11 +2013,21 @@ function deepAll(sel, root) {
   }
   return out;
 }
-// A <label>'s own words, without the text of the control(s) it wraps.
+// A <label>'s own words: not the control(s) it wraps, nor hidden text or a
+// suggestion popup ("Loading", "No results") that some widgets keep inside it.
+const LABEL_SKIP = "select, input, textarea, button, [role=listbox], [role=status], [role=alert], [aria-live], [class*=dropdown]";
 function labelWords(l) {
-  const c = l.cloneNode(true);
-  c.querySelectorAll("select, input, textarea, button").forEach(function (x) { x.remove(); });
-  return c.textContent || "";
+  let s = "";
+  (function walk(n) {
+    for (const c of n.childNodes) {
+      if (c.nodeType === 3) s += c.nodeValue;
+      else if (c.nodeType === 1 && !c.hidden && !c.matches(LABEL_SKIP)) {
+        const cs = getComputedStyle(c);
+        if (cs.display !== "none" && cs.visibility !== "hidden") walk(c);
+      }
+    }
+  })(l);
+  return s;
 }
 function editable(el) { return !!el && (el.isContentEditable === true || (!!el.hasAttribute && el.hasAttribute("contenteditable") && attr(el, "contenteditable") !== "false")); }
 function vis(el) {
@@ -2049,8 +2059,34 @@ function labelText(el) {
   return wrap ? clip(labelWords(wrap), 120) : "";
 }
 function hintText(el) { return attr(el, "placeholder") || attr(el, "name") || attr(el, "data-tooltip") || attr(el, "title"); }
+const FIELD_CTL = "input, select, textarea, button, [role=combobox], [role=textbox], [contenteditable]";
+function isField(el) {
+  if (el.tagName === "INPUT") return !/^(submit|button|image|reset|hidden)$/i.test(el.type);
+  return /^(SELECT|TEXTAREA)$/.test(el.tagName) || /^(combobox|textbox)$/.test(attr(el, "role"));
+}
+// Question text laid out before an unlabeled field: the nearest earlier sibling
+// of the field or of one of its 3 nearest ancestors, not crossing a list item,
+// fieldset or form, and stopping at a sibling that holds a control (that text
+// names the other control).
+function nearText(el) {
+  let n = el;
+  for (let up = 0; up < 4 && n && !/^(LI|FIELDSET|FORM|BODY)$/.test(n.tagName); up++, n = n.parentElement) {
+    let sib = n.previousElementSibling;
+    for (let k = 0; sib && k < 3; k++, sib = sib.previousElementSibling) {
+      if (sib.matches(FIELD_CTL) || sib.querySelector(FIELD_CTL)) return "";
+      if (!vis(sib)) continue;
+      // Text nodes joined by spaces, so "Question?<span>*</span>" reads "Question? *".
+      const parts = [];
+      const tw = document.createTreeWalker(sib, 4);
+      while (parts.length < 40 && tw.nextNode()) parts.push(tw.currentNode.nodeValue);
+      const t = clip(parts.join(" "), 120);
+      if (t) return t;
+    }
+  }
+  return "";
+}
 function accName(el) {
-  let s = labelText(el) || attr(el, "placeholder") || attr(el, "alt");
+  let s = labelText(el) || (isField(el) ? nearText(el) : "") || attr(el, "placeholder") || attr(el, "alt");
   if (!s && el.tagName === "INPUT" && /^(submit|button|reset)$/i.test(el.type)) s = el.value;
   // A <select>'s text is its options, not a name.
   if (!s && !/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) s = textOf(el);
@@ -2462,11 +2498,40 @@ const origin = location.origin;
 // A query tests each line without its ref and keeps counting matches past max.
 const re = A.query == null ? null : new RegExp(A.query, "i");
 const lines = [];
+// A styled select's wrapper box (react-select and kin: "x__control", "x-control").
+const ctlOf = function (el) { return el.parentElement && el.parentElement.closest('[class*="__control"], [class*="-control"]'); };
+// What such a box shows as picked: its single value, else its chips' labels.
+function shownValue(el) {
+  const c = ctlOf(el);
+  if (!c) return "";
+  const sv = c.querySelector('[class*="single-value"], [class*="singleValue"]');
+  if (sv) return clip(textOf(sv), 200);
+  let chips = c.querySelectorAll('[class*="multi-value__label"], [class*="multiValue__label"]');
+  if (!chips.length) chips = c.querySelectorAll('[class*="multi-value"]:not([class*="__"]), [class*="multiValue"]:not([class*="__"])');
+  return clip(Array.prototype.map.call(chips, function (x) { return clip(textOf(x), 60); }).filter(Boolean).join(", "), 200);
+}
+// vis(), plus inputs a stylesheet shrinks or fades to nothing while their
+// widget stays on screen: a radio or checkbox behind its visible label, and a
+// combobox input inside a visible select box (hidden after a pick, or a dummy).
+function snapVis(el) {
+  if (vis(el)) return true;
+  if (el.tagName !== "INPUT" || el.hidden) return false;
+  const t = (el.type || "").toLowerCase();
+  const tick = t === "radio" || t === "checkbox";
+  if (!tick && attr(el, "role") !== "combobox") return false;
+  if (getComputedStyle(el).visibility === "hidden") return false;
+  for (let p = el; p; p = p.parentElement) if (getComputedStyle(p).display === "none") return false;
+  if (!tick) { const c = ctlOf(el); return !!c && vis(c); }
+  const ls = el.labels ? Array.from(el.labels) : [];
+  const wrap = el.closest("label");
+  if (wrap) ls.push(wrap);
+  return ls.some(vis);
+}
 let n = 0, matched = 0, truncated = false;
 for (const el of deepAll(SEL)) {
   const r = role(el);
   if (roles && roles.indexOf(r) < 0) continue;
-  if (!vis(el)) continue;
+  if (!snapVis(el)) continue;
   if (!re && n >= A.max) { truncated = true; break; }
   const tag = el.tagName;
   let line = r + " " + q(accName(el));
@@ -2481,13 +2546,16 @@ for (const el of deepAll(SEL)) {
     if (o.length) kv("options", o);
     if (el.value) kv("value", el.value);
   } else if (r === "textbox" && el.value) kv("value", clip(el.value, 200));
+  else if (r === "combobox" && tag === "INPUT") { const v = el.value ? clip(el.value, 200) : shownValue(el); if (v) kv("value", v); }
   if (r === "link") {
     let h = el.href || "";
     if (h.indexOf(origin + "/") === 0) h = h.slice(origin.length);
     kv("href", h.length > 150 ? h.slice(0, 150) + "…" : h);
   }
   if (el.required || attr(el, "aria-required") === "true") line += " required";
-  if (el.checked) line += " checked";
+  if (el.checked || attr(el, "aria-checked") === "true") line += " checked";
+  if (attr(el, "aria-pressed") === "true") line += " pressed";
+  if (attr(el, "aria-selected") === "true") line += " selected";
   if (el.disabled) line += " disabled";
   if (attr(el, "aria-expanded") === "true") line += " expanded";
   if (re && !re.test(line)) continue;
@@ -2516,8 +2584,13 @@ if (forms.length) {
   const FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
   let big = forms[0];
   forms.forEach(function (f) { if (f.querySelectorAll(FIELDS).length > big.querySelectorAll(FIELDS).length) big = f; });
-  const fields = Array.from(big.querySelectorAll(FIELDS)).filter(function (el) { return !(el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0); });
-  const requiredEmpty = fields.filter(function (el) { return (el.required || attr(el, "aria-required") === "true") && !String(el.value || el.textContent || "").trim(); }).length;
+  // A file input is a field to fill too (through file_upload).
+  const fields = Array.from(big.querySelectorAll(FIELDS)).filter(function (el) { const t = (el.type || "text").toLowerCase(); return !(el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0); });
+  const requiredEmpty = fields.filter(function (el) {
+    if (!el.required && attr(el, "aria-required") !== "true") return false;
+    if (String(el.value || el.textContent || "").trim()) return false;
+    return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
+  }).length;
   head.form = { fields: fields.length, requiredEmpty: requiredEmpty };
 }
 return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "");
