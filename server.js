@@ -552,7 +552,10 @@ function jxaRuntime(BROWSERS) {
         $.CGContextSetInterpolationQuality(ctx, 3);
         $.CGContextDrawImage(ctx, $.CGRectMake(0, 0, maxWidth, sh), img);
         const small = $.CGBitmapContextCreateImage(ctx);
-        if (Number($.CGImageGetWidth(small)) === maxWidth) { img = small; w = maxWidth; h = sh; }
+        // A failed downscale hands the shot to screencapture and sips, which
+        // always shrink it, rather than returning one wider than asked.
+        if (Number($.CGImageGetWidth(small)) !== maxWidth) return null;
+        img = small; w = maxWidth; h = sh;
       }
       const rep = $.NSBitmapImageRep.alloc.initWithCGImage(img);
       const data = format === "jpeg"

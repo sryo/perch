@@ -80,6 +80,15 @@ test("screenshot downscales only when wider than maxWidth; maxWidth:0 keeps full
   assert.deepEqual((await shoot({ maxWidth: 400 })).meta.image, { w: 400, h: 310 });
 });
 
+test("screenshot falls back to screencapture and sips when the runtime can't downscale", async () => {
+  canary();
+  const calls = spawns();
+  world.state.scaleFail = true;
+  const { meta } = await shoot({ maxWidth: 400 });
+  assert.deepEqual(calls.map((c) => c[0]), ["screencapture", "sips"]);
+  assert.equal(meta.image.w, 400, "never wider than maxWidth");
+});
+
 test("screenshot jpeg is encoded at 0.8 and sent as image/jpeg", async () => {
   canary();
   const calls = spawns();

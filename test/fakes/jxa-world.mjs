@@ -580,7 +580,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       CGBitmapContextCreate: (_data, w, h, bpc, bpr, space, info) => ({ w, h, bpc, bpr, space, info }),
       CGContextSetInterpolationQuality: (ctx, q) => { ctx.quality = q; },
       CGContextDrawImage: (ctx, rect, img) => { ctx.rect = rect; ctx.img = img; img.shot.scaled = ctx; },
-      CGBitmapContextCreateImage: (ctx) => (ctx.img ? { w: ctx.w, h: ctx.h, shot: ctx.img.shot } : { w: 0, h: 0 }),
+      CGBitmapContextCreateImage: (ctx) => (ctx.img && !state.scaleFail ? { w: ctx.w, h: ctx.h, shot: ctx.img.shot } : { w: 0, h: 0 }),
       NSBitmapImageFileTypeJPEG: 3,
       NSBitmapImageFileTypePNG: 4,
       NSBitmapImageRep: { alloc: { initWithCGImage: (img) => ({
