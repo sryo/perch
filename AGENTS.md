@@ -21,7 +21,7 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 │   ├── compare.mjs  # perch side of the perch vs Claude in Chrome suite
 │   ├── mcp-client.mjs  # tiny MCP stdio client shared by the live scripts
 │   └── skylight-probe.js  # proof that SkyLight event routing binds from pure JXA
-├── bench/           # baseline.json (the number to beat), compare/ (fixture + history); runs/ is gitignored
+├── bench/           # baseline.json (the number to beat), fixture.html (the benched page), compare/ (fixture + history); runs/ is gitignored
 ├── install.sh       # macOS installer: clone, npm install, `claude mcp add`
 ├── GOALS.md         # goals, principles, admission test, non-goals. Read before adding a tool.
 ├── SKILL.md         # usage reference for agents
@@ -163,7 +163,7 @@ Each blocked layer returns an actionable error.
 - **Every improvement is measured.** Before committing a change to perch:
   1. Write the failing test first, then make it pass. `npm test` (unit, no browser) must be green.
   2. `npm run smoke` (live) must pass.
-  3. `npm run bench` (live, Canary's shown tab) compares against `bench/baseline.json`. Say the before/after in the commit message. A regression needs a reason or a fix. Unchanged code moves about ±5% between runs, so smaller differences are noise.
+  3. `npm run bench` (live, Canary) compares against `bench/baseline.json`. It serves `bench/fixture.html` on 127.0.0.1, navigates an existing about:blank scratch tab there (shown, for the screenshot rows) and back, and records the fixture's sha256; byte counts are compared only when the baseline's hash matches. Say the before/after in the commit message. A regression needs a reason or a fix. Unchanged code moves about ±5% between runs, so smaller differences are noise.
   4. If the change made perch faster, replace `bench/baseline.json` with the new run (`bench/runs/bench.json`) in the same commit. For a change a user would notice in an agent's session (fewer calls, a flow that works now), rerun `scripts/compare.mjs` and add a row to `bench/compare/README.md`.
 
   Live steps need a browser the user isn't using; if none is free, say so and leave them for later rather than skipping silently. Runs land in `bench/runs/` (gitignored).
