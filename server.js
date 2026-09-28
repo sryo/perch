@@ -1728,7 +1728,11 @@ function jxaRuntime(BROWSERS) {
         const P = procs();
         if (P.front !== t.app || P.dupe[t.app] || t.w !== 0) return false;
         if (!now) return true;
-        try { return String(app(t.app).windows[0].tabs.byId(t.tabId).id()) === String(t.tabId); } catch (e) { return false; }
+        try { return String(app(t.app).windows[0].tabs.byId(t.tabId).id()) === String(t.tabId); } catch (e) {
+          // Not in the front window: moved behind another, or closed (stale_tab).
+          if (noSuchObject(e) && t.tabId != null) { try { resolve({ tabId: handle(t.app, t.tabId) }); } catch (x) { if (isStale(x)) throw x; } }
+          return false;
+        }
       };
       const refuse = function (code, why) {
         return new Error(code + ": " + why + "; loading it from outside the page would bring the browser to the front: pass raise:true to allow that, or activate_tab first");
