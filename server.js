@@ -1047,7 +1047,9 @@ function jxaRuntime(BROWSERS) {
       if (T.background) skyClick(T.I, A.pt);
       else leftClick(T.I, A.pt);
       delay(0.05);
-      const check = parseExec(T.t, a.check);
+      // The click is posted, so a dropped reply says `tool` ran rather than inviting a
+      // retry; the check only reads what the recorders saw, so it may be sent twice.
+      const check = afterStep(tool, function () { return readExec(T.t, a.check); });
       return { out: Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" }, check) };
     } finally {
       if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));

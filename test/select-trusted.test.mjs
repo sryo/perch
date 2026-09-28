@@ -98,6 +98,18 @@ test("trusted: options that also ignore synthetic presses get a trusted click of
   noFocusTaken(w);
 });
 
+test("trusted: a click whose check gets no reply says the select ran, not to select again", async () => {
+  const w = world();
+  const post = w.state.onPost;
+  w.state.onPost = (e) => { post(e); if (e.kind === "mouse" && e.type === 2) w.state.hung = true; };
+  const t0 = w.clock.t;
+  const o = await select({ selector: "#fruit", text: "banana", trusted: true });
+  assert.equal(o.isError, true);
+  assert.match(o.error, /^error: timeout: the select ran but .*don't select again/);
+  assert.ok(w.clock.t - t0 < 10000, `took ${w.clock.t - t0}ms`);
+  assert.equal(presses(w).length, 1);
+});
+
 test("trusted: a list still empty after the trusted click misses, saying it clicked", async () => {
   const w = world();
   w.dom.document.getElementById("fruit-list").remove();
