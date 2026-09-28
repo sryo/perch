@@ -258,3 +258,157 @@ test("fill single checked/option refuses text, trusted and raise, and both at on
   assert.match(await err({ checked: true }), /`ref`, `selector`, or `label_pattern`/);
   assert.match(await err({ selector: "#a" }), /fill requires `text` or `text_path` \(checked\/option: use fields\)/);
 });
+
+// ---- option on radio groups, found by their question ----
+
+const yesNo = (name) => `<label><input type=radio name=${name} value=y> Yes</label><label><input type=radio name=${name} value=n> No</label>`;
+const QUESTIONS = `<form>
+  <label>Full name <input name=full></label>
+  <label>Country <select name=country><option value="">Pick</option><option value=ar>Argentina</option><option value=br>Brazil</option></select></label>
+  <fieldset><legend>Do you require sponsorship?</legend>${yesNo("spons")}</fieldset>
+  <fieldset><legend>Are you authorized to work?</legend>${yesNo("auth")}</fieldset>
+  <fieldset><legend>Willing to relocate?</legend>${yesNo("reloc")}</fieldset>
+  <div><span id=vq>Are you a veteran?</span>
+    <div role=radiogroup aria-labelledby=vq><div role=radio aria-checked=false tabindex=0>Yes</div><div role=radio aria-checked=false tabindex=0>No</div></div></div>
+  <div class=field><label>Preferred shift</label><div class=opts>
+    <label><input type=radio name=shift value=day> Day</label><label><input type=radio name=shift value=night> Night</label></div></div>
+  <div class=field><label>Remote only?</label><div class=opts>
+    <label><input type=radio name=remote value=y> Yes</label><label><input type=radio name=remote value=n> No</label></div></div>
+</form>`;
+// The ARIA radios follow their clicks. The shift and remote groups are
+// controlled: a change re-renders every radio from the component's own state,
+// which only a click on an option updates (shift) or nothing updates (remote).
+const QUESTIONS_JS = `
+  document.querySelectorAll('[role=radio]').forEach((r) => r.addEventListener('click', () => {
+    r.parentElement.querySelectorAll('[role=radio]').forEach((x) => x.setAttribute('aria-checked', String(x === r)));
+  }));
+  const controlled = (name, onClick) => {
+    const st = { v: null };
+    const radios = () => document.querySelectorAll('[name=' + name + ']');
+    const render = () => radios().forEach((x) => { x.checked = x.value === st.v; });
+    radios().forEach((x) => {
+      x.addEventListener('click', () => onClick(st, x.value));
+      x.addEventListener('change', render);
+    });
+  };
+  controlled('shift', (st, v) => { st.v = v; });
+  controlled('remote', () => {});`;
+
+const radioState = (w) => runBody(w, `return Array.from(document.querySelectorAll('input[type=radio], [role=radio]'))
+  .filter((r) => r.checked || r.getAttribute('aria-checked') === 'true').map((r) => (r.name || 'aria') + '=' + (r.value || r.textContent))`);
+
+function questions() {
+  const w = page(QUESTIONS);
+  w.eval(QUESTIONS_JS);
+  return w;
+}
+const pick = (w, label_pattern, option) => run(w, "fill_fields", { fields: [{ label_pattern, option }] }).results[0];
+
+test("fill_fields: option answers each yes/no question in its own group", () => {
+  const w = questions();
+  const s = pick(w, "sponsorship", "No");
+  assert.deepEqual(s, { ok: true, kind: "radio", selected: "No", el: `radiogroup "Do you require sponsorship?"` });
+  assert.deepEqual(radioState(w), ["spons=n"]);
+  assert.equal(pick(w, "authorized", "yes").selected, "Yes");
+  assert.equal(pick(w, "relocate", "no").ok, true);
+  assert.deepEqual(radioState(w), ["spons=n", "auth=y", "reloc=n"]);
+  const v = pick(w, "veteran", "No");
+  assert.deepEqual(v, { ok: true, kind: "radio", selected: "No", el: `radiogroup "Are you a veteran?"` });
+  assert.deepEqual(radioState(w), ["spons=n", "auth=y", "reloc=n", "aria=No"]);
+});
+
+test("fill_fields: a radio option miss lists that group's options and clicks nothing", () => {
+  const w = questions();
+  runBody(w, `window.clicks = 0; document.addEventListener('click', () => window.clicks++, true); return 1`);
+  const r = pick(w, "sponsorship", "Maybe");
+  assert.equal(r.ok, false);
+  assert.equal(r.kind, "radio");
+  assert.match(r.error, /no matching option/);
+  assert.deepEqual(r.candidates, ["Yes", "No"]);
+  assert.equal(runBody(w, "return window.clicks"), 0);
+  assert.deepEqual(radioState(w), []);
+});
+
+test("fill_fields: a radio option tie at the best tier is ambiguous", () => {
+  const w = page(`<fieldset><legend>Start date</legend><label><input type=radio name=s> Now, full time</label><label><input type=radio name=s> Now, part time</label><label><input type=radio name=s> Later</label></fieldset>`);
+  const r = pick(w, "start", "now");
+  assert.equal(r.ok, false);
+  assert.equal(r.ambiguous, true);
+  assert.deepEqual(r.candidates, ["Now, full time", "Now, part time", "Later"]);
+  assert.deepEqual(radioState(w), []);
+});
+
+test("fill_fields: an already-checked radio option is a no-op", () => {
+  const w = questions();
+  assert.equal(pick(w, "relocate", "No").ok, true);
+  runBody(w, `window.clicks = 0; document.addEventListener('click', () => window.clicks++, true); return 1`);
+  const r = pick(w, "relocate", "No");
+  assert.deepEqual(r, { ok: true, kind: "radio", selected: "No", el: `radiogroup "Willing to relocate?"` });
+  assert.equal(runBody(w, "return window.clicks"), 0);
+});
+
+test("fill_fields: a controlled radio group is answered by clicking, and one that reverts is reported", () => {
+  const w = questions();
+  // A bare checked assignment is undone by the component's next render.
+  runBody(w, `const n = document.querySelector('[name=shift][value=night]'); n.checked = true; n.dispatchEvent(new Event('change', { bubbles: true })); return 1`);
+  assert.deepEqual(radioState(w), []);
+  const s = pick(w, "preferred shift", "night");
+  assert.deepEqual(s, { ok: true, kind: "radio", selected: "Night", el: `radiogroup "Preferred shift"` });
+  assert.deepEqual(radioState(w), ["shift=night"]);
+  const r = pick(w, "remote only", "No");
+  assert.equal(r.ok, false);
+  assert.equal(r.kind, "radio");
+  assert.match(r.error, /did not stick/);
+  assert.equal(r.selected, null);
+  assert.deepEqual(radioState(w), ["shift=night"]);
+});
+
+test("fill_fields: text, a native select and a radio group in one pass", () => {
+  const w = questions();
+  const o = run(w, "fill_fields", { fields: [
+    { label_pattern: "full name", text: "Ada Lovelace" },
+    { label_pattern: "country", option: "Brazil" },
+    { label_pattern: "sponsorship", option: "No" },
+    { label_pattern: "authorized", option: "Yes" },
+  ] });
+  assert.equal(o.defer, undefined);
+  assert.deepEqual(o.results.map((r) => [r.ok, r.kind, r.selected]), [[true, "plain", undefined], [true, "select", "Brazil"], [true, "radio", "No"], [true, "radio", "Yes"]]);
+  assert.equal(val(w, "[name=full]").value, "Ada Lovelace");
+  assert.equal(val(w, "select").value, "br");
+  assert.deepEqual(radioState(w), ["spons=n", "auth=y"]);
+});
+
+test("fill_fields: a question that matches a select and a radio group is ambiguous", () => {
+  const w = page(`<label>Work status <select><option>Citizen</option><option>Visa</option></select></label>
+    <fieldset><legend>Work status verified?</legend>${yesNo("ws")}</fieldset>`);
+  const r = pick(w, "work status", "Visa");
+  assert.equal(r.ok, false);
+  assert.equal(r.ambiguous, true);
+  assert.match(r.error, /several/);
+  assert.equal(val(w, "select").value, "Citizen");
+  assert.deepEqual(radioState(w), []);
+});
+
+test("fill_fields: a same-name radio set takes its question from the text before it", () => {
+  const w = page(`<ul><li class=q><div class=label>Do you have a driver's license?</div><div class=f><ul>
+    <li><label><input type=radio name=lic value=y> Yes</label></li><li><label><input type=radio name=lic value=n> No</label></li></ul></div></li>
+    <li class=q><p>Can you travel?</p><label><input type=radio name=tr value=y> Yes</label><label><input type=radio name=tr value=n> No</label></li></ul>`);
+  assert.equal(pick(w, "license", "No").ok, true);
+  assert.equal(pick(w, "travel", "Yes").ok, true);
+  assert.deepEqual(radioState(w), ["lic=n", "tr=y"]);
+});
+
+test("fill_fields: option on a selector naming a radio or its group's box answers that group", () => {
+  const w = questions();
+  const a = run(w, "fill_fields", { fields: [{ selector: "[name=reloc][value=y]", option: "No" }, { selector: "[role=radiogroup]", option: "Yes" }] });
+  assert.deepEqual(a.results.map((r) => [r.ok, r.kind, r.selected]), [[true, "radio", "No"], [true, "radio", "Yes"]]);
+  assert.deepEqual(radioState(w), ["reloc=n", "aria=Yes"]);
+});
+
+test("fill: a single option field answers a radio question through the tool", async () => {
+  const { dom } = onPage(QUESTIONS, QUESTIONS_JS);
+  const { o } = await fill({ label_pattern: "sponsorship", option: "No" });
+  assert.deepEqual(o, { ok: true, kind: "radio", selected: "No", el: `radiogroup "Do you require sponsorship?"` });
+  assert.equal(dom.document.querySelector("[name=spons][value=n]").checked, true);
+  assert.equal(dom.document.querySelector("[name=auth][value=n]").checked, false);
+});
