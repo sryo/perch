@@ -369,3 +369,86 @@ test("fill: a search combobox stays a plain fill", () => {
   assert.equal(run(w, "fill", { label_pattern: "^search", text: "shoes" }).kind, "plain");
   assert.equal(run(w, "fill", { label_pattern: "query", text: "shoes" }).kind, "plain");
 });
+
+// A location widget whose results wrapper holds plain item divs (no role, no
+// item/option class): only the wrapper's class says "results". A pick fills a
+// hidden companion with JSON; ArrowDown then Enter picks the highlighted item.
+const WRAPPED = `<form><li class=application-question><label><div class=application-label>Location</div><div class=application-field>
+  <input id=loc class=location-input name=location required><input type=hidden id=sel name=selectedLocation>
+  <div class='x dropdown-container'><div class='dropdown-results'></div><div class=dropdown-no-results style='display:none'>No location found</div>
+  <div class=dropdown-loading-results style='display:none'>Loading</div></div></div></label></li></form>`;
+const WRAPPED_JS = `
+  const inp = document.getElementById('loc'), hid = document.getElementById('sel'), res = document.querySelector('.dropdown-results');
+  const items = ['Springfield, Region, Country A', 'Springfield, Other, Country B'];
+  let hi = -1;
+  const pick = (i) => { inp.value = items[i]; hid.value = JSON.stringify({ name: items[i], id: 'location-' + i }); res.innerHTML = ''; };
+  inp.addEventListener('input', () => { hid.value = ''; hi = -1; window.__q = []; later(() => {
+    res.innerHTML = items.map((c, i) => "<div class='dropdown-location' id=location-" + i + '>' + c + '</div>').join('');
+    res.querySelectorAll('.dropdown-location').forEach((o, i) => { o.addEventListener('mousedown', () => pick(i)); o.addEventListener('click', () => pick(i)); });
+  }, 3); });
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') hi = Math.min(hi + 1, res.children.length - 1);
+    if (e.key === 'Enter' && hi >= 0) pick(hi);
+  });`;
+
+test("typeahead: a results wrapper of plain item divs offers each item, not the wrapper", async () => {
+  const { dom } = onPage(WRAPPED, WRAPPED_JS);
+  const miss = await fill({ selector: "#loc", text: "Zzz Nowhere" });
+  assert.equal(miss.ok, false, JSON.stringify(miss));
+  assert.deepEqual(miss.candidates, ["Springfield, Region, Country A", "Springfield, Other, Country B"]);
+  const o = await fill({ selector: "#loc", text: "Springfield, Region, Country A" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Springfield, Region, Country A");
+  assert.equal($(dom, "#loc").value, "Springfield, Region, Country A");
+  assert.deepEqual(JSON.parse($(dom, "#sel").value), { name: "Springfield, Region, Country A", id: "location-0" });
+});
+
+// A combobox whose own listbox fills asynchronously with accented suggestions;
+// a pick shows in the control's single-value slot.
+const ACCENTS = ["Córdoba, Spain", "Córdoba, Córdoba, Argentina", "Córdoba, Veracruz, Mexico"];
+const ACCENT_HTML = (companion) => `<label for=city>City</label><div class=select__container><div class=select__control>
+  <div class=select__single-value></div>
+  <input id=city class=select__input role=combobox aria-autocomplete=list aria-controls=city-list placeholder="Start typing...">
+  </div><div id=city-list role=listbox></div>${companion ? "<input type=hidden name=city>" : ""}</div>`;
+const ACCENT_JS = `
+  const inp = document.getElementById('city'), ul = document.getElementById('city-list'), hid = document.querySelector('input[name=city]');
+  window.picks = [];
+  inp.addEventListener('input', () => { window.__q = []; const q = inp.value; later(() => {
+    ul.innerHTML = q ? ${JSON.stringify(ACCENTS)}.map((c) => '<div role=option>' + c + '</div>').join('') : '';
+    ul.querySelectorAll('[role=option]').forEach((o) => o.addEventListener('click', () => {
+      window.picks.push(o.textContent);
+      document.querySelector('.select__single-value').textContent = o.textContent;
+      if (hid) hid.value = o.textContent;
+      inp.value = ''; ul.innerHTML = '';
+    }));
+  }, 3); });`;
+
+test("typeahead: accents fold and typed words match in order", async () => {
+  for (const companion of [true, false]) {
+    for (const text of ["Cordoba, Argentina", "Córdoba, Argentina"]) {
+      const { dom } = onPage(ACCENT_HTML(companion), ACCENT_JS);
+      const o = await fill({ selector: "#city", text });
+      assert.equal(o.ok, true, text + " " + JSON.stringify(o));
+      assert.equal(o.selected, "Córdoba, Córdoba, Argentina");
+      assert.equal($(dom, ".select__single-value").textContent, "Córdoba, Córdoba, Argentina");
+    }
+    const { dom } = onPage(ACCENT_HTML(companion), ACCENT_JS);
+    const o = await fill({ selector: "#city", text: "Cordoba Mexico" });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    assert.equal(o.selected, "Córdoba, Veracruz, Mexico");
+    assert.equal(dom.picks.length, 1);
+  }
+});
+
+test("typeahead: several suggestions equally matching the text pick nothing and say so", async () => {
+  for (const companion of [true, false]) {
+    const { dom } = onPage(ACCENT_HTML(companion), ACCENT_JS);
+    const o = await fill({ selector: "#city", text: "Cordoba" });
+    assert.equal(o.ok, false, JSON.stringify(o));
+    assert.equal(o.ambiguous, true);
+    assert.match(o.error, /^no suggestion matched/);
+    assert.deepEqual(o.candidates, ACCENTS);
+    assert.equal(dom.picks.length, 0);
+    assert.equal($(dom, "#city").value, "");
+  }
+});
