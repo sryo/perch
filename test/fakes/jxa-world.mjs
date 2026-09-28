@@ -28,6 +28,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     if (app != null && !notAe.test(k)) ae(app, k);
   };
   const log = [];
+  // state.afterExecute(tabSpec) runs once, after the next page script returns:
+  // a world change (a tab closing) that lands between two page calls.
+  const afterExecute = (spec) => {
+    const f = state.afterExecute;
+    if (f) { state.afterExecute = null; f(spec); }
+  };
   // What JXA throws when a specifier resolves to nothing (errAENoSuchObject).
   const gone = () => Object.assign(new Error("Can't get object."), { errorNumber: -1728 });
   const missing = new Proxy({}, { get: () => { throw gone(); } });
@@ -66,7 +72,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       set page(p) { spec._page = p; },
       get _active() { return w.spec.active === w.tabs.indexOf(tab); },
     };
-    const fn = (name, get) => Object.defineProperty(tab, name, { get: () => { bump(`tab.${name}`, b.name); return get; }, configurable: true });
+    // A closed tab's specifier names nothing: every read and command fails.
+    const present = () => winsByApp[b.name].some((x) => x.tabs.includes(tab));
+    const fn = (name, get) => Object.defineProperty(tab, name, { get: () => { bump(`tab.${name}`, b.name); if (!present()) throw gone(); return get; }, configurable: true });
     fn("id", () => spec.id);
     fn("title", () => spec.title || "");
     fn("name", () => spec.title || "");
@@ -82,6 +90,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     Object.defineProperty(tab, "url", {
       get: () => () => {
         bump("tab.url", b.name);
+        if (!present()) throw gone();
         // state.arcSlowUrl = {throws, reads}: a new Arc tab's url() first throws, then
         // keeps showing arc://newtab until `reads` more reads, then the set URL commits.
         if (tab.slow) {
@@ -92,6 +101,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       },
       set: (u) => {
         bump("tab.url=", b.name);
+        if (!present()) throw gone();
         if (tab.slow) { tab.slow.target = u; return; }
         go(u, "url");
       },
@@ -115,6 +125,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     // none, so an unanswered one blocks for the 2-minute default.
     tab.execute = ({ javascript }, ae = {}) => {
       bump("tab.execute", b.name);
+      if (!present()) throw gone();
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
       if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
       settle();
@@ -138,6 +149,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       const r = spec.dom ? spec.dom.eval(javascript) : vm.runInContext(javascript, tab.page.ctx);
       // state.dropAfterAssign: the reply to the execute that started a navigation is lost.
       if (state.dropAfterAssign && tab.pending && tab.pending !== before) throw unanswered();
+      afterExecute(spec);
       return b.kind === "arc" ? JSON.stringify(r) : r;
     };
     tab.select = () => { bump("tab.select", b.name); w.spec.active = w.tabs.indexOf(tab); };
@@ -253,11 +265,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       doJavaScript: (js, { in: tab }) => {
         bump("doJavaScript", b.name);
         if (tab && tab.__specifier) tab = tab();
-        if (!tab) throw gone();
+        if (!tab || !winsByApp[b.name].some((x) => x.tabs.includes(tab))) throw gone();
         // Live on macOS 27.2 Safari runs JS in any tab; state.safariCurrentOnly
         // models versions that only run it in the window's current tab.
         if (state.safariCurrentOnly && !tab._active) throw new Error("Safari: tab is not current");
-        return vm.runInContext(js, tab.page.ctx);
+        const r = vm.runInContext(js, tab.page.ctx);
+        afterExecute(tab.spec);
+        return r;
       },
       Tab: (props) => props,
       Window: () => ({ make: () => wins.push(makeWindow({ id: 999, active: 0, tabs: [] }, b)) }),
