@@ -2596,8 +2596,14 @@ if (forms.length) {
   const FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
   let big = forms[0];
   forms.forEach(function (f) { if (f.querySelectorAll(FIELDS).length > big.querySelectorAll(FIELDS).length) big = f; });
-  // A file input is a field to fill too (through file_upload).
-  const fields = Array.from(big.querySelectorAll(FIELDS)).filter(function (el) { const t = (el.type || "text").toLowerCase(); return !(el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0); });
+  // A file input is a field to fill too (through file_upload). An input that is
+  // both aria-hidden and out of the tab order is a widget's stand-in for native
+  // validation (react-select's required input), not a field of its own.
+  const fields = Array.from(big.querySelectorAll(FIELDS)).filter(function (el) {
+    const t = (el.type || "text").toLowerCase();
+    if (el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0) return false;
+    return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
+  });
   const requiredEmpty = fields.filter(function (el) {
     if (!el.required && attr(el, "aria-required") !== "true") return false;
     if (String(el.value || el.textContent || "").trim()) return false;

@@ -69,6 +69,17 @@ test("snapshot: a picked select keeps its combobox with the shown value, and cou
   assert.equal(head.form.requiredEmpty, 2);
 });
 
+test("snapshot: a select's hidden required stand-in is not counted as a second field", () => {
+  // react-select renders this input only while a required select is empty,
+  // for native validation; the field it stands for is the combobox.
+  const stub = `<input required tabindex=-1 aria-hidden=true class=requiredInput style="opacity:0;position:absolute">`;
+  const w = page(`<form>
+    <div id=c-l>Region</div>${RS("select", { id: "c" }).replace("</div>\n  </div>", `</div>${stub}</div>`)}
+    <input name=first required>
+  </form>`);
+  assert.deepEqual(snap(w).head.form, { fields: 2, requiredEmpty: 2 });
+});
+
 test("snapshot: a typed combobox shows its value; a nearby unlinked label beats the placeholder", () => {
   const w = page(`<div class=field><label class=title>Location</label>
     <div class=wrap><input role=combobox placeholder="Start typing..."></div></div>`);
