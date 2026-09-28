@@ -2007,12 +2007,18 @@ function clip(s, n) { s = String(s == null ? "" : s).replace(/\s+/g, " ").trim()
 function textOf(n) { return n ? (n.innerText || n.textContent || "") : ""; }
 // querySelectorAll over the document and every open shadow root, in document
 // order: a shadow tree's matches follow its host. Closed roots stay unreachable.
+// Each root is one native query; each host's shadow matches go in after the
+// matches up to and including the host.
 function deepAll(sel, root) {
-  const out = [];
-  for (const el of (root || document).querySelectorAll("*")) {
-    if (el.matches(sel)) out.push(el);
-    if (el.shadowRoot) out.push.apply(out, deepAll(sel, el.shadowRoot));
+  root = root || document;
+  const hits = root.querySelectorAll(sel), out = [];
+  let i = 0;
+  for (const el of root.querySelectorAll("*")) {
+    if (!el.shadowRoot) continue;
+    while (i < hits.length && (hits[i] === el || el.compareDocumentPosition(hits[i]) & 2)) out.push(hits[i++]);
+    out.push.apply(out, deepAll(sel, el.shadowRoot));
   }
+  while (i < hits.length) out.push(hits[i++]);
   return out;
 }
 // A <label>'s own words: not the control(s) it wraps, nor hidden text or a
@@ -2091,9 +2097,34 @@ function accName(el) {
   let s = labelText(el) || (isField(el) ? nearText(el) : "") || attr(el, "placeholder") || attr(el, "alt");
   if (!s && el.tagName === "INPUT" && /^(submit|button|reset)$/i.test(el.type)) s = el.value;
   // A <select>'s text is its options, not a name.
-  if (!s && !/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) s = textOf(el);
+  if (!s && !/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) s = contentName(el);
   if (!s) s = attr(el, "title") || attr(el, "name");
   return clip(s, 120);
+}
+// Name from content. Up to 400 nodes it is the element's text; past that,
+// innerText would lay out and serialize the whole subtree for a 120-character
+// name, so the text comes from the first 400 nodes, up to 200 characters:
+// hidden and script subtrees skipped, a space around each non-inline element.
+function contentName(el) {
+  const tw = document.createTreeWalker(el, 5);
+  let n = 0;
+  while (n <= 400 && tw.nextNode()) n++;
+  if (n <= 400) return textOf(el);
+  const skip = function (e) {
+    if (e.hidden || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(e.tagName)) return true;
+    const cs = getComputedStyle(e);
+    return cs.display === "none" || cs.visibility === "hidden";
+  };
+  const w = document.createTreeWalker(el, 5, { acceptNode: function (x) { return x.nodeType === 1 && skip(x) ? 2 : 1; } });
+  const block = function (e) { return !!e && e.nodeType === 1 && !/^inline/.test(getComputedStyle(e).display); };
+  let s = "";
+  for (n = 0; n < 400 && w.nextNode(); n++) {
+    const x = w.currentNode;
+    if (x.nodeType === 3) s += (block(x.previousSibling) ? " " : "") + x.nodeValue;
+    else if (block(x)) s += " ";
+    if (s.length >= 200 && clip(s, 200).length > 200) break;
+  }
+  return s;
 }
 function role(el) {
   const ex = attr(el, "role");
@@ -2186,8 +2217,9 @@ function matchTier(list, key, want) {
   const pre = new RegExp("(?:^|[^\\p{L}\\p{N}])" + esc, "u");
   const tiers = [function (t) { return t === want; }, function (t) { return word.test(t); }, function (t) { return pre.test(t); },
     function (t) { return inOrder(wordsOf(t), ws); }];
+  const keys = list.map(function (x) { return fold(key(x)); });
   for (let i = 0; i < tiers.length; i++) {
-    const hits = list.filter(function (x) { return tiers[i](fold(key(x))); });
+    const hits = list.filter(function (x, j) { return tiers[i](keys[j]); });
     if (hits.length) return { hits: hits, exact: i === 0 };
   }
   return { hits: [], exact: false };
@@ -2377,8 +2409,9 @@ function taMatch(opts, text) {
   const pre = new RegExp("(?:^|[^\\p{L}\\p{N}])" + reEsc(w), "u");
   const tiers = [function (t) { return t === w; }, function (t) { return inOrder(parts(t), wp); }, function (t) { return t.indexOf(w) === 0; },
     function (t) { return pre.test(t); }, function (t) { return inOrder(wordsOf(t), ws); }];
+  const keys = w ? opts.map(function (o) { return fold(taNorm(o.textContent)); }) : [];
   if (w) for (let i = 0; i < tiers.length; i++) {
-    const hits = opts.filter(function (o) { return tiers[i](fold(taNorm(o.textContent))); });
+    const hits = opts.filter(function (o, j) { return tiers[i](keys[j]); });
     if (hits.length) return { hits: hits, exact: i === 0 };
   }
   return { hits: [], exact: false };
@@ -2456,6 +2489,12 @@ function fillOne(a) {
   // hidden one and text never lands silently in the wrong element.
   const re = new RegExp(a.label_pattern, "i");
   const scored = [];
+  // Fields share ancestors: test each ancestor's text once.
+  const near = new Map();
+  const nearHit = function (p) {
+    if (!near.has(p)) near.set(p, re.test(p.textContent || ""));
+    return near.get(p);
+  };
   deepAll("textarea, input, [contenteditable], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe").forEach(function (el) {
     if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return;
     if (el.hasAttribute("contenteditable") && !editable(el)) return;
@@ -2466,7 +2505,7 @@ function fillOne(a) {
     else if (re.test(hintText(el))) s = 40;
     else {
       let p = el, hit = false;
-      for (let i = 0; i < 6 && p; i++, p = p.parentElement) if (re.test(p.textContent || "")) { hit = true; break; }
+      for (let i = 0; i < 6 && p; i++, p = p.parentElement) if (nearHit(p)) { hit = true; break; }
       if (!hit) return;
       s = 10;
     }
