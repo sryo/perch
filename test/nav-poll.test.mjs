@@ -55,6 +55,19 @@ test("wait {expression} mid-navigation answers from the new document within its 
   assert.equal(world.counts["win.id()"] || 0, 0, "the bounded poll needs no window id read");
 });
 
+test("wait {quiet} mid-navigation waits out the dropped reply, then times the window on the new document", async () => {
+  await install();
+  await startNav();
+  const { out: { r, o, t }, took } = await timed(() => call("wait", { quiet: 500, timeout: 5000, target: { tabId: handle } }));
+  assert.equal(r.isError, undefined, t);
+  assert.ok(o.quietFor >= 500, `quietFor ${o.quietFor}`);
+  // The dropped reply (one POLL_EXEC_SECS) restarts the window, so it runs on the new document.
+  assert.ok(took >= 1000 + 500 && took <= 5000 + 1000, `took ${took}ms`);
+  assert.equal(newPage().location.href, NEXT);
+  assert.ok(newPage().__perch_quiet, "the new document was armed");
+  assert.equal(world.log.filter(([k]) => k === "assign").length, 1, "the page's own navigation ran once");
+});
+
 test("eval_js {awaitPromise} mid-navigation ends with a coded error, not the 2-minute Apple Event timeout", async () => {
   await install();
   await startNav();

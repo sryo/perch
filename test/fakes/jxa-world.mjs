@@ -161,11 +161,14 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (state.jsOff) throw new Error("Executing JavaScript through AppleScript is turned off.");
       // A JS dialog pauses its own tab's page: a dialog's `blocks` is that tab's id.
       // Browser prompts that only look like one (permission, FedCM, passkey) omit it.
-      if (state.dialogs.some((d) => d.blocks != null && String(d.blocks) === String(spec.id))) throw unanswered();
+      const paused = () => state.dialogs.some((d) => d.blocks != null && String(d.blocks) === String(spec.id));
+      if (paused()) throw unanswered();
       // spec.dom: a happy-dom Window standing in for the page.
       const before = tab.pending, ran = tab.page;
       ran.busy = 0;
       const r = spec.dom ? spec.dom.eval(javascript) : vm.runInContext(javascript, tab.page.ctx);
+      // A dialog the script itself opened (alert() in a click handler) stops it before it replies.
+      if (paused()) throw unanswered();
       // A script busy past the caller's timeout ran, but its reply never arrives.
       if (ran.busy) {
         tab.busyUntil = clock.t + ran.busy;

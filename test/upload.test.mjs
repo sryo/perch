@@ -53,7 +53,8 @@ test("file_upload: failures always carry an error string", () => {
   assert.match(o.error, /file/);
   const d = run(w, "file_upload", { ...PDF, selector: "#d" });
   assert.equal(d.ok, false);
-  assert.match(d.error, /not an <input type=file>/);
+  assert.equal(d.dropped, true);
+  assert.match(d.error, /nothing took the file dropped on/);
   assert.equal(run(page(`<p>none</p>`), "file_upload", PDF).ok, false);
 });
 
@@ -221,4 +222,180 @@ test("file_upload: a daemon that disabled itself counts as no daemon", async (t)
 test("file_upload: a missing file still reads as cannot read", async () => {
   onPage(`<input type=file id=f>`);
   assert.match(await refusal({ path: "/nonexistent/perch-none.pdf" }), /cannot read \/nonexistent\/perch-none\.pdf/);
+});
+
+// ---- drop zones ----
+
+// Like react-dropzone: a zone that reads files from the drop's DataTransfer
+// items, only after the dragenter/dragover that preceded it.
+const ZONE = `<p>Resume</p><div id=z role=presentation><p>Drag and drop your file here</p></div><ul id=l></ul>`;
+const ZONE_JS = `(() => {
+  const z = document.getElementById('z'); let entered = false; window.drops = 0;
+  z.addEventListener('dragenter', (e) => { e.preventDefault(); entered = e.dataTransfer.items.length > 0; });
+  z.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  z.addEventListener('drop', (e) => {
+    e.preventDefault(); window.drops++;
+    if (!entered) return;
+    const fs = Array.from(e.dataTransfer.items).filter((i) => i.kind === 'file').map((i) => i.getAsFile());
+    document.getElementById('l').innerHTML = fs.map((f) => '<li>' + f.name + ' (' + f.size + ' bytes)</li>').join('');
+  });
+})();`;
+
+test("file_upload: a drop zone without an input gets the file as a drop", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(ZONE, ZONE_JS);
+  const o = await upload({ path, selector: "#z" });
+  assert.deepEqual(o, { ok: true, name: "cv.pdf", size: 8, type: "application/pdf", dropped: true, el: 'presentation "Drag and drop your file here"', shown: true });
+  assert.equal(dom.document.getElementById("l").textContent, "cv.pdf (8 bytes)");
+});
+
+test("file_upload: label_pattern finds a drop zone by its text", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(ZONE, ZONE_JS);
+  const o = await upload({ path, label_pattern: "drag and drop" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, true);
+  assert.equal(dom.eval("window.drops"), 1);
+});
+
+test("file_upload: label_pattern prefers a labeled file input over zone text", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(`<label for=r>Resume</label><input type=file id=r><div id=z>Drop your resume here</div>`);
+  const o = await upload({ path, label_pattern: "resume" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, undefined);
+  assert.equal(dom.eval("document.getElementById('r').files.length"), 1);
+});
+
+test("file_upload: label_pattern naming two zones refuses with candidates", async (t) => {
+  const path = await cvFile(t);
+  onPage(`<div>Drop your resume here</div><div>Drop your cover letter here</div>`);
+  const o = await upload({ path, label_pattern: "drop your" });
+  assert.equal(o.ok, false);
+  assert.equal(o.ambiguous, true);
+  assert.equal(o.candidates.length, 2);
+});
+
+test("file_upload: label_pattern goes with no ref or selector", async () => {
+  const r = await handleCall("file_upload", { path: "/x/cv.pdf", selector: "#z", label_pattern: "cv" });
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /label_pattern/);
+});
+
+// A zone whose hidden input has no change handler: only the drop registers.
+const HIDDEN = ZONE.replace("<p>Drag", "<input type=file id=f style='display:none'><p>Drag");
+
+test("file_upload: a zone's hidden input nobody listens to falls back to a drop on the zone", async (t) => {
+  const path = await cvFile(t);
+  const { dom, world } = onPage(HIDDEN, ZONE_JS);
+  const t0 = world.clock.t;
+  const o = await upload({ path, selector: "#z" });
+  assert.deepEqual(o, { ok: true, name: "cv.pdf", size: 8, type: "application/pdf", dropped: true, el: 'presentation "Drag and drop your file here"', shown: true });
+  assert.equal(dom.eval("window.drops"), 1);
+  assert.equal(dom.eval("document.getElementById('f').files.length"), 0, "the unwired input is emptied");
+  const spent = world.clock.t - t0;
+  assert.ok(spent >= 500 && spent <= 1500, `spent ${spent}ms`);
+});
+
+test("file_upload: the hidden input named directly falls back to a drop on its zone", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(HIDDEN, ZONE_JS);
+  const o = await upload({ path, selector: "#f" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, true);
+  assert.equal(dom.document.getElementById("l").textContent, "cv.pdf (8 bytes)");
+});
+
+test("file_upload: a zone whose hidden input is wired takes the file once, with no drop", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(HIDDEN, ZONE_JS + `document.getElementById('f').addEventListener('change', (e) => {
+    document.getElementById('l').innerHTML = '<li>' + e.target.files[0].name + '</li>';
+  });`);
+  const o = await upload({ path, selector: "#z" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, undefined);
+  assert.equal(dom.eval("window.drops"), 0);
+});
+
+test("file_upload: a hidden input whose handler changes the page without the name gets no drop", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(HIDDEN, ZONE_JS + `document.getElementById('f').addEventListener('change', () => {
+    setTimeout(() => { document.getElementById('l').innerHTML = '<li>1 file ready</li>'; }, 200);
+  });`);
+  const o = await upload({ path, selector: "#z" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, undefined);
+  assert.equal(dom.eval("window.drops"), 0);
+});
+
+// Resource timing lists a request once it completes; the test's entries stand in for it.
+function fetchEntries(dom) {
+  const entries = [];
+  dom.performance.getEntriesByType = (k) => (k === "resource" ? entries.slice() : []);
+  return entries;
+}
+
+test("file_upload: a hidden input whose handler only starts a fetch gets no drop", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(HIDDEN, ZONE_JS);
+  const entries = fetchEntries(dom);
+  entries.push({ initiatorType: "fetch" }, { initiatorType: "img" });
+  dom.startUpload = () => dom.setTimeout(() => entries.push({ initiatorType: "fetch" }), 300);
+  dom.eval(`document.getElementById('f').addEventListener('change', () => window.startUpload());`);
+  const o = await upload({ path, selector: "#z" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, undefined);
+  assert.equal(dom.eval("window.drops"), 0);
+  assert.equal(dom.eval("document.getElementById('f').files.length"), 1, "the input keeps the file");
+});
+
+test("file_upload: requests that finished before the upload don't count as handled", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(HIDDEN, ZONE_JS);
+  const entries = fetchEntries(dom);
+  entries.push({ initiatorType: "fetch" }, { initiatorType: "xmlhttprequest" });
+  dom.setTimeout(() => entries.push({ initiatorType: "img" }), 200);
+  const o = await upload({ path, selector: "#z" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, true);
+  assert.equal(dom.eval("window.drops"), 1);
+});
+
+test("file_upload: a hidden input with a framework change handler in reach gets no drop", async (t) => {
+  // React keeps an element's props on an expando; a same-world eval can read its onChange.
+  const path = await cvFile(t);
+  const { dom } = onPage(HIDDEN, ZONE_JS);
+  dom.eval(`document.getElementById('f').__reactProps$x1 = { type: 'file', onChange: () => { window.took = 1; } };`);
+  const o = await upload({ path, selector: "#z" });
+  assert.equal(o.ok, true);
+  assert.equal(o.dropped, undefined);
+  assert.equal(dom.eval("window.drops"), 0);
+});
+
+test("file_upload: a hidden named input in a form keeps the file with no drop", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(`<form><div id=z><input type=file name=cv id=f hidden>Choose a file</div></form>`,
+    `document.getElementById('z').addEventListener('drop', () => { window.drops = 1; });`);
+  const o = await upload({ path, selector: "#f" });
+  assert.deepEqual(o, { ok: true, name: "cv.pdf", size: 8, type: "application/pdf" });
+  assert.equal(dom.eval("window.drops || 0"), 0);
+});
+
+test("file_upload: a zone that ignores drops fails closed", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(`<div id=z>Drop files here</div><p>cv.pdf is our example name</p>`);
+  const o = await upload({ path, selector: "#z" });
+  assert.equal(o.ok, false);
+  assert.equal(o.dropped, true);
+  assert.match(o.error, /nothing took the file dropped on generic "Drop files here"/);
+  assert.equal(dom.eval("document.querySelectorAll('input').length"), 0);
+});
+
+test("file_upload: a zone with an unwired hidden input that ignores drops fails closed", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(`<div id=z><input type=file id=f style='display:none'>Drop files here</div>`);
+  const o = await upload({ path, selector: "#z" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /nothing took the file dropped/);
+  assert.equal(dom.eval("document.getElementById('f').files.length"), 0);
 });

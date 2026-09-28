@@ -608,7 +608,8 @@ function jxaRuntime(BROWSERS) {
   // A failed run counts as not yet, except a closed tab. A dropped reply doubles
   // the next run's cap, so a slow read still answers while a navigation costs
   // one POLL_EXEC_SECS. `step`: `js` has side effects, so a dropped reply ends it.
-  function poll(t, js, timeout, interval, step) {
+  // `done(v)`, if given, decides instead and sees every run, a failed one as null.
+  function poll(t, js, timeout, interval, step, done) {
     const start = Date.now();
     let cap = POLL_EXEC_SECS;
     for (;;) {
@@ -620,7 +621,7 @@ function jxaRuntime(BROWSERS) {
         if (isStale(e) || (step && isNoReply(e))) throw e;
         if (isNoReply(e)) cap *= 2;
       }
-      if (v !== null && v !== false) return { value: v, waited: Date.now() - start };
+      if (done ? done(v) : v !== null && v !== false) return { value: v, waited: Date.now() - start };
       if (Date.now() - start >= timeout) return null;
       delay(interval / 1000);
     }
@@ -898,6 +899,24 @@ function jxaRuntime(BROWSERS) {
     });
   }
 
+  // wait {quiet}: timed here, where the clock isn't throttled with the page. The
+  // window opens when a poll arms the observer (fresh); a poll that fails or
+  // finds a new document restarts it.
+  function waitQuiet(a, start, interval) {
+    const t = pageTarget(a.target, "wait");
+    let last = start, quietFor = 0;
+    const r = poll(t, a.js, a.timeout, interval, false, function (v) {
+      const now = Date.now();
+      if (v && v.__perch_error) return true;
+      if (!v || v.busy || v.fresh) last = now;
+      quietFor = now - last;
+      return quietFor >= a.quiet;
+    });
+    if (!r) throw new Error("timeout: wait timed out after " + a.timeout + "ms; the page never stayed quiet for " + a.quiet + "ms");
+    if (r.value.__perch_error) throw new Error("wait: " + r.value.__perch_error);
+    return { waited: Date.now() - start, quietFor: quietFor };
+  }
+
   // A refusal when the screen point falls on one of the page's embedded frames,
   // placed through Accessibility when it finds the page area, else by the page's
   // estimate. A page that can't answer fails closed.
@@ -1012,6 +1031,26 @@ function jxaRuntime(BROWSERS) {
     function aimed() {
       const off = offPage(T, probe, pt, area);
       return off ? { out: off } : { pt: pt, el: probe.el, calibrated: true, calibration: trace, aim: via };
+    }
+  }
+
+  // A trusted click on the element a.probe arms: aim, the hit test, `before` (a
+  // result with ok:false stops it), the post, then a.check's `hit`. {stop} is a
+  // refusal with nothing posted. The cursor is home again on return.
+  function aimedClick(T, a, tool, before) {
+    const home = T.background ? null : cursorAt();
+    try {
+      const A = aim(T, a, tool);
+      if (A.out) return { stop: A.out };
+      const bad = before && before();
+      if (bad && bad.ok === false) return { stop: bad };
+      if (T.background) skyClick(T.I, A.pt);
+      else leftClick(T.I, A.pt);
+      delay(0.05);
+      const check = parseExec(T.t, a.check);
+      return { out: Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" }, check) };
+    } finally {
+      if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
     }
   }
 
@@ -1579,6 +1618,9 @@ function jxaRuntime(BROWSERS) {
   }
 
   globalThis.__perch = {
+    // Run by the daemons' handshake, so no call pays the AppKit import; one-shot
+    // runs keep it lazy.
+    warm() { try { appKit(); } catch (e) {} },
     dialogs(a) {
       return provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
     },
@@ -1628,6 +1670,7 @@ function jxaRuntime(BROWSERS) {
     // One event when the page is already there; then polls every 50ms.
     wait(a) {
       const start = Date.now(), interval = a.interval || 50;
+      if (a.quiet) return waitQuiet(a, start, interval);
       let q = null, r = null;
       // A hinted Chromium handle's first poll is quickExec's one event, bounded.
       const w = a.target || {};
@@ -1848,16 +1891,39 @@ function jxaRuntime(BROWSERS) {
       const r = a.start ? stepRead(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
       return afterStep(a.tool || "select", function () {
+        // a.trusted: a control whose synthetic open shows no list of its own gets a
+        // trusted click (the tab its window shows only; never raised). A refused or
+        // missed click fails closed.
+        const X = a.trusted, used = [];
+        const done = function (o) { if (used.length && o) o.trusted = used; return o; };
+        let T = null;
+        const selectClick = function (part) {
+          if (!T) T = trustedTarget({ target: a.target }, "select {trusted:true}");
+          const c = aimedClick(T, { probe: part, check: X.check }, "select");
+          if (c.stop) return c.stop.gone ? null : c.stop;
+          if (!c.out.ok) return { ok: false, hit: c.out.hit, el: c.out.el, error: "the trusted click on " + c.out.el + " did not land on it (hit: " + c.out.hit + "); nothing was picked" };
+          used.push(part === X.option ? "option" : "control");
+          return null;
+        };
+        if (X && !poll(t, X.open, 400, 50)) {
+          const c = selectClick(X.control);
+          if (c) return c;
+        }
         // a.short: give up early unless a.probe says a list or companion is there.
         // A pick step answering {settled} has found nothing more worth waiting for.
         let picked = poll(t, a.pick, a.short || a.wait || 2500, 50, true);
         if (!picked && a.short && readExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50, true);
         if (picked && picked.value.settled) picked = null;
-        if (!picked && !a.missFinal) return readExec(t, a.miss);
+        if (!picked && !a.missFinal) return done(readExec(t, a.miss));
         if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : readExec(t, a.missFinal); }
-        if (picked.value.ok === false) return picked.value;
+        if (picked.value.ok === false) return done(picked.value);
+        // A pick that doesn't show while the popup stays open gets a trusted click on the option.
+        if (X && !poll(t, X.keep, 500, 50)) {
+          const c = selectClick(X.option);
+          if (c) return done(c);
+        }
         const read = poll(t, a.read, 500, 50);
-        return read ? read.value : readExec(t, a.readFinal);
+        return done(read ? read.value : readExec(t, a.readFinal));
       });
     },
     // Plain click with readback: click (arming the pre-click text), then poll.
@@ -1869,11 +1935,11 @@ function jxaRuntime(BROWSERS) {
     },
     trustedClick(a) {
       const T = trustedTarget(a);
-      const home = T.background ? null : cursorAt();
       const arm = function () { return a.arm ? parseExec(T.t, a.arm) : null; };
       let out;
-      try {
-        if (a.x != null) {
+      if (a.x != null) {
+        const home = T.background ? null : cursorAt();
+        try {
           const f = parseExec(T.t, a.frames);
           const framed = pointOnFrame(T, a, f) || offPage(T, f, { x: a.x, y: a.y });
           if (framed) return framed;
@@ -1882,19 +1948,13 @@ function jxaRuntime(BROWSERS) {
           if (T.background) skyClick(T.I, { x: a.x, y: a.y });
           else leftClick(T.I, { x: a.x, y: a.y });
           out = { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" };
-        } else {
-          const A = aim(T, a, "click");
-          if (A.out) return A.out;
-          const bad = arm();
-          if (bad && bad.ok === false) return bad;
-          if (T.background) skyClick(T.I, A.pt);
-          else leftClick(T.I, A.pt);
-          delay(0.05);
-          const check = parseExec(T.t, a.check);
-          out = Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" }, check);
+        } finally {
+          if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
         }
-      } finally {
-        if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
+      } else {
+        const c = aimedClick(T, a, "click", arm);
+        if (c.stop) return c.stop;
+        out = c.out;
       }
       // The cursor is already home, so the settle wait doesn't hold it.
       return a.arm ? Object.assign(out, readback(T.t, a)) : out;
@@ -1983,6 +2043,7 @@ function jxaRuntime(BROWSERS) {
 }
 
 export const JXA_PRELUDE = `(${jxaRuntime})(${JSON.stringify(BROWSERS)})`;
+export const DAEMON_PRELUDE = JXA_PRELUDE + ";__perch.warm()";
 
 export const ERR = {
   jsOff: "JavaScript-from-AppleEvents is off. Enable it: Chromium-family → View > Developer > Allow JavaScript from Apple Events. " +
@@ -2173,8 +2234,8 @@ const JXA_DEFAULT_TIMEOUT = 30000;
 const JXA_OVERHEAD = 5000;
 
 export const DAEMONS = process.env.PERCH_DAEMON === "0" ? {} : {
-  fast: new OsaDaemon({ prelude: JXA_PRELUDE }),
-  slow: new OsaDaemon({ prelude: JXA_PRELUDE }),
+  fast: new OsaDaemon({ prelude: DAEMON_PRELUDE }),
+  slow: new OsaDaemon({ prelude: DAEMON_PRELUDE }),
 };
 
 export async function jxa(script, { timeout = JXA_DEFAULT_TIMEOUT, lane = "fast", daemons = DAEMONS, oneShot = jxaOneShot, token } = {}) {
@@ -2309,12 +2370,23 @@ async function evalJs(script, target, { awaitPromise = false, timeout = 30000, t
 }
 
 async function wait(args = {}) {
-  const { selector, readyState = "complete", expression, timeout = 10000, target } = args;
+  const { selector, readyState = "complete", expression, timeout = 10000, target, quiet } = args;
+  if (quiet != null) return waitQuiet(args, timeout);
   const js = expression
     ? `(function(){try{var __r=(${expression});return JSON.stringify(__r===undefined?null:__r)}catch(e){return "null"}})()`
     : buildEvalWrapper(pageScript("wait_check", { selector, readyState }));
   const r = await rt("wait", { target, js, timeout }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
   return expression ? { ok: true, waited: r.waited, value: r.value } : { ok: true, waited: r.waited };
+}
+
+async function waitQuiet({ quiet, selector, expression, target }, timeout) {
+  if (typeof quiet !== "number" || !(quiet > 0)) throw new Error("wait: `quiet` must be a positive number of ms");
+  if (!(quiet < timeout)) throw new Error("wait: `quiet` must be shorter than `timeout`");
+  if (selector != null || expression != null) throw new Error("wait: `quiet` takes no selector or expression");
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const js = buildEvalWrapper(pageScript("wait_quiet", { id, life: timeout }));
+  const r = await rt("wait", { target, js, timeout, quiet }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+  return { ok: true, waited: r.waited, quietFor: r.quietFor };
 }
 
 const NAV_TIMEOUT = 15000;
@@ -3178,13 +3250,44 @@ function fillOne(a) {
 }
 `;
 
+// Page activity since the last poll, for click {readback} and wait {quiet}: DOM
+// mutations anywhere (takeRecords too, since the observer's callback may not
+// have run between polls) and completed fetch/XHR requests, as resource timing
+// entries. A request still in flight shows only once it completes. rbWatch keeps
+// the state on window[key]; one that is never read again stops its observer at
+// the first mutation after `life` ms.
+const QUIET_LIB = String.raw`
+function rbNet() {
+  try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
+  catch (e) { return 0; }
+}
+function rbBusy(s) {
+  if (s.obs) s.mut += s.obs.takeRecords().length;
+  const act = s.mut + ":" + rbNet(), busy = act !== s.act;
+  s.act = act;
+  return busy;
+}
+function rbStop(s) { if (s && s.obs) s.obs.disconnect(); }
+function rbWatch(s, key, life) {
+  s.mut = 0; s.at = Date.now(); s.act = "0:" + rbNet();
+  try {
+    s.obs = new MutationObserver(function (r) {
+      if (window[key] !== s || Date.now() - s.at > life) return s.obs.disconnect();
+      s.mut += r.length;
+    });
+    s.obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  } catch (e) { s.obs = null; }
+  window[key] = s;
+}
+`;
+
 // click {readback}: the pre-click text, state and url live on window.__perch_rb until read.
 // The state catches toggles that change no text: ARIA flags, disabled and the
 // checked/selected/value of controls on the element and its first 50
 // descendants. Classes count only when they are state names (not hover, focus
 // or animation ones) and still hold on the next poll, so transient effects
 // don't pass for a change.
-const READBACK_LIB = String.raw`
+const READBACK_LIB = QUIET_LIB + String.raw`
 function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
 function rbSig() {
   const n = document.querySelector(A.readback);
@@ -3208,36 +3311,47 @@ function rbCls() {
     }).sort().join(" ");
   }).join("|");
 }
-// Page activity since the last poll: DOM mutations anywhere (takeRecords too,
-// since the observer's callback may not have run between polls) and completed
-// fetch/XHR requests, as resource timing entries. A state that is never read
-// stops its observer at the next mutation after 10s.
-function rbNet() {
-  try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
-  catch (e) { return 0; }
-}
-function rbBusy(s) {
-  if (s.obs) s.mut += s.obs.takeRecords().length;
-  const act = s.mut + ":" + rbNet(), busy = act !== s.act;
-  s.act = act;
-  return busy;
-}
-function rbStop(s) { if (s && s.obs) s.obs.disconnect(); }
 function rbArm() {
   let s;
   try { s = { text: rbText(), sig: rbSig(), cls: rbCls(), url: location.href }; }
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
   rbStop(window.__perch_rb);
-  s.mut = 0; s.quiet = 0; s.at = Date.now(); s.act = "0:" + rbNet();
-  try {
-    s.obs = new MutationObserver(function (r) {
-      if (window.__perch_rb !== s || Date.now() - s.at > 10000) return s.obs.disconnect();
-      s.mut += r.length;
-    });
-    s.obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-  } catch (e) { s.obs = null; }
-  window.__perch_rb = s;
+  s.quiet = 0;
+  rbWatch(s, "__perch_rb", 10000);
   return null;
+}
+`;
+
+// file_upload's drop path. U is the upload's state, kept on window.__perch_up
+// between calls: the DataTransfer, the zone, the input under watch and its
+// MutationObserver, how often the file name was on the page before, and how
+// many fetch/XHR requests had completed (resource timing) before the file was set.
+const UPLOAD_LIB = String.raw`
+const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
+function nameCount(name) { return textOf(document.body).split(name).length - 1; }
+function upNet() {
+  try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
+  catch (e) { return 0; }
+}
+function uploadSeen(name, U) {
+  if (U.obs && U.obs.takeRecords().some(function (r) { return r.target !== U.input; })) U.moved = true;
+  return U.moved || (U.net != null && upNet() > U.net) || deepAll("input[type=file]").some(function (el) { return el !== U.input && has(el); }) || nameCount(name) > U.names;
+}
+// Not every engine takes dataTransfer in a DragEvent init, so it is pinned on
+// the event when it didn't stick.
+function dropOn(U) {
+  const b = U.zone.getBoundingClientRect();
+  const init = { bubbles: true, cancelable: true, composed: true, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2 };
+  ["dragenter", "dragover", "drop"].forEach(function (t) {
+    let ev;
+    try { ev = new DragEvent(t, Object.assign({ dataTransfer: U.dt }, init)); } catch (e) { ev = new Event(t, init); }
+    if (ev.dataTransfer !== U.dt) Object.defineProperty(ev, "dataTransfer", { value: U.dt });
+    U.zone.dispatchEvent(ev);
+  });
+  const seen = uploadSeen(A.name, U);
+  const r = { ok: seen, dropped: true, el: ident(U.zone), shown: seen };
+  if (!seen) r.error = "nothing took the file dropped on " + r.el + ": no file name shown and no file input holds it";
+  return r;
 }
 `;
 
@@ -3518,6 +3632,7 @@ if (!open) {
   pressFocus(wrap || ctl, input || ctl);
   s.opened = true;
 }
+s.openEl = wrap || ctl;
 window.__perch_select = s;
 return { pending: true };
 `,
@@ -3538,6 +3653,7 @@ const opt = bestMatch(opts, function (o) { return keys.get(o); }, wantN);
 if (opt) {
   s.picked = clip(textOf(opt), 80);
   s.pickedN = keys.get(opt);
+  s.optEl = opt;
   s.multi = isMulti(s, opt);
   if (chosenAlready(s, opt, s.pickedN)) s.already = true;
   else press(opt);
@@ -3598,15 +3714,22 @@ if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
 // Escape on a closed Downshift menu clears its selection, so only an open one gets it.
 if (s.opened && stillOpen(s)) escapeOwn(s);
 if (s.disabled) return { ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands };
-if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty; click it with trusted:true, then select again", candidates: [] };
+if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [] };
 return { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands };
 `,
 
+  // select {trusted}: whether the synthetic open showed the control's own list.
+  select_open: SELECT_LIB + String.raw`
+const s = window.__perch_select;
+return !!s && stillOpen(s);
+`,
+
   // Until the control shows the choice: null (keep polling); A.final reports anyway.
+  // A.keep leaves an open popup alone, so a pick that didn't show can still be clicked.
   select_read: SELECT_LIB + String.raw`
 const s = window.__perch_select;
 // A popup select opened and a pick left open (a multi-select) closes again.
-if (s.opened && !s.closed) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
+if (s.opened && !s.closed && !A.keep) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
 // An input's own value first: its wrapper may hold only its label.
 const iv = (s.input && s.input.value) || "";
 const has = function (t) { return s.multi ? norm(t).indexOf(s.pickedN) >= 0 : norm(t) === s.pickedN; };
@@ -3713,56 +3836,112 @@ const P = typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
 return { ok: true, el: ident(r.el) };
 `,
 
-  file_upload: String.raw`
+  file_upload: UPLOAD_LIB + String.raw`
 const isFile = function (el) { return el.tagName === "INPUT" && (el.type || "").toLowerCase() === "file"; };
 const ext = "." + A.name.split(".").pop().toLowerCase(), mime = A.mime.toLowerCase();
 function fits(el) {
   const acc = attr(el, "accept").toLowerCase().split(",").map(function (s) { return s.trim(); }).filter(Boolean);
   return !acc.length || acc.some(function (a) { return a === ext || a === mime || (/\/\*$/.test(a) && mime.indexOf(a.slice(0, -1)) === 0); });
 }
+const words = function (el) { return [labelText(el), attr(el, "aria-label"), attr(el, "name"), el.id].join(" ").replace(/[_-]/g, " "); };
 // Accept fit first, then a resume/CV name; an autofill/parser input is someone else's field.
 function score(el) {
-  const w = [labelText(el), attr(el, "aria-label"), attr(el, "name"), el.id].join(" ").replace(/[_-]/g, " ");
+  const w = words(el);
   return (fits(el) ? 4 : 0) + (/resume|résumé|\bcv\b|curriculum/i.test(w) ? 2 : 0) - (/auto ?fill|pars(e|er|ing)|import/i.test(w) ? 3 : 0);
 }
-let input, many = false;
+const best = function (files) { return files.map(function (el, i) { return { el: el, s: score(el), i: i }; }).sort(function (a, b) { return b.s - a.s || a.i - b.i; })[0].el; };
+// A zone's own file input: one inside it, else the only one within 3 ancestors.
+function inputFor(z) {
+  const inner = deepAll("input[type=file]", z);
+  if (inner.length) return { input: best(inner), many: inner.length > 1 };
+  for (let p = z.parentElement, k = 0; p && k < 3 && p !== document.body; p = p.parentElement, k++) {
+    const f = p.querySelectorAll("input[type=file]");
+    if (f.length === 1) return { input: f[0] };
+    if (f.length > 1) break;
+  }
+  return {};
+}
+window.__perch_up = null;
+let input = null, zone = null, many = false;
 if (A.ref) {
   const r = resolveEl(A);
   if (r.out) return r.out;
-  input = r.el;
+  if (isFile(r.el)) input = r.el; else zone = r.el;
+} else if (A.label_pattern) {
+  const re = new RegExp(A.label_pattern, "i"), pat = "/" + A.label_pattern + "/i";
+  const files = deepAll("input[type=file]").filter(function (el) { return re.test(words(el)); });
+  if (files.length) { many = files.length > 1; input = best(files); }
+  else {
+    const hits = [];
+    const add = function (el) { if (el && hits.indexOf(el) < 0 && !/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(el.tagName) && vis(el)) hits.push(el); };
+    const tw = document.createTreeWalker(document.body, 4);
+    while (tw.nextNode()) if (re.test(tw.currentNode.nodeValue)) add(tw.currentNode.parentElement);
+    deepAll("[aria-label]").forEach(function (el) { if (re.test(attr(el, "aria-label"))) add(el); });
+    if (!hits.length) return { ok: false, error: "no file input or drop zone matched " + pat };
+    if (hits.length > 1) return { ok: false, ambiguous: true, error: "several elements matched " + pat + "; narrow it, or use a selector or ref", candidates: hits.slice(0, 8).map(ident) };
+    zone = hits[0];
+  }
 } else {
   const sel = A.selector || "input[type=file]";
   let all;
   try { all = deepAll(sel); } catch (e) { return { ok: false, error: "bad selector: " + sel }; }
-  if (!all.length) return { ok: false, error: "no element for selector " + sel };
+  if (!all.length) return { ok: false, error: "no element for selector " + sel + (A.selector ? "" : "; for a drop zone pass its selector, ref or label_pattern") };
   const files = all.filter(isFile);
-  if (!files.length) return { ok: false, error: "not an <input type=file>: " + ident(all[0]) };
-  many = files.length > 1;
-  input = files.map(function (el, i) { return { el: el, s: score(el), i: i }; }).sort(function (a, b) { return b.s - a.s || a.i - b.i; })[0].el;
+  if (files.length) { many = files.length > 1; input = best(files); } else zone = all[0];
 }
-if (!isFile(input)) return { ok: false, error: "not an <input type=file>: " + ident(input) };
-const who = ident(input) + (input.id ? " #" + input.id : "");
+if (zone) { const f = inputFor(zone); input = f.input || null; many = many || !!f.many; }
 const bin = atob(A.b64);
 const arr = new Uint8Array(bin.length);
 for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
 const file = new File([arr], A.name, { type: A.mime });
 const dt = new DataTransfer();
 dt.items.add(file);
+const out = { ok: true, name: file.name, size: file.size, type: file.type };
+const U = { dt: dt, zone: zone, input: null, obs: null, moved: false, names: 0 };
+if (!input) { U.names = nameCount(A.name); window.__perch_up = U; return Object.assign(out, dropOn(U)); }
+const who = ident(input) + (input.id ? " #" + input.id : "");
+// A hidden input that no form submits may have no handler reading it; a change
+// handler we can see, or any page change or completed fetch/XHR after change,
+// counts as handled, else Node falls back to a drop.
+const watch = !vis(input) && !(input.form && input.name) && typeof MutationObserver === "function";
+// Change handlers readable from this world: an onchange property, or the props
+// React (__reactProps$, __reactEventHandlers$ before 17) and Vue 3 (_vei) keep
+// on the element. An isolated world sees none of them.
+function heard(el) {
+  if (typeof el.onchange === "function") return true;
+  return Object.keys(el).some(function (k) {
+    const v = el[k];
+    return !!v && (/^__react(Props|EventHandlers)\$/.test(k) || k === "_vei") && typeof v.onChange === "function";
+  });
+}
+if (watch) {
+  U.names = nameCount(A.name);
+  U.net = upNet();
+  U.input = input;
+  U.obs = new MutationObserver(function () {});
+  U.obs.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+}
 // CSS-hidden inputs reject .files assignment; unhide with !important, then restore.
 const orig = { display: input.style.display, visibility: input.style.visibility, hidden: input.hidden };
 input.hidden = false;
 input.style.setProperty("display", "block", "important");
 input.style.setProperty("visibility", "visible", "important");
-const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
 input.files = dt.files;
 const set = has(input);
 let changed = false;
 input.addEventListener("change", function () { changed = true; }, { once: true });
 fire(input, ["change", "input", "blur"]);
 setTimeout(function () { input.hidden = orig.hidden; input.style.display = orig.display; input.style.visibility = orig.visibility; }, 150);
-const out = { ok: true, name: file.name, size: file.size, type: file.type };
 if (many) { out.ambiguous = true; out.el = who; }
-if (input.isConnected && has(input)) return out;
+if (input.isConnected && has(input)) {
+  if (watch) {
+    if (!U.zone) for (let p = input.parentElement, k = 0; p && k < 3 && p !== document.body; p = p.parentElement, k++) if (vis(p)) { U.zone = p; break; }
+    if (U.zone && !heard(input) && !uploadSeen(A.name, U)) { window.__perch_up = U; out.unwired = true; return out; }
+    U.obs.disconnect();
+  }
+  return out;
+}
+if (U.obs) U.obs.disconnect();
 if (!set || !changed) return Object.assign(out, { ok: false, error: "the input did not take the file: " + who });
 // Sites often swap or empty the input once their change handler has the file.
 if (!input.isConnected) out.detached = true; else out.cleared = true;
@@ -3771,10 +3950,22 @@ return out;
 `,
 
   // Polled from Node after a cleared/detached upload read shown:false: many sites
-  // render the file name on a later tick. null keeps polling.
-  file_upload_shown: String.raw`
-const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
+  // render the file name on a later tick. null keeps polling. A.up reads the
+  // drop state file_upload left instead.
+  file_upload_shown: UPLOAD_LIB + String.raw`
+const U = window.__perch_up;
+if (A.up) return (!!U && uploadSeen(A.name, U)) || null;
 return deepAll("input[type=file]").some(has) || textOf(document.body).indexOf(A.name) >= 0 || null;
+`,
+
+  // The fallback for a hidden input nothing reacted to: empty it, drop on its zone.
+  file_upload_drop: UPLOAD_LIB + String.raw`
+const U = window.__perch_up;
+if (!U || !U.zone || !U.zone.isConnected) return { ok: false, error: "the drop zone left the page" };
+if (U.obs) { U.obs.disconnect(); U.obs = null; }
+if (U.input && U.input.isConnected) U.input.files = new DataTransfer().files;
+U.input = null;
+return dropOn(U);
 `,
 
   // Chrome runs this in an isolated world, whose console the page never calls. A
@@ -3902,7 +4093,13 @@ return out;
   trusted_probe: String.raw`
 if (document.visibilityState === "hidden") return { ok: false, retry: "hidden" };
 let el;
-if (A.ref || A.selector || !A.forFill) {
+if (A.select) {
+  // select {trusted}: the control select pressed, or the option it picked (gone once its list closed).
+  const s = window.__perch_select;
+  if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
+  el = A.select === "option" ? s.optEl : s.openEl;
+  if (A.select === "option" && !(el && el.isConnected && vis(el))) return { ok: false, gone: true };
+} else if (A.ref || A.selector || !A.forFill) {
   const r = A.ref || A.selector ? resolveEl(A) : clickableByLabel(A);
   if (r.out) return r.out;
   el = r.el;
@@ -4065,6 +4262,17 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
 
   // What a frame click needs from the page: its URL and viewport.
   viewport: "return { url: location.href, iw: innerWidth, ih: innerHeight };",
+
+  // wait {quiet}: whether the page was busy since the last poll. With no state
+  // for this wait (A.id) it arms one and answers fresh: on the first poll, or on
+  // a new document.
+  wait_quiet: QUIET_LIB + String.raw`
+const s = window.__perch_quiet;
+if (s && s.id === A.id) return { busy: rbBusy(s) };
+rbStop(s);
+rbWatch({ id: A.id }, "__perch_quiet", A.life);
+return { fresh: true };
+`,
 
   wait_check: String.raw`
 const order = { loading: 0, interactive: 1, complete: 2 };
@@ -4295,19 +4503,36 @@ function uploadCap(abs, size) {
     : `file_upload: ${abs} is ${Math.ceil(size / 1024)}KB, over the 700KB cap without the osascript daemon (PERCH_DAEMON=0 or it failed to start)`;
   throw Object.assign(new Error(msg), { cap: true });
 }
+async function uploadShown(target, name, up) {
+  try {
+    await rt("wait", { target, js: pageFn("file_upload_shown", { name, up }), timeout: UPLOAD_SHOWN_WAIT, interval: 50 }, { lane: "slow" });
+    return true;
+  } catch { return false; }
+}
 async function fileUpload(args = {}) {
-  const { selector, ref, path, target } = args;
+  const { selector, ref, label_pattern, path, target } = args;
   if (!path) throw new Error("file_upload requires `path`");
+  if (label_pattern != null) {
+    if (ref || selector) throw new Error("file_upload: pass `label_pattern` alone, without `ref` or `selector`");
+    validateLabelPattern("file_upload", label_pattern);
+  }
   const { abs, data } = await readUserFile(path, undefined, uploadCap);
   const name = abs.split("/").pop();
   const mime = MIME_BY_EXT[name.split(".").pop().toLowerCase()] || "application/octet-stream";
-  const r = await runPage("file_upload", "file_upload", { selector, ref, b64: data.toString("base64"), name, mime }, target);
-  if (!r || r.ok !== true || r.shown !== false) return r;
-  // Best effort: the file is already on the page, so a failed poll leaves shown:false.
-  try {
-    await rt("wait", { target, js: pageFn("file_upload_shown", { name }), timeout: UPLOAD_SHOWN_WAIT, interval: 50 }, { lane: "slow" });
+  let r = await runPage("file_upload", "file_upload", { selector, ref, label_pattern, b64: data.toString("base64"), name, mime }, target);
+  // A hidden input nothing reacted to within the wait gets a drop on its zone instead.
+  if (r && r.unwired) {
+    delete r.unwired;
+    if (await uploadShown(target, name, true)) return r;
+    r = { ...r, ...(await runPage("file_upload", "file_upload_drop", { name }, target)) };
+  }
+  if (!r || r.shown !== false || !(r.ok === true || r.dropped)) return r;
+  // Best effort: an input already holds the file, so a failed poll leaves shown:false.
+  // A drop nothing showed stays {ok:false}.
+  if (await uploadShown(target, name, !!r.dropped)) {
     r.shown = true;
-  } catch {}
+    if (r.dropped) { r.ok = true; delete r.error; }
+  }
   return r;
 }
 
@@ -4474,16 +4699,20 @@ const pickSuggestion = (target) => rt("select", {
 }, { lane: "slow" });
 
 async function select(args = {}) {
-  const { ref = null, selector = null, label_pattern = null, text = null, target } = args;
+  const { ref = null, selector = null, label_pattern = null, text = null, trusted = false, target } = args;
   if (text == null) throw new Error("select requires `text` (the option to choose)");
   if (!ref && !selector && !label_pattern) throw new Error("select requires `ref`, `selector`, or `label_pattern`");
   if (label_pattern) validateLabelPattern("select", label_pattern);
-  const A = { ref, selector, label_pattern, text: String(text) };
+  const A = { ref, selector, label_pattern, text: String(text), ...(trusted ? { trusted: true } : {}) };
   const step = (name, extra = {}) => pageFn(name, { ...A, ...extra });
   return rt("select", {
     target,
     start: step("select_start"), pick: step("select_pick"), miss: step("select_miss"),
     read: step("select_read"), readFinal: step("select_read", { final: true }),
+    ...(trusted ? { trusted: {
+      open: step("select_open"), keep: step("select_read", { keep: true }), check: pageFn("trusted_check", {}),
+      control: pageFn("trusted_probe", { select: "control" }), option: pageFn("trusted_probe", { select: "option" }),
+    } } : {}),
   }, { lane: "slow" });
 }
 
@@ -4522,10 +4751,11 @@ const TOOLS = [
     awaitPromise: { type: "boolean", description: "Await async code (30s cap)." },
     target: TARGET,
   }),
-  tool("wait", "Wait until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`).", {
+  tool("wait", "Wait until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`), or `quiet`.", {
     selector: SEL,
     readyState: { type: "string", enum: ["loading", "interactive", "complete"], description: "Default complete." },
     expression: { type: "string" },
+    quiet: { type: "number", description: "ms with no DOM change or fetch/XHR finishing: {ok,waited,quietFor}." },
     timeout: { type: "number", description: "ms, default 10000." },
     target: TARGET,
   }),
@@ -4560,10 +4790,11 @@ const TOOLS = [
     subtitle: { type: "string" },
     sound: { type: "string", description: "Default Glass." },
   }, ["message"]),
-  tool("file_upload", "Put a local file on an <input type=file> without the bytes entering context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). detached/cleared: the site took the file. {ok:false}: hand off, don't retry.", {
+  tool("file_upload", "Put a local file on an <input type=file> without the bytes entering context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. {ok:false}: hand off, don't retry.", {
     path: { type: "string" },
     ref: REF,
     selector: SEL,
+    label_pattern: { type: "string", description: "Regex over a file input's label or a drop zone's text." },
     target: TARGET,
   }, ["path"]),
   tool("click", "Click by ref/selector/label_pattern (el.click(); ties refuse); `hover` fires hover events instead. `trusted`: real click without focus (needs Accessibility), `raise:true` in the foreground; check `hit`. Only trusted takes screen `x`/`y`.", {
@@ -4597,11 +4828,12 @@ const TOOLS = [
     raise: { type: "boolean" },
     target: TARGET,
   }),
-  tool("select", "Choose an option in a native <select> or custom combobox (react-select, Downshift, cmdk), from that control's own list only, and read back what's shown. Exact text or value, then whole word, then word prefix. A miss returns the control's options as `candidates`; `text:\"\"` just lists them.", {
+  tool("select", "Choose an option in a native <select> or custom combobox (react-select, Downshift, cmdk), from that control's own list only, and read back what's shown. Exact text or value, then whole word, then word prefix. A miss returns the control's options as `candidates`; `text:\"\"` just lists them. `trusted`: a control that won't open gets a real click (shown tab; check `trusted`).", {
     text: { type: "string" },
     ref: REF,
     selector: SEL,
     label_pattern: LABEL,
+    trusted: { type: "boolean" },
     target: TARGET,
   }, ["text"]),
 ];
