@@ -12,14 +12,14 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 
 | Tool | Use |
 |---|---|
-| `list_tabs` | `{tabs:[{app,tabId,url,title,active?}], total}`, 50 rows by default. `active`: the tab its window shows. Filter with `app`, `urlContains`, `titleContains`. |
+| `list_tabs` | `{tabs:[{app,tabId,url,title,active?}], total}`. `active`: the tab its window shows. Filter with `app`, `urlContains`, `titleContains`. |
 | `new_tab` | Unselected tab in a running browser, default the one in use. May focus the browser; defer while the user works. Returns `{app,tabId}`. |
 | `activate_tab` | Raise a tab and its window. |
 | `close_tab` | Close a tab by its required `tabId`. Refuses a window's last tab; never changes focus. |
 | `navigate` | Load a URL and wait for the new page. Returns the tab's current `tabId`; use it from then on. `waited:false`: load not confirmed. |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path`: a local file, run before `script` if both. `awaitPromise` for real async. |
-| `wait` | Until `selector` exists and `readyState` is reached, or `expression` is truthy (returned as `value`). |
-| `screenshot` | On-screen window image without raising it, plus `{window, image}`: `screenX = window.x + imageX * window.w / image.w`. Not for minimized windows. |
+| `wait` | Until `selector` exists at `readyState`, `expression` is truthy (as `value`), or `quiet` ms pass with no DOM change or fetch/XHR end. |
+| `screenshot` | On-screen window image without raising it, plus `{window, image}`: `screenX = window.x + imageX * window.w / image.w`. |
 | `get_text` | innerText, or outerHTML with `html: true`. Paged by `offset` / `maxChars`. |
 | `accessibility_snapshot` | Page outline with refs (below), open shadow roots included. Filter with `role` or `query` (regex per line); `max: 0`: header only. |
 | `console_capture` | `start`, `read` drains `"level: text"`, `stop` restores; navigation clears it. `network` drains finished requests as `"status type ms size url"`. |
@@ -54,7 +54,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 ## Gotchas
 
 - **Page globals may be invisible.** Some browsers eval in an isolated world: read page state through the DOM.
-- **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait`.
+- **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait` (`quiet` to let it settle).
 - **Return summaries, not state.**
 - **Dialogs.** A call stuck behind a page's alert/confirm/prompt fails in ~3s with `dialog_open`. Answer with `press {key:"Enter"|"Escape", dialog:true, target:{tabId}}` (a string fills a prompt), no raise, then re-read the page. Only the tab's own JS dialog is answered; other browser prompts go to the user.
 
