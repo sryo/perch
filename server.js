@@ -2488,7 +2488,9 @@ function fillOne(a) {
 // click {readback}: the pre-click text, state and url live on window.__perch_rb until read.
 // The state catches toggles that change no text: ARIA flags, disabled and the
 // checked/selected/value of controls on the element and its first 50
-// descendants. Classes stay out: hover, focus and animation flip them.
+// descendants. Classes count only when they are state names (not hover, focus
+// or animation ones) and still hold on the next poll, so transient effects
+// don't pass for a change.
 const READBACK_LIB = String.raw`
 function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
 function rbSig() {
@@ -2503,8 +2505,18 @@ function rbSig() {
     return JSON.stringify(f);
   }).join("|");
 }
+function rbCls() {
+  const n = document.querySelector(A.readback);
+  if (!n) return null;
+  const els = [n].concat(Array.prototype.slice.call(n.querySelectorAll("*"), 0, 50));
+  return els.map(function (el) {
+    return String(el.getAttribute("class") || "").split(/\s+/).filter(function (c) {
+      return c && !/hover|focus|anim|transition|ripple|spin/i.test(c);
+    }).sort().join(" ");
+  }).join("|");
+}
 function rbArm() {
-  try { window.__perch_rb = { text: rbText(), sig: rbSig(), url: location.href }; }
+  try { window.__perch_rb = { text: rbText(), sig: rbSig(), cls: rbCls(), url: location.href }; }
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
   return null;
 }
@@ -2648,12 +2660,12 @@ const m = taMatch(opts, s.text);
 const opt = m.hits.length === 1 || m.exact ? m.hits[0] : null;
 if (!opt) {
   if (opts.length) { s.cands = opts.slice(0, 8).map(function (o) { return clip(o.textContent, 60); }); s.tied = m.hits.length > 1; }
-  // A tie in a list unchanged since the last poll is settled: waiting longer
-  // won't break it, so the miss runs now ({settled}).
+  // A tie in a list unchanged for 8 polls (about 400ms, past a typical
+  // debounce that shows a stale list) is settled, so the miss runs now ({settled}).
   const sig = s.tied ? opts.map(function (o) { return taNorm(o.textContent); }).join("\n") : null;
-  if (sig && sig === s.tieSig) return { settled: true };
+  s.tieN = sig && sig === s.tieSig ? (s.tieN || 0) + 1 : 0;
   s.tieSig = sig;
-  return null;
+  return sig && s.tieN >= 8 ? { settled: true } : null;
 }
 s.picked = clip(opt.textContent, 80);
 s.pickedN = taNorm(opt.textContent);
@@ -2862,7 +2874,11 @@ if (!s) {
   return { readback: text, changed: true, navigated: true, url: location.href };
 }
 const moved = location.href !== s.url;
-const changed = moved || text !== s.text || rbSig() !== s.sig;
+// A class change must still be there on the next poll.
+const cls = rbCls();
+const clsMoved = cls !== s.cls && cls === s.clsSeen;
+s.clsSeen = cls !== s.cls ? cls : null;
+const changed = moved || text !== s.text || rbSig() !== s.sig || clsMoved;
 if (!changed && !A.final) return null;
 delete window.__perch_rb;
 const out = { readback: text, changed: changed };

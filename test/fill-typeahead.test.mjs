@@ -455,6 +455,20 @@ test("typeahead: several suggestions equally matching the text pick nothing and 
   }
 });
 
+test("typeahead: a tie that holds through a debounce still waits for the fresh list", async () => {
+  // The tied list sits unchanged for several polls (a stale list during a
+  // debounce) before the exact suggestion arrives.
+  const { dom } = onPage(ACCENT_HTML(true), ACCENT_JS + `
+    inp.addEventListener('input', () => { later(() => {
+      ul.insertAdjacentHTML('beforeend', '<div role=option>Cordoba</div>');
+      ul.lastChild.addEventListener('click', () => { window.picks.push('Cordoba'); document.querySelector('.select__single-value').textContent = 'Cordoba'; hid.value = 'Cordoba'; inp.value = ''; ul.innerHTML = ''; });
+    }, 8); });`);
+  const o = await fill({ selector: "#city", text: "Cordoba" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Cordoba");
+  assert.deepEqual([...dom.picks], ["Cordoba"]);
+});
+
 test("typeahead: a tie in a list still growing waits for the list to settle", async () => {
   const { dom } = onPage(ACCENT_HTML(true), ACCENT_JS + `
     const add = (t) => {

@@ -169,6 +169,22 @@ test("readback ignores class flips from hover, focus or animation", async () => 
   assert.ok(world.clock.t - t0 >= 1900, "waited out the settle");
 });
 
+test("readback sees a lasting state class such as active or open", async () => {
+  onPage(`<button id=b>Go</button><div id=t><span class=tab>One</span></div>`,
+    `document.getElementById('b').addEventListener('click', () => { document.querySelector('#t .tab').classList.add('active'); });`);
+  assert.equal((await click({ selector: "#b", readback: "#t" })).changed, true);
+});
+
+test("readback ignores a state class that is gone by the next poll", async () => {
+  const { dom } = onPage(`<button id=b>Go</button><div id=t><span class=tab>One</span></div>`,
+    `document.getElementById('b').addEventListener('click', () => { document.querySelector('#t .tab').classList.add('open'); });`);
+  // The class shows for one poll only, like a transient effect.
+  let polls = 0;
+  const orig = dom.eval.bind(dom);
+  dom.eval = (js) => { if (js.includes("__perch_rb") && ++polls === 3) dom.document.querySelector("#t .tab").classList.remove("open"); return orig(js); };
+  assert.equal((await click({ selector: "#b", readback: "#t" })).changed, false);
+});
+
 test("readback sees an element becoming disabled", async () => {
   onPage(`<div id=t><button id=b>Send</button></div>`, `document.getElementById('b').addEventListener('click', (e) => { e.currentTarget.disabled = true; });`);
   assert.equal((await click({ selector: "#b", readback: "#t" })).changed, true);
