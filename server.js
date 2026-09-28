@@ -87,11 +87,13 @@ function jxaRuntime(BROWSERS) {
   // Chromium handle -> {w: window position, id: the tab's native id}, learned
   // from list_tabs, new_tab and resolve. `windows[w].tabs.byId(id)` pins the
   // exact tab, so a wrong hint can only miss (errAENoSuchObject), never mis-target.
-  let hints = {}, hintCount = 0;
+  // Arc's go to `arcHints`, and only for a window that showed the tab: Arc windows
+  // share tabs, so a hint counts only while `windows[w].activeTab.id()` is the tab.
+  let hints = {}, arcHints = {}, hintCount = 0;
   function hint(name, id, w) {
-    if (KIND[name] !== "chrome" || id == null) return;
-    if (++hintCount > 5000) { hints = {}; hintCount = 0; }
-    hints[handle(name, id)] = { w: w, id: id };
+    if ((KIND[name] !== "chrome" && KIND[name] !== "arc") || id == null) return;
+    if (++hintCount > 5000) { hints = {}; arcHints = {}; hintCount = 0; }
+    (KIND[name] === "arc" ? arcHints : hints)[handle(name, id)] = { w: w, id: id };
   }
 
   // One CGWindowList read replaces System Events: z-order of on-screen browsers,
@@ -169,6 +171,14 @@ function jxaRuntime(BROWSERS) {
       } catch (e) {}
       delete hints[want.tabId];
     }
+    // A hinted Arc window that still shows the tab: one event, and no isActive later.
+    const ah = want.windowId == null && arcHints[want.tabId];
+    if (ah && alive(want.app, P)) {
+      const win = app(want.app).windows[ah.w];
+      let shown = null; try { shown = win.activeTab.id(); } catch (e) {}
+      if (shown != null && String(shown) === key) return { tab: win.tabs.byId(ah.id), idx: null, tabId: ah.id, kind: "arc", app: want.app, win, w: ah.w, P, shown: true };
+      delete arcHints[want.tabId];
+    }
     for (const name of candidates(P, want.app)) {
       const a = app(name), kind = KIND[name];
       if (kind === "safari") continue;
@@ -186,9 +196,10 @@ function jxaRuntime(BROWSERS) {
         const i = ids.map(String).indexOf(key);
         if (i < 0) continue;
         const t = { tab: win.tabs.byId(ids[i]), idx: i, tabId: ids[i], kind, app: name, win, w, P };
+        if (kind === "arc" && !isActive(t)) { if (!fallback) fallback = t; continue; }
+        if (kind === "arc") t.shown = true;
         hint(name, ids[i], w);
-        if (kind !== "arc" || isActive(t)) return t;
-        if (!fallback) fallback = t;
+        return t;
       }
       if (fallback) return fallback;
     }
@@ -238,7 +249,16 @@ function jxaRuntime(BROWSERS) {
       // A bare id (from before handles) is searched across browsers, narrowed by `app`.
       return resolveById({ tabId: want.tabId, raw: h ? h.raw : String(want.tabId), app: h ? h.app : want.app, windowId: want.windowId }, P);
     }
-    for (const name of candidates(P, want.app)) {
+    const names = candidates(P, want.app);
+    // The front window's shown tab in one event; a window showing no tab (or no
+    // window) falls through to the walk.
+    if (want.windowId == null && want.tabIndex == null && (KIND[names[0]] === "chrome" || KIND[names[0]] === "arc")) {
+      try {
+        const win = app(names[0]).windows[0], id = win.activeTab.id();
+        if (id != null) return { tab: win.tabs.byId(id), idx: null, tabId: id, kind: KIND[names[0]], app: names[0], win, w: 0, P, shown: true };
+      } catch (e) {}
+    }
+    for (const name of names) {
       const a = app(name), kind = KIND[name];
       let n;
       try { n = a.windows.length; } catch (e) { continue; }
@@ -275,7 +295,9 @@ function jxaRuntime(BROWSERS) {
   }
 
   // Chrome tabs have no `index` property (it throws), so positions come from resolve.
+  // `shown`: resolve just read the tab as its window's shown tab.
   function isActive(t) {
+    if (t.shown) return true;
     try {
       if (t.kind === "chrome") {
         if (t.tabId != null) return String(t.win.activeTab.id()) === String(t.tabId);
@@ -316,11 +338,42 @@ function jxaRuntime(BROWSERS) {
   function visibleGuard(t, tool) {
     if (t.kind !== "arc") return;
     if (!isActive(t)) throw new Error(notVisible(tool));
+    if (!t.pageOk) arcPageGuard(t, tool);
+  }
+  function arcPageGuard(t, tool) {
+    if (t.kind !== "arc") return;
     let url = ""; try { url = t.tab.url(); } catch (e) {}
     if (/^arc:/i.test(url)) throw new Error("tab_not_scriptable: " + tool + " can't run on the browser's own pages (new tab, settings); navigate the tab to a web page first");
+    t.pageOk = true;
+  }
+
+  // For tools that only run page JS: a hinted Chromium handle costs no Apple
+  // Event here, and its first execute re-resolves once if the tab is gone from
+  // that window (exec). Anything else resolves and is guarded as usual.
+  function pageTarget(want, tool) {
+    const hn = want && want.windowId == null && want.tabId != null && hints[want.tabId];
+    if (hn) {
+      const name = parseHandle(want.tabId).app, P = procs();
+      if (alive(name, P)) {
+        const win = app(name).windows[hn.w];
+        return { tab: win.tabs.byId(hn.id), idx: null, tabId: hn.id, kind: "chrome", app: name, win, w: hn.w, P, lazy: want };
+      }
+    }
+    const t = resolve(want);
+    visibleGuard(t, tool);
+    return t;
   }
 
   function exec(t, js) {
+    if (t.lazy) {
+      const want = t.lazy;
+      t.lazy = null;
+      try { return exec(t, js); } catch (e) {
+        if (!noSuchObject(e)) throw e;
+        delete hints[want.tabId];
+        Object.assign(t, resolve(want));
+      }
+    }
     if (t.kind === "safari") {
       try { return app(t.app).doJavaScript(js, { in: t.tab }); }
       catch (e) { if (!isActive(t)) throw new Error(notVisible("page JS")); throw e; }
@@ -392,12 +445,15 @@ function jxaRuntime(BROWSERS) {
     return ObjC.unwrap(d.stringValue);
   }
 
+  function pollValue(r) {
+    try { return r != null && r !== "" ? JSON.parse(String(r)) : null; } catch (e) { return null; }
+  }
   // Re-runs `js` (which returns a JSON string) until it yields non-null/non-false.
   function poll(t, js, timeout, interval) {
     const start = Date.now();
     for (;;) {
       let v = null;
-      try { const r = exec(t, js); if (r != null && r !== "") v = JSON.parse(String(r)); } catch (e) {}
+      try { v = pollValue(exec(t, js)); } catch (e) {}
       if (v !== null && v !== false) return { value: v, waited: Date.now() - start };
       if (Date.now() - start >= timeout) return null;
       delay(interval / 1000);
@@ -468,6 +524,7 @@ function jxaRuntime(BROWSERS) {
   // Resolves the target for trusted input: permission, optional foreground, ids.
   function trustedTarget(a, what) {
     const t = resolve(a.target);
+    arcPageGuard(t, what || "trusted input");
     requireAccessibility();
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
     else if (!isActive(t)) throw new Error(what ? notVisible(what) : notVisible("a background trusted click") + ", or pass raise:true");
@@ -1257,17 +1314,25 @@ function jxaRuntime(BROWSERS) {
       return exec(t, a.js);
     },
     evalAsync(a) {
-      const t = resolve(a.target);
-      visibleGuard(t, "eval_js");
+      const t = pageTarget(a.target, "eval_js");
       exec(t, a.kick);
       const r = poll(t, a.poll, a.timeout, 50);
       if (!r) throw new Error("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms; background tabs throttle timers, so avoid page sleeps or activate the tab");
       return r.value;
     },
+    // One event when the page is already there; then polls every 50ms.
     wait(a) {
-      const t = resolve(a.target);
-      visibleGuard(t, "wait");
-      const r = poll(t, a.js, a.timeout, a.interval || 150);
+      const start = Date.now(), interval = a.interval || 50;
+      let q = null, r = null;
+      try { q = quickExec(a.target, a.js); } catch (e) {}
+      const v = q && pollValue(q.v);
+      if (v != null && v !== false) r = { value: v, waited: 0 };
+      else {
+        const t = pageTarget(a.target, "wait");
+        if (q) delay(interval / 1000);
+        r = poll(t, a.js, Math.max(0, a.timeout - (Date.now() - start)), interval);
+        if (r) r.waited = Date.now() - start;
+      }
       if (!r) throw new Error("timeout: wait timed out after " + a.timeout + "ms");
       if (r.value && r.value.__perch_error) throw new Error("wait: " + r.value.__perch_error);
       return r;
@@ -1281,7 +1346,7 @@ function jxaRuntime(BROWSERS) {
       // Each page-JS call gets at most NAV_EXEC_SECS, and never more than the time
       // left, so one unanswered execute can't carry navigate past its timeout.
       const run = function (js) { return execWithin(t, js, Math.max(0.1, Math.min(NAV_EXEC_SECS, (deadline - Date.now()) / 1000))); };
-      const canEval = t.kind !== "arc" || isActive(t);
+      let canEval = t.kind !== "arc" || isActive(t);
       const token = "n" + Date.now() + Math.random().toString(36).slice(2, 6);
       // The page resolves the url against its own location, so a #fragment change is
       // recognized as same-document even when the two spellings differ.
@@ -1290,7 +1355,14 @@ function jxaRuntime(BROWSERS) {
       // javascript: or browser URLs that way.
       const fromPage = /^(https?:\/\/|about:blank$)/i.test(a.url);
       let r = null, wasLoading = false, preUrl = null;
-      if (canEval && t.kind !== "safari") { try { wasLoading = t.tab.loading(); preUrl = String(t.tab.url()); } catch (e) {} }
+      if (canEval && t.kind !== "safari") {
+        try { wasLoading = t.tab.loading(); } catch (e) {}
+        try { preUrl = String(t.tab.url()); } catch (e) {}
+      }
+      // Arc's execute hangs on its own arc: pages, so no page JS runs on one: none
+      // before the tab has left it (an unreadable url counts), none when going to one.
+      const arcPage = t.kind === "arc" && canEval && (preUrl == null || /^arc:/i.test(preUrl) || /^arc:/i.test(a.url));
+      if (arcPage) canEval = false;
       if (canEval) {
         const q = JSON.stringify(a.url);
         const stamp = "(function(){var s='stamped';try{var u=new URL(" + q + ",location.href);" +
@@ -1316,7 +1388,19 @@ function jxaRuntime(BROWSERS) {
       };
       if (!viaPage) t.tab.url = a.url;
       if (/^same/.test(r || "")) return result(true);
-      if (!canEval) return result(false);
+      // Until the url commits the tab still reads arc:. Arc can drop a url set while
+      // its new-tab page is loading, so it is set once more after a second.
+      const leftArcPage = function () {
+        if (/^arc:/i.test(a.url)) return false;
+        for (let i = 0; Date.now() < deadline; i++) {
+          let u = null; try { u = t.tab.url(); } catch (e) {}
+          if (u != null && !/^arc:/i.test(u)) return true;
+          if (i === 20) { try { t.tab.url = a.url; } catch (e) {} }
+          delay(0.05);
+        }
+        return false;
+      };
+      if (!canEval && !(arcPage && leftArcPage())) return result(false);
       const check = "(function(){try{return JSON.stringify(window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete')}catch(e){return 'false'}})()";
       const start = Date.now();
       // Page JS sent before the new document commits may never be answered, and
@@ -1342,7 +1426,7 @@ function jxaRuntime(BROWSERS) {
           try { idle = t.tab.loading() ? 0 : idle + 1; } catch (e) {}
           if (idle >= 2) { let u = preUrl; try { u = String(t.tab.url()); } catch (e) {} return result(preUrl != null && u !== preUrl); }
         }
-        delay(0.1);
+        delay(0.05);
       }
       return result(false);
     },
@@ -1445,8 +1529,7 @@ function jxaRuntime(BROWSERS) {
       return I;
     },
     select(a) {
-      const t = resolve(a.target);
-      visibleGuard(t, a.tool || "select");
+      const t = pageTarget(a.target, a.tool || "select");
       // No start: the caller's own page call already opened the control.
       const r = a.start ? parseExec(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
@@ -1463,8 +1546,7 @@ function jxaRuntime(BROWSERS) {
     },
     // Plain click with readback: click (arming the pre-click text), then poll.
     click(a) {
-      const t = resolve(a.target);
-      visibleGuard(t, "click");
+      const t = pageTarget(a.target, "click");
       const r = parseExec(t, a.click);
       if (!r || r.ok !== true) return r;
       return Object.assign(r, readback(t, a));
