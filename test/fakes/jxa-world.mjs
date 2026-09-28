@@ -13,6 +13,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   const clock = { t: 1_000_000 };
   const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [], shots: [] };
   const cgEntries = cg.map((entry) => ({ ...entry }));
+  const twinOf = (name) => (state.twins || []).find((x) => x.name === name);
   const posted = [];
   const counts = {}, geom = {};
   const aeLog = [];
@@ -352,6 +353,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       Object.defineProperty(err, 0, { get: () => { state.segv = true; throw new Error("SEGV: read a freed error Ref"); } });
       return { isNil: () => true };
     };
+    // A second instance of the app (state.twins) takes AppleScript's by-name
+    // `tell`; it has none of the user's tabs, so the execute fails at once.
+    if (twinOf(appName)) return nil();
     const wins = winsByApp[appName] || [];
     const w = winIndex != null ? wins[Number(winIndex) - 1] : wins.find((x) => String(x.spec.id) === winId);
     const tab = w && w.tabs.find((x) => String(x.spec.id) === tabId);
@@ -536,6 +540,16 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       CGEventGetLocation: () => ({ ...state.cursor }),
       CGWarpMouseCursorPosition: (pt) => { state.cursor = { x: pt.x, y: pt.y }; state.warps.push({ x: pt.x, y: pt.y }); },
       NSDictionary: { dictionaryWithObjectForKey: () => ({}) },
+      // state.twins: [{name, bundle, pid, policy?}], second instances of a browser.
+      // Every process is a regular app (activation policy 0) except a twin, which
+      // defaults to 2 (prohibited: a headless instance, no Dock icon).
+      NSRunningApplication: {
+        runningApplicationsWithBundleIdentifier: (bundle) => ({ count: 1 + (state.twins || []).filter((x) => x.bundle === bundle).length }),
+        runningApplicationWithProcessIdentifier: (pid) => {
+          const x = (state.twins || []).find((y) => y.pid === pid);
+          return { isNil: () => false, activationPolicy: x ? x.policy ?? 2 : 0 };
+        },
+      },
       NSAppleScript: { alloc: { initWithSource: (src) => ({ executeAndReturnError: (err) => runAppleScript(src, err) }) } },
       NSString: { stringWithString: (str) => nsString(str) },
       AXIsProcessTrusted: () => state.ax,

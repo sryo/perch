@@ -37,13 +37,14 @@ const BROWSERS = [
 function jxaRuntime(BROWSERS) {
   ObjC.import("CoreGraphics");
   ObjC.import("Foundation");
-  const KIND = {}, KEY = {}, BY_KEY = {};
-  BROWSERS.forEach((b) => { KIND[b.app] = b.kind; KEY[b.app] = b.key; BY_KEY[b.key] = b.app; });
+  const KIND = {}, KEY = {}, BY_KEY = {}, BUNDLE = {};
+  BROWSERS.forEach((b) => { KIND[b.app] = b.kind; KEY[b.app] = b.key; BY_KEY[b.key] = b.app; BUNDLE[b.app] = b.bundle; });
 
   // Errors start with a stable, browser-neutral code that clients branch on.
   const notVisible = (what) => "tab_not_visible: " + what + " needs the tab its window shows; activate_tab (takes focus) or retry later";
   const OFFSCREEN = "window_offscreen: the browser window isn't on screen (minimized or on another Space)";
   const AMBIGUOUS = "window_ambiguous: another window of this browser has the same frame, so perch can't tell which is the target's; move or resize one";
+  const TWINS = "window_ambiguous: two instances of this browser have windows on screen, so perch can't tell which is the target's; quit the other one";
 
   // Tab handles are opaque to clients: "<key>:<raw id>". Chromium ids are
   // per-process counters, so the key keeps two Chromium apps from colliding.
@@ -99,9 +100,22 @@ function jxaRuntime(BROWSERS) {
   // One CGWindowList read replaces System Events: z-order of on-screen browsers,
   // the frontmost app, pids and CGWindowIDs. ~4ms vs ~60ms for a System Events
   // `frontmost` query, and it needs no extra permission.
+  // A browser's CG windows go by owner name, which a second instance of the same
+  // app shares (another tool's headless copy). Only a regular app (activation
+  // policy 0, a Dock icon) is the user's; a pid's policy is read once, over ObjC.
+  const userPid = {};
+  function isUserPid(pid) {
+    if (!(pid in userPid)) {
+      let ok = true;
+      try { const a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid); ok = a.isNil() || Number(a.activationPolicy) === 0; } catch (e) {}
+      userPid[pid] = ok;
+    }
+    return userPid[pid];
+  }
   function procs() {
     // `byPid` keeps every layer-0 window of a pid, small ones too, front to back.
-    const out = { front: null, frontPid: null, frontWid: null, z: [], pid: {}, wins: {}, byPid: {} };
+    // `dupe[owner]`: windows of two regular instances, which geometry can't separate.
+    const out = { front: null, frontPid: null, frontWid: null, z: [], pid: {}, wins: {}, byPid: {}, dupe: {} };
     let list = [];
     try { list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || []; } catch (e) {}
     for (const w of list) {
@@ -110,8 +124,10 @@ function jxaRuntime(BROWSERS) {
       (out.byPid[w.kCGWindowOwnerPID] = out.byPid[w.kCGWindowOwnerPID] || []).push({ wid: w.kCGWindowNumber, x: b.X, y: b.Y, w: b.Width, h: b.Height });
       if (b.Width < 100 || b.Height < 100) continue;
       const owner = w.kCGWindowOwnerName;
+      if (KIND[owner] && !isUserPid(w.kCGWindowOwnerPID)) continue;
       if (out.front === null) { out.front = owner; out.frontPid = w.kCGWindowOwnerPID; out.frontWid = w.kCGWindowNumber; }
       if (!KIND[owner]) continue;
+      if (out.wins[owner] && out.pid[owner] !== w.kCGWindowOwnerPID) out.dupe[owner] = true;
       if (!out.wins[owner]) { out.z.push(owner); out.pid[owner] = w.kCGWindowOwnerPID; out.wins[owner] = []; }
       out.wins[owner].push({ wid: w.kCGWindowNumber, name: w.kCGWindowName || "", x: b.X, y: b.Y, w: b.Width, h: b.Height });
     }
@@ -473,8 +489,19 @@ function jxaRuntime(BROWSERS) {
     if (d.isNil()) throw new Error(Date.now() - start >= secs * 900 ? NO_REPLY + secs + "s; the page may be navigating; retry" : "page JS failed");
     return ObjC.unwrap(d.stringValue);
   }
+  // AppleScript's `tell application "Name"` may reach another instance of the
+  // browser (another tool's headless copy), while JXA's Application(name) reaches
+  // the user's. With several running, the bounded path is off and page JS takes
+  // the plain one. One ObjC read per call, no Apple Event.
+  function soleInstance(t) {
+    if (t.solo == null) {
+      t.solo = true;
+      try { t.solo = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(BUNDLE[t.app]).count <= 1; } catch (e) {}
+    }
+    return t.solo;
+  }
   function execWithin(t, js, secs) {
-    if (t.kind !== "chrome" || t.tabId == null) return exec(t, js);
+    if (t.kind !== "chrome" || t.tabId == null || !soleInstance(t)) return exec(t, js);
     if (t.winId == null) t.winId = t.win.id();
     return asExecute(t, js, secs, "window id " + asQuote(t.winId));
   }
@@ -483,7 +510,7 @@ function jxaRuntime(BROWSERS) {
   // windows[N-1], the window the plain path's specifier names). A fast failure (a
   // raised window moved the tab's window, JS from Apple Events off) takes the
   // plain path, which re-finds a moved tab and reports the real error.
-  const pinned = function (t) { return t.kind === "chrome" && t.tabId != null && (t.winId != null || t.w != null); };
+  const pinned = function (t) { return t.kind === "chrome" && t.tabId != null && (t.winId != null || t.w != null) && soleInstance(t); };
   const namedWindow = function (t) { return t.winId != null ? "window id " + asQuote(t.winId) : "window " + (t.w + 1); };
   function pollExec(t, js, secs) {
     if (!pinned(t)) return exec(t, js);
@@ -549,6 +576,7 @@ function jxaRuntime(BROWSERS) {
   // only y and h may differ by the titlebar and toolbar. A minimized window has no
   // entry, and the nearest one is then another window.
   function ids(t) {
+    if (t.P.dupe && t.P.dupe[t.app]) throw new Error(TWINS);
     let geom = null;
     if (t.kind !== "arc") { try { const b = t.win.bounds(); geom = { x: b.x, y: b.y, w: b.width, h: b.height }; } catch (e) {} }
     const cands = t.P.wins[t.app] || [];
