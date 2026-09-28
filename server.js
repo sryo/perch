@@ -2390,11 +2390,23 @@ function fillOne(a) {
 }
 `;
 
-// click {readback}: the pre-click text and url live on window.__perch_rb until read.
+// click {readback}: the pre-click text, state and url live on window.__perch_rb until read.
+// The state catches toggles that change no text: ARIA flags, classes and the
+// checked/value of inputs on the element and its first 50 descendants.
 const READBACK_LIB = String.raw`
 function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
+function rbSig() {
+  const n = document.querySelector(A.readback);
+  if (!n) return null;
+  const els = [n].concat(Array.prototype.slice.call(n.querySelectorAll("*"), 0, 50));
+  return els.map(function (el) {
+    const f = ["aria-pressed", "aria-checked", "aria-selected", "aria-expanded", "class"].map(function (k) { return el.getAttribute(k); });
+    if (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA") f.push(el.checked, el.type === "password" ? el.value.length : el.value);
+    return JSON.stringify(f);
+  }).join("|");
+}
 function rbArm() {
-  try { window.__perch_rb = { text: rbText(), url: location.href }; }
+  try { window.__perch_rb = { text: rbText(), sig: rbSig(), url: location.href }; }
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
   return null;
 }
@@ -2695,7 +2707,7 @@ if (!s) {
   return { readback: text, changed: true, navigated: true, url: location.href };
 }
 const moved = location.href !== s.url;
-const changed = moved || text !== s.text;
+const changed = moved || text !== s.text || rbSig() !== s.sig;
 if (!changed && !A.final) return null;
 delete window.__perch_rb;
 const out = { readback: text, changed: changed };
