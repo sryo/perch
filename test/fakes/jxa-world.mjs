@@ -136,9 +136,18 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         return Object.assign(new Error("AppleEvent timed out."), { errorNumber: -1712 });
       };
       // An execute sent while an earlier script still holds the page's thread waits for it.
+      // state.lateRun: one that gives up waiting still runs once the thread frees.
       if (tab.busyUntil > clock.t) {
-        if (tab.busyUntil - clock.t >= limit) throw unanswered();
+        if (tab.busyUntil - clock.t >= limit) {
+          if (state.lateRun) (tab.queued = tab.queued || []).push(javascript);
+          throw unanswered();
+        }
         clock.t = tab.busyUntil;
+      }
+      if (tab.queued && tab.busyUntil <= clock.t) {
+        const q = tab.queued;
+        tab.queued = null;
+        q.forEach((js) => { spec.dom ? spec.dom.eval(js) : vm.runInContext(js, tab.page.ctx); });
       }
       settle();
       if (tab.pending && tab.pending.n-- <= 0) { tab.page = mk(tab.pending.url); tab.pending = null; }
@@ -164,6 +173,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       }
       // state.dropAfterAssign: the reply to the execute that started a navigation is lost.
       if (state.dropAfterAssign && tab.pending && tab.pending !== before) throw unanswered();
+      // state.failAfterRun: the next script runs, then the execute fails at once
+      // with an error that says nothing about whether it ran.
+      if (state.failAfterRun) { state.failAfterRun = false; throw new Error("Some other AppleScript error."); }
       afterExecute(spec);
       return b.kind === "arc" ? JSON.stringify(r) : r;
     };

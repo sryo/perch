@@ -483,9 +483,11 @@ function jxaRuntime(BROWSERS) {
   // windows[N-1], the window the plain path's specifier names). A fast failure (a
   // raised window moved the tab's window, JS from Apple Events off) takes the
   // plain path, which re-finds a moved tab and reports the real error.
+  const pinned = function (t) { return t.kind === "chrome" && t.tabId != null && (t.winId != null || t.w != null); };
+  const namedWindow = function (t) { return t.winId != null ? "window id " + asQuote(t.winId) : "window " + (t.w + 1); };
   function pollExec(t, js, secs) {
-    if (t.kind !== "chrome" || t.tabId == null || (t.winId == null && t.w == null)) return exec(t, js);
-    try { return asExecute(t, js, secs, t.winId != null ? "window id " + asQuote(t.winId) : "window " + (t.w + 1)); }
+    if (!pinned(t)) return exec(t, js);
+    try { return asExecute(t, js, secs, namedWindow(t)); }
     catch (e) { if (isNoReply(e)) throw e; }
     return exec(t, js);
   }
@@ -493,11 +495,25 @@ function jxaRuntime(BROWSERS) {
   // A step with side effects (opening, typing, pressing) is never sent twice: a
   // dropped reply may mean it ran and the page is leaving.
   const MAY_HAVE_RUN = "; it may have run, and the page may be navigating; retry after checking the page";
+  // A click handler may run long synchronously; a dropped reply costs at most this.
+  const CLICK_EXEC_SECS = 5;
+  // pollExec for steps. A fast failure's error is never read (see asExecute), so the
+  // step is resent on the plain path only when that failure proves it never ran:
+  // the tab is not in the window named (a raised window moved it), or page JS is
+  // off, which the plain probe reports as its own error. Anything else may have run.
   function stepExec(t, js, secs) {
-    try { return pollExec(t, js, secs); }
-    catch (e) { throw isNoReply(e) ? new Error(NO_REPLY + secs + "s" + MAY_HAVE_RUN) : e; }
+    if (!pinned(t)) return exec(t, js);
+    try { return asExecute(t, js, secs, namedWindow(t)); }
+    catch (e) { if (isNoReply(e)) throw new Error(NO_REPLY + secs + "s" + MAY_HAVE_RUN); }
+    if (!inNamedWindow(t)) return exec(t, js);
+    exec(t, "1");
+    throw new Error("timeout: page JS failed without a reply" + MAY_HAVE_RUN);
   }
-  const stepRead = function (t, js) { return JSON.parse(String(stepExec(t, js, POLL_EXEC_SECS))); };
+  function inNamedWindow(t) {
+    const w = t.winId != null ? app(t.app).windows.byId(t.winId) : app(t.app).windows[t.w];
+    try { w.tabs.byId(t.tabId).id(); return true; } catch (e) { if (noSuchObject(e)) return false; throw e; }
+  }
+  const stepRead = function (t, js, secs) { return JSON.parse(String(stepExec(t, js, secs || POLL_EXEC_SECS))); };
 
   function pollValue(r) {
     try { return r != null && r !== "" ? JSON.parse(String(r)) : null; } catch (e) { return null; }
@@ -511,7 +527,9 @@ function jxaRuntime(BROWSERS) {
     let cap = POLL_EXEC_SECS;
     for (;;) {
       let v = null;
-      const secs = Math.max(0.1, Math.min(cap, (timeout - (Date.now() - start)) / 1000));
+      // A step run gets the full cap even near the deadline: cutting it short would
+      // turn a pick that answered null in time into "may have run".
+      const secs = step ? POLL_EXEC_SECS : Math.max(0.1, Math.min(cap, (timeout - (Date.now() - start)) / 1000));
       try { v = pollValue(step ? stepExec(t, js, secs) : pollExec(t, js, secs)); } catch (e) {
         if (isStale(e) || (step && isNoReply(e))) throw e;
         if (isNoReply(e)) cap *= 2;
@@ -1753,7 +1771,7 @@ function jxaRuntime(BROWSERS) {
     // Plain click with readback: click (arming the pre-click text), then poll.
     click(a) {
       const t = pageTarget(a.target, "click");
-      const r = stepRead(t, a.click);
+      const r = stepRead(t, a.click, CLICK_EXEC_SECS);
       if (!r || r.ok !== true) return r;
       return Object.assign(r, readback(t, a));
     },
@@ -2157,14 +2175,18 @@ export function buildEvalWrapper(js) {
 }
 
 // AppleScript can't await, so async code stashes its outcome on window[key] and JXA polls it.
+// A poll never deletes the slot: one that gave up waiting can still run later, and
+// deleting there would read as a lost result. It lists the slot as read instead,
+// and the next kick sweeps read slots, so the normal path adds no Apple Event.
+const ASYNC_DONE = "window.__perch_async_done";
 function buildAsyncKickoff(js, key) {
   const k = JSON.stringify(key);
-  return `(function(){var __E=${ERROR_SHAPE};window[${k}]=0;(async function(){try{var __r=await (async function(){${js}\n})();window[${k}]={value:__r===undefined?null:__r}}catch(e){window[${k}]=__E(e)}})();return "1"})()`;
+  return `(function(){var __E=${ERROR_SHAPE};(${ASYNC_DONE}||[]).forEach(function(d){delete window[d]});${ASYNC_DONE}=[];window[${k}]=0;(async function(){try{var __r=await (async function(){${js}\n})();window[${k}]={value:__r===undefined?null:__r}}catch(e){window[${k}]=__E(e)}})();return "1"})()`;
 }
 
 function buildAsyncPoll(key) {
   const k = JSON.stringify(key);
-  return `(function(){var v=window[${k}];if(v===undefined)return '{"__perch_gone":1}';if(v===0)return "null";delete window[${k}];return JSON.stringify(v)})()`;
+  return `(function(){var v=window[${k}];if(v===undefined)return '{"__perch_gone":1}';if(v===0)return "null";var d=${ASYNC_DONE}=${ASYNC_DONE}||[];if(d.indexOf(${k})<0)d.push(${k});return JSON.stringify(v)})()`;
 }
 
 const parsePage = (raw) => { if (raw === "") return null; try { return JSON.parse(raw); } catch { return raw; } };

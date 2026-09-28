@@ -224,7 +224,7 @@ test("a select start whose reply is dropped is not run again", async () => {
   assert.equal(assigns(), 1);
 });
 
-test("a click whose reply is dropped ends coded within a second, clicked once", async () => {
+test("a click whose reply is dropped ends coded within the click's cap, clicked once", async () => {
   await install();
   world.state.dropWhilePending = false;
   world.state.dropAfterAssign = true;
@@ -234,8 +234,79 @@ test("a click whose reply is dropped ends coded within a second, clicked once", 
     click: `location.assign(${JSON.stringify(NEXT)}); JSON.stringify({ok: true})`,
     read: "JSON.stringify(null)", readFinal: "JSON.stringify({changed: false})", settle: 300,
   }), (e) => NO_RERUN.test(e.message));
-  assert.ok(world.clock.t - t0 <= 1200, `took ${world.clock.t - t0}ms`);
+  assert.ok(world.clock.t - t0 <= 5200, `took ${world.clock.t - t0}ms`);
   assert.equal(assigns(), 1);
+});
+
+const clickArgs = (click) => ({
+  target: { tabId: handle }, click,
+  read: "JSON.stringify(null)", readFinal: "JSON.stringify({changed: false})", settle: 300,
+});
+const COUNT_CLICK = "window.clicks = (window.clicks || 0) + 1; JSON.stringify({ok: true})";
+
+test("eval_js {awaitPromise}: a poll that gave up and runs late does not eat the result", async () => {
+  await install();
+  calm();
+  world.state.lateRun = true;
+  const { r, t } = await call("eval_js", {
+    script: "__busy(2500); await 0; return 7",
+    awaitPromise: true, timeout: 8000, target: { tabId: handle },
+  });
+  assert.equal(r.isError, undefined, t);
+  assert.equal(t, "7");
+});
+
+test("eval_js {awaitPromise}: the next call sweeps the slots earlier calls read", async () => {
+  await install();
+  calm();
+  for (const n of [1, 2]) assert.equal((await call("eval_js", { script: `return ${n}`, awaitPromise: true, target: { tabId: handle } })).t, String(n));
+  const left = Object.keys(world.page("Google Chrome", 1, 0)).filter((k) => /^__perch_async_/.test(k) && k !== "__perch_async_done");
+  assert.equal(left.length, 1, left.join());
+});
+
+test("a pick run near the deadline that answers null in time is a clean miss", async () => {
+  await install();
+  calm();
+  const out = rt("select", {
+    target: { tabId: handle }, wait: 500,
+    pick: "__busy(300); JSON.stringify(null)",
+    miss: "JSON.stringify({ok: false, error: 'miss'})",
+  });
+  assert.deepEqual(out, { ok: false, error: "miss" });
+});
+
+test("a click whose handler runs 1.5s synchronously answers", async () => {
+  await install();
+  calm();
+  const out = rt("click", clickArgs("__busy(1500); " + COUNT_CLICK));
+  assert.equal(out.ok, true);
+  assert.equal(world.page("Google Chrome", 1, 0).clicks, 1);
+});
+
+test("a click whose window was raised is resent on the plain path, once, to the right tab", async () => {
+  await install();
+  calm();
+  world.run(`Application("Google Chrome").windows[1].index = 1`);
+  const out = rt("click", clickArgs(COUNT_CLICK));
+  assert.equal(out.ok, true);
+  assert.equal(world.page("Google Chrome", 0, 0).clicks, 1);
+  assert.equal(world.page("Google Chrome", 1, 0).clicks, undefined);
+});
+
+test("a click that fails at once for no provable reason is not resent", async () => {
+  await install();
+  calm();
+  world.state.failAfterRun = true;
+  assert.throws(() => rt("click", clickArgs(COUNT_CLICK)), (e) => /^timeout: .*may have run.*retry after checking the page/.test(e.message));
+  assert.equal(world.page("Google Chrome", 1, 0).clicks, 1);
+});
+
+test("a click with JavaScript from Apple Events off reports that, not a timeout", async () => {
+  await install();
+  calm();
+  world.state.jsOff = true;
+  assert.throws(() => rt("click", clickArgs(COUNT_CLICK)), (e) => /turned off/.test(e.message));
+  assert.equal(world.page("Google Chrome", 1, 0).clicks, undefined);
 });
 
 test("a window raised mid-poll: the `window N` run falls back to the plain path and polls the right tab", async () => {
