@@ -3652,5 +3652,14 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   const server = new Server({ name: "perch", version: "0.2.0" }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, (req) => handleCall(req.params.name, req.params.arguments || {}));
+  // The daemons' pipes keep node alive, so a closed client would leave this
+  // process and its osascript REPLs running for good.
+  const shutdown = () => {
+    for (const d of Object.values(DAEMONS)) { try { d.kill(); } catch {} }
+    process.exit(0);
+  };
+  process.stdin.on("end", shutdown);
+  process.stdin.on("close", shutdown);
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(sig, shutdown);
   await server.connect(new StdioServerTransport());
 }
