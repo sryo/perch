@@ -11,8 +11,8 @@ const FIXTURE = readFileSync(new URL("./fixtures/pickers.html", import.meta.url)
 const BODY = /<body>([\s\S]*?)<script>/.exec(FIXTURE)[1];
 const SCRIPT = /<script>([\s\S]*?)<\/script>/.exec(FIXTURE)[1];
 
-function onPage(setup) {
-  const dom = page(BODY);
+function onPage(setup, extra = "") {
+  const dom = page(BODY + extra);
   dom.eval(SCRIPT);
   if (setup) dom.eval(setup);
   const world = makeWorld({
@@ -166,4 +166,85 @@ test("Downshift: its toggle button lists the items, typing opens it to pick, and
   assert.equal(o.ok, false);
   assert.equal(dom.downshift.selectedItem, "Design");
   assert.equal(input.value, "Design");
+});
+
+// A popup whose options land inside a form dialog: the dialog's fields are not its search box.
+const FORM_DIALOG = `document.body.insertAdjacentHTML("beforeend", '<div role="dialog" aria-modal="true"><label for="name">Name</label><input id="name" value="Ada">' +
+  '<label for="t">Color</label><button id="t" type="button" aria-haspopup="listbox" aria-expanded="false">Pick a color</button><div id="opts"></div></div>');
+window.nameFocus = 0;
+document.getElementById("name").addEventListener("focus", function () { window.nameFocus++; });
+document.getElementById("t").addEventListener("click", function () {
+  document.getElementById("opts").innerHTML = '<div role="option">Red</div><div role="option">Blue</div>';
+  this.setAttribute("aria-expanded", "true");
+});`;
+
+test("options that appear inside a form dialog never make its prefilled field the search box", async () => {
+  const dom = onPage(FORM_DIALOG);
+  const o = await select({ selector: "#t", text: "Green" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.candidates, ["Red", "Blue"]);
+  assert.equal(dom.document.getElementById("name").value, "Ada");
+  assert.equal(dom.nameFocus, 0, "the field is never focused");
+});
+
+// A portaled popup dialog that holds its own unrelated form field beside the options.
+const POPUP_FORM = `document.body.insertAdjacentHTML("beforeend", '<label for="t2">Color</label><button id="t2" type="button" aria-haspopup="dialog" aria-expanded="false">Pick a color</button>');
+window.noteFocus = 0;
+document.getElementById("t2").addEventListener("click", function () {
+  document.body.insertAdjacentHTML("beforeend", '<div role="dialog" id="pop"><input id="note" value="keep me"><div role="option">Red</div><div role="option">Blue</div></div>');
+  document.getElementById("note").addEventListener("focus", function () { window.noteFocus++; });
+  this.setAttribute("aria-expanded", "true");
+});`;
+
+test("a popup's own unrelated field is never taken as its search box", async () => {
+  const dom = onPage(POPUP_FORM);
+  const o = await select({ selector: "#t2", text: "Green" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.candidates, ["Red", "Blue"]);
+  assert.equal(dom.document.getElementById("note").value, "keep me");
+  assert.equal(dom.noteFocus, 0, "the field is never focused");
+});
+
+const CITY = `<div class="field"><label for="city">City</label>
+  <button id="city" type="button" role="combobox" aria-haspopup="dialog" aria-expanded="false" aria-controls="radix-:r8:" data-state="closed" data-picker="single" data-items="Paris|Paris, Texas|Lyon"><span class="placeholder">Select city...</span></button></div>`;
+
+test("a single value with a comma is one value: an option equal to one of its parts is still pressed", async () => {
+  const dom = onPage("", CITY);
+  let o = await select({ selector: "#city", text: "Paris, Texas" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.value, "Paris, Texas");
+  o = await select({ selector: "#city", text: "Paris" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.note, undefined, JSON.stringify(o));
+  assert.equal(o.value, "Paris");
+  assert.equal(o.unverified, undefined, JSON.stringify(o));
+  assert.deepEqual([...dom.pickerLog], ["city:Paris, Texas", "city:Paris"]);
+});
+
+// A single select whose display never changes after the pick.
+const STUCK = `document.body.insertAdjacentHTML("beforeend", '<label for="c2">Town</label><button id="c2" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="l2"><span>Paris, Texas</span></button>');
+window.stuckLog = [];
+document.getElementById("c2").addEventListener("click", function () {
+  document.body.insertAdjacentHTML("beforeend", '<div id="l2" role="listbox"><div role="option">Paris</div><div role="option">Paris, Texas</div></div>');
+  document.querySelectorAll("#l2 [role=option]").forEach(function (o) { o.addEventListener("click", function () { window.stuckLog.push(o.textContent); document.getElementById("l2").remove(); }); });
+  this.setAttribute("aria-expanded", "true");
+});`;
+
+test("a single value that only contains the pick does not verify it", async () => {
+  const dom = onPage(STUCK);
+  const o = await select({ selector: "#c2", text: "Paris" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual([...dom.stuckLog], ["Paris"]);
+  assert.equal(o.unverified, true, JSON.stringify(o));
+});
+
+const LEGACY = `<div class="field"><label for="speak">Speaks</label>
+  <button id="speak" type="button" aria-haspopup="dialog" aria-expanded="false" data-state="closed" data-picker="multi" data-limit="2" data-items="Spanish (legacy)*|Figma|Spanish"><span class="placeholder">Select all that apply</span></button></div>`;
+
+test("a disabled word-prefix match does not hide an enabled match the search box finds", async () => {
+  const dom = onPage("", LEGACY);
+  const o = await select({ selector: "#speak", text: "Spanish" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Spanish");
+  assert.deepEqual([...dom.pickerLog], ["speak:Spanish"]);
 });

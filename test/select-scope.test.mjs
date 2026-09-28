@@ -222,6 +222,7 @@ test("Radix popover + cmdk multi-select: picks items and closes the popover it o
   o = await select({ selector: "#trigger", text: "English" });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.value, "Spanish, English");
+  assert.equal(o.unverified, undefined, "a value that grew by the pick verifies it");
   assert.equal(dom.opens, 2);
   assert.equal($(dom, "[data-radix-popper-content-wrapper]"), null);
 });

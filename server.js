@@ -2482,23 +2482,48 @@ function pickNative(nat, text) {
 function mine(s, el) { return [s.ctl, s.input, s.box].some(function (m) { return m && (m === el || m.contains(el) || el.contains(m)); }); }
 // cmdk writes data-disabled="false" on enabled items; Radix marks disabled ones with a bare data-disabled.
 function optOff(o) { const d = o.getAttribute("data-disabled"); return attr(o, "aria-disabled") === "true" || d === "" || d === "true"; }
-// The texts a control shows as chosen: each element's own text (a chip, a value
-// span) and each comma part of the whole, never a placeholder or an icon.
+// The elements a control shows as chosen, each with its own text (a chip, a value
+// span), never a placeholder or an icon.
+function shownEls(box) {
+  if (!box || box.tagName === "INPUT") return [];
+  return [box].concat(Array.from(box.querySelectorAll("*"))).filter(function (el) {
+    return !el.closest("svg, [class*=placeholder], [data-placeholder]") && vis(el) && ownText(el);
+  });
+}
+function ownText(el) { return clip(Array.prototype.filter.call(el.childNodes, function (n) { return n.nodeType === 3; }).map(function (n) { return n.nodeValue; }).join(""), 80); }
 function shownParts(box) {
   const out = [];
-  const add = function (t) { t = clip(t, 80); if (t && out.indexOf(t) < 0) out.push(t); };
-  if (!box || box.tagName === "INPUT") return out;
-  [box].concat(Array.from(box.querySelectorAll("*"))).forEach(function (el) {
-    if (el.closest("svg, [class*=placeholder], [data-placeholder]") || !vis(el)) return;
-    add(Array.prototype.filter.call(el.childNodes, function (n) { return n.nodeType === 3; }).map(function (n) { return n.nodeValue; }).join(""));
-  });
-  const whole = String(textOf(box));
-  if (/[,;\n]/.test(whole) && !box.querySelector("[class*=placeholder], [data-placeholder]")) whole.split(/[,;\n]/).forEach(add);
+  shownEls(box).forEach(function (el) { const t = ownText(el); if (out.indexOf(t) < 0) out.push(t); });
   return out;
 }
+function commaParts(t) { return String(t || "").split(/[,;\n]/).map(function (x) { return norm(x); }).filter(Boolean); }
+// What the box shows as a whole, or "" while it shows a placeholder.
+function shownWhole(box) { return !box || box.tagName === "INPUT" || box.querySelector("[class*=placeholder], [data-placeholder]") ? "" : norm(textOf(box)); }
+const CHIP = "[class*=badge], [class*=chip], [class*=multi-value], [class*=multiValue], [class*=token], [class*=pill], [class~=tag], [class*=tag-], [class*=-tag]";
+// Chips in the box, or several value elements alike in tag and class under one parent.
+function multiBox(box) {
+  if (!box || box.tagName === "INPUT") return false;
+  if (box.querySelector(CHIP)) return true;
+  const seen = new Map();
+  return shownEls(box).some(function (el) {
+    if (el === box) return false;
+    const k = el.tagName + "." + el.className;
+    const sibs = seen.get(el.parentElement) || [];
+    if (sibs.indexOf(k) >= 0) return true;
+    sibs.push(k); seen.set(el.parentElement, sibs);
+    return false;
+  });
+}
+function isMulti(s, opt) {
+  return !!(s.multiBox || attr(s.ctl, "aria-multiselectable") === "true" || (opt && opt.closest("[aria-multiselectable=true]")) ||
+    linkedLists(s).some(function (m) { return attr(m, "aria-multiselectable") === "true"; }));
+}
 // A picked item that already shows as chosen; pressing it again would toggle it off.
+// A multi-select shows each choice apart; a single one shows the whole value.
 function chosenAlready(s, opt, key) {
-  return attr(opt, "aria-checked") === "true" || attr(opt, "data-state") === "checked" || (s.shown || []).some(function (t) { return norm(t) === key; });
+  if (attr(opt, "aria-checked") === "true" || attr(opt, "data-state") === "checked") return true;
+  if (!s.multi) return !!s.whole && s.whole === key;
+  return (s.shown || []).some(function (t) { return norm(t) === key; }) || commaParts(s.whole).indexOf(key) >= 0;
 }
 // Still open: the control says so, or its own list still shows options.
 function stillOpen(s) {
@@ -2544,7 +2569,7 @@ function ownOptions(s) {
   if (attr(s.ctl, "role") === "listbox") return within(s.ctl);
   const lists = linkedLists(s);
   if (lists.length) {
-    lists.forEach(function (m) { if (!s.input && !s.filter) s.filter = m.querySelector("input"); });
+    lists.forEach(function (m) { if (!s.input && !s.filter) s.filter = popSearch(m); });
     return lists.reduce(function (out, m) { return out.concat(m.matches(OPT) ? [m] : within(m)); }, []);
   }
   const rs = s.input && /^(react-select-.+)-input$/.exec(s.input.id);
@@ -2561,8 +2586,21 @@ function ownOptions(s) {
   if (!s.opened) return [];
   const fresh = within(document).filter(function (o) { return s.before.indexOf(o) < 0; });
   if (fresh.length && !s.pop) s.pop = fresh[0].closest("[data-radix-popper-content-wrapper], [cmdk-root], [role=dialog]");
-  if (s.pop && !s.input && !s.filter) s.filter = s.pop.querySelector("input");
+  if (s.pop && !s.input && !s.filter) s.filter = popSearch(s.pop);
   return fresh;
+}
+// A popup's own search box, empty: cmdk's, one inside a Radix popper or cmdk root,
+// or a combobox/searchbox naming a list of options. Never another field of a form.
+function popSearch(root) {
+  return Array.from(root.querySelectorAll("input")).find(function (i) {
+    if (i.value || !vis(i)) return false;
+    if (i.matches("[cmdk-input]") || i.closest("[data-radix-popper-content-wrapper], [cmdk-root]")) return true;
+    if (!/^(combobox|searchbox)$/.test(attr(i, "role"))) return false;
+    return attr(i, "aria-controls").split(/\s+/).some(function (id) {
+      const m = id && document.getElementById(id);
+      return m && (m.matches(OPT) || attr(m, "role") === "listbox" || !!m.querySelector(OPT));
+    });
+  }) || null;
 }
 `;
 
@@ -3096,7 +3134,8 @@ const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySele
 const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
 const box = wrap || (ctl.tagName === "INPUT" ? ctl.parentElement : ctl);
 // A bare input's box is its parent, which may hold only its label: its value is in the input.
-const s = { ctl: ctl, input: input, box: box, polls: 0, shown: wrap || ctl.tagName !== "INPUT" ? shownParts(box) : [] };
+const shows = wrap || ctl.tagName !== "INPUT";
+const s = { ctl: ctl, input: input, box: box, polls: 0, shown: shows ? shownParts(box) : [], whole: shows ? shownWhole(box) : "", multiBox: shows && multiBox(box) };
 // A text input's value and hidden companion go back after a miss: opening or
 // closing a typeahead may clear the text it holds.
 if (input && input.tagName === "INPUT") { s.prior = input.value; s.comp = taParts(input).comp; s.priorComp = s.comp && s.comp.value; }
@@ -3138,12 +3177,18 @@ const opt = bestMatch(opts, function (o) { return keys.get(o); }, wantN);
 if (opt) {
   s.picked = clip(textOf(opt), 80);
   s.pickedN = keys.get(opt);
+  s.multi = isMulti(s, opt);
   if (chosenAlready(s, opt, s.pickedN)) s.already = true;
   else press(opt);
   return { picked: true };
 }
-const off = !s.typed && bestMatch(all.filter(optOff), function (o) { return norm(textOf(o)); }, wantN);
-if (off) { s.disabled = clip(textOf(off), 60); return { settled: true }; }
+const box = s.input || s.filter;
+// A disabled match short of exact settles only once no search box could still turn up an enabled one.
+const offM = !s.typed && wantN ? matchTier(all.filter(optOff), function (o) { return norm(textOf(o)); }, wantN) : { hits: [] };
+if (offM.hits.length) {
+  s.disabled = clip(textOf(offM.hits.sort(function (a, b) { return textOf(a).length - textOf(b).length; })[0]), 60);
+  if (offM.exact || !box) return { settled: true };
+}
 // A combobox that opens only on input events (Downshift) may have a toggle button
 // naming the same list; pressed once the press on the control has had a poll to show.
 if (s.opened && !all.length && !s.toggled && s.polls >= 2 && !stillOpen(s)) {
@@ -3159,7 +3204,6 @@ const sig = opts.length ? Array.from(keys.values()).join("\n") : null;
 s.same = sig && sig === s.sig ? s.same + 1 : 0;
 s.sig = sig;
 if (s.typed && sig !== s.typedSig) s.answered = true;
-const box = s.input || s.filter;
 if (sig && s.same >= (wantN ? 8 : 3) && (!wantN || s.answered || !box)) return { settled: true };
 if (!s.typed && wantN && box && s.polls >= 4) {
   const q = String(A.text).trim().split(/[^\p{L}\p{N} ]/u)[0].trim() || String(A.text).trim();
@@ -3196,10 +3240,15 @@ const s = window.__perch_select;
 if (s.opened && !s.closed) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
 // An input's own value first: its wrapper may hold only its label.
 const iv = (s.input && s.input.value) || "";
-const full = (iv && norm(iv).indexOf(s.pickedN) >= 0 ? iv : textOf(s.box)) || iv;
+const has = function (t) { return s.multi ? norm(t).indexOf(s.pickedN) >= 0 : norm(t) === s.pickedN; };
+const full = (iv && has(iv) ? iv : textOf(s.box)) || iv;
 const parts = full === iv ? [] : shownParts(s.box);
 const shown = clip(parts.length > 1 && !/[,;\n]/.test(full) ? parts.join(", ") : full, 120);
-const seen = norm(full).indexOf(s.pickedN) >= 0;
+// A single value must equal the pick; one that grew from the prior value may be a
+// multi-select without chips, so its newest element or comma part counts.
+const now = norm(full);
+const grew = !s.multi && s.whole && now !== s.whole && now.indexOf(s.whole) === 0;
+const seen = has(full) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; })));
 if (!seen && !A.final) return null;
 const out = { ok: true, selected: s.picked, el: ident(s.ctl), value: shown };
 if (!seen) out.unverified = true;
