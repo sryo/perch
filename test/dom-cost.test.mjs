@@ -1,0 +1,101 @@
+// Page-side outputs on a large page (test/fixtures/large-dom.mjs), pinned byte
+// for byte: snapshot text, get_text, fill's label search, select and typeahead
+// picks, and the match tiers over a 1200-option list. Any speedup of the page
+// scripts must leave all of it unchanged. PERCH_GOLDEN_WRITE=1 rewrites it.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { JXA_PRELUDE, DAEMONS, PAGE_SCRIPTS, handleCall, pageScript, buildEvalWrapper } from "../server.js";
+import { makeWorld } from "./fakes/jxa-world.mjs";
+import { page, run, runBody } from "./helpers/page.mjs";
+import { build } from "./fixtures/large-dom.mjs";
+
+const GOLDEN = new URL("./fixtures/large-dom.golden.json", import.meta.url);
+// SELECT_LIB and TA_PICK_LIB (matchTier, taMatch) without fill_ta_pick's own body.
+const MATCH_LIB = PAGE_SCRIPTS.fill_ta_pick.slice(0, PAGE_SCRIPTS.fill_ta_pick.indexOf("const s = window.__perch_ta;"));
+const runMatch = (w, body) => JSON.parse(w.eval(buildEvalWrapper(pageScript(null, { text: "" }) + MATCH_LIB + body)));
+
+function large() {
+  const w = page("");
+  build(w.document);
+  return w;
+}
+function onLarge() {
+  const dom = large();
+  const world = makeWorld({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: [{ url: "https://a.test/p", id: "x", dom }] }] }],
+    cg: [{ owner: "Google Chrome" }],
+  });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  return dom;
+}
+// Long outputs are pinned by digest; the readable ones show what changed.
+const digest = (v) => { const s = JSON.stringify(v); return { len: s.length, sha256: createHash("sha256").update(s).digest("hex") }; };
+const text = (r) => (r.isError ? "error: " : "") + r.content.map((c) => c.text).join("\n");
+// Every field's value, shadow roots included, so a fill that lands elsewhere
+// shows. reset() puts them all back, so one page serves every case.
+const values = (w) => runBody(w, `return deepAll("input, textarea, select").map(function (el, i) { return el.value ? i + "=" + el.value : ""; }).filter(Boolean)`);
+const changed = (before, after) => after.filter((v) => before.indexOf(v) < 0);
+const keep = (w) => runBody(w, `window.__init = deepAll("input, textarea, select").map(function (el) { return el.value; }); return null`);
+const reset = (w) => runBody(w, `
+  deepAll("input, textarea, select").forEach(function (el, i) { if (el.value !== window.__init[i]) el.value = window.__init[i]; });
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  delete window.__perch_ta; delete window.__perch_select; delete window.__perch_refs;
+  return null`);
+
+const FILLS = ["full name 12", "email 7", "shipping city 14", "phone 33", "search orders 4", "notes 5", "shadow field 3",
+  "inner code 5", "deep search 9", "group 20", "customer", "zzz", "monthly", "destination x"];
+const SELECTS = [["country", "Toronto Canada 9"], ["country", "zurich"], ["country", "kraków 7"], ["country", "sao paulo brazil 43"],
+  ["country", "nowhere"], ["country", ""], ["destination", "Córdoba, Argentina"], ["destination", "cordoba"], ["destination", "zone 1199"],
+  ["destination", "reykjavik, sweden"]];
+const TYPEAHEADS = ["Córdoba, Argentina", "Zone 777", "medellin, paraguay", "cordoba"];
+const WANTS = ["a", "ar", "zone", "zone 12", "córdoba", "cordoba, argentina", "rosario brazil", "sao", "lodz, poland", "ZÜRICH", "zzz", ""];
+
+async function outputs() {
+  const out = {};
+  let w = large();
+  out.snapshot = run(w, "snapshot", { max: 500 });
+  out.snapshotAll = digest(run(w, "snapshot", { max: 100000 }));
+  out.snapshotQuery = run(w, "snapshot", { max: 50, query: "city|zone 1[0-9]{2}\\b|deep" });
+  out.snapshotRole = digest(run(w, "snapshot", { max: 100000, role: ["textbox", "checkbox"] }));
+  out.text = digest(run(w, "get_text", { offset: 0, maxChars: 1e7 }));
+  out.textSel = digest(run(w, "get_text", { selector: "form", offset: 0, maxChars: 1e7 }));
+  out.names = digest(runBody(w, `return deepAll("input, textarea, select, button, a, [role]").map(accName)`));
+  const dom = onLarge();
+  keep(dom);
+  const before = values(dom);
+  out.fill = FILLS.map((p) => {
+    reset(dom);
+    const r = run(dom, "fill", { label_pattern: p, text: "Ab 12 x" });
+    return { p, r, changed: changed(before, values(dom)) };
+  });
+  out.select = [];
+  for (const [label_pattern, t] of SELECTS) {
+    reset(dom);
+    out.select.push({ label_pattern, text: t, r: text(await handleCall("select", { label_pattern, text: t })), changed: changed(before, values(dom)) });
+  }
+  out.typeahead = [];
+  for (const t of TYPEAHEADS) {
+    reset(dom);
+    out.typeahead.push({ text: t, r: text(await handleCall("fill", { label_pattern: "destination", text: t })), value: dom.document.getElementById("dest").value });
+  }
+  out.match = runMatch(large(), `
+    const list = Array.from(document.querySelectorAll("[role=option], option"));
+    const idx = function (m) { return { hits: m.hits.map(function (x) { return list.indexOf(x); }), exact: m.exact }; };
+    return ${JSON.stringify(WANTS)}.map(function (w) {
+      return { w: w, tier: idx(matchTier(list, function (x) { return norm(x.textContent); }, norm(w))), ta: idx(taMatch(list, w)) };
+    });`);
+  return out;
+}
+
+if (process.env.PERCH_GOLDEN_WRITE) writeFileSync(GOLDEN, JSON.stringify(await outputs(), null, 1) + "\n");
+
+test("large page: snapshot, text, names, fill, select, typeahead and match tiers match the golden", async () => {
+  const g = JSON.parse(readFileSync(GOLDEN, "utf8"));
+  const o = await outputs();
+  for (const k of Object.keys(g)) assert.deepEqual(o[k], g[k], k);
+  assert.deepEqual(Object.keys(o), Object.keys(g));
+});
