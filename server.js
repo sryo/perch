@@ -6222,7 +6222,8 @@ return A.reset || !moves.length ? null : { moves: moves };
 
   // Background trusted fill through the editing command (EDIT_LIB).
   // A.held: the field a fill_fields pass resolved for a trusted entry and
-  // held on __perch_ta, taken once.
+  // held on __perch_ta, taken once. A plain one that lands joins that batch's
+  // __perch_ff at A.at, so later passes recheck it as they do their own.
   trusted_fill_background: TYPEAHEAD_LIB + EDIT_LIB + String.raw`
 let el;
 if (A.held) {
@@ -6253,6 +6254,12 @@ if (!e.focused) return { ok: false, error: ident(el) + " did not accept focus" }
 if (e.ok && ta) {
   el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: A.text.slice(-1) }));
   return { pending: true, trusted: true };
+}
+const ff = A.held && e.ok && window.__perch_ff;
+if (ff) {
+  for (const k in ff.items) if (ff.items[k].el === el) delete ff.items[k];
+  ff.items[A.at] = { el: el, want: el.value, text: A.text, id: ident(el), kind: "plain", f: A.f, key: { id: el.id, name: el.name, form: el.form }, shown: vis(el) };
+  if (!("form" in ff)) ff.form = el.form || el.closest("form");
 }
 return { ok: e.ok, trusted: e.trusted, value: e.value, el: ident(el), ...(e.ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
 `,
@@ -6839,11 +6846,11 @@ async function fillFields(fields, target, only) {
     // one trusted_fill_background finds by its own looser label match.
     const s = await step(async () => {
       if (!f.trusted) return f.text != null ? pickTypeahead(f.text, target) : selectPrefs(f, target);
-      const t = await runPage("fill", "trusted_fill_background", { held: true, text: f.text }, target);
+      const t = await runPage("fill", "trusted_fill_background", { held: true, at: r.defer, f, text: f.text }, target);
       return t && t.pending ? { ...await pickSuggestion(target), trusted: true } : t;
     });
     if (halted) return halted;
-    results.push(f.trusted ? { kind: "plain", ...pageFault(s, "fill") }
+    results.push(f.trusted ? { kind: "plain", ...pageFault(s, "plain", "fill") }
       : s && s.__perch_ref_miss ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
       : { kind: "select", ...pageFault(s, "select") });
     from = r.defer + 1;
@@ -6965,10 +6972,10 @@ function scriptFault(tool, r, args) {
 
 // A picker phase that threw: a page change only when the phase saw its
 // document go, else the neutral script fault.
-function pageFault(r, kind) {
+function pageFault(r, kind, tool = kind === "typeahead" ? "fill" : kind) {
   if (!r || typeof r !== "object" || r.__perch_error == null) return r;
   if (r.gone) return { ok: false, kind, error: "the page changed while picking; not verified" };
-  return { ok: false, kind, error: scriptFault(kind === "typeahead" ? "fill" : kind, r).error };
+  return { ok: false, kind, error: scriptFault(tool, r).error };
 }
 
 // The page has typed into a typeahead; its suggestions arrive asynchronously,

@@ -777,6 +777,36 @@ test("trusted_fill_background {held}: the field fill_fields held is used once; a
   $(dom, "[name=name]").remove();
   assert.deepEqual(run(dom, "trusted_fill_background", { held: true, text: "Ada" }), gone);
 });
+test("fill {fields}: a trusted entry whose page script throws stays kind plain, in neutral words", async () => {
+  const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
+  const threw = throwAt(dom, "if (A.held) {");
+  const o = await fill({ fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }, { label_pattern: "name", text: "Ada" }] });
+  assert.equal(threw(), 1);
+  assert.deepEqual(o.results[0], { ok: false, kind: "plain", error: "fill: the page script failed on this page (TypeError); nothing verified" });
+  assert.equal(o.results[1].ok, true);
+  noRaw(o);
+});
+
+test("fill {fields}: a trusted entry a later field clears is rechecked like any other", async () => {
+  const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS() + `
+    document.querySelector('[name=name]').addEventListener('input', () => { document.querySelector('[name=email]').value = ''; });`);
+  const o = await fill({ fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }, { label_pattern: "name", text: "Ada" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results[0].ok, false);
+  assert.equal(o.results[0].kind, "plain");
+  assert.match(o.results[0].error, /was cleared after a later field changed; fill it again$/);
+  assert.equal(o.results[1].ok, true);
+});
+
+test("fill {fields}: a trusted entry that fails is never told to retry with trusted", async () => {
+  const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
+  const o = await fill({ fields: [{ label_pattern: "location", text: "Zurich", trusted: true }, { label_pattern: "name", text: "Ada" }] });
+  assert.equal(o.results[0].ok, false, JSON.stringify(o));
+  assert.match(o.results[0].error, /^no suggestion matched/);
+  assert.ok(!o.results[0].error.includes("retry with fill {trusted:true}"), o.results[0].error);
+  assert.equal($(dom, "[name=name]").value, "Ada");
+});
+
 // A combobox whose own listbox offers suggestions but whose pick handler runs
 // only `onPick` (nothing by default); it keeps whatever text is typed on blur.
 const INERT = `<form><label for=c>City</label><input id=c role=combobox aria-autocomplete=list aria-controls=c-list><ul id=c-list role=listbox></ul>
