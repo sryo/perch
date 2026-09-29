@@ -904,6 +904,9 @@ function jxaRuntime(BROWSERS, HANG) {
   const SHOT_MOVED = "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it, or scroll it into view and call again";
   // A window the browser stopped painting (covered, hidden, or too slow) still
   // holds the frame from before the scroll.
+  // A capture run with the grant that still gave no usable image (screencapture
+  // failed or wrote nothing readable, or the crop or downscale failed).
+  const SHOT_NO_CAPTURE = "screenshot: the window capture gave no image; nothing was captured";
   const SHOT_UNPAINTED = "screenshot: the window isn't painting (covered or hidden); show the window or scroll the element into view and call again; nothing was captured";
   // Every page call of a crop is bounded where the tab is pinned (pollExec): the
   // clip and the restore get SHOT_STEP_SECS each, and the clip, the page area and
@@ -977,8 +980,8 @@ function jxaRuntime(BROWSERS, HANG) {
         else if (!painted) refused = SHOT_UNPAINTED;
         else {
           const cap = capture(I.windowNumber, a.format, a.maxWidth, m);
-          if (cap) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
-          else if (c.moved) refused = SHOT_MOVED;
+          if (cap && cap.data) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
+          else if (c.moved) refused = cap ? SHOT_NO_CAPTURE : SHOT_MOVED;
           else I.map = m;
           I.aim = "ax";
           if (m.clipped || (cap && cap.cut)) I.clipped = true;
@@ -986,6 +989,7 @@ function jxaRuntime(BROWSERS, HANG) {
       }
     } catch (e) { err = e; }
     const left = shotRestore(t, a.restore, c.token);
+    if (err && err.message === SHOT_NO_IMAGE) throw new Error(SHOT_NO_IMAGE + left);
     if (err) throw err;
     if (silent) throw shotTimeout(Math.round(SHOT_BUDGET_MS / 1000), left);
     if (refused) return { ok: false, error: refused + left };
@@ -1020,29 +1024,33 @@ function jxaRuntime(BROWSERS, HANG) {
   // The window's own pixels, cropped, scaled and encoded here, so a crop happens
   // inside the runtime call that scrolled and restores. CGPreflightScreenCaptureAccess
   // never prompts; without the grant, or on an empty image, it returns null and
-  // Node's screencapture (which asks for the grant itself) takes over, as it does
-  // after a failed downscale. With a shot map it keeps only the map's box, cut
-  // before any downscale. A capture that gives no image in time is a coded
-  // timeout, which the crop's restore still follows.
+  // Node's screencapture (which asks for the grant itself) takes over. With the
+  // grant, a run that gives no usable image returns NO_IMAGE, which Node's
+  // screencapture and sips also take over unless the page had to scroll. With a
+  // shot map it keeps only the map's box, cut before any downscale. A capture
+  // that gives no image in time is a coded timeout, which the crop's restore
+  // still follows.
+  const NO_IMAGE = { noImage: true };
   function capture(wid, format, maxWidth, map) {
-    let shot = null;
+    let shot = null, granted = false;
     try {
       ObjC.import("CoreGraphics");
       appKit();
       ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]);
       if (!$.CGPreflightScreenCaptureAccess()) return null;
+      granted = true;
       shot = windowShot(wid);
-      if (!shot) return null;
+      if (!shot) return NO_IMAGE;
       let img = shot.img;
       let w = Number($.CGImageGetWidth(img)), h = Number($.CGImageGetHeight(img));
-      if (!w || !h) return null;
+      if (!w || !h) return NO_IMAGE;
       let clip = null;
       if (map) {
         clip = clipPixels(map, w, h);
-        if (!(clip.w > 0 && clip.h > 0)) return null;
+        if (!(clip.w > 0 && clip.h > 0)) return NO_IMAGE;
         img = $.CGImageCreateWithImageInRect(img, $.CGRectMake(clip.x, clip.y, clip.w, clip.h));
         w = Number($.CGImageGetWidth(img)); h = Number($.CGImageGetHeight(img));
-        if (w !== clip.w || h !== clip.h) return null;
+        if (w !== clip.w || h !== clip.h) return NO_IMAGE;
       }
       if (maxWidth > 0 && w > maxWidth) {
         const sh = Math.round(h * maxWidth / w);
@@ -1053,20 +1061,20 @@ function jxaRuntime(BROWSERS, HANG) {
         const small = $.CGBitmapContextCreateImage(ctx);
         // A failed downscale hands the shot to screencapture and sips, which
         // always shrink it, rather than returning one wider than asked.
-        if (Number($.CGImageGetWidth(small)) !== maxWidth) return null;
+        if (Number($.CGImageGetWidth(small)) !== maxWidth) return NO_IMAGE;
         img = small; w = maxWidth; h = sh;
       }
       const rep = $.NSBitmapImageRep.alloc.initWithCGImage(img);
       const data = format === "jpeg"
         ? rep.representationUsingTypeProperties($.NSBitmapImageFileTypeJPEG, $({ NSImageCompressionFactor: 0.8 }))
         : rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $());
-      if (!data || !Number(data.length)) return null;
+      if (!data || !Number(data.length)) return NO_IMAGE;
       const out = { data: data.base64EncodedStringWithOptions(0).js, image: { w: w, h: h } };
       if (clip) { out.clip = { x: clip.x, y: clip.y, w: clip.w, h: clip.h }; if (clip.cut) out.cut = true; }
       return out;
     } catch (e) {
       if (e && e.message === SHOT_NO_IMAGE) throw e;
-      return null;
+      return granted ? NO_IMAGE : null;
     } finally { if (shot) dropFile(shot.path); }
   }
   // The capture runs the screencapture binary rather than CGWindowListCreateImage:
@@ -1089,12 +1097,24 @@ function jxaRuntime(BROWSERS, HANG) {
     if (!task.launchAndReturnError($())) return null;
     const until = Date.now() + SHOT_CAPTURE_SECS * 1000;
     while (task.isRunning) {
-      if (Date.now() >= until) { task.terminate; dropFile(path); throw new Error(SHOT_NO_IMAGE); }
+      if (Date.now() >= until) { stopTask(task); dropFile(path); throw new Error(SHOT_NO_IMAGE); }
       delay(0.01);
     }
     const rep = task.terminationStatus === 0 ? $.NSBitmapImageRep.imageRepWithContentsOfFile(path) : null;
     if (!rep || rep.isNil()) { dropFile(path); return null; }
     return { img: rep.CGImage, path: path };
+  }
+  // SIGTERM, then SIGKILL if it is still running after SHOT_TERM_MS, so no run
+  // outlives the call to write its file after dropFile.
+  const SHOT_TERM_MS = 200;
+  function stopTask(task) {
+    task.terminate;
+    const until = Date.now() + SHOT_TERM_MS;
+    while (task.isRunning && Date.now() < until) delay(0.01);
+    if (!task.isRunning) return;
+    try { ObjC.bindFunction("kill", ["int", ["int", "int"]]); $.kill(task.processIdentifier, 9); } catch (e) {}
+    const hard = Date.now() + SHOT_TERM_MS;
+    while (task.isRunning && Date.now() < hard) delay(0.01);
   }
   function dropFile(path) { try { $.NSFileManager.defaultManager.removeItemAtPathError(path, $()); } catch (e) {} }
 
@@ -2570,7 +2590,7 @@ function jxaRuntime(BROWSERS, HANG) {
     shot(a) {
       if (a.clip) return shotClip(a);
       const I = shotGeom(a), c = capture(I.windowNumber, a.format, a.maxWidth);
-      if (c) { I.data = c.data; I.image = c.image; }
+      if (c && c.data) { I.data = c.data; I.image = c.image; }
       return I;
     },
     select(a) {

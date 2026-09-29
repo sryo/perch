@@ -432,6 +432,66 @@ test("a capture that gives no image in 3s restores every scroll and is a coded t
   assert.deepEqual([calls, world.state.files], [[], {}]);
 });
 
+test("a capture timeout keeps the restore's outcome when the restore goes unanswered", async () => {
+  const back = quietDialogs();
+  try {
+    const p = scrolled();
+    install(p);
+    spawns(2000);
+    world.state.captureMs = Infinity;
+    world.state.hangIf = isRestore;
+    const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+    assert.equal(r.content[0].text, "error: timeout: screenshot: the window capture gave no image within 3s; nothing was captured; the scroll may be left moved (its restore got no answer)");
+  } finally { back(); }
+});
+
+// With the grant, a run that gives no image is its own refusal, never the
+// grant advice of SHOT_MOVED.
+const NO_CAPTURE = "screenshot: the window capture gave no image; nothing was captured";
+for (const [name, set] of [
+  ["exits nonzero", () => { world.state.captureExit = 1; }],
+  ["writes a file that won't load", () => { world.state.unreadable = true; }],
+  ["gives an empty image", () => { world.state.shotEmpty = true; }],
+  ["fails to launch", () => { world.state.captureThrows = true; }],
+]) {
+  test(`a moved crop whose capture ${name} is refused as no image, scroll restored, no file left`, async () => {
+    const p = scrolled();
+    install(p);
+    const calls = spawns(2000);
+    set();
+    const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+    assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: NO_CAPTURE });
+    assert.deepEqual(where(p), [0, 40, 37]);
+    assert.deepEqual([calls, world.state.files], [[], {}]);
+  });
+}
+
+test("an unmoved crop whose capture exits nonzero is cropped by Node's screencapture and sips", async () => {
+  const p = still();
+  install(p);
+  const calls = spawns(2000);
+  world.state.captureExit = 1;
+  await shoot({ selector: "#t" });
+  assert.deepEqual(calls.map((c) => c[0]).slice(0, 2), ["screencapture", "sips"]);
+  assert.deepEqual(world.state.files, {});
+});
+
+test("a capture that ignores SIGTERM is SIGKILLed before its file is dropped", async () => {
+  const p = scrolled();
+  install(p);
+  spawns(2000);
+  world.state.captureMs = Infinity;
+  world.state.ignoreTerm = true;
+  const t0 = world.clock.t;
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.equal(r.content[0].text, "error: timeout: screenshot: the window capture gave no image within 3s; nothing was captured");
+  const [s] = world.state.shots;
+  assert.deepEqual([s.termed, s.killed, world.state.sigkills], [true, true, [[3131, 9]]]);
+  assert.ok(world.clock.t - t0 < 8000, `took ${world.clock.t - t0}ms`);
+  assert.deepEqual(where(p), [0, 40, 37]);
+  assert.deepEqual(world.state.files, {});
+});
+
 test("a tab its window doesn't show is tab_not_visible before any page JS runs", async () => {
   const p = scrolled();
   install(p, { active: false });

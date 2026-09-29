@@ -136,6 +136,19 @@ test("a runtime capture that finishes within 3s is kept", async () => {
   assert.deepEqual(meta.image, { w: 1600, h: 1240 });
 });
 
+test("a runtime capture that exits nonzero or won't load falls back to screencapture, its file removed", async () => {
+  for (const set of [() => { world.state.captureExit = 1; }, () => { world.state.unreadable = true; }]) {
+    canary();
+    set();
+    const calls = spawns(1000);
+    const { meta } = await shoot({});
+    assert.deepEqual(calls.map((c) => c[0]), ["screencapture"]);
+    assert.deepEqual(meta.image, { w: 1000, h: 1000 });
+    assert.equal(world.state.shots.length, 1);
+    assert.deepEqual(world.state.files, {}, "the failed run's file is removed");
+  }
+});
+
 test("an empty capture falls back to screencapture", async () => {
   canary();
   world.state.shotEmpty = true;

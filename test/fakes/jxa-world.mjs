@@ -572,6 +572,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   };
   // screencapture as an NSTask: it runs on the fake clock and writes its image
   // when done; a terminated one writes nothing.
+  const tasks = {};
   const fakeTask = () => {
     let shot = null, doneAt = null;
     const task = {
@@ -585,18 +586,22 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         doneAt = clock.t + (state.captureMs ?? 0);
         return true;
       },
+      processIdentifier: 3131,
       get isRunning() {
         if (shot.killed || clock.t < doneAt) return !shot.killed;
         if (!shot.written) {
           shot.written = true;
+          task.terminationStatus = state.captureExit ?? 0;
           const c = cgEntries.find((e) => (e.wid ?? 1) === shot.wid);
           const s = state.shotScale ?? 2;
           state.files[shot.args[shot.args.length - 1]] = c && !state.shotEmpty ? { w: (c.w ?? 800) * s, h: (c.h ?? 600) * s, shot } : { w: 0, h: 0, shot };
         }
         return false;
       },
-      get terminate() { shot.killed = true; task.terminationStatus = 15; return undefined; },
+      get terminate() { shot.termed = true; if (!state.ignoreTerm) { shot.killed = true; task.terminationStatus = 15; } return undefined; },
     };
+    tasks[task.processIdentifier] = task;
+    task.shot = () => shot;
     return task;
   };
   const sandbox = {
@@ -732,8 +737,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // rect cut from it), `scaled` (the bitmap context it was drawn into),
       // `encoded` ({type, props, w, h}) and `killed` (it was terminated).
       // state.captureThrows: the launch throws. state.captureMs: each capture
-      // takes that long; Infinity never finishes. state.files holds what is
-      // written and not yet removed.
+      // takes that long; Infinity never finishes. state.captureExit: the run
+      // exits with that status, its file still written. state.unreadable: the
+      // file is written but won't load. state.ignoreTerm: SIGTERM is ignored,
+      // only SIGKILL (recorded in state.sigkills) stops it. state.files holds
+      // what is written and not yet removed.
       CGPreflightScreenCaptureAccess: () => { bump("CGPreflight"); return state.capture !== false; },
       CGRectMake: (x, y, w, h) => ({ x, y, w, h }),
       CGWindowListCreateImage: () => { bump("CGWindowListCreateImage"); throw new Error("CGWindowListCreateImage is not used"); },
@@ -742,6 +750,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       NSURL: { fileURLWithPath: (path) => ({ path }) },
       NSFileHandle: { fileHandleWithNullDevice: { nullDevice: true } },
       NSTask: { alloc: { get init() { return fakeTask(); } } },
+      kill: (pid, sig) => { (state.sigkills = state.sigkills || []).push([pid, sig]); const t = tasks[pid]; if (t && sig === 9) { t.shot().killed = true; t.terminationStatus = 9; } return 0; },
       NSFileManager: { defaultManager: { removeItemAtPathError: (path) => { const had = path in state.files; delete state.files[path]; return had; } } },
       // A crop keeps the pixels inside the image; the rect is recorded as shot.crop.
       CGImageCreateWithImageInRect: (img, r) => {
@@ -759,7 +768,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       CGBitmapContextCreateImage: (ctx) => (ctx.img && !state.scaleFail ? { w: ctx.w, h: ctx.h, shot: ctx.img.shot } : { w: 0, h: 0 }),
       NSBitmapImageFileTypeJPEG: 3,
       NSBitmapImageFileTypePNG: 4,
-      NSBitmapImageRep: { imageRepWithContentsOfFile: (path) => (state.files[path] ? { isNil: () => false, CGImage: state.files[path] } : null), alloc: { initWithCGImage: (img) => ({
+      NSBitmapImageRep: { imageRepWithContentsOfFile: (path) => (state.files[path] ? (state.unreadable ? { isNil: () => true } : { isNil: () => false, CGImage: state.files[path] }) : null), alloc: { initWithCGImage: (img) => ({
         representationUsingTypeProperties: (type, props) => {
           img.shot.encoded = { type, props: props ? JSON.parse(JSON.stringify(props.js)) : null, w: img.w, h: img.h };
           const bytes = Buffer.alloc(33);
