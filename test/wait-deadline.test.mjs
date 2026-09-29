@@ -4,7 +4,8 @@
 // never came) is probed. Fake world, virtual clock.
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
+import { readFileSync } from "node:fs";
+import { JXA_PRELUDE, DAEMONS, handleCall, deps, HANG, ERR } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
 
@@ -94,6 +95,21 @@ test("only hangs are probed: the REPL killed, or a reply that never came", async
       assert.equal(probes, 0, msg);
     }
   }
+});
+
+test("every hang message is built from the shared HANG phrases the probe checks", async () => {
+  const src = readFileSync(new URL("../server.js", import.meta.url), "utf8");
+  const decl = src.slice(src.indexOf("export const HANG = {"), src.indexOf("};", src.indexOf("export const HANG = {")));
+  const rest = src.replace(decl, "");
+  for (const [key, phrase] of Object.entries(HANG)) {
+    assert.equal(rest.includes(phrase.trim()), false, `"${phrase}" is spelled out outside HANG`);
+    assert.match(rest, new RegExp("HANG\\." + key + "\\b"), `HANG.${key} is never used to build a message`);
+  }
+  // The Node-side kill, built for real, is probed.
+  countProbes(OPEN);
+  DAEMONS.fast = { run: async () => { throw new Error(ERR.timeout(35000)); } };
+  const { t } = await call("eval_js", { script: "return 1", target: { tabId: "chrome:x" } });
+  assert.match(t, /^error: dialog_open: a confirm/);
 });
 
 test("wait {quiet}: time spent finding the tab counts against the timeout", async () => {

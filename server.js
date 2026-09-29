@@ -34,7 +34,7 @@ const BROWSERS = [
 //
 // JXA access rules (see AGENTS.md): collections are read lazily (`windows[i]`,
 // never `windows()`), multi-tab reads use bulk property access (`tabs.url()`).
-function jxaRuntime(BROWSERS) {
+function jxaRuntime(BROWSERS, HANG) {
   ObjC.import("CoreGraphics");
   ObjC.import("Foundation");
   const KIND = {}, KEY = {}, BY_KEY = {}, BUNDLE = {};
@@ -493,7 +493,7 @@ function jxaRuntime(BROWSERS) {
   // dropped mid-navigation costs at most this.
   const POLL_EXEC_SECS = 2;
   const asQuote = function (s) { return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; };
-  const NO_REPLY = "timeout: page JS got no reply within ";
+  const NO_REPLY = "timeout: " + HANG.noReply;
   const isNoReply = function (e) { return !!e && e.message.indexOf(NO_REPLY) === 0; };
   // NSAppleScript compiles on its first run, which live costs about as much as
   // the execute itself, so each (browser, tab, window) gets one compiled handler
@@ -581,7 +581,7 @@ function jxaRuntime(BROWSERS) {
   function afterStep(tool, f) {
     try { return f(); } catch (e) {
       if (!isNoReply(e) || e.message.indexOf(MAY_HAVE_RUN) >= 0) throw e;
-      throw new Error("timeout: the " + tool + " ran but its result got no reply; the page may be navigating; don't " + tool + " again, check the page");
+      throw new Error("timeout: the " + tool + HANG.ranNoReply + "; the page may be navigating; don't " + tool + " again, check the page");
     }
   }
   // pollExec for steps. A fast failure's error is never read (see asExecute), so the
@@ -594,7 +594,7 @@ function jxaRuntime(BROWSERS) {
     catch (e) { if (isNoReply(e)) throw new Error(NO_REPLY + secs + "s" + MAY_HAVE_RUN); }
     if (!inNamedWindow(t)) return exec(t, js);
     exec(t, "1");
-    throw new Error("timeout: page JS failed without a reply" + MAY_HAVE_RUN);
+    throw new Error("timeout: " + HANG.failed + MAY_HAVE_RUN);
   }
   function inNamedWindow(t) {
     const w = t.winId != null ? app(t.app).windows.byId(t.winId) : app(t.app).windows[t.w];
@@ -636,7 +636,7 @@ function jxaRuntime(BROWSERS) {
   // Whether the last poll ran out with its last run unanswered: the page may be
   // blocked (a dialog), not merely not there yet. Node probes for a dialog then.
   let pollSilent = false;
-  const UNANSWERED = "; the page stopped answering";
+  const UNANSWERED = HANG.unanswered;
   const ranOut = function (msg) { return new Error(msg + (pollSilent ? UNANSWERED : "")); };
 
 
@@ -1829,7 +1829,7 @@ function jxaRuntime(BROWSERS) {
           try { execWithin(t, "1", Math.max(0.1, Math.min(NAV_EXEC_SECS, (deadline - Date.now()) / 1000))); } catch (e) { if (isStale(e)) throw e; answers = isNoReply(e); }
           if (!answers) throw lastErr;
         }
-        throw refuse("timeout", "the page didn't answer, so the load may or may not have started; check the tab's url before retrying");
+        throw refuse("timeout", HANG.noAnswer + ", so the load may or may not have started; check the tab's url before retrying");
       }
       if (!viaPage) onTab(t, function () { t.tab.url = a.url; });
       if (/^same/.test(r || "")) return result(true);
@@ -2142,7 +2142,18 @@ function jxaRuntime(BROWSERS) {
   };
 }
 
-export const JXA_PRELUDE = `(${jxaRuntime})(${JSON.stringify(BROWSERS)})`;
+// Timeout wording that marks a hang (page JS blocked, or its reply never came),
+// shared by the messages and by the dialog probe's check.
+export const HANG = {
+  killed: "osascript gave up after",
+  noReply: "page JS got no reply within ",
+  failed: "page JS failed without a reply",
+  ranNoReply: " ran but its result got no reply",
+  noAnswer: "the page didn't answer",
+  unanswered: "; the page stopped answering",
+};
+
+export const JXA_PRELUDE = `(${jxaRuntime})(${JSON.stringify(BROWSERS)}, ${JSON.stringify(HANG)})`;
 export const DAEMON_PRELUDE = JXA_PRELUDE + ";__perch.warm()";
 
 export const ERR = {
@@ -2150,7 +2161,7 @@ export const ERR = {
     "Safari → Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.",
   automation: "Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, " +
     "ticking the target browser under the controlling app (Claude Code / Terminal / iTerm).",
-  timeout: (ms) => `timeout: osascript gave up after ${ms}ms: the tab is unreachable (hung page, or a tab its window doesn't show). Re-run list_tabs.`,
+  timeout: (ms) => `timeout: ${HANG.killed} ${ms}ms: the tab is unreachable (hung page, or a tab its window doesn't show). Re-run list_tabs.`,
 };
 
 export function translatePermissionError(msg) {
@@ -2401,8 +2412,9 @@ const DIALOG_PROBE_MS = 1500, DIALOG_REPROBE_MS = 2000;
 // Timeouts that may mean page JS was blocked: the REPL killed, or an execute
 // whose reply never came. A wait, wait {quiet} or awaitPromise that ran out
 // while the page answered its polls can't be a dialog and is not probed; one
-// whose last poll went unanswered says so (the runtime's UNANSWERED) and is.
-const HUNG = /^timeout: (osascript gave up after|page JS got no reply within|page JS failed without a reply|the \w+ ran but its result got no reply|the page didn't answer|.*; the page stopped answering)/;
+// whose last poll went unanswered says so (HANG.unanswered) and is.
+const HANG_PHRASES = Object.values(HANG);
+const hung = (msg) => msg.startsWith("timeout: ") && HANG_PHRASES.some((p) => msg.includes(p));
 const DIALOG_BLIND = new Set(["listTabs", "newTab", "closeTab", "activate", "shotGeom", "shot", "dialogs", "answerDialog"]);
 
 const probeDialogs = async (target) => JSON.parse(await jxaOneShot(`JSON.stringify(__perch.dialogs(${JSON.stringify({ target })}))`, { timeout: 5000 }));
@@ -2428,7 +2440,7 @@ async function watchDialogs(target, lane, run) {
   try { return await run(token); }
   catch (e) { err = e; }
   finally { done = true; clearTimeout(timer); }
-  const hit = HUNG.test(err.message) && await findDialog(target);
+  const hit = hung(err.message) && await findDialog(target);
   throw hit ? dialogOpen(hit) : err;
 }
 
