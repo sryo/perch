@@ -10,6 +10,7 @@ import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
 import { throwAt, noRaw } from "./helpers/fault.mjs";
+import { mapRefs } from "./helpers/refs.mjs";
 
 const saved = { fast: DAEMONS.fast, slow: DAEMONS.slow, exec: deps.exec };
 afterEach(() => Object.assign(DAEMONS, { fast: saved.fast, slow: saved.slow }) && Object.assign(deps, { exec: saved.exec }));
@@ -117,6 +118,7 @@ test("shot_restore puts back the window's scroll and every scrolled ancestor's, 
 
 test("shot_clip takes a ref; a stale or unknown ref is a ref miss that scrolls nothing", () => {
   const p = scrolled();
+  p.dom.__perch_refsId = "m";
   p.dom.__perch_refs = { e4: p.t, e5: p.dom.document.getElementById("u") };
   assert.equal(run(p.dom, "shot_clip", { ref: "e4" }).ok, true);
   run(p.dom, "shot_restore", {});
@@ -417,9 +419,9 @@ test("a moved element is captured once, after its frames painted, from a poll wh
   const first = polls()[0];
   const q = scrolled();
   install(q);
-  q.dom.__perch_refs = { e4: q.t };
+  const { e4 } = mapRefs(q.dom, { e4: q.t }, { tabId: "chrome:c0" });
   spawns(2000);
-  await shoot({ ref: "e4" });
+  await shoot({ ref: e4 });
   assert.equal(world.state.shots.length, 1);
   assert.equal(polls()[0], first, "byte-identical across calls");
 });
@@ -637,8 +639,8 @@ test("a shot_clip page fault is reported in neutral words, captures nothing and 
     const calls = spawns(2000);
     const threw = throwAt(p.dom, marker);
     for (const how of [{ selector: "#t" }, { ref: "e4" }]) {
-      p.dom.__perch_refs = { e4: p.t };
-      const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, ...how });
+      const { e4 } = mapRefs(p.dom, { e4: p.t }, { tabId: "chrome:c0" });
+      const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, ...how, ...(how.ref ? { ref: e4 } : {}) });
       assert.equal(r.content.length, 1, "no image");
       const out = JSON.parse(r.content[0].text);
       assert.deepEqual(out, { ok: false, error: "screenshot: the page script failed on this page (TypeError); nothing was captured" });
@@ -654,10 +656,10 @@ test("a shot_clip PerchStaleRef is the call's ref miss", async () => {
   const p = scrolled();
   install(p);
   spawns(2000);
-  p.dom.__perch_refs = { e4: p.t };
+  const { e4 } = mapRefs(p.dom, { e4: p.t }, { tabId: "chrome:c0" });
   throwAt(p.dom, "const c = el.getBoundingClientRect();", () => true, "throw Object.assign(new Error('x'), { name: 'PerchStaleRef' });");
-  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, ref: "e4" });
-  assert.match(r.content[0].text, /^error: ref e4 is stale or unknown; call accessibility_snapshot again/);
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, ref: e4 });
+  assert.match(r.content[0].text, new RegExp(`^error: ref ${e4} is stale or unknown; call accessibility_snapshot again`));
   assert.deepEqual(where(p), [0, 40, 37]);
 });
 

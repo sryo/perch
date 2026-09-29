@@ -7,7 +7,7 @@
 // performance.timeOrigin is the page's own (happy-dom shares the process's). It
 // seeds snapshot refs; the default seeds them from 1 on every run.
 import { Window } from "happy-dom";
-import { buildEvalWrapper, pageScript } from "../../server.js";
+import { buildEvalWrapper, pageScript, takeRefsId } from "../../server.js";
 
 export function page(html, { url = "https://a.test/p", timeOrigin = 1790000001000.25 } = {}) {
   const w = new Window({ url, settings: { enableJavaScriptEvaluation: true, suppressInsecureJavaScriptEnvironmentWarning: true, navigation: { disableChildPageNavigation: true } } });
@@ -31,7 +31,15 @@ export function page(html, { url = "https://a.test/p", timeOrigin = 179000000100
 }
 
 const parse = (s) => (s === "" || s == null ? null : JSON.parse(s));
-export const run = (w, name, A = {}) => parse(w.eval(buildEvalWrapper(pageScript(name, A))));
+// As the server that took the page's last snapshot calls it: every ref goes
+// with that map's id, and a snapshot's reply drops the id.
+const tagRefs = (v, rid) => Array.isArray(v) ? v.map((x) => tagRefs(x, rid))
+  : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, tagRefs(x, rid)]).concat(v.ref ? [["rid", rid]] : []))
+  : v;
+export const run = (w, name, A = {}) => {
+  const out = parse(w.eval(buildEvalWrapper(pageScript(name, tagRefs(A, w.__perch_refsId)))));
+  return typeof out === "string" ? takeRefsId(out).page : out;
+};
 export const runBody = (w, body) => parse(w.eval(buildEvalWrapper(pageScript(null, {}) + body)));
 
 // The OS delivers a posted press: a trusted mousedown on `el` (default: body),

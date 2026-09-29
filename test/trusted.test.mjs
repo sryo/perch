@@ -71,7 +71,7 @@ test("trusted_probe for fill skips checkboxes/hidden and refuses rich editors", 
   const o = run(w, "trusted_probe", { label_pattern: "email", forFill: true });
   assert.equal(o.el, `textbox "Email"`);
   assert.equal(run(w, "trusted_probe", { ref: "1", forFill: true }).__perch_ref_miss, true);
-  w.eval(`window.__perch_refs = { '1': document.querySelector('[contenteditable]') }`);
+  w.eval(`window.__perch_refsId = 'm'; window.__perch_refs = { '1': document.querySelector('[contenteditable]') }`);
   assert.match(run(w, "trusted_probe", { ref: "1", forFill: true }).error, /plain inputs\/textareas only/);
 });
 

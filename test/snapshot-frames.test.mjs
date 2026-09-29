@@ -10,6 +10,8 @@ import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run, runBody } from "./helpers/page.mjs";
 import { throwAt, noRaw } from "./helpers/fault.mjs";
 
+// A server renumbers a ref it showed before, so rows across fresh pages compare without it.
+const unref = (l) => l.replace(/^\d+ /, "");
 const snap = (w, A = {}) => {
   const [head, ...lines] = run(w, "snapshot", { max: 500, ...A }).split("\n");
   return { head: JSON.parse(head.slice(2)), lines };
@@ -128,19 +130,20 @@ function tabOf(dom) {
 // viewOf's throw, through a tool call: the ref-miss hint for the call's ref.
 // Any other thrown name is the neutral fault, with none of the page's text.
 test("(b) a frame document gone mid-call is the ref-miss hint through fill and click; another fault is neutral", async () => {
-  for (const [tool, marker, args] of [["fill", "return fillOne(A);", { ref: "2", text: "Ada" }], ["click", "const r = resolveClick(A);", { ref: "2" }]]) {
+  const firstName = async () => (await handleCall("accessibility_snapshot", {})).content[0].text.split("\n").find((l) => l.includes(`"First name"`)).split(" ")[0];
+  for (const [tool, marker, args] of [["fill", "return fillOne(A);", { text: "Ada" }], ["click", "const r = resolveClick(A);", {}]]) {
     const { w } = sameOrigin();
     tabOf(w);
-    snap(w);
+    const ref = await firstName();
     throwAt(w, marker, undefined, "viewOf({ ownerDocument: { defaultView: null } });");
-    const r = await handleCall(tool, args);
+    const r = await handleCall(tool, { ...args, ref });
     assert.equal(r.isError, true, tool);
-    assert.equal(r.content[0].text, "error: ref 2 is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)");
+    assert.equal(r.content[0].text, `error: ref ${ref} is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)`);
     const b = sameOrigin();
     tabOf(b.w);
-    snap(b.w);
+    const bref = await firstName();
     throwAt(b.w, marker);
-    const o = await handleCall(tool, args);
+    const o = await handleCall(tool, { ...args, ref: bref });
     assert.equal(o.isError, undefined, o.content[0].text);
     noRaw(JSON.parse(o.content[0].text));
     assert.deepEqual(JSON.parse(o.content[0].text), { ok: false, error: `${tool}: the page script failed on this page (TypeError); nothing verified` });
@@ -277,7 +280,7 @@ test("frames:true drops the Accessibility rows of a same-origin frame already wa
   const s = r.content[0].text;
   const lines = s.split("\n").slice(1);
   assert.deepEqual(lines.filter((l) => /^f\d+ /.test(l)), [`f1 button "Chat" frame="widget.example"`]);
-  assert.ok(lines.includes(`2 textbox "First name" name="first" required frame=0`), s);
+  assert.ok(lines.map(unref).includes(`textbox "First name" name="first" required frame=0`), s);
   const h = JSON.parse(s.split("\n")[0].slice(2));
   assert.deepEqual(h.frames, { count: 1 });
   assert.equal(h.fr, undefined, "the frame rects stay private");
@@ -314,7 +317,7 @@ test("frames:true keeps a cross-origin frame nested in a walked same-origin fram
   framesWorld(dom, [mine]);
   const { s, head, lines, f } = await frameSnap();
   assert.deepEqual(f, [`f1 textbox "Card" frame="pay.example"`], s);
-  assert.ok(lines.includes(`2 textbox "First name" name="first" required frame=0`), s);
+  assert.ok(lines.map(unref).includes(`textbox "First name" name="first" required frame=0`), s);
   assert.deepEqual(head.frames, { count: 1 });
 });
 
@@ -329,7 +332,7 @@ for (const [name, err] of [
     const { s, head, lines } = await frameSnap();
     assert.match(head.frames.error, /^[a-z][a-z_]*: /, s);
     assert.doesNotMatch(head.frames.error, /NSCFNumber|Can't get object/, s);
-    assert.equal(lines[0], `1 heading "Careers" level=1`);
+    assert.equal(unref(lines[0]), `heading "Careers" level=1`);
   });
 }
 
@@ -363,7 +366,7 @@ test("an untruncated same-origin frame is listed once, by the page walk", async 
   framesWorld(truncatedPage(), [MINE]);
   const r = await frameSnap();
   assert.deepEqual(r.f, [], r.s);
-  assert.deepEqual(r.lines.slice(5), [`6 textbox "First name" frame=0`, `7 textbox "Last name" frame=0`]);
+  assert.deepEqual(r.lines.slice(5).map(unref), [`textbox "First name" frame=0`, `textbox "Last name" frame=0`]);
   assert.deepEqual(r.head.frames, { count: 0 });
 });
 
