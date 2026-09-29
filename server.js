@@ -926,13 +926,15 @@ function jxaRuntime(BROWSERS, HANG) {
     return I;
   }
 
-  // Where the clip's CSS box lands in the capture: pixel = k * (ox + s*v) + d*v
-  // for a CSS coordinate v, k being capture pixels per window point and (ox, oy)
-  // the viewport's origin in window points. The Accessibility page area gives the
-  // origin and points per CSS px (s) exactly; without it the page's estimate
-  // places the origin and devicePixelRatio is pixels per CSS px (d), zoom
-  // included. The box is the element plus SHOT_MARGIN CSS px, cut at the
-  // viewport; null when nothing of it is left.
+  // Where the clip's CSS box lands in the capture: pixel = k * (ox + s*v) + d*(v - e)
+  // for a CSS coordinate v, k being capture pixels per window point. The
+  // Accessibility page area gives the viewport's origin (ox, oy) in window points
+  // and points per CSS px (s) exactly, with d = 0. Without it devicePixelRatio is
+  // pixels per CSS px (d), zoom included, and the origin is the window's far
+  // corner (ox, oy) less the viewport's size (e: innerWidth, innerHeight) in
+  // points, e * d / k: innerWidth is CSS px while outerWidth is points, so the
+  // two only subtract once the zoom (d / k) is known. The box is the element
+  // plus SHOT_MARGIN CSS px, cut at the viewport; null when nothing of it is left.
   const SHOT_MARGIN = 8;
   const SHOT_MOVED = "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it or scroll the page yourself";
   function shotMap(I, c) {
@@ -944,7 +946,7 @@ function jxaRuntime(BROWSERS, HANG) {
       ObjC.import("ApplicationServices");
       if ($.AXIsProcessTrusted()) w = axPageArea(I, { iw: c.iw, ih: c.ih });
     } catch (e) {}
-    const m = w ? { ox: w.x - r.x, oy: w.y - r.y, s: w.scale, d: 0, aim: "ax" } : { ox: c.ox - r.x, oy: c.oy - r.y, s: 0, d: c.dpr || 1, aim: "estimate" };
+    const m = w ? { ox: w.x - r.x, oy: w.y - r.y, s: w.scale, d: 0, aim: "ax" } : { ox: c.right - r.x, oy: c.bottom - r.y, ex: c.iw, ey: c.ih, s: 0, d: c.dpr || 1, aim: "estimate" };
     m.box = box;
     m.cw = r.w;
     m.clipped = c.x < 0 || c.y < 0 || c.x + c.w > c.iw || c.y + c.h > c.ih;
@@ -953,9 +955,9 @@ function jxaRuntime(BROWSERS, HANG) {
   // A shot map's box in pixels of a W x H capture, kept inside it (cut if it had
   // to be). Node's clipPixels does the same for the screencapture fallback.
   function clipPixels(m, W, H) {
-    const k = W / m.cw, px = function (o, v) { return k * (o + m.s * v) + m.d * v; };
-    const x0 = Math.floor(px(m.ox, m.box.x0) + 1e-6), y0 = Math.floor(px(m.oy, m.box.y0) + 1e-6);
-    const x1 = Math.ceil(px(m.ox, m.box.x1) - 1e-6), y1 = Math.ceil(px(m.oy, m.box.y1) - 1e-6);
+    const k = W / m.cw, px = function (o, e, v) { return k * (o + m.s * v) + m.d * (v - (e || 0)); };
+    const x0 = Math.floor(px(m.ox, m.ex, m.box.x0) + 1e-6), y0 = Math.floor(px(m.oy, m.ey, m.box.y0) + 1e-6);
+    const x1 = Math.ceil(px(m.ox, m.ex, m.box.x1) - 1e-6), y1 = Math.ceil(px(m.oy, m.ey, m.box.y1) - 1e-6);
     const x = Math.max(0, x0), y = Math.max(0, y0);
     return { x: x, y: y, w: Math.min(W, x1) - x, h: Math.min(H, y1) - y, cut: x0 < 0 || y0 < 0 || x1 > W || y1 > H };
   }
@@ -3319,9 +3321,9 @@ export const deps = { exec, dialogs: probeDialogs };
 
 // The runtime's clipPixels, for a screencapture of W x H pixels.
 function clipPixels(m, W, H) {
-  const k = W / m.cw, px = (o, v) => k * (o + m.s * v) + m.d * v;
-  const x0 = Math.floor(px(m.ox, m.box.x0) + 1e-6), y0 = Math.floor(px(m.oy, m.box.y0) + 1e-6);
-  const x1 = Math.ceil(px(m.ox, m.box.x1) - 1e-6), y1 = Math.ceil(px(m.oy, m.box.y1) - 1e-6);
+  const k = W / m.cw, px = (o, e, v) => k * (o + m.s * v) + m.d * (v - (e || 0));
+  const x0 = Math.floor(px(m.ox, m.ex, m.box.x0) + 1e-6), y0 = Math.floor(px(m.oy, m.ey, m.box.y0) + 1e-6);
+  const x1 = Math.ceil(px(m.ox, m.ex, m.box.x1) - 1e-6), y1 = Math.ceil(px(m.oy, m.ey, m.box.y1) - 1e-6);
   const x = Math.max(0, x0), y = Math.max(0, y0);
   return { x, y, w: Math.min(W, x1) - x, h: Math.min(H, y1) - y, cut: x0 < 0 || y0 < 0 || x1 > W || y1 > H };
 }
@@ -6332,8 +6334,9 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
   // screenshot {ref|selector}: the element's client rect once scrolled into
   // view. Every scroll position that can move (each ancestor's, across shadow
   // roots, and the window's) is kept on window.__perch_shot for shot_restore,
-  // and only once the element is known to have a box. ox/oy: the viewport's
-  // screen origin as trusted input estimates it (browser chrome left and top).
+  // and only once the element is known to have a box. right/bottom: the window's
+  // far corner in screen points, from which the runtime estimates the viewport's
+  // origin (browser chrome left and top) once it knows the zoom.
   shot_clip: String.raw`
 const r = resolveEl(A);
 if (r.out) return r.out;
@@ -6347,7 +6350,7 @@ const st = window.__perch_shot = { els: els, x: window.scrollX, y: window.scroll
 try { el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (e) {}
 const c = el.getBoundingClientRect();
 const moved = window.scrollX !== st.x || window.scrollY !== st.y || els.some(function (e) { return e[0].scrollLeft !== e[1] || e[0].scrollTop !== e[2]; });
-return { ok: true, x: c.left, y: c.top, w: c.width, h: c.height, iw: innerWidth, ih: innerHeight, dpr: window.devicePixelRatio || 1, ox: screenX + outerWidth - innerWidth, oy: screenY + outerHeight - innerHeight, moved: moved };
+return { ok: true, x: c.left, y: c.top, w: c.width, h: c.height, iw: innerWidth, ih: innerHeight, dpr: window.devicePixelRatio || 1, right: screenX + outerWidth, bottom: screenY + outerHeight, moved: moved };
 `,
   // Puts back what shot_clip kept, instantly even under scroll-behavior: smooth.
   shot_restore: String.raw`

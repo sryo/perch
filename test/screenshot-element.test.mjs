@@ -27,14 +27,21 @@ function scrolled({ rect = "100,200,300,50", iw = 800, ih = 620, dpr = 1, est = 
   return { dom, box, t };
 }
 const where = ({ dom, box }) => [dom.scrollX, dom.scrollY, box.scrollTop];
+// An element already in view: scrollIntoView moves nothing.
+function still(opts) {
+  const p = scrolled(opts);
+  p.t.scrollIntoView = function (o) { p.dom.intoView.push(o); };
+  return p;
+}
+
 
 // ---- the page scripts ----
 
-test("shot_clip scrolls the element to the center and reports its client rect, viewport and screen estimate", () => {
+test("shot_clip scrolls the element to the center and reports its client rect, viewport and the window's screen corner", () => {
   const p = scrolled({ dpr: 2 });
   const c = run(p.dom, "shot_clip", { selector: "#t" });
   assert.equal(JSON.stringify(p.dom.intoView), JSON.stringify([{ block: "center", inline: "nearest", behavior: "instant" }]));
-  assert.deepEqual(c, { ok: true, x: 100, y: 200, w: 300, h: 50, iw: 800, ih: 620, dpr: 2, ox: 300, oy: 130, moved: true });
+  assert.deepEqual(c, { ok: true, x: 100, y: 200, w: 300, h: 50, iw: 800, ih: 620, dpr: 2, right: 1100, bottom: 750, moved: true });
 });
 
 test("shot_restore puts back the window's scroll and every scrolled ancestor's, then forgets them", () => {
@@ -145,13 +152,27 @@ test("page zoom: the Accessibility area's width over innerWidth scales the CSS b
   // 92..408 x 192..258 CSS px * 1.25 + (200, 80), * 2.
   assert.deepEqual(meta.clip, { x: 630, y: 640, w: 790, h: 165 });
   assert.equal(meta.aim, "ax");
+  // The estimate gets the zoom from devicePixelRatio over the capture's 2px per
+  // point: the 640x496 CSS px viewport is 800x620 points, so the browser's own
+  // frame is 1000-800 points wide at the left and 700-620 tall at the top, in the
+  // same points as outerWidth and outerHeight.
+  for (const [scale, dpr, clip] of [[2, 2.5, { x: 630, y: 640, w: 790, h: 165 }], [1, 1.25, { x: 315, y: 320, w: 395, h: 83 }]]) {
+    const est = scrolled({ iw: 640, ih: 496, dpr });
+    install(est, { scale });
+    world.state.ax = false;
+    spawns(2000);
+    const { meta: m } = await shoot({ selector: "#t" });
+    assert.equal(m.aim, "estimate");
+    assert.deepEqual(m.clip, clip, `scale ${scale}`);
+  }
+  // Node's screencapture fallback places it the same way.
+  const fb = still({ iw: 640, ih: 496, dpr: 2.5 });
+  install(fb);
   world.state.ax = false;
-  // The estimate gets the zoom from devicePixelRatio over the capture's 2px per point.
-  const est = scrolled({ iw: 640, ih: 496, dpr: 2.5, est: { screenX: 100, screenY: 50, outerWidth: 840, outerHeight: 576 } });
-  install(est);
-  world.state.ax = false;
-  spawns(2000);
+  world.state.capture = false;
+  const calls = spawns(2000);
   assert.deepEqual((await shoot({ selector: "#t" })).meta.clip, { x: 630, y: 640, w: 790, h: 165 });
+  assert.deepEqual(calls[1].slice(0, 6), ["sips", "--cropToHeightWidth", "165", "790", "--cropOffset", "640"]);
 });
 
 test("an element past the viewport's edge is cropped at the viewport, clipped:true", async () => {
@@ -175,13 +196,6 @@ test("the crop comes before the downscale", async () => {
   assert.deepEqual(meta.image, { w: 800, h: 308 });
   assert.equal(meta.clipped, undefined);
 });
-
-// An element already in view: scrollIntoView moves nothing.
-function still(opts) {
-  const p = scrolled(opts);
-  p.t.scrollIntoView = function (o) { p.dom.intoView.push(o); };
-  return p;
-}
 
 test("without the capture grant, an element already in view is cropped by sips before any resample", async () => {
   const p = still({ dpr: 2 });
