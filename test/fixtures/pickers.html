@@ -43,6 +43,12 @@
   <input id="loc" name="location" type="text" autocomplete="off">
   <input type="hidden" id="selected-location" name="selectedLocation"><div class="dropdown-container"></div></div></div>
 
+<!-- A location typeahead that keeps typed text on blur: only its empty hidden
+     companion tells free text from a pick, so a snapshot flags it unpicked. -->
+<form class="field"><div class="loc-pick"><label for="li">Work location</label>
+  <input id="li" name="location-input" type="text" autocomplete="off" required>
+  <input type="hidden" id="sl" name="selected-location"><div class="dropdown-results"></div></div></form>
+
 <script>
 (function () {
   // Radix's DismissableLayer: Escape and a pointerdown outside close only the topmost layer.
@@ -179,6 +185,19 @@
     }, 250);
   });
   loc.addEventListener("blur", function () { clearTimeout(locTimer); locList.innerHTML = ""; if (!locHidden.value) loc.value = ""; });
+
+  const li = document.getElementById("li");
+  const sl = document.getElementById("sl");
+  const liList = document.querySelector(".loc-pick .dropdown-results");
+  li.addEventListener("input", function () {
+    sl.value = "";
+    const q = li.value.toLowerCase();
+    liList.innerHTML = cities.filter(function (c) { return q && c.toLowerCase().indexOf(q) === 0; })
+      .map(function (c) { return '<div class="dropdown-item">' + c + "</div>"; }).join("");
+    liList.querySelectorAll(".dropdown-item").forEach(function (o) {
+      o.addEventListener("mousedown", function () { li.value = o.textContent; sl.value = "ChIJ" + cities.indexOf(o.textContent); liList.innerHTML = ""; });
+    });
+  });
 })();
 </script>
 </body>
