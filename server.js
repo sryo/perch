@@ -3313,6 +3313,7 @@ function fillOne(a) {
   // Masks reformat or drop a country code, so digits also count when one ends the other.
   const digits = function (s) { return String(s || "").replace(/\D/g, ""); };
   const landed = function (s) {
+    if (text === "") return String(s || "").trim() === "";
     const d = digits(s), t = digits(text);
     return String(s || "").replace(/\s/g, "").length >= want || (d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t));
   };
@@ -3346,7 +3347,7 @@ function fillOne(a) {
     setNativeValue(el, text);
     fire(el, ["input", "change", "blur"]);
     const t = el.tagName === "INPUT" ? (el.type || "text").toLowerCase() : "";
-    if (!Object.prototype.hasOwnProperty.call(FORMATS, t)) return landed(el.value);
+    if (!Object.prototype.hasOwnProperty.call(FORMATS, t)) return text === "" ? el.value === "" : landed(el.value);
     if (exact(t, el.value)) return true;
     const kept = clip(el.value, 60);
     return { ok: false, el: ident(el), kept: kept, error: ident(el) + " expects " + format(el, t) + "; the page kept " + JSON.stringify(kept) };
@@ -3381,7 +3382,7 @@ function fillOne(a) {
     return landed(textOf(root));
   }
   function tryFill(el, host) {
-    if (isField(el) && isTypeahead(el)) return startTypeahead(el);
+    if (isField(el) && text !== "" && isTypeahead(el)) return startTypeahead(el);
     if (isField(el)) {
       const r = setPlain(el);
       return r === true ? { ok: true, kind: "plain", el: ident(el), len: el.value.length } : r || null;
@@ -5029,13 +5030,15 @@ async function fill(args = {}) {
     const r = await fillFields([{ ref, selector, label_pattern, checked, option }], target);
     return r && Array.isArray(r.results) ? r.results[0] : r;
   }
-  if (!text && !text_path) throw new Error("fill requires `text` or `text_path` (checked/option: use fields)");
-  if (text && text_path) throw new Error("fill: pass `text` OR `text_path`, not both");
+  if (text == null && !text_path) throw new Error("fill requires `text` or `text_path` (checked/option: use fields)");
+  if (text != null && text_path) throw new Error("fill: pass `text` OR `text_path`, not both");
   if (!ref && !selector && !label_pattern) throw new Error("fill requires `ref`, `selector`, or `label_pattern`");
   if (label_pattern) validateLabelPattern("fill", label_pattern);
+  const clear = text === "";
+  if (clear && (trusted || raise)) throw new Error("fill: clearing (text:\"\") does not take trusted/raise");
   let body = text;
   if (text_path) ({ data: body } = await readUserFile(text_path, "utf8"));
-  if (!body || !body.trim()) throw new Error("fill: empty body");
+  if (!clear && (!body || !String(body).trim())) throw new Error("fill: empty body");
   const r = trusted
     ? await trustedFill({ ref, selector, label_pattern, text: body, raise, target })
     : await runPage("fill", "fill", { ref, selector, label_pattern, text: body }, target);
@@ -5172,10 +5175,10 @@ const TOOLS = [
     dialog: { type: ["boolean", "string"] },
     target: TARGET,
   }, ["key"]),
-  tool("fill", "Set text in inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies it landed: {ok,kind,el,len}. `fields`: many in one call. `trusted`: trusted input event, no key focus; `raise:true` types foreground keys.", {
+  tool("fill", "Fill inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies it landed: {ok,kind,el,len}; empty `text` clears. `fields`: many in one call. `trusted`: trusted input event, no key focus; `raise:true`: foreground keys.", {
     fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]; option: a select or radio group" },
     text: { type: "string" },
-    text_path: { type: "string", description: "Local text file." },
+    text_path: { type: "string", description: "Local file." },
     ref: REF,
     selector: SEL,
     label_pattern: LABEL,

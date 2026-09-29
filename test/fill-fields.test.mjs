@@ -521,6 +521,62 @@ test("fill: clearing a number field with empty text passes", () => {
   assert.equal(w.document.querySelector("[type=number]").value, "");
 });
 
+const CLEAR = `<label>City <input id=city value=Rosario></label>
+  <label>Salary <input type=number value=3000></label>
+  <label>Start date <input type=date value=2026-03-15></label>
+  <label>Notes <textarea>old</textarea></label>
+  <label>Tag <input id=tag role=combobox aria-autocomplete=list value=blue></label>`;
+
+test("fill {text:''} clears a field and checks it is empty", async () => {
+  const { dom } = onPage(CLEAR);
+  sanitize(dom, "[type=number]", numberRule);
+  for (const [label_pattern, sel] of [["city", "#city"], ["salary", "[type=number]"], ["start", "[type=date]"], ["notes", "textarea"], ["tag", "#tag"]]) {
+    const { r, o } = await fill({ label_pattern, text: "" });
+    assert.equal(r.isError, undefined, `${label_pattern}: ${o}`);
+    assert.equal(o.ok, true, `${label_pattern}: ${JSON.stringify(o)}`);
+    assert.equal(o.len, 0, label_pattern);
+    assert.equal(dom.document.querySelector(sel).value, "", label_pattern);
+  }
+});
+
+test("fill {fields} clears fields given text:''", async () => {
+  const { dom } = onPage(CLEAR);
+  const { o } = await fill({ fields: [{ selector: "#city", text: "" }, { label_pattern: "salary", text: "" }, { selector: "#tag", text: "" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(["#city", "[type=number]", "#tag"].map((s) => dom.document.querySelector(s).value), ["", "", ""]);
+});
+
+test("fill {text:''} fails when the page puts the value back", () => {
+  const w = page(`<label>City <input id=city value=Rosario></label>`);
+  runBody(w, `const c = document.getElementById('city'); c.addEventListener('blur', () => { c.value = 'Rosario'; }); return 1`);
+  const o = run(w, "fill", { label_pattern: "city", text: "" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+});
+
+test("fill {text:''} empties a rich editor", () => {
+  const w = page(`<div contenteditable=true aria-label=Body><p>Dear team</p></div>`);
+  const o = run(w, "fill", { label_pattern: "body", text: "" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.kind, "rich");
+  assert.equal(w.document.querySelector("[contenteditable]").textContent, "");
+});
+
+test("fill {text:''} on a typeahead clears it without a suggestion lookup", () => {
+  const w = page(`<label>Tag <input id=tag role=combobox aria-autocomplete=list value=blue></label>`);
+  assert.deepEqual(run(w, "fill", { label_pattern: "tag", text: "" }), { ok: true, kind: "plain", el: `combobox "Tag"`, len: 0 });
+  assert.deepEqual(run(w, "fill_fields", { fields: [{ selector: "#tag", text: "" }] }).results, [{ ok: true, kind: "plain", el: `combobox "Tag"`, len: 0 }]);
+});
+
+test("fill still rejects a missing or blank text, and a trusted clear", async () => {
+  onPage(CLEAR);
+  const err = async (args) => (await handleCall("fill", args)).content[0].text;
+  assert.match(await err({ selector: "#city" }), /fill requires `text` or `text_path`/);
+  assert.match(await err({ selector: "#city", text: null }), /fill requires `text` or `text_path`/);
+  assert.match(await err({ selector: "#city", text: "  " }), /fill: empty body/);
+  assert.match(await err({ selector: "#city", text: "", text_path: "/tmp/x" }), /`text` OR `text_path`/);
+  assert.match(await err({ selector: "#city", text: "", trusted: true }), /clearing.*trusted/);
+});
+
 test("fill: text-like inputs keep the tolerant check", () => {
   const w = page(`<label>Phone <input type=tel></label><label>City <input id=city></label>`);
   // A phone mask that drops the country code and reformats.
