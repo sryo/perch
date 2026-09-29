@@ -43,7 +43,7 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, 
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed (a field a later one cleared comes back `ok:false`); `unverified`: count of picks the control didn't show, or of fields a failed final re-read or a page change left unchecked (`warning`); an error after a field landed ends it with `error`, landed results kept. `checked` clicks only on a change; `option` also answers a radio group by question. `only_empty`: skip absent/filled/disabled fields (`skipped`).
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
 - `moved: true` with a new `tabId` (`eval_js`: in a second text item): the tab changed place; use that `tabId` from now on.
-- Page errors: `isError` with `__perch_error`, `__perch_error_name`.
+- `eval_js` error: `isError`, `__perch_error`, `__perch_error_name`.
 - Other errors start with a code (server instructions list them). Also `window_offscreen`: window minimized or on another Space; `no_browser`: none running, or no window; `window_ambiguous`: move or resize a same-frame window; `timeout`: re-list, retry once; if it may have run, check first.
 
 ## Gotchas

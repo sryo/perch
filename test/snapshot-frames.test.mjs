@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run, runBody } from "./helpers/page.mjs";
+import { throwAt, noRaw } from "./helpers/fault.mjs";
 
 const snap = (w, A = {}) => {
   const [head, ...lines] = run(w, "snapshot", { max: 500, ...A }).split("\n");
@@ -112,6 +113,38 @@ test("(b) viewOf fails closed for a detached frame document instead of using the
   Object.defineProperty(d, "defaultView", { get: () => null, configurable: true });
   const o = runBody(w, `return viewOf(window.__el) === window`);
   assert.match(String(o && o.__perch_error), /stale/);
+});
+
+function tabOf(dom) {
+  const world = makeWorld({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: [{ url: "https://a.test/", id: "x", dom }] }] }],
+    cg: [{ owner: "Google Chrome" }],
+  });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+}
+
+// viewOf's throw, through a tool call: the ref-miss hint for the call's ref.
+// Any other thrown name is the neutral fault, with none of the page's text.
+test("(b) a frame document gone mid-call is the ref-miss hint through fill and click; another fault is neutral", async () => {
+  for (const [tool, marker, args] of [["fill", "return fillOne(A);", { ref: "2", text: "Ada" }], ["click", "const r = resolveClick(A);", { ref: "2" }]]) {
+    const { w } = sameOrigin();
+    tabOf(w);
+    snap(w);
+    throwAt(w, marker, undefined, "viewOf({ ownerDocument: { defaultView: null } });");
+    const r = await handleCall(tool, args);
+    assert.equal(r.isError, true, tool);
+    assert.equal(r.content[0].text, "error: ref 2 is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)");
+    const b = sameOrigin();
+    tabOf(b.w);
+    snap(b.w);
+    throwAt(b.w, marker);
+    const o = await handleCall(tool, args);
+    assert.equal(o.isError, undefined, o.content[0].text);
+    noRaw(JSON.parse(o.content[0].text));
+    assert.deepEqual(JSON.parse(o.content[0].text), { ok: false, error: `${tool}: the page script failed on this page (TypeError); nothing verified` });
+  }
 });
 
 test("(b) a trusted click can't aim at a same-origin frame's row: its box is in the frame's viewport", () => {

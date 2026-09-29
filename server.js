@@ -2034,7 +2034,8 @@ function jxaRuntime(BROWSERS, HANG) {
         if (r) r.waited = Date.now() - start;
       }
       if (!r) throw ranOut("timeout: wait timed out after " + a.timeout + "ms");
-      if (r.value && r.value.__perch_error) throw new Error("wait: " + r.value.__perch_error);
+      if (r.value && r.value.bad && a.selector) throw new Error("wait: bad selector: " + a.selector);
+      if (r.value && r.value.__perch_error) throw new Error("wait: the page script failed on this page (" + faultName(r.value) + "); nothing verified");
       return r;
     },
     // One round trip: stamp the current document, start the load, then wait until a
@@ -3102,7 +3103,7 @@ async function wait(args = {}) {
   const js = expression
     ? `(function(){try{var __r=(${expression});return JSON.stringify(__r===undefined?null:__r)}catch(e){return "null"}})()`
     : buildEvalWrapper(pageScript("wait_check", { selector, readyState }));
-  const r = await rt("wait", { target, js, timeout }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+  const r = await rt("wait", { target, js, timeout, selector: expression ? undefined : selector }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
   return expression ? { ok: true, waited: r.waited, value: r.value } : { ok: true, waited: r.waited };
 }
 
@@ -3261,7 +3262,7 @@ function textOf(n) { return n ? (n.innerText || n.textContent || "") : ""; }
 function viewOf(el) {
   const d = el && el.ownerDocument;
   if (!d || d === document) return window;
-  if (!d.defaultView) throw new Error("stale ref: its frame's document is gone; call accessibility_snapshot again");
+  if (!d.defaultView) throw Object.assign(new Error("stale ref"), { name: "PerchStaleRef" });
   return d.defaultView;
 }
 // A same-origin frame that navigates or reloads leaves its old document alive,
@@ -6187,8 +6188,10 @@ return { fresh: true };
   wait_check: String.raw`
 const order = { loading: 0, interactive: 1, complete: 2 };
 if (A.readyState && order[document.readyState] < order[A.readyState]) return false;
-if (A.selector && !document.querySelector(A.selector)) return false;
-return true;
+if (!A.selector) return true;
+let el;
+try { el = document.querySelector(A.selector); } catch (e) { return { bad: true }; }
+return !!el;
 `,
 };
 
@@ -6458,7 +6461,9 @@ async function fileUpload(args = {}) {
   if (r && r.unwired) {
     delete r.unwired;
     if (await uploadShown(target, name, true)) return r;
-    r = { ...r, ...(await runPage("file_upload", "file_upload_drop", { name }, target)) };
+    const drop = await runPage("file_upload", "file_upload_drop", { name }, target);
+    if (drop && drop.__perch_error != null) return drop;
+    r = { ...r, ...drop };
   }
   if (!r || r.shown !== false || !(r.ok === true || r.dropped)) return r;
   // Best effort: an input already holds the file, so a failed poll leaves shown:false.
@@ -6725,11 +6730,28 @@ async function fill(args = {}) {
 
 // A perch page script that threw, by error name only: its message and stack
 // are page internals the agent can't act on. eval_js's own errors never come here.
-function scriptFault(tool, r) {
+// PerchStaleRef is viewOf's; a page can forge the name, which only earns it a
+// re-snapshot hint. A result carrying perch's `delivery` or `point` means the
+// input went out before the fault, so the agent checks rather than retries.
+const SENT_NOUN = { click: "click", press: "keys", fill: "text" };
+function scriptFault(tool, r, args) {
   if (!r || typeof r !== "object" || r.__perch_error == null) return r;
   const n = r.__perch_error_name;
   const name = typeof n === "string" && /^[A-Za-z_$][\w$]{0,39}$/.test(n) ? n : "Error";
-  return { ok: false, error: `${tool}: the page script failed on this page (${name}); nothing verified` };
+  if (name === "PerchStaleRef") {
+    return args && args.ref != null ? { __perch_ref_miss: true, ref: String(args.ref) }
+      : { ok: false, error: `${tool}: a ref's frame document is gone; call accessibility_snapshot again` };
+  }
+  const why = `${tool}: the page script failed on this page (${name}); `;
+  if (r.delivery == null && r.point == null) return { ok: false, error: why + "nothing verified" };
+  const p = r.point;
+  return {
+    ok: false,
+    ...(p && Number.isFinite(p.x) && Number.isFinite(p.y) ? { point: { x: p.x, y: p.y } } : {}),
+    ...(r.delivery === "hid" || r.delivery === "skylight" ? { delivery: r.delivery } : {}),
+    ...(typeof r.el === "string" ? { el: r.el } : {}),
+    error: why + `the ${SENT_NOUN[tool] || "input"} was sent, outcome unverified`,
+  };
 }
 
 // A picker phase that threw: a page change only when the phase saw its
@@ -7026,7 +7048,8 @@ export async function handleCall(name, args = {}) {
     const note = {};
     const lockKey = tabLockKey(name, args);
     const call = () => callNotes.run(note, () => handler(args));
-    const result = await (lockKey ? withTabLock(lockKey, call) : call());
+    let result = await (lockKey ? withTabLock(lockKey, call) : call());
+    if (name !== "eval_js" && result && typeof result === "object" && !Array.isArray(result) && result.__perch_error != null) result = scriptFault(name, result, args);
     const issued = new Set(issuedHandles(name, result));
     if (note.counts) keepCounts(note.counts, (h) => issued.has(h) || (note.stamped && note.stamped.has(h)));
     for (const t of issued) {

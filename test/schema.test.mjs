@@ -97,6 +97,7 @@ test("formatResult: ref miss and page errors are isError; ok:false and strings a
   const miss = formatResult({ __perch_ref_miss: true, ref: "4" });
   assert.equal(miss.isError, true);
   assert.match(miss.content[0].text, /ref 4 is stale.*accessibility_snapshot/);
+  // Only eval_js reaches formatResult with a raw page error; handleCall codes every other tool's.
   assert.equal(formatResult({ __perch_error: "x" }).isError, true);
   assert.equal(formatResult({ ok: false, error: "no match" }).isError, undefined);
   assert.equal(formatResult("# {}").content[0].text, "# {}");

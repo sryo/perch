@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall, taQuery } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
+import { throwAt, noRaw } from "./helpers/fault.mjs";
 
 // The page's async work runs on window.__q, one step per execute, standing in
 // for timers that fire between JXA polls.
@@ -772,18 +773,6 @@ test("fill {fields}: a typeahead entry gets the short-query retry too", async ()
   assert.equal($(dom, "[name=name]").value, "Ada");
 });
 
-// A perch page script that throws is reported by its error name alone.
-const SECRET = "throw new TypeError('secret-internal detail');";
-function throwAt(dom, marker) {
-  const ev = dom.eval.bind(dom);
-  let threw = 0;
-  dom.eval = (js) => js.includes(marker) ? (threw++, ev(js.replace(marker, SECRET + marker))) : ev(js);
-  return () => threw;
-}
-const noRaw = (x) => {
-  const s = JSON.stringify(x);
-  for (const k of ["secret-internal", "__perch_error", "stack"]) assert.ok(!s.includes(k), s);
-};
 
 test("typeahead: a pick that throws is ok:false with the error name only", async () => {
   const { dom } = onPage(LOCATION, LOCATION_JS());
