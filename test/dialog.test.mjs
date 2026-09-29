@@ -1,4 +1,4 @@
-import { test, afterEach } from "node:test";
+import { test, afterEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, OsaDaemon, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
@@ -408,32 +408,50 @@ const hung = () => {
 };
 const OPEN = [{ kind: "confirm", message: "Delete the draft?" }];
 
-test("a call stuck behind a dialog fails with dialog_open in about 1.5s, not at the timeout", { timeout: 10000 }, async () => {
+// Fake setTimeout, so the probe schedule is checked in order, not by elapsed
+// time. The fake REPL answers on setImmediate, which stays real: `settle` lets
+// the call reach the REPL and the probe's promise resolve.
+const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+const onFakeTime = (t) => { mock.timers.enable({ apis: ["setTimeout"] }); t.after(() => mock.timers.reset()); };
+
+test("a call stuck behind a dialog fails with dialog_open at the first probe (1.5s), not at the timeout", async (t) => {
+  onFakeTime(t);
   const { d, f } = hung();
   DAEMONS.fast = d;
   const asked = [];
   deps.dialogs = async (target) => { asked.push(target); return OPEN; };
-  const t0 = Date.now();
-  const { r, t } = await call("eval_js", { script: "return 1", target: A });
-  const ms = Date.now() - t0;
-  assert.equal(r.isError, true);
-  assert.ok(t.startsWith('error: dialog_open: a confirm ("Delete the draft?") is open and pauses the page; answer it with press {key:"Enter"|"Escape", dialog:true, target:{tabId}}'), t);
-  assert.ok(ms >= 1400 && ms < 3000, `${ms}ms`);
+  let out = null;
+  call("eval_js", { script: "return 1", target: A }).then((x) => { out = x; });
+  await settle();
+  mock.timers.tick(1499);
+  await settle();
+  assert.deepEqual(asked, [], "no probe before 1.5s");
+  mock.timers.tick(1);
+  await settle();
+  assert.ok(out, "the call ended at the first probe");
+  assert.equal(out.r.isError, true);
+  assert.ok(out.t.startsWith('error: dialog_open: a confirm ("Delete the draft?") is open and pauses the page; answer it with press {key:"Enter"|"Escape", dialog:true, target:{tabId}}'), out.t);
   assert.deepEqual(asked, [A], "the probe asks about the call's own target");
   assert.equal(f.spawned[0].killed, true, "the hung REPL is killed");
 });
 
-test("the watchdog keeps probing every 2s and stays quiet while the target has no dialog", { timeout: 10000 }, async () => {
+test("the watchdog keeps probing every 2s and stays quiet while the target has no dialog", async (t) => {
+  onFakeTime(t);
   const { d } = hung();
   DAEMONS.slow = d;
   let n = 0;
-  deps.dialogs = async (target) => { n++; assert.deepEqual(target, {}); return n >= 2 ? OPEN : []; };
-  const t0 = Date.now();
-  const { t } = await call("wait", { expression: "false", timeout: 20000 });
-  const ms = Date.now() - t0;
-  assert.match(t, /^error: dialog_open: a confirm/);
-  assert.equal(n, 2);
-  assert.ok(ms >= 3400 && ms < 5000, `${ms}ms`);
+  deps.dialogs = async (target) => { n++; assert.deepEqual(target, {}); return n >= 3 ? OPEN : []; };
+  let out = null;
+  call("wait", { expression: "false", timeout: 20000 }).then((x) => { out = x; });
+  await settle();
+  // [ms to advance, probes expected after it]
+  for (const [ms, probes] of [[1499, 0], [1, 1], [1999, 1], [1, 2], [1999, 2], [1, 3]]) {
+    mock.timers.tick(ms);
+    await settle();
+    assert.equal(n, probes, `after +${ms}ms`);
+    if (probes < 3) assert.equal(out, null, "still waiting while no dialog is found");
+  }
+  assert.match(out.t, /^error: dialog_open: a confirm/);
 });
 
 test("probeDialogs asks the runtime about the target, and any failure is no hit", { timeout: 10000 }, async () => {

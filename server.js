@@ -2196,6 +2196,8 @@ export class OsaDaemon {
     this.ready = null;
     this.queue = [];
     this.current = null;
+    // Characters searched for result markers, over the daemon's life.
+    this.scanned = 0;
   }
   // `token` names the job for a later abort().
   run(script, timeout, token) {
@@ -2295,11 +2297,13 @@ export class OsaDaemon {
     c.buffer += s;
     // Incremental scan: never rescan bytes already searched.
     if (c.start < 0) {
+      this.scanned += c.buffer.length - c.scan;
       const i = c.buffer.indexOf(c.prefix, c.scan);
       if (i < 0) { c.scan = Math.max(0, c.buffer.length - c.prefix.length); return; }
       c.start = i;
       c.scan = i + c.prefix.length + 2;
     }
+    this.scanned += c.buffer.length - c.scan;
     const end = c.buffer.indexOf(">>", c.scan);
     if (end < 0) { c.scan = Math.max(c.scan, c.buffer.length - 1); return; }
     this.current = null;

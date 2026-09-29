@@ -8,6 +8,14 @@ import { fileURLToPath } from "node:url";
 import { OsaDaemon, jxa, ERR } from "../server.js";
 import { fakeSpawner } from "./fakes/fake-repl.mjs";
 
+// Whether `p` settles before one turn of the event loop: no timer, spawn or I/O in between.
+const settlesAtOnce = async (p) => {
+  let settled = false;
+  p.then(() => { settled = true; }, () => { settled = true; });
+  await new Promise((r) => setImmediate(r));
+  return settled;
+};
+
 const daemonWith = (opts, extra = {}) => {
   const f = fakeSpawner(opts);
   return { d: new OsaDaemon({ spawn: f.spawnFn, ...extra }), f };
@@ -37,10 +45,11 @@ test("a result marker split across tiny chunks still resolves", async () => {
 
 test("large chunked output is parsed incrementally, not rescanned", async () => {
   const { d } = daemonWith({ chunk: 100 });
-  const t0 = performance.now();
-  const out = await d.run("'y'.repeat(200000)", 5000);
+  const out = await d.run("'y'.repeat(200000)", 60000);
   assert.equal(out.length, 200000);
-  assert.ok(performance.now() - t0 < 1500, `took ${performance.now() - t0}ms`);
+  // Every byte is searched about once: a rescan from the start of the buffer on
+  // each of the 2000 chunks would search ~200M.
+  assert.ok(d.scanned < 2 * 200000, `scanned ${d.scanned} chars`);
   d.kill();
 });
 
@@ -129,23 +138,24 @@ test("a REPL that never answers the handshake disables the daemon after one wait
   const { d, f } = daemonWith({ mode: "deaf" }, { handshakeTimeout: 50 });
   const t0 = performance.now();
   await assert.rejects(d.run("1", 1000), (e) => e.notSent === true);
-  const t1 = performance.now();
-  await assert.rejects(d.run("1", 1000), (e) => e.notSent === true);
-  assert.ok(performance.now() - t1 < 20, `second call waited ${performance.now() - t1}ms`);
-  assert.ok(t1 - t0 >= 45, "first call waits the handshake out");
+  assert.ok(performance.now() - t0 >= 45, "first call waits the handshake out");
+  const second = d.run("1", 1000);
+  assert.equal(await settlesAtOnce(second), true, "the second call waits for nothing");
+  await assert.rejects(second, (e) => e.notSent === true);
   assert.equal(f.spawned.length, 1, "no respawn per call");
   d.kill();
 });
 
 test("jxa falls back to one-shot at once when the daemon is disabled", async () => {
-  const { d } = daemonWith({ mode: "deaf" }, { handshakeTimeout: 50 });
+  const { d, f } = daemonWith({ mode: "deaf" }, { handshakeTimeout: 50 });
   let shots = 0;
   const oneShot = async () => { shots++; return "ok"; };
   assert.equal(await jxa("1", { daemons: { fast: d }, oneShot }), "ok");
-  const t = performance.now();
-  assert.equal(await jxa("1", { daemons: { fast: d }, oneShot }), "ok");
-  assert.ok(performance.now() - t < 20);
+  const second = jxa("1", { daemons: { fast: d }, oneShot });
+  assert.equal(await settlesAtOnce(second), true, "the fallback waits for nothing");
+  assert.equal(await second, "ok");
   assert.equal(shots, 2);
+  assert.equal(f.spawned.length, 1);
   d.kill();
 });
 
@@ -217,7 +227,8 @@ async function startServer(t, env = {}) {
 
 test("the server warms both lanes once it is connected", async (t) => {
   const { spawns } = await startServer(t);
-  for (let i = 0; i < 100 && (await spawns()) < 2; i++) await new Promise((r) => setTimeout(r, 20));
+  // A ceiling that only catches a hang: the spawns land in milliseconds.
+  for (let i = 0; i < 750 && (await spawns()) < 2; i++) await new Promise((r) => setTimeout(r, 20));
   assert.equal(await spawns(), 2);
 });
 
@@ -230,10 +241,9 @@ test("PERCH_DAEMON=0 warms nothing", async (t) => {
 // Runs by default on macOS: it's the only guard against a REPL that stops answering.
 // PERCH_LIVE=0 opts out (hermetic runs).
 test("real osascript daemon answers line by line", { skip: process.platform !== "darwin" || process.env.PERCH_LIVE === "0" }, async () => {
-  const d = new OsaDaemon({ prelude: "globalThis.__t = 41" });
-  const t0 = performance.now();
-  assert.equal(await d.run("__t + 1", 5000), "42");
-  assert.equal(await d.run("'<<:>>'", 5000), "<<:>>");
-  assert.ok(performance.now() - t0 < 4000, `took ${performance.now() - t0}ms`);
+  // Each run's own timeout is the ceiling: generous, so only a REPL that stopped answering fails.
+  const d = new OsaDaemon({ prelude: "globalThis.__t = 41", handshakeTimeout: 15000 });
+  assert.equal(await d.run("__t + 1", 15000), "42");
+  assert.equal(await d.run("'<<:>>'", 15000), "<<:>>");
   d.kill();
 });
