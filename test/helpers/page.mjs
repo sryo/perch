@@ -4,11 +4,15 @@
 // in a display:none or [hidden] subtree, which Chrome lays out as an empty 0x0
 // box (happy-dom has no user-agent rule for [hidden]).
 // data-rect="left,top,width,height" places an element anywhere, offscreen too.
+// performance.timeOrigin is the page's own (happy-dom shares the process's). It
+// seeds snapshot refs; the default seeds them from 1 on every run.
 import { Window } from "happy-dom";
 import { buildEvalWrapper, pageScript } from "../../server.js";
 
-export function page(html, { url = "https://a.test/p" } = {}) {
+export function page(html, { url = "https://a.test/p", timeOrigin = 1790000001000.25 } = {}) {
   const w = new Window({ url, settings: { enableJavaScriptEvaluation: true, suppressInsecureJavaScriptEnvironmentWarning: true, navigation: { disableChildPageNavigation: true } } });
+  const perf = w.performance;
+  Object.defineProperty(w, "performance", { configurable: true, value: new Proxy(perf, { get: (t, k) => (k === "timeOrigin" ? timeOrigin : typeof t[k] === "function" ? t[k].bind(t) : t[k]) }) });
   w.Element.prototype.getBoundingClientRect = function () {
     const at = this.getAttribute("data-rect");
     if (at) {

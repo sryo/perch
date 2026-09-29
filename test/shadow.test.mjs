@@ -77,7 +77,8 @@ test("query matches keys but not the ref, and max caps the emitted lines", () =>
   assert.deepEqual(lines(run(w, "snapshot", { max: 500, query: "href=\"/after" })), [`1 link "After" href="/after"`]);
   assert.deepEqual(lines(run(w, "snapshot", { max: 500, query: "^4" })), []);
   const capped = run(w, "snapshot", { max: 1, query: "button" });
-  assert.deepEqual(lines(capped), [`1 button "Light"`]);
+  // Refs continue from the first snapshot's one row.
+  assert.deepEqual(lines(capped), [`2 button "Light"`]);
   assert.deepEqual([head(capped).count, head(capped).matched, head(capped).truncated], [1, 3, true]);
 });
 

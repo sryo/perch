@@ -5444,6 +5444,10 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
   snapshot: INVALID_LIB + STEP_LIB + TA_BOX_LIB + CENSUS_LIB + EMBED_LIB + String.raw`
 const refs = {};
 window.__perch_refs = refs;
+// Refs continue one counter per document, shared by every perch server, from a
+// base its load time picks, so a ref from any earlier snapshot names no row here.
+if (typeof window.__perch_refN !== "number") window.__perch_refN = Math.floor(((window.performance || {}).timeOrigin || Date.now()) % 9000) * 100;
+const n0 = window.__perch_refN;
 const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
 const roles = A.role == null ? null : [].concat(A.role);
 const q = JSON.stringify;
@@ -5491,17 +5495,17 @@ const embedded = embeds();
 const frameDocs = new Map();
 embedded.forEach(function (e, i) { if (e.same && e.f.contentDocument) frameDocs.set(e.f.contentDocument, i); });
 function frameTag(el) { return el.ownerDocument === document ? "" : " frame=" + frameDocs.get(el.ownerDocument); }
-let n = 0, matched = 0, truncated = false;
+let n = n0, matched = 0, truncated = false;
 function walk(root) {
   for (const el of deepAll(SEL, root)) {
     const r = role(el);
     if (roles && roles.indexOf(r) < 0) continue;
     if (!snapVis(el)) continue;
-    if (!re && n >= A.max) { truncated = true; return; }
+    if (!re && n - n0 >= A.max) { truncated = true; return; }
     const line = describe(el, r, accName(el)) + frameTag(el);
     if (re && !re.test(line)) continue;
     matched++;
-    if (n >= A.max) { truncated = true; continue; }
+    if (n - n0 >= A.max) { truncated = true; continue; }
     const ref = String(++n);
     refs[ref] = el;
     lines.push(ref + " " + line);
@@ -5561,13 +5565,13 @@ function hiddenRows(cands) {
     const line = describe(el, r, name) + (seen ? "" : " hidden") + frameTag(el);
     if (re && !re.test(line)) continue;
     matched++;
-    if (n >= A.max) { truncated = true; continue; }
+    if (n - n0 >= A.max) { truncated = true; continue; }
     shown++;
     const ref = String(++n);
     refs[ref] = el;
     const b = seen ? null : revealer(el, secs);
     let bref = b && listed.get(b), bline = null;
-    if (b && !bref && n < A.max) { bref = String(++n); refs[bref] = b; listed.set(b, bref); bline = bref + " " + describe(b, role(b), accName(b)) + frameTag(b); }
+    if (b && !bref && n - n0 < A.max) { bref = String(++n); refs[bref] = b; listed.set(b, bref); bline = bref + " " + describe(b, role(b), accName(b)) + frameTag(b); }
     lines.push(ref + " " + line + (bref ? " reveal=" + q(bref) : ""));
     if (bline) lines.push(bline);
   }
@@ -5589,7 +5593,8 @@ if (forms.length) {
   const unseen = empty.filter(function (el) { return !snapVis(el); });
   if (unseen.length) hiddenRows(unseen);
 }
-const head = { url: location.href, title: document.title, ready: document.readyState, count: n };
+window.__perch_refN = n;
+const head = { url: location.href, title: document.title, ready: document.readyState, count: n - n0 };
 // For the frame walk's page-area match; Node drops them from the header.
 if (A.frames) {
   head.iw = innerWidth; head.ih = innerHeight;

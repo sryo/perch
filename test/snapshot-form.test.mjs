@@ -238,7 +238,7 @@ test("snapshot: a required select on a placeholder option counts as empty and sh
   w.document.querySelector("select").selectedIndex = 1;
   ({ head, lines } = snap(w));
   assert.deepEqual(head.form, { fields: 1, requiredEmpty: 0 });
-  assert.equal(pickRow(lines), `1 combobox "Country" name="c" options=["Select...","Argentina"] value="Argentina" required`);
+  assert.equal(pickRow(lines), `2 combobox "Country" name="c" options=["Select...","Argentina"] value="Argentina" required`);
 });
 
 test("snapshot: a required select whose first option is a real choice is filled", () => {

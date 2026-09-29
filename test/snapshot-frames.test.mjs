@@ -413,8 +413,8 @@ test("nested (c) a same-origin form inside a fieldless wrapper is walked with it
   assert.deepEqual(lines, [`1 heading "Careers" level=1`, `2 textbox "Email" name="email" required frame=1`]);
   const miss = run(w, "fill", { label_pattern: "first name", text: "Ada" });
   assert.match(miss.error, /accessibility_snapshot lists its fields \(frame=1\); fill them by ref$/);
-  snap(w);
-  const f = run(w, "fill", { ref: "2", text: "a@b.co" });
+  const ref = snap(w).lines.find((l) => l.includes('"Email"')).split(" ")[0];
+  const f = run(w, "fill", { ref, text: "a@b.co" });
   assert.equal(f.ok, true, JSON.stringify(f));
   assert.equal(inner.getElementById("em").value, "a@b.co");
   // frames:true places the nested frame's box in top-page coordinates.

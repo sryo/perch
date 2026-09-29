@@ -210,7 +210,7 @@ test("snapshot: typed text in a typeahead whose hidden companion is empty is unp
   assert.deepEqual(head.form, { fields: 2, requiredEmpty: 1, unpicked: 1 });
   w.document.getElementById("sl").value = "ChIJ0a";
   ({ head, lines } = snap(w));
-  assert.equal(lineOf(lines, "Location"), `1 textbox "Location" value="Buenos" required`);
+  assert.equal(lineOf(lines, "Location"), `3 textbox "Location" value="Buenos" required`);
   assert.deepEqual(head.form, { fields: 2, requiredEmpty: 0 });
 });
 
