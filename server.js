@@ -2015,8 +2015,12 @@ export function translatePermissionError(msg) {
 // The daemon's own read-eval loop. `osascript -i` over a pipe evaluates nothing
 // until stdin hits EOF (seen on macOS 27.2), so perch reads lines itself.
 // Indirect eval keeps the prelude's globals across lines. NSData.length comes
-// back as a string in JXA, hence Number().
+// back as a string in JXA, hence Number(). The Prohibited activation policy
+// keeps the long-lived REPL out of the Dock, where it would otherwise show up
+// under the responsible app's name (e.g. "Claude") once it touches AppKit.
 const DAEMON_LOOP = `ObjC.import("Foundation");
+ObjC.import("AppKit");
+$.NSApplication.sharedApplication.setActivationPolicy($.NSApplicationActivationPolicyProhibited);
 var __in = $.NSFileHandle.fileHandleWithStandardInput, __buf = "";
 for (;;) {
   var __d = __in.availableData;
