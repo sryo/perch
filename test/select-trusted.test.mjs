@@ -274,13 +274,13 @@ test("trusted_probe aims at select's control, then its picked option, and report
   const c = run(dom, "trusted_probe", { select: "control" });
   assert.equal(c.ok, true, JSON.stringify(c));
   assert.equal(c.el, `combobox "Fruit"`);
-  assert.deepEqual(run(dom, "trusted_probe", { select: "option" }), { ok: false, gone: true });
+  assert.deepEqual(run(dom, "trusted_probe", { select: "option" }), { ok: false, gone: true, tok: c.tok });
   dom.document.getElementById("fruit-list").hidden = false;
   dom.document.getElementById("fruit-list").innerHTML = `<li role=option>Apple</li>`;
   run(dom, "select_pick", { selector: "#fruit", text: "Apple" });
   assert.equal(run(dom, "trusted_probe", { select: "option" }).el, `option "Apple"`);
   dom.document.getElementById("fruit-list").innerHTML = "";
-  assert.deepEqual(run(dom, "trusted_probe", { select: "option" }), { ok: false, gone: true });
+  assert.deepEqual(run(dom, "trusted_probe", { select: "option" }), { ok: false, gone: true, tok: c.tok });
 });
 
 test("select_type types only into the control's own box or its linked popup's search box, never the page's", () => {
@@ -290,7 +290,7 @@ test("select_type types only into the control's own box or its linked popup's se
     <div id=pop><input id=f aria-label=Filter></div>`);
   const edits = editing(dom);
   run(dom, "select_start", A);
-  assert.deepEqual(run(dom, "select_type", A), { ok: true });
+  assert.deepEqual(run(dom, "select_type", A), { ok: true, tok: dom.__perch_select.tok });
   assert.deepEqual(edits, [["insertText", "Design"]]);
   assert.equal(dom.document.getElementById("f").value, "Design");
   assert.equal(dom.document.getElementById("q").value, "");
@@ -298,7 +298,7 @@ test("select_type types only into the control's own box or its linked popup's se
   const bare = page(`<input id=q aria-label=Search><div id=c role=combobox aria-label=Team aria-controls=pop>Pick</div><ul id=pop role=listbox></ul>`);
   const none = editing(bare);
   run(bare, "select_start", A);
-  assert.deepEqual(run(bare, "select_type", A), { none: true });
+  assert.deepEqual(run(bare, "select_type", A), { none: true, tok: bare.__perch_select.tok });
   assert.deepEqual(none, []);
 });
 
