@@ -1081,10 +1081,11 @@ function jxaRuntime(BROWSERS, HANG) {
   // After a click armed with readback: the first changed text/url within a.settle ms,
   // else what the element shows now. Polled here because page timers are throttled.
   function readback(t, a) {
-    return afterStep("click", function () {
+    const v = afterStep("click", function () {
       const r = poll(t, a.read, a.settle, 50);
       return r ? r.value : readExec(t, a.readFinal);
     });
+    return threw(v) ? { ok: false, error: "click: the click was sent; the page script failed reading it back (" + faultName(v) + "); outcome unverified" } : v;
   }
 
   // A click that opens a new tab is found by the app's tab lists, one bulk read
@@ -1238,6 +1239,11 @@ function jxaRuntime(BROWSERS, HANG) {
     const n = v && v.__perch_error_name;
     return typeof n === "string" && /^[A-Za-z_$][\w$]{0,39}$/.test(n) ? n : "Error";
   }
+  const threw = function (v) { return !!v && v.__perch_error != null; };
+  // Trusted input whose step before the post threw sends nothing; one whose check
+  // after it threw was sent but can't be vouched for.
+  const armFault = function (tool, v) { return { ok: false, error: tool + ": the page script failed on this page (" + faultName(v) + "); nothing was " + (tool === "press" ? "pressed" : "clicked") }; };
+  const checkFault = function (tool, v) { return tool + ": the " + (tool === "press" ? "key" : "click") + " was sent; the page script failed checking it (" + faultName(v) + "); outcome unverified"; };
 
   // wait {quiet}: timed here, where the clock isn't throttled with the page. The
   // window opens when a poll arms the observer (fresh); a poll that fails or
@@ -1383,6 +1389,7 @@ function jxaRuntime(BROWSERS, HANG) {
       const A = aim(T, a, tool);
       if (A.out) return { stop: A.out };
       const bad = before && before(A);
+      if (threw(bad)) return { stop: armFault(tool, bad) };
       if (bad && bad.ok === false) return { stop: bad };
       if (T.background) skyClick(T.I, A.pt);
       else leftClick(T.I, A.pt);
@@ -1390,7 +1397,8 @@ function jxaRuntime(BROWSERS, HANG) {
       // The click is posted, so a dropped reply says `tool` ran rather than inviting a
       // retry; the check only reads what the recorders saw, so it may be sent twice.
       const check = afterStep(tool, function () { return readExec(T.t, a.check); });
-      return { out: Object.assign({ ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" }, check) };
+      const out = { ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" };
+      return { out: threw(check) ? Object.assign(out, { ok: false, error: checkFault(tool, check) }) : Object.assign(out, check) };
     } finally {
       if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
     }
@@ -2479,12 +2487,14 @@ function jxaRuntime(BROWSERS, HANG) {
           const framed = pointOnFrame(T, a, f) || offPage(T, f, { x: a.x, y: a.y });
           if (framed) return framed;
           const bad = arm();
+          if (threw(bad)) return armFault("click", bad);
           if (bad && bad.ok === false) return bad;
           if (T.background) skyClick(T.I, { x: a.x, y: a.y });
           else leftClick(T.I, { x: a.x, y: a.y });
           delay(0.05);
           const check = afterStep("click", function () { return readExec(T.t, a.check); });
           out = { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" };
+          if (threw(check)) return Object.assign(out, { ok: false, error: checkFault("click", check) });
           if (check.hit === undefined) out.note = "the page changed after the click (it may have navigated), so whether it landed is unknown";
           else if (check.hit !== true) return Object.assign(out, { ok: false, hit: false, error: "no click reached the page at " + a.x + "," + a.y });
           else Object.assign(out, { hit: true }, check.el ? { el: check.el } : {});
@@ -2583,10 +2593,12 @@ function jxaRuntime(BROWSERS, HANG) {
       const miss = keyFocusMiss(T.I, T.t.P, parseExec(T.t, a.probe));
       if (miss) throw new Error("tab_not_visible: a background trusted press needs the keyboard in the target's page: " + miss);
       const arm = parseExec(T.t, a.arm);
+      if (threw(arm)) return armFault("press", arm);
       if (!arm || arm.ok === false || arm.__perch_ref_miss) return arm;
       skyKey(T.I, a.vk, a.uni, a.flags);
       const r = poll(T.t, a.check, 1000, 25);
       const check = r ? r.value : parseExec(T.t, a.final);
+      if (threw(check)) return { ok: false, el: arm.el, key: a.key, delivery: "skylight", error: checkFault("press", check) };
       const out = Object.assign({ ok: check.hit === true, el: arm.el, key: a.key }, check, { delivery: "skylight" });
       if (check.hit === null) out.error = "no key reached the page; the browser's focus may be in its toolbar (a trusted click on the page brings it back)";
       return out;

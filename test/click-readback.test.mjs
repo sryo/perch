@@ -608,3 +608,16 @@ test("a disabled button with readback refuses and arms nothing", async () => {
   assert.match(o.error, /is disabled; nothing was clicked/);
   assert.equal(dom.__perch_rb, undefined);
 });
+
+test("a readback read that throws is ok:false with the error name only", async () => {
+  const { dom } = onPage(FORM, SAVE);
+  const ev = dom.eval.bind(dom);
+  const marker = "const text = rbText();";
+  dom.eval = (js) => ev(js.includes(marker) ? js.replace(marker, "throw new TypeError('secret-internal detail');" + marker) : js);
+  const o = await click({ selector: "#b", readback: "#s" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.error, "click: the click was sent; the page script failed reading it back (TypeError); outcome unverified");
+  assert.equal(o.el, `button "Submit"`);
+  assert.equal(dom.document.getElementById("s").textContent, "Saved", "the click itself ran");
+  for (const k of ["secret-internal", "__perch", "stack"]) assert.ok(!JSON.stringify(o).includes(k), JSON.stringify(o));
+});
