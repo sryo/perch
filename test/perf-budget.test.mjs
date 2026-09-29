@@ -399,8 +399,9 @@ test("click: a plain click's one script carries the prelude once and no second p
 // A plain click is one page call, as eval_js is. A click on a link or submit
 // aimed at a new tab adds every window's tab list in one bulk read before and
 // after the second page call that clicks, plus one read of the shown tab once a
-// tab appeared (goal 1's note), in whichever window it landed. One that opens
-// nothing re-reads the lists every 100ms for 500ms before calling it unconfirmed.
+// tab appeared (goal 1's note), in whichever window it landed; Chromium also
+// reads the new tab's URL to tell it is the click's (Safari's list has it). One
+// that opens nothing re-reads the lists every 100ms for 500ms before calling it unconfirmed.
 test("click: same-tab links and buttons cost what they did; a _blank link adds the tab reads and one page call", async () => {
   const html = `<a id=a href="/job/1" target=_blank>Apply</a><a id=same href="/job/2">Details</a><button id=b>Save</button>`;
   const cost = {};
@@ -417,7 +418,7 @@ test("click: same-tab links and buttons cost what they did; a _blank link adds t
     }
   }
   assert.deepEqual(cost, {
-    "chrome #same": 1, "chrome #b": 1, "chrome #a": 1 + 1 + 1 + 1 + 1, "chrome #a other window": 1 + 1 + 1 + 1 + 1, "chrome #a unconfirmed": 1 + 1 + 1 + 6,
+    "chrome #same": 1, "chrome #b": 1, "chrome #a": 1 + 1 + 1 + 1 + 1 + 1, "chrome #a other window": 1 + 1 + 1 + 1 + 1 + 1, "chrome #a unconfirmed": 1 + 1 + 1 + 6,
     // Safari's handle also needs the window id.
     "safari #same": 1, "safari #b": 1, "safari #a": 1 + 1 + 1 + 1 + 1 + 1, "safari #a other window": 1 + 1 + 1 + 1 + 1 + 1, "safari #a unconfirmed": 1 + 1 + 1 + 6,
   });

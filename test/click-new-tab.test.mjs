@@ -225,6 +225,87 @@ test("Arc: a tab opened from the shown tab is reported by its id", async () => {
   assert.deepEqual(focusEvents(world), []);
 });
 
+// A tab something else opens during the wait (the user, another agent, a site
+// popup) is not the click's: it is never named in `opened`.
+const opensAt = (world, dom, b, urls, win = 0) => {
+  dom.document.getElementById("a").addEventListener("click", () => { for (const u of urls) world.openTab(b.name, win, u); });
+};
+
+test("a foreign tab during the wait is not opened: unconfirmed, and the note names where it is", async () => {
+  const { dom, world } = onPage(CHROME, LINK);
+  opensAt(world, dom, CHROME, ["https://other.example/x?token=s3cret"]);
+  const o = await call("click", { selector: "#a" });
+  assert.equal(o.opened, undefined);
+  assert.equal(o.unconfirmed, true);
+  assert.equal(o.href, "https://a.test/job/1");
+  assert.equal(o.note, "no new tab for href within 0.5s; a tab opened meanwhile at https://other.example/x is not the click's: list_tabs urlContains href");
+});
+
+test("Safari: the page's window.open is blocked and a foreign tab appears in the same window: blocked, not opened", async () => {
+  const { dom, world } = onPage(SAFARI, LINK, `window.open = function () { return null; };
+    document.getElementById('a').addEventListener('click', function () { window.open('/job/9'); });`, { active: 1 });
+  opensAt(world, dom, SAFARI, ["https://other.example/x"]);
+  const o = await call("click", { selector: "#a" });
+  assert.equal(o.opened, undefined);
+  assert.equal(o.blocked, true);
+  assert.equal(o.href, "https://a.test/job/9");
+  assert.match(o.note, /other\.example\/x is not the click's/);
+});
+
+test("of two new tabs, the one at href is reported, not the first", async () => {
+  const { dom, world } = onPage(CHROME, LINK);
+  opensAt(world, dom, CHROME, ["https://other.example/x", "https://a.test/job/1"]);
+  const o = await call("click", { selector: "#a" });
+  assert.deepEqual(o, { ok: true, el: `link "Apply"`, opened: { tabId: "chrome:pop2", url: "https://a.test/job/1" } });
+});
+
+test("a new tab still reading about:blank counts as the click's, reported at href", async () => {
+  for (const b of [CHROME, ARC]) {
+    const { dom, world } = onPage(b, LINK);
+    opensAt(world, dom, b, ["about:blank"]);
+    const o = await call("click", { selector: "#a" });
+    assert.match(o.opened.tabId, /:pop1$/, b.name);
+    assert.equal(o.opened.url, "https://a.test/job/1");
+    assert.equal(o.unconfirmed, undefined);
+  }
+});
+
+test("Safari: a foreign tab in another window is not reported", async () => {
+  const { dom, world } = onPage(SAFARI, LINK, null, { active: 1, more: [second()] });
+  opensAt(world, dom, SAFARI, ["https://other.example/x"], 1);
+  const o = await call("click", { selector: "#a" });
+  assert.equal(o.opened, undefined);
+  assert.equal(o.unconfirmed, true);
+  assert.match(o.note, /other\.example\/x/);
+});
+
+test("a same-origin redirect counts, reported at the URL read; a foreign one alongside is passed over", async () => {
+  const { dom, world } = onPage(CHROME, `<a id=a href="/apply" target=_blank>Apply</a>`);
+  opensAt(world, dom, CHROME, ["https://other.example/apply", "https://a.test/apply/step1?s=1"]);
+  const o = await call("click", { selector: "#a" });
+  assert.deepEqual(o.opened, { tabId: "chrome:pop2", url: "https://a.test/apply/step1?s=1" });
+});
+
+test("an exact match beats a blank tab, which beats a same-origin one", async () => {
+  const one = onPage(CHROME, LINK);
+  opensAt(one.world, one.dom, CHROME, ["https://a.test/other", "about:blank", "https://a.test/job/1"]);
+  assert.equal((await call("click", { selector: "#a" })).opened.tabId, "chrome:pop3");
+  const two = onPage(CHROME, LINK);
+  opensAt(two.world, two.dom, CHROME, ["https://a.test/other", "about:blank"]);
+  assert.equal((await call("click", { selector: "#a" })).opened.tabId, "chrome:pop2");
+});
+
+test("a matching tab that comes after a foreign one within the wait is still found", async () => {
+  const { dom, world } = onPage(CHROME, LINK);
+  let later = null;
+  dom.document.getElementById("a").addEventListener("click", (e) => { const href = e.currentTarget.href; world.openTab(CHROME.name, 0, "https://other.example/x"); later = () => world.openTab(CHROME.name, 0, href); });
+  const delay = world.ctx.delay;
+  const start = world.clock.t;
+  world.ctx.delay = (s) => { delay(s); if (later && world.clock.t - start >= 300) { later(); later = null; } };
+  const o = await call("click", { selector: "#a" });
+  assert.deepEqual(o, { ok: true, el: `link "Apply"`, opened: { tabId: "chrome:pop2", url: "https://a.test/job/1" } });
+});
+
 // ---- trusted ----
 
 function trustedTab(html) {
