@@ -2036,3 +2036,125 @@ test("fill {fields}: a concurrent fill on the same tab neither breaks the batch 
   assert.equal(val(dom, "[name=phone]").value, "5551234");
   assert.equal(val(dom, "#city-id").value, "c0");
 });
+
+// ---- label_pattern over the field's autocomplete token ----
+
+// No label here says given-name, email or tel: only the autocomplete tokens do.
+const ES_FORM = `<form>
+  <label>Nombre <input name=n1 autocomplete=given-name required></label>
+  <label>Apellido <input name=n2 autocomplete="section-a family-name" required></label>
+  <label>Correo <input name=n3 autocomplete="work email" required></label>
+  <label>Celular <input name=n4 autocomplete="shipping mobile tel" required></label>
+</form>`;
+const TOKEN_PROFILE = [
+  { label_pattern: "given-name|first.?name", text: "Ada" },
+  { label_pattern: "family-name|last.?name", text: "Lovelace" },
+  { label_pattern: "email", text: "ada@example.test" },
+  { label_pattern: "tel|phone", text: "+1 555 010 0199" },
+];
+
+test("fill {fields, only_empty}: token patterns fill a form labelled in another language", async () => {
+  const { dom } = onPage(ES_FORM);
+  const { o } = await fill({ fields: TOKEN_PROFILE, only_empty: true });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(o.results.map((x) => [x.ok, x.kind, x.skipped, x.unverified]), TOKEN_PROFILE.map(() => [true, "plain", undefined, undefined]));
+  assert.deepEqual(["n1", "n2", "n3", "n4"].map((n) => val(dom, `[name=${n}]`).value), ["Ada", "Lovelace", "ada@example.test", "+1 555 010 0199"]);
+  assert.deepEqual(o.form, { requiredEmpty: 0 });
+});
+
+test("fill_fields only_empty: two fields sharing a token are ambiguous and neither is written", () => {
+  const w = page(`<label>Casa <input name=a autocomplete=tel></label><label>Trabajo <input name=b autocomplete="work tel"></label>`);
+  const r = run(w, "fill_fields", { only: true, fields: [{ label_pattern: "tel|phone", text: "5550100" }] }).results[0];
+  assert.deepEqual(r, { ok: true, kind: "text", skipped: "ambiguous", candidates: [`textbox "Casa"`, `textbox "Trabajo"`] });
+  assert.equal(val(w, "[name=a]").value, "");
+  assert.equal(val(w, "[name=b]").value, "");
+});
+
+test("fill_fields only_empty: a honeypot carrying the token stays empty; a trap-only token match is skipped as a trap", () => {
+  const w = page(`<div class=row><label>Correo <input id=trap tabindex=-1 autocomplete=email data-rect="-9999,0,100,20"></label></div>
+    <div class=row><label>Correo electronico <input id=real autocomplete=email></label></div>`);
+  const o = run(w, "fill_fields", { only: true, fields: [{ label_pattern: "email", text: "ada@example.test" }] });
+  assert.equal(o.results[0].ok, true, JSON.stringify(o));
+  assert.equal(o.results[0].skipped, undefined);
+  assert.equal(val(w, "#real").value, "ada@example.test");
+  assert.equal(val(w, "#trap").value, "");
+  val(w, "#real").closest(".row").remove();
+  const t = run(w, "fill_fields", { only: true, fields: [{ label_pattern: "email", text: "ada@example.test" }] }).results[0];
+  assert.deepEqual(t, { ok: true, kind: "text", skipped: "trap", el: `textbox "Correo" hidden` });
+  const single = run(w, "fill", { label_pattern: "email", text: "ada@example.test" });
+  assert.equal(single.ok, false);
+  assert.match(single.error, /bot trap/);
+  assert.equal(val(w, "#trap").value, "");
+});
+
+// The textarea is claimed only by its section's text (10 plus bonuses); the url
+// token is a full match (100), so the input wins with no tie and no rival.
+test("fill: a token match outranks a field claimed only by its section's text", () => {
+  const html = `<form><div class=q><p>Tell us about your LinkedIn activity</p><textarea id=ta></textarea></div>
+    <div class=q><label>Sitio web <input id=u autocomplete=url></label></div></form>`;
+  for (const only of [false, true]) {
+    const w = page(html);
+    const o = run(w, "fill_fields", { only, fields: [{ label_pattern: "url|linkedin", text: "https://example.test/ada" }] }).results[0];
+    assert.equal(o.ok, true, JSON.stringify(o));
+    assert.equal(o.el, `textbox "Sitio web"`);
+    assert.equal(o.ambiguous, undefined);
+    assert.equal(val(w, "#u").value, "https://example.test/ada");
+    assert.equal(val(w, "#ta").value, "");
+  }
+});
+
+test("fill_fields: autofill off, modifiers without a field name, and unknown tokens never match", () => {
+  const w = page(`<label>Uno <input name=a autocomplete=off></label><label>Dos <input name=b autocomplete="section-a shipping"></label>
+    <label>Tres <input name=c autocomplete="email-confirm"></label><label>Cuatro <input name=d autocomplete=on></label>`);
+  for (const p of ["off", "on", "section-a", "shipping", "section-a shipping", "email-confirm", "email"]) {
+    const r = run(w, "fill_fields", { only: true, fields: [{ label_pattern: p, text: "x" }] }).results[0];
+    assert.equal(r.skipped, "absent", `${p}: ${JSON.stringify(r)}`);
+  }
+  assert.deepEqual(["a", "b", "c", "d"].map((n) => val(w, `[name=${n}]`).value), ["", "", "", ""]);
+});
+
+test("fill_fields: the token must match the whole pattern, not part of it", () => {
+  const w = page(`<label>Nombre de pila <input name=g autocomplete=given-name></label><label>Nombre completo <input name=f autocomplete=name></label>`);
+  const r = run(w, "fill_fields", { only: true, fields: [{ label_pattern: "name", text: "Ada Lovelace" }] }).results[0];
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.el, `textbox "Nombre completo"`);
+  assert.equal(val(w, "[name=g]").value, "");
+  assert.equal(val(w, "[name=f]").value, "Ada Lovelace");
+});
+
+// Deliberately conservative: a token hit counts as much as the field's own
+// label, so a second field carrying the token ties with the labelled one.
+test("fill_fields: a labelled field and another carrying only the token tie at the label tier", () => {
+  const html = `<label>Email <input name=main></label><label>Boletin <input name=news autocomplete=email></label>`;
+  const w = page(html);
+  const r = run(w, "fill_fields", { only: true, fields: [{ label_pattern: "email", text: "ada@example.test" }] }).results[0];
+  assert.deepEqual(r, { ok: true, kind: "text", skipped: "ambiguous", candidates: [`textbox "Email"`, `textbox "Boletin"`] });
+  assert.equal(val(w, "[name=main]").value, "");
+  assert.equal(val(w, "[name=news]").value, "");
+  const w2 = page(html);
+  const f = run(w2, "fill_fields", { fields: [{ label_pattern: "email", text: "ada@example.test" }] }).results[0];
+  assert.equal(f.ok, true, JSON.stringify(f));
+  assert.equal(f.el, `textbox "Email"`);
+  assert.deepEqual(f.ambiguous, [`textbox "Email"`, `textbox "Boletin"`]);
+  assert.equal(val(w2, "[name=main]").value, "ada@example.test");
+  assert.equal(val(w2, "[name=news]").value, "");
+});
+
+test("fill_fields: a payment token never matches", () => {
+  const w = page(`<label>Tarjeta <input name=cc autocomplete="billing cc-number"></label><label>Vence <input name=exp autocomplete=cc-exp></label>`);
+  for (const p of ["cc-number", "cc-.*", "cc-exp", ".*number", "(cc-)?number"]) {
+    const r = run(w, "fill_fields", { only: true, fields: [{ label_pattern: p, text: "4111111111111111" }] }).results[0];
+    assert.equal(r.skipped, "absent", `${p}: ${JSON.stringify(r)}`);
+  }
+  assert.equal(val(w, "[name=cc]").value, "");
+  assert.equal(val(w, "[name=exp]").value, "");
+});
+
+test("fill {fields}: batches differing only in their patterns send the same library source", async () => {
+  const { world } = onPage(`<label>Uno <input autocomplete=email></label><label>Dos <input autocomplete=tel></label>`);
+  const sent = passes(world);
+  await fill({ fields: [{ label_pattern: "zqemail", text: "a" }] });
+  await fill({ fields: [{ label_pattern: "zqphone", text: "a" }] });
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1], sent[0].replaceAll("zqemail", "zqphone"));
+});
