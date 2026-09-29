@@ -73,3 +73,13 @@ test("every param, element hint, error code and permission toggle stays document
   assert.ok(ERR.automation.includes("Privacy & Security"), "ERR.automation lost its settings path");
   assert.match(source, /Accessibility permission required: System Settings > Privacy & Security > Accessibility/);
 });
+
+test("docs say a natively disabled control refuses the click, trusted too, and aria-disabled still clicks", async () => {
+  const skill = await read("SKILL.md");
+  const agents = await read("AGENTS.md");
+  const row = skill.split("\n").find((l) => l.startsWith("| `click` |"));
+  assert.ok(row && /disabled/.test(row) && /aria-disabled/.test(row), "SKILL.md's click row misses disabled");
+  const bullet = agents.split("\n").find((l) => l.startsWith("- **Click by name:**"));
+  assert.ok(bullet.includes("is disabled; nothing was clicked"), "AGENTS.md's click bullet misses the disabled refusal");
+  assert.ok(/fieldset/.test(bullet) && /legend/.test(bullet) && /trusted/.test(bullet) && /aria-disabled/.test(bullet), "AGENTS.md's click bullet misses fieldset, legend, trusted or aria-disabled");
+});
