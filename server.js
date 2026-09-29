@@ -4341,8 +4341,19 @@ function rbNet() {
   try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
   catch (e) { return 0; }
 }
+// s.away: the page changed outside the clicked submit button (s.btn). class and
+// style stay out, as hover, focus and animation flip them.
+function rbSeen(s, r) {
+  s.mut += r.length;
+  if (!s.btn || s.away) return;
+  for (let i = 0; i < r.length; i++) {
+    const m = r[i];
+    if (m.type === "attributes" && (m.attributeName === "class" || m.attributeName === "style")) continue;
+    if (!s.btn.contains(m.target)) { s.away = true; return; }
+  }
+}
 function rbBusy(s) {
-  if (s.obs) s.mut += s.obs.takeRecords().length;
+  if (s.obs) rbSeen(s, s.obs.takeRecords());
   const act = s.mut + ":" + rbNet(), busy = act !== s.act;
   s.act = act;
   return busy;
@@ -4353,10 +4364,10 @@ function rbWatch(s, key, life) {
   try {
     s.obs = new MutationObserver(function (r) {
       if (window[key] !== s || Date.now() - s.at > life) return s.obs.disconnect();
-      s.mut += r.length;
+      rbSeen(s, r);
     });
     s.obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-  } catch (e) { s.obs = null; }
+  } catch (e) { s.obs = null; s.away = true; }
   window[key] = s;
 }
 `;
@@ -5239,14 +5250,16 @@ if (s.form) {
 }
 const changed = moved || text !== s.text || sig !== s.sig || clsMoved || invNew.length > 0 || invGone || !!form;
 // A submit button that only relabels or disables itself ("Submitting...") is
-// mid-flight, not an outcome: keep polling for one until the page settles.
+// mid-flight, not an outcome: keep polling for one until the page settles. That
+// holds whatever the readback is on, while nothing outside the button changed.
+const busy = rbBusy(s);
 const node = s.btn && s.btn.isConnected ? document.querySelector(A.readback) : null;
-const onBtn = !!node && (node === s.btn || s.btn.contains(node) || (node.contains(s.btn) && sig === s.sig));
-const inFlight = onBtn && (textOf(s.btn) !== s.btnText || !!s.btn.disabled !== s.btnOff) && !moved && !clsMoved && !invNew.length && !invGone && !form;
+const onBtn = !!node && (node === s.btn || s.btn.contains(node));
+const inFlight = !!s.btn && s.btn.isConnected && (onBtn || !s.away) && (textOf(s.btn) !== s.btnText || !!s.btn.disabled !== s.btnOff) && !moved && !clsMoved && !invNew.length && !invGone && !form;
 // Ten polls in a row with no page activity (about 670ms live) settle it early.
 // A hidden tab runs its timers about once a second, so there the quiet stretch
 // must also last 1.2s of page time, long enough for one throttled tick to fire.
-if (rbBusy(s)) { s.quiet = 0; s.calm = Date.now(); }
+if (busy) { s.quiet = 0; s.calm = Date.now(); }
 else s.quiet++;
 const settled = s.quiet >= 10 && (document.visibilityState !== "hidden" || Date.now() - s.calm >= 1200);
 if ((!changed || inFlight) && !A.final && !settled) return null;

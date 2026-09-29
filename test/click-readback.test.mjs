@@ -493,6 +493,26 @@ test("form: a submit that shows Submitting... then replaces the form reads gone,
   assert.deepEqual(o, { ok: true, el: `button "Submitting..."`, readback: null, changed: true, form: { gone: true } });
 });
 
+for (const target of ["#wiz", "body"]) {
+  test(`form: with readback on ${target}, a submit's transient Submitting... still waits for the form to go`, async () => {
+    wizard(`show(3);`);
+    const o = await click({ selector: "#send", readback: target });
+    assert.equal(o.changed, true);
+    assert.deepEqual(o.form, { gone: true }, JSON.stringify(o));
+    if (target === "#wiz") assert.equal(o.readback, null);
+    else assert.match(o.readback, /Thanks, we received your application/);
+  });
+}
+
+test("form: with readback on the form, a change beside the relabeled submit button ends the wait", async () => {
+  const { world } = wizard(`show(3); document.getElementById('wiz').addEventListener('submit', function (e) { e.stopImmediatePropagation(); e.preventDefault(); document.getElementById('send').textContent = 'Submitting...'; document.getElementById('banner').textContent = 'Saved as draft'; }, true);`);
+  const t0 = world.clock.t;
+  const o = await click({ selector: "#send", readback: "#wiz" });
+  assert.equal(o.changed, true);
+  assert.match(o.readback, /Saved as draft/, JSON.stringify(o));
+  assert.ok(world.clock.t - t0 < 450, `spent ${world.clock.t - t0}ms ${JSON.stringify(o)}`);
+});
+
 test("form: a submit button that only relabels itself settles on the quiet window with its last text", async () => {
   const { world } = wizard(`show(3); document.getElementById('wiz').addEventListener('submit', function (e) { e.stopImmediatePropagation(); e.preventDefault(); document.getElementById('send').textContent = 'Submitting...'; }, true);`);
   const t0 = world.clock.t;
