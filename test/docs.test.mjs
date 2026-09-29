@@ -12,6 +12,18 @@ test("SKILL.md covers every tool and stays short", async () => {
   assert.ok(skill.includes("Refs die on re-snapshot or navigation."), "SKILL.md says when refs die");
 });
 
+test("SKILL.md adds to the schema and server instructions rather than repeating them", async () => {
+  const skill = await read("SKILL.md");
+  const norm = (s) => s.toLowerCase().replace(/\s+/g, " ");
+  const sources = [INSTRUCTIONS, ...TOOLS.flatMap((t) => [t.description, ...Object.values(t.inputSchema.properties).map((p) => p.description || "")])];
+  const shingles = new Set();
+  for (const s of sources.map(norm)) for (let i = 0; i + 40 <= s.length; i++) shingles.add(s.slice(i, i + 40));
+  const body = norm(skill);
+  const repeated = new Set();
+  for (let i = 0; i + 40 <= body.length; i++) if (shingles.has(body.slice(i, i + 40))) repeated.add(body.slice(i, i + 40));
+  assert.ok(repeated.size <= 3, `SKILL.md repeats ${repeated.size} 40-char runs of the schema, e.g. ${JSON.stringify([...repeated][0])}`);
+});
+
 test("docs don't mention removed tools, params or shapes", async () => {
   const stale = ["get_html", "page_state", "include_bounds", "clickCount", "`clear`", "bare array", "wait: false", "targetClause", "FRONTMOST", "{level, ts, args"];
   for (const f of ["SKILL.md", "AGENTS.md", "README.md", "GOALS.md"]) {
