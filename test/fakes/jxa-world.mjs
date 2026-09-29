@@ -20,7 +20,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   // Building a specifier is lazy in JXA, and running() asks LaunchServices: no Apple Event.
   const notAe = /^(win\.tabs|tabs\.byId|win\.activeTab|windows\[\d+\]\(.*\)|running\(.*\))$/;
   const phase = (app) => (browsers.findIndex((b) => b.name === app) * frameMs) / browsers.length;
+  // state.aeFail = {errorNumber, message, key?, app?}: every Apple Event to a
+  // browser (only `app`, only keys matching `key`) throws that AppleScript error,
+  // as a browser that quit (-600), dropped its connection (-609) or timed out (-1712) would.
   const ae = (app, k) => {
+    const f = state.aeFail;
+    if (f && (!f.key || f.key.test(k)) && (!f.app || f.app === app)) throw Object.assign(new Error(f.message), { errorNumber: f.errorNumber });
     aeLog.push([app, k]);
     if (frameMs > 0) { const p = phase(app); clock.t = p + (Math.floor((clock.t - p) / frameMs) + 1) * frameMs; }
   };
@@ -745,10 +750,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     state,
     page: (name, w, t) => winsByApp[name][w].tabs[t].page.ctx,
     run: (src) => vm.runInContext(src, ctx),
-    // A daemon stand-in with the real daemon's result contract.
+    // A daemon stand-in with the real daemon's result contract, errorNumber suffix included.
     daemon: {
       run: async (script) => {
-        const r = vm.runInContext(script, ctx);
+        let r;
+        try { r = vm.runInContext(script, ctx); }
+        catch (e) { throw new Error((e && e.message ? e.message : String(e)) + (e && typeof e.errorNumber === "number" ? " (" + e.errorNumber + ")" : "")); }
         return r == null ? "" : typeof r === "string" ? r : JSON.stringify(r);
       },
     },

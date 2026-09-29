@@ -84,6 +84,11 @@ function jxaRuntime(BROWSERS, HANG) {
   // below count events. errAENoSuchObject (or a bad index) means the specifier
   // matched nothing, so the page script never ran and a slower path may retry.
   const noSuchObject = (e) => !!e && (e.errorNumber === -1728 || e.errorNumber === -1719);
+  // A running browser whose tabs couldn't be read (Automation denied, no answer,
+  // its handler failed), as opposed to one that quit or has no windows.
+  const UNLISTED = [-1743, -1712, -10000, -1708];
+  // The browser quit, or dropped the connection, during the call.
+  const QUIT = [-600, -609];
 
   // Chromium handle -> {w: window position, id: the tab's native id}, learned
   // from list_tabs, new_tab and resolve. `windows[w].tabs.byId(id)` pins the
@@ -278,18 +283,21 @@ function jxaRuntime(BROWSERS, HANG) {
       return resolveById({ tabId: want.tabId, raw: h ? h.raw : String(want.tabId), app: h ? h.app : want.app, windowId: want.windowId }, P);
     }
     const names = candidates(P, want.app);
+    // A browser that couldn't be read is why nothing matched, if one was.
+    let blocked = null;
+    const note = function (e) { if (!blocked && e && (UNLISTED.indexOf(e.errorNumber) >= 0 || QUIT.indexOf(e.errorNumber) >= 0)) blocked = e; };
     // The front window's shown tab in one event; a window showing no tab (or no
     // window) falls through to the walk.
     if (want.windowId == null && want.tabIndex == null && (KIND[names[0]] === "chrome" || KIND[names[0]] === "arc")) {
       try {
         const win = app(names[0]).windows[0], id = win.activeTab.id();
         if (id != null) return { tab: win.tabs.byId(id), idx: null, tabId: id, kind: KIND[names[0]], app: names[0], win, w: 0, P, shown: true };
-      } catch (e) {}
+      } catch (e) { note(e); }
     }
     for (const name of names) {
       const a = app(name), kind = KIND[name];
       let n;
-      try { n = a.windows.length; } catch (e) { continue; }
+      try { n = a.windows.length; } catch (e) { note(e); continue; }
       for (let w = 0; w < n; w++) {
         const win = a.windows[w];
         if (want.windowId != null) {
@@ -297,7 +305,7 @@ function jxaRuntime(BROWSERS, HANG) {
           if (String(id) !== String(want.windowId)) continue;
         }
         let tabs, len;
-        try { tabs = win.tabs; len = tabs.length; if (!len) continue; } catch (e) { continue; }
+        try { tabs = win.tabs; len = tabs.length; if (!len) continue; } catch (e) { note(e); continue; }
         if (kind === "arc") {
           let id;
           if (want.tabIndex != null) {
@@ -319,7 +327,9 @@ function jxaRuntime(BROWSERS, HANG) {
         return { tab, idx, tabId, kind, app: name, win, w, P };
       }
     }
-    throw new Error(want.app && !KIND[want.app] ? "no_browser: unknown browser " + want.app : "no_browser: no browser window with an open tab" + (want.app ? " in " + want.app : ""));
+    if (want.app && !KIND[want.app]) throw new Error("no_browser: unknown browser " + want.app);
+    if (blocked) throw blocked;
+    throw new Error("no_browser: no browser window with an open tab" + (want.app ? " in " + want.app : ""));
   }
 
   // Chrome tabs have no `index` property (it throws), so positions come from resolve.
@@ -1609,7 +1619,7 @@ function jxaRuntime(BROWSERS, HANG) {
         if (n != null) { s.more = n; return; }
         counts = false;
       }
-      try { r[k] = bulkRead(ap.windows, kind, k); } catch (e) { bulk = false; }
+      try { r[k] = bulkRead(ap.windows, kind, k); } catch (e) { bulk = false; if (!s.err && e && UNLISTED.indexOf(e.errorNumber) >= 0) s.err = e.message + " (" + e.errorNumber + ")"; }
       if (bulk && ((k === "url" && misses(a.urlContains, r.url)) || (k === "title" && misses(a.titleContains, r.title)))) return;
       if (bulk && j === 0) s.sure = surely(kind, a, r[k], k);
     }
@@ -1629,6 +1639,7 @@ function jxaRuntime(BROWSERS, HANG) {
       yield* walkWindows(ap, name, kind, s.rows);
     }
     s.sure = s.rows.filter(function (row) { return matches(a, row.url, row.title); }).length;
+    if (s.rows.length) s.err = null;
   }
 
   globalThis.__perch = {
@@ -1656,10 +1667,13 @@ function jxaRuntime(BROWSERS, HANG) {
         return lister(app(name), name, KIND[name], a, slots[k], function () { return past(k); });
       });
       while (live.length) live = live.filter(function (g) { return !g.next().done; });
-      return {
+      const res = {
         rows: slots.reduce(function (out, s) { return out.concat(s.rows); }, []),
         more: slots.reduce(function (n, s) { return n + s.more; }, 0),
       };
+      const failed = names.map(function (name, k) { return slots[k].err ? { app: name, error: slots[k].err } : null; }).filter(Boolean);
+      if (failed.length) res.failed = failed;
+      return res;
     },
     evalJs(a) {
       const q = quickExec(a.target, a.js);
@@ -2151,6 +2165,7 @@ export const HANG = {
   ranNoReply: " ran but its result got no reply",
   noAnswer: "the page didn't answer",
   unanswered: "; the page stopped answering",
+  noEvent: "the browser didn't answer an Apple Event in time",
 };
 
 export const JXA_PRELUDE = `(${jxaRuntime})(${JSON.stringify(BROWSERS)}, ${JSON.stringify(HANG)})`;
@@ -2168,6 +2183,37 @@ export function translatePermissionError(msg) {
   if (/Allow JavaScript from Apple Events|JavaScript through AppleScript is turned off|JavaScript from Apple events is turned off/i.test(msg)) return ERR.jsOff;
   if (/Not authorized to send Apple events|errAEEventNotPermitted|-1743/i.test(msg)) return ERR.automation;
   return null;
+}
+
+// AppleScript error numbers a browser call can fail with, by the coded message
+// the caller gets instead of AppleScript's own wording.
+const OSA_QUIT = "no_browser: the browser quit or isn't running; open it, then re-run list_tabs";
+const OSA_GONE = "stale_tab: the browser couldn't reach the tab or window (closed, crashed or replaced mid-call); re-run list_tabs";
+const OSA_CODES = {
+  "-600": OSA_QUIT, "-609": OSA_QUIT, "-903": OSA_QUIT, "-10810": OSA_QUIT,
+  "-1712": "timeout: " + HANG.noEvent + "; the call may have run, so check the page before retrying",
+  "-1728": OSA_GONE, "-1719": OSA_GONE, "-1708": OSA_GONE, "-10000": OSA_GONE,
+};
+// Wordings seen without their number.
+const OSA_WORDS = [[/Application isn't running/i, "-600"], [/Connection is invalid/i, "-609"], [/AppleEvent timed out/i, "-1712"]];
+const CODED = /^(tab_not_visible|stale_tab|window_offscreen|no_browser|timeout|dialog_open|tab_not_scriptable): /;
+const EXITED = "osascript exited mid-call";
+
+// A raw osascript failure as the caller sees it: a coded message, the permission
+// wording, or AppleScript's own message. Its error number stays as a suffix.
+export function codeOsaError(msg) {
+  const m = / \((-\d+)\)$/.exec(msg);
+  let num = m ? m[1] : null;
+  const text = m ? msg.slice(0, m.index) : msg;
+  // -2700 is a script's own throw, whose message is already the whole story.
+  if (num === "-2700") return text;
+  if (CODED.test(msg)) return msg;
+  const perm = translatePermissionError(msg);
+  if (perm) return perm;
+  if (msg === EXITED) return "timeout: " + EXITED + "; the call may have run, so check the page before retrying";
+  if (num == null) { const w = OSA_WORDS.find(([re]) => re.test(text)); if (w) num = w[1]; }
+  if (num == null) return msg;
+  return (OSA_CODES[num] || text) + ` (AppleScript ${num})`;
 }
 
 // One long-lived `osascript -i -l JavaScript` REPL per lane. A warm REPL runs a
@@ -2302,7 +2348,7 @@ export class OsaDaemon {
     this.current = job;
     const line =
       `(function(){var __r;try{__r=eval(decodeURIComponent("${encodeURIComponent(c.script)}"))}` +
-      `catch(e){console.log("<<P:${id}:E:"+encodeURIComponent((e&&e.message)?e.message:String(e))+">>");return}` +
+      `catch(e){console.log("<<P:${id}:E:"+encodeURIComponent(((e&&e.message)?e.message:String(e))+(e&&typeof e.errorNumber==="number"?" ("+e.errorNumber+")":""))+">>");return}` +
       `var __s=__r===undefined||__r===null?"":(typeof __r==="string"?__r:JSON.stringify(__r));` +
       `console.log("<<P:${id}:O:"+encodeURIComponent(__s)+">>")})();\n`;
     try { this.proc.stdin.write(line); }
@@ -2342,7 +2388,7 @@ export class OsaDaemon {
     this.ready = null;
     const c = this.current;
     this.current = null;
-    if (c) { clearTimeout(c.timer); c.reject(new Error("osascript exited mid-call")); }
+    if (c) { clearTimeout(c.timer); c.reject(new Error(EXITED)); }
     if (this.queue.length) this._drain();
   }
 }
@@ -2362,7 +2408,7 @@ export async function jxa(script, { timeout = JXA_DEFAULT_TIMEOUT, lane = "fast"
   if (d) {
     try { return await d.run(script, timeout, token); }
     catch (e) {
-      if (!e.notSent) throw new Error(translatePermissionError(e.message) || e.message);
+      if (!e.notSent) throw new Error(codeOsaError(e.message));
     }
   }
   return oneShot(script, { timeout });
@@ -2377,8 +2423,8 @@ export function formatOsaFailure(e, timeout) {
   const translated = translatePermissionError(msg);
   if (translated) return translated;
   if (e.code === 1 && !msg) return ERR.automation;
-  // "execution error: Error: <msg> (-2700)" → "<msg>"
-  return msg.replace(/^.*?execution error: (?:Error: )?/s, "").replace(/ \(-?\d+\)$/, "");
+  // "execution error: Error: <msg> (-1728)" → "<msg> (-1728)", then coded
+  return codeOsaError(msg.replace(/^.*?execution error: (?:Error: )?/s, ""));
 }
 
 async function jxaOneShot(script, { timeout = JXA_DEFAULT_TIMEOUT } = {}) {
@@ -2481,8 +2527,12 @@ export function shapeTabs(rows, { urlContains, titleContains, limit = 50 } = {})
 async function listTabs(args = {}) {
   const { urlContains = null, titleContains = null, limit = 50 } = args;
   const r = await rt("listTabs", { app: args.app || null, urlContains, titleContains, limit });
+  // A browser that couldn't be read fails the call when nothing else listed, so
+  // "no tabs" always means none.
+  if (r.failed && !r.rows.length && !r.more) throw new Error(codeOsaError(r.failed[0].error));
   const out = shapeTabs(r.rows, args);
   out.total += r.more;
+  if (r.failed) out.warning = r.failed.map((f) => `${f.app} not listed: ${codeOsaError(f.error)}`).join("; ");
   return out;
 }
 
