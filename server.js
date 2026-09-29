@@ -3918,7 +3918,8 @@ function checkByLabel(a, only) {
   if (trap) { const id = ident(trap); return { out: { ok: false, el: id, error: id + " matched " + pat + " but it looks like a bot trap; leave it unchecked" } }; }
   return { out: { ok: false, error: "no checkbox/radio matched " + pat } };
 }
-function checkOne(a, only) {
+// onLand(el) hears of a box that ends in the wanted state.
+function checkOne(a, only, onLand) {
   const r = a.ref || a.selector ? resolveEl(a) : checkByLabel(a, only);
   if (r.out) return r.out;
   const el = r.el;
@@ -3926,10 +3927,12 @@ function checkOne(a, only) {
   if (isDisabled(el) || el.closest("fieldset[disabled]")) return only ? { ok: true, kind: "check", el: ident(el), skipped: "disabled" } : { ok: false, kind: "check", el: ident(el), error: ident(el) + " is disabled; the form will not submit it" };
   const want = !!a.checked;
   const out = { ok: true, kind: "check", el: ident(el), checked: want };
-  if (isOn(el) === want) return out;
-  if (!want && role(el) === "radio") return { ok: false, kind: "check", el: out.el, error: "a radio can't be unchecked; check another option" };
-  el.click();
-  if (isOn(el) !== want) return { ok: false, kind: "check", el: out.el, error: "state did not change after click", checked: isOn(el) };
+  if (isOn(el) !== want) {
+    if (!want && role(el) === "radio") return { ok: false, kind: "check", el: out.el, error: "a radio can't be unchecked; check another option" };
+    el.click();
+    if (isOn(el) !== want) return { ok: false, kind: "check", el: out.el, error: "state did not change after click", checked: isOn(el) };
+  }
+  if (onLand) onLand(el);
   return out;
 }
 // Radio groups, each asked by a question: a [role=radiogroup] (its accessible
@@ -4199,21 +4202,27 @@ function revealers(re, nearHit) {
   found.sort(function (x, y) { return x.rank[0] - y.rank[0] || x.rank[1] - y.rank[1] || x.rank[2] - y.rank[2]; });
   return found.slice(0, 2).map(function (f) { return f.line; });
 }
+// Masks reformat or drop a country code, so digits also count when one ends the other.
+function sameNumber(s, text) {
+  const d = String(s || "").replace(/\D/g, ""), t = String(text || "").replace(/\D/g, "");
+  return d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t);
+}
+// Whether v still holds text as setPlain accepts it on the first read.
+function holdsText(v, text) {
+  const norm = function (s) { return String(s || "").trim().replace(/\s+/g, " "); };
+  return norm(v).indexOf(norm(text)) >= 0 || sameNumber(v, text);
+}
 // -> fill's result for one field {ref|selector|label_pattern, text}. only:
 // write nothing to a field that is absent, a trap, ambiguous or already set.
-function fillOne(a, only) {
+// onLand(el, rich) hears of each field or editor root that took the text.
+function fillOne(a, only, onLand) {
   const text = a.text;
   // Compare non-whitespace counts: rich editors normalize whitespace on the way in.
   const want = Math.floor(text.replace(/\s/g, "").length * 0.9);
-  // Masks reformat or drop a country code, so digits also count when one ends the other.
-  const digits = function (s) { return String(s || "").replace(/\D/g, ""); };
-  const sameNumber = function (s) {
-    const d = digits(s), t = digits(text);
-    return d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t);
-  };
+  const sameNum = function (s) { return sameNumber(s, text); };
   const landed = function (s) {
     if (text === "") return String(s || "").trim() === "";
-    return String(s || "").replace(/\s/g, "").length >= want || sameNumber(s);
+    return String(s || "").replace(/\s/g, "").length >= want || sameNum(s);
   };
   const isField = function (el) { return el.tagName === "TEXTAREA" || el.tagName === "INPUT"; };
   function isRich(el) {
@@ -4254,7 +4263,7 @@ function fillOne(a, only) {
       // Length and digit-suffix checks can't tell a revert from a landed value.
       if (v !== prior) return landed(v);
       // A mask that puts back the number it held, in its own format, holds the text.
-      if (sameNumber(v)) return true;
+      if (sameNum(v)) return true;
       return { ok: false, el: ident(el), kept: clip(v, 60), error: ident(el) + " kept its previous value " + JSON.stringify(clip(v, 60)) + " instead of the text; the page reverted the write" };
     }
     if (exact(t, el.value)) return true;
@@ -4295,10 +4304,13 @@ function fillOne(a, only) {
     if (isField(el) && text !== "" && isTypeahead(el)) return startTypeahead(el);
     if (isField(el)) {
       const r = setPlain(el);
-      return r === true ? { ok: true, kind: "plain", el: ident(el), len: el.value.length } : r || null;
+      if (r !== true) return r || null;
+      if (onLand) onLand(el, false);
+      return { ok: true, kind: "plain", el: ident(el), len: el.value.length };
     }
-    if (isRich(el)) return setRich(el) ? { ok: true, kind: "rich", el: ident(host || el), len: textOf(el).length } : null;
-    return null;
+    if (!isRich(el) || !setRich(el)) return null;
+    if (onLand) onLand(el, true);
+    return { ok: true, kind: "rich", el: ident(host || el), len: textOf(el).length };
   }
   // A typeahead holds only its pick (a companion's value or what its control
   // shows), never typed text alone.
@@ -5226,35 +5238,80 @@ function chosen(c) {
   const t = shownWhole(box) ? textOf(box).trim() : "";
   return PLACEHOLDERISH.test(t) ? "" : t;
 }
+// This run's landed fields by index (A.run names the call; a pass from 0 starts
+// it over). The last pass re-reads them, since a later field's handler may
+// clear or change one, as a country resets its state.
+let ff = window.__perch_ff;
+if (!A.from) ff = window.__perch_ff = { run: A.run, items: {} };
+else if (!ff || ff.run !== A.run) ff = null;
+const AFTER = " after a later field changed; fill it again";
+function drift(it) {
+  const el = it.el;
+  if (!el.isConnected) return { ok: false, kind: it.kind, el: it.id, error: it.id + " was removed" + AFTER };
+  if ("checked" in it) {
+    if (isOn(el) === it.checked) return null;
+    return { ok: false, kind: it.kind, el: it.id, checked: !it.checked, error: it.id + (it.checked ? " was cleared" : ' changed to "checked"') + AFTER };
+  }
+  let now;
+  if (it.group) {
+    if (isOn(el)) return null;
+    now = chosen({ group: it.group });
+  } else if ("sel" in it) {
+    now = chosen({ el: el });
+    if (el.selectedIndex === it.sel && (now || !it.want)) return null;
+  } else {
+    now = it.rich ? textOf(el) : el.value;
+    if (now.trim() && (now === it.want || holdsText(now, it.text))) return null;
+  }
+  const kept = clip(now, 60);
+  return { ok: false, kind: it.kind, el: it.id, kept: kept, error: it.id + (kept ? " changed to " + JSON.stringify(kept) : " was cleared") + AFTER };
+}
 const results = [];
+const stop = function (i) {
+  const out = { results: results, defer: i };
+  if (ff && Object.keys(ff.items).length) out.watch = true;
+  return out;
+};
 for (let i = A.from || 0; i < A.fields.length; i++) {
   const f = A.fields[i];
-  let o, kind;
+  let o, kind, got = null;
   if (f.option != null) {
     kind = "select";
     const c = findCtl(f, radioGroups, A.only);
     const v = !c.out && A.only && chosen(c);
     if (c.out) o = c.out.absent ? { ok: true, skipped: "absent" } : c.out;
     else if (v) o = { ok: true, skipped: "has value", el: c.group ? "radiogroup " + JSON.stringify(clip(c.group.q, 80)) : ident(nativeOf(c.el) || c.el), value: clip(v, 60) };
-    else if (c.group) o = pickRadio(c.group, f.option);
-    else {
+    else if (c.group) {
+      o = pickRadio(c.group, f.option);
+      got = { el: c.group.opts.filter(isOn)[0], group: c.group };
+    } else {
       const nat = nativeOf(c.el);
-      if (!nat) return { results: results, defer: i };
+      if (!nat) return stop(i);
       o = A.only && unsent(nat) ? { ok: true, skipped: "disabled", el: ident(nat) } : pickNative(nat, f.option);
+      got = { el: nat, sel: nat.selectedIndex, want: chosen({ el: nat }) };
     }
   } else if (f.checked != null) {
     kind = "check";
-    o = checkOne(f, A.only);
+    o = checkOne(f, A.only, function (el) { got = { el: el, checked: !!f.checked }; });
   } else {
     kind = "text";
-    o = fillOne(f, A.only);
-    if (o.pending) return { results: results, defer: i };
+    o = fillOne(f, A.only, function (el, rich) { if (f.text !== "") got = { el: el, rich: rich, want: rich ? textOf(el) : el.value, text: f.text }; });
+    if (o.pending) return stop(i);
   }
   if (o.__perch_ref_miss) o = { ok: false, error: "ref " + o.ref + " is stale or unknown; call accessibility_snapshot again" };
   if (!o.kind) o.kind = kind;
+  if (ff && got && got.el && o.ok === true && !o.skipped) {
+    const same = function (x) { return x.el === got.el || (!!x.group && !!got.group && x.group.opts[0] === got.group.opts[0]); };
+    Object.keys(ff.items).forEach(function (k) { if (same(ff.items[k])) delete ff.items[k]; });
+    got.id = o.el;
+    got.kind = o.kind;
+    ff.items[i] = got;
+  }
   results.push(o);
 }
-return { results: results };
+const recheck = {};
+if (ff) Object.keys(ff.items).forEach(function (k) { const d = drift(ff.items[k]); if (d) recheck[k] = d; });
+return Object.keys(recheck).length ? { results: results, recheck: recheck } : { results: results };
 `,
 
   // select runs in phases polled from JXA (runtime `select`), never with page
@@ -6361,8 +6418,11 @@ async function fillFields(fields, target, only) {
       halt(e && e.message);
     }
   };
+  const run = Math.random().toString(36).slice(2);
+  const recheck = (r) => { for (const [i, x] of Object.entries(r.recheck || {})) if (results[i]) results[i] = x; };
+  let watch = false;
   for (let from = 0; from < A.length;) {
-    const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target));
+    const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined, run }, target));
     if (halted) return halted;
     if (!r || !Array.isArray(r.results)) {
       if (!results.length) return r;
@@ -6370,6 +6430,8 @@ async function fillFields(fields, target, only) {
       return halted;
     }
     results.push(...r.results);
+    recheck(r);
+    watch = !!r.watch;
     if (r.defer == null) break;
     const f = A[r.defer];
     const s = await step(() => f.text != null ? pickSuggestion(target) : select({ ...f, text: f.option, target }));
@@ -6378,6 +6440,12 @@ async function fillFields(fields, target, only) {
       ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
       : { kind: "select", ...s });
     from = r.defer + 1;
+    // The combobox ended the batch, so no page pass has re-read the fields
+    // before it. A failed or navigated re-read leaves the results as they are.
+    if (from === A.length && watch) {
+      const x = await runPage("fill", "fill_fields", { fields: A, from, run }, target).catch(() => null);
+      if (x) recheck(x);
+    }
   }
   return { ok: results.every((x) => x.ok === true), results, ...counts() };
 }

@@ -1096,3 +1096,164 @@ test("fill_fields only_empty: a disabled field is skipped as disabled and the ba
   assert.equal(val(w, "#s").value, "");
   assert.equal(val(w, "#n").value, "Ada");
 });
+
+// ---- a field a later field's handler cleared or changed ----
+
+const DEPENDENT = `<label>State <input id=st></label>
+  <label>Country <select id=co><option value="">Select...</option><option value=ar>Argentina</option><option value=cl>Chile</option></select></label>`;
+const CLEARS_ST = `document.getElementById('co').addEventListener('change', () => { document.getElementById('st').value = ''; });`;
+
+test("fill_fields: a state a later country change clears comes back ok:false", () => {
+  const w = page(DEPENDENT);
+  runBody(w, CLEARS_ST + " return 1");
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "country", option: "Argentina" }] });
+  assert.deepEqual(o.results.map((r) => r.ok), [true, true]);
+  assert.deepEqual(Object.keys(o.recheck), ["0"]);
+  assert.deepEqual(o.recheck[0], { ok: false, kind: "plain", el: `textbox "State"`, kept: "", error: `textbox "State" was cleared after a later field changed; fill it again` });
+});
+
+test("fill {fields}: the cleared state fails the batch and the country stays ok", async () => {
+  onPage(DEPENDENT, CLEARS_ST);
+  const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "country", option: "Argentina" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results.length, 2);
+  assert.equal(o.results[0].ok, false);
+  assert.match(o.results[0].error, /cleared after a later field changed/);
+  assert.equal(o.results[1].ok, true);
+  assert.equal(o.results[1].selected, "Argentina");
+  assert.equal(o.recheck, undefined);
+});
+
+test("fill {fields}: order-independent fields stay ok and nothing extra leaks into the result", async () => {
+  onPage(FORM);
+  const { o } = await fill({ fields: [FIVE[0], FIVE[1], FIVE[4]] });
+  assert.deepEqual(o, { ok: true, results: [
+    { ok: true, kind: "plain", el: `textbox "Name"`, len: 12 },
+    { ok: true, kind: "plain", el: `textbox "Email"`, len: 16 },
+    { ok: true, kind: "check", el: `checkbox "I agree"`, checked: true },
+  ] });
+});
+
+test("fill_fields: a masked phone the page reformats after landing stays ok", () => {
+  const w = page(`<label>Phone <input id=ph></label><label>Name <input id=n></label>`);
+  runBody(w, `document.getElementById('n').addEventListener('change', () => {
+    const p = document.getElementById('ph'), d = p.value.replace(/\\D/g, '');
+    p.value = '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6); }); return 1`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "phone", text: "5551234567" }, { label_pattern: "name", text: "Ada" }] });
+  assert.equal(val(w, "#ph").value, "(555) 123-4567");
+  assert.deepEqual(o.results.map((r) => r.ok), [true, true]);
+  assert.equal(o.recheck, undefined);
+});
+
+test("fill_fields: a later field that unchecks an earlier checkbox flags it", () => {
+  const w = page(`<label><input type=checkbox id=c> Ship to billing</label><label>Address <input id=a></label>`);
+  runBody(w, `document.getElementById('a').addEventListener('change', () => { document.getElementById('c').checked = false; }); return 1`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "ship", checked: true }, { label_pattern: "address", text: "1 Main St" }] });
+  assert.equal(o.recheck[0].ok, false);
+  assert.equal(o.recheck[0].kind, "check");
+  assert.equal(o.recheck[0].checked, false);
+  assert.match(o.recheck[0].error, /^checkbox "Ship to billing" was cleared after a later field changed/);
+});
+
+test("fill_fields: a value a later field reformats but still holds the text stays ok", () => {
+  const w = page(`<label>City <input id=ci></label><label>Zip <input id=z></label>`);
+  runBody(w, `document.getElementById('z').addEventListener('change', () => { const c = document.getElementById('ci'); c.value = c.value + ', AR'; }); return 1`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "city", text: "Cordoba" }, { label_pattern: "zip", text: "5000" }] });
+  assert.equal(val(w, "#ci").value, "Cordoba, AR");
+  assert.equal(o.recheck, undefined);
+});
+
+test("fill_fields: a value a later field replaces with another is reported as changed", () => {
+  const w = page(`<label>City <input id=ci></label><label>Zip <input id=z></label>`);
+  runBody(w, `document.getElementById('z').addEventListener('change', () => { document.getElementById('ci').value = 'Rosario'; }); return 1`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "city", text: "Cordoba" }, { label_pattern: "zip", text: "5000" }] });
+  assert.equal(o.recheck[0].kept, "Rosario");
+  assert.match(o.recheck[0].error, /^textbox "City" changed to "Rosario" after a later field changed; fill it again$/);
+});
+
+test("fill_fields: a field filled twice in one batch is checked against its last value", () => {
+  const w = page(`<label>City <input id=ci></label>`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "city", text: "Cordoba" }, { selector: "#ci", text: "Rosario" }] });
+  assert.equal(o.recheck, undefined);
+});
+
+test("fill_fields: a select and a radio a later field resets are flagged; a removed field too", () => {
+  const w = page(`<label>Size <select id=s><option value="">Select...</option><option>S</option><option>L</option></select></label>
+    <fieldset><legend>Plan</legend><label><input type=radio name=p id=p1> Monthly</label><label><input type=radio name=p id=p2> Yearly</label></fieldset>
+    <div id=box><label>Note <input id=no></label></div><label>Code <input id=cd></label>`);
+  runBody(w, `document.getElementById('cd').addEventListener('change', () => {
+    document.getElementById('s').selectedIndex = 2; document.getElementById('p1').checked = false; document.getElementById('box').innerHTML = ''; }); return 1`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "size", option: "S" }, { label_pattern: "plan", option: "Monthly" }, { label_pattern: "note", text: "hi there" }, { label_pattern: "code", text: "X1" }] });
+  assert.deepEqual(o.results.map((r) => r.ok), [true, true, true, true]);
+  assert.deepEqual(Object.keys(o.recheck), ["0", "1", "2"]);
+  assert.match(o.recheck[0].error, /^combobox "Size" changed to "L" after a later field changed/);
+  assert.equal(o.recheck[1].kind, "radio");
+  assert.match(o.recheck[1].error, /^radiogroup "Plan" was cleared after a later field changed/);
+  assert.match(o.recheck[2].error, /^textbox "Note" was removed after a later field changed/);
+});
+
+test("fill_fields: only_empty skips are never rechecked", () => {
+  const w = page(`<label>State <input id=st value=Salta></label><label>Country <select id=co><option value="">Select...</option><option>Chile</option></select></label>`);
+  runBody(w, CLEARS_ST + " return 1");
+  const o = run(w, "fill_fields", { only: true, fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "country", option: "Chile" }] });
+  assert.equal(o.results[0].skipped, "has value");
+  assert.equal(val(w, "#st").value, "");
+  assert.equal(o.recheck, undefined);
+});
+
+test("fill_fields: a later pass on a page without this run's record rechecks nothing", () => {
+  const w = page(DEPENDENT);
+  runBody(w, CLEARS_ST + " return 1");
+  run(w, "fill_fields", { run: "a", fields: [{ label_pattern: "state", text: "Cordoba" }] });
+  const o = run(w, "fill_fields", { run: "b", from: 1, fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "country", option: "Argentina" }] });
+  assert.equal(val(w, "#st").value, "");
+  assert.equal(o.recheck, undefined);
+});
+
+// The combobox pick clears State, as a country widget clears its dependents.
+const CUSTOM_CLEARS = CUSTOM.replace("<input aria-label=First>", "<label>State <input id=st></label>") + `<label>City <input id=ci></label>`;
+const CUSTOM_CLEARS_JS = CUSTOM_JS.replace("cb.querySelector('.v').textContent = o.textContent;", "cb.querySelector('.v').textContent = o.textContent; document.getElementById('st').value = '';");
+const passes = (world) => {
+  const sent = [], d = { run: (s) => { if (s.includes("PLACEHOLDERISH")) sent.push(s); return world.daemon.run(s); } };
+  DAEMONS.fast = d; DAEMONS.slow = d;
+  return sent;
+};
+
+test("fill {fields}: a combobox pick that clears an earlier field is caught by the final pass", async () => {
+  const { world } = onPage(CUSTOM_CLEARS, CUSTOM_CLEARS_JS);
+  const sent = passes(world);
+  const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }, { label_pattern: "city", text: "Rio" }] });
+  assert.equal(sent.length, 2);
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.results.map((x) => [x.kind, x.ok]), [["plain", false], ["select", true], ["plain", true]]);
+  assert.match(o.results[0].error, /cleared after a later field changed/);
+});
+
+test("fill {fields}: a batch ending on the combobox costs one extra pass, which flags State", async () => {
+  const { world } = onPage(CUSTOM_CLEARS, CUSTOM_CLEARS_JS);
+  const sent = passes(world);
+  const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }] });
+  assert.equal(sent.length, 2);
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results.length, 2);
+  assert.match(o.results[0].error, /cleared after a later field changed/);
+  assert.equal(o.results[1].ok, true);
+});
+
+test("fill {fields}: a batch of only the combobox has nothing to recheck and no extra pass", async () => {
+  const { world } = onPage(CUSTOM_CLEARS, CUSTOM_CLEARS_JS);
+  const sent = passes(world);
+  const { o } = await fill({ fields: [{ label_pattern: "level", option: "senior" }] });
+  assert.equal(sent.length, 1);
+  assert.equal(o.ok, true, JSON.stringify(o));
+});
+
+test("fill {fields}: a page that navigated before the extra pass is not failed", async () => {
+  const { world, dom } = onPage(CUSTOM_CLEARS, CUSTOM_CLEARS_JS);
+  const sent = passes(world);
+  dom.document.getElementById("menu").addEventListener("click", () => { delete dom.__perch_ff; });
+  const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }] });
+  assert.equal(sent.length, 2);
+  assert.deepEqual(o.results.map((x) => x.ok), [true, true]);
+  assert.equal(o.ok, true);
+});
