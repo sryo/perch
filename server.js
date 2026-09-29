@@ -950,22 +950,52 @@ function jxaRuntime(BROWSERS, HANG) {
     });
   }
 
-  // A click that opens a new tab is found by the target window's tab list, one
-  // bulk read before and after: ids, or Safari's urls (its tabs have no id). The
-  // new tab is never selected; a browser that showed it itself gets a note.
-  const winOf = function (t) { return { app: t.app, kind: t.kind, win: t.win, w: t.w, winId: null }; };
+  // A click that opens a new tab is found by the app's tab lists, one bulk read
+  // of every window before and after: ids, or Safari's urls (its tabs have no id),
+  // so a tab the browser put in another window counts too. The new tab is never
+  // selected; a browser that showed it itself gets a note.
+  const winOf = function (t) { return { app: t.app, kind: t.kind, w: t.w }; };
   function tabSet(W) {
-    try { return W.kind === "safari" ? W.win.tabs.url() : W.win.tabs.id(); } catch (e) { return null; }
+    try { const all = app(W.app).windows.tabs; return W.kind === "safari" ? all.url() : all.id(); } catch (e) { return null; }
   }
-  function addedAt(kind, before, after) {
-    if (kind !== "safari") {
-      const had = before.map(String);
-      for (let i = 0; i < after.length; i++) if (had.indexOf(String(after[i])) < 0) return i;
-      return -1;
-    }
+  // Safari: the first index where `after` grew over `before`, or -1.
+  function grewAt(before, after) {
     if (after.length <= before.length) return -1;
     for (let i = 0; i < before.length; i++) if (after[i] !== before[i]) return i;
     return before.length;
+  }
+  // {j: window position now, i: tab index in it} of a tab that wasn't there before, or null.
+  function addedAt(kind, before, after, w) {
+    after = after.map(function (l) { return l || []; });
+    if (kind !== "safari") {
+      const had = {};
+      before.forEach(function (l) { (l || []).forEach(function (id) { had[String(id)] = true; }); });
+      const order = after.map(function (l, j) { return j; });
+      if (w != null && w < after.length) { order.splice(w, 1); order.unshift(w); }
+      for (let n = 0; n < order.length; n++) {
+        const l = after[order[n]];
+        for (let i = 0; i < l.length; i++) if (!had[String(l[i])]) return { j: order[n], i: i };
+      }
+      return null;
+    }
+    // Safari windows can't be told apart in the same event, so an unchanged list
+    // pairs a window with itself; a changed one pairs with a list it grew from; a
+    // window left over whose length no old list has is new, and its tab is the first.
+    const old = before.map(function (l) { return l || []; }), rest = [];
+    after.forEach(function (l, j) {
+      const k = old.findIndex(function (b) { return b && b.length === l.length && b.every(function (u, i) { return u === l[i]; }); });
+      if (k >= 0) old[k] = null; else rest.push(j);
+    });
+    const left = old.filter(function (b) { return b; });
+    for (let n = 0; n < rest.length; n++) {
+      for (let k = 0; k < left.length; k++) { const i = grewAt(left[k], after[rest[n]]); if (i >= 0) return { j: rest[n], i: i }; }
+    }
+    if (after.length <= before.length) return null;
+    for (let n = 0; n < rest.length; n++) {
+      const len = after[rest[n]].length;
+      if (len && !left.some(function (b) { return b.length === len; })) return { j: rest[n], i: 0 };
+    }
+    return null;
   }
   // A popup blocker drops the tab silently, and a browser adds an allowed one
   // soon after the click, so an empty result is re-read this long first.
@@ -973,29 +1003,31 @@ function jxaRuntime(BROWSERS, HANG) {
   function tabOpened(W, before, href, wait) {
     const start = Date.now();
     for (;;) {
-      const after = tabSet(W), i = after ? addedAt(W.kind, before, after) : -1;
-      if (i >= 0) return openedTab(W, after, i, href);
+      const after = tabSet(W), at = after ? addedAt(W.kind, before, after, W.w) : null;
+      if (at) return openedTab(W, after, at, href);
       if (Date.now() - start >= wait) return null;
       delay(0.1);
     }
   }
   // A new Safari tab still loading reads blank, so its handle hashes the URL it is loading.
-  function openedTab(W, after, i, href) {
-    const out = { tabId: null, url: href, shown: false };
+  function openedTab(W, after, at, href) {
+    const raw = after[at.j][at.i], out = { tabId: null, url: href, shown: false };
     try {
+      const win = app(W.app).windows[at.j];
       if (W.kind === "safari") {
-        out.tabId = safariHandle(W.winId != null ? W.winId : W.win.id(), i, fp(after[i]) === fp("") ? href : after[i]);
-        out.shown = W.win.currentTab.index() === i + 1;
+        out.tabId = safariHandle(win.id(), at.i, fp(raw) === fp("") ? href : raw);
+        out.shown = win.currentTab.index() === at.i + 1;
       } else {
-        out.tabId = handle(W.app, after[i]);
-        if (W.kind === "chrome" && W.w != null) hint(W.app, after[i], W.w);
-        out.shown = String(W.win.activeTab.id()) === String(after[i]);
+        out.tabId = handle(W.app, raw);
+        if (W.kind === "chrome") hint(W.app, raw, at.j);
+        out.shown = String(win.activeTab.id()) === String(raw);
       }
     } catch (e) {}
     return out;
   }
   // `r` is a click's result: `cancelled` (the page prevented the default) and
-  // window.open's opened/blocked, which a tab found in the window replaces.
+  // window.open's opened/blocked, which a tab found replaces. Only the page seeing
+  // window.open return null is `blocked`; no tab in time is `unconfirmed`.
   function noteOpened(r, W, before, href) {
     const cancelled = !!r.cancelled;
     delete r.cancelled;
@@ -1005,8 +1037,9 @@ function jxaRuntime(BROWSERS, HANG) {
       r.opened = { tabId: o.tabId, url: o.url };
       if (o.shown) r.note = "the browser showed the new tab";
     } else if (!cancelled && !r.opened && !r.blocked) {
-      r.blocked = true;
+      r.unconfirmed = true;
       r.href = href;
+      r.note = "no new tab within 0.5s; it may be blocked or still opening: list_tabs urlContains href";
     }
     return r;
   }
