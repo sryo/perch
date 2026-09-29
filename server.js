@@ -5277,9 +5277,48 @@ let ff = window.__perch_ff;
 if (!A.from) ff = window.__perch_ff = { run: A.run, items: {} };
 else if (!ff || ff.run !== A.run) ff = null;
 const AFTER = " after a later field changed; fill it again";
-function drift(it) {
-  const el = it.el;
-  if (!el.isConnected) return { ok: false, kind: it.kind, el: it.id, error: it.id + " was removed" + AFTER };
+// A framework re-render replaces a node but keeps its value: a disconnected
+// field is looked up again by id, then by name in its form, then by the call's
+// own label_pattern (a field's own label or hint; a select, combobox or radio
+// group through findCtl; a box through checkByLabel), shown ones first.
+function twin(it) {
+  const k = it.key || {}, ok = function (x) { return !!x && x.isConnected && x !== it.el; };
+  let x = k.id && document.getElementById(k.id);
+  if (ok(x)) return { el: x };
+  if (k.name && k.form && k.form.isConnected) {
+    x = Array.prototype.find.call(k.form.elements, function (e) { return e.name === k.name && (!("value" in k) || e.value === k.value); });
+    if (ok(x)) return { el: x };
+  }
+  const f = it.f;
+  if (!f || f.ref || f.selector || !f.label_pattern) return null;
+  if (f.checked != null) { const r = checkByLabel(f); return r.el ? { el: r.el } : null; }
+  if (f.option != null) {
+    const c = findCtl(f, radioGroups);
+    if (c.group) { const i = c.group.names.indexOf(it.pick); return { el: c.group.opts[i >= 0 ? i : 0], group: c.group }; }
+    const nat = c.el && nativeOf(c.el);
+    return nat ? { el: nat } : null;
+  }
+  const re = new RegExp(f.label_pattern, "i");
+  const all = Array.prototype.filter.call(document.querySelectorAll("textarea, input, [contenteditable]"), function (e) {
+    return (e.tagName !== "INPUT" || INPUT_SKIP.indexOf((e.type || "text").toLowerCase()) < 0) && (!e.hasAttribute("contenteditable") || editable(e));
+  });
+  const hits = all.filter(function (e) { return re.test(labelText(e)); }).concat(all.filter(function (e) { return !re.test(labelText(e)) && re.test(hintText(e)); }));
+  x = hits.filter(fieldVis)[0] || hits[0];
+  return ok(x) ? { el: x } : null;
+}
+function drift(it, again) {
+  let el = it.el;
+  if (!el.isConnected) {
+    const t = !again && twin(it);
+    if (!t) return { ok: false, kind: it.kind, el: it.id, error: it.id + " was removed" + AFTER };
+    const n = Object.assign({}, it, t);
+    if (!t.group && it.group) {
+      const g = radioGroups().find(function (x) { return x.opts.indexOf(t.el) >= 0; });
+      if (!g) return { ok: false, kind: it.kind, el: it.id, error: it.id + " was removed" + AFTER };
+      n.group = g;
+    }
+    return drift(n, true);
+  }
   if ("checked" in it) {
     if (isOn(el) === it.checked) return null;
     return { ok: false, kind: it.kind, el: it.id, checked: !it.checked, error: it.id + (it.checked ? " was cleared" : ' changed to "checked"') + AFTER };
@@ -5337,6 +5376,10 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     Object.keys(ff.items).forEach(function (k) { if (same(ff.items[k])) delete ff.items[k]; });
     got.id = o.el;
     got.kind = o.kind;
+    got.f = f;
+    got.key = { id: got.el.id, name: got.el.name, form: got.el.form };
+    if (got.group) got.pick = chosen({ group: got.group });
+    if (got.group || "checked" in got) got.key.value = got.el.value;
     ff.items[i] = got;
   }
   results.push(o);

@@ -1194,6 +1194,59 @@ test("fill_fields: a select and a radio a later field resets are flagged; a remo
   assert.match(o.recheck[2].error, /^textbox "Note" was removed after a later field changed/);
 });
 
+const REPLACED = `<form><label>State <input id=st name=state></label><label>Code <input id=cd></label></form>`;
+const replaceSt = (value) => `document.getElementById('cd').addEventListener('change', () => {
+  const old = document.getElementById('st'), n = document.createElement('input');
+  n.id = 'st'; n.name = 'state'; n.value = ${JSON.stringify(value)}; old.replaceWith(n); }); return 1`;
+const ST_FIELDS = [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "code", text: "X1" }];
+
+test("fill_fields: a re-rendered field that still holds the value stays ok", () => {
+  const w = page(REPLACED);
+  runBody(w, replaceSt("Cordoba"));
+  const o = run(w, "fill_fields", { fields: ST_FIELDS });
+  assert.deepEqual(o.results.map((r) => r.ok), [true, true]);
+  assert.equal(o.recheck, undefined, JSON.stringify(o.recheck));
+});
+
+test("fill_fields: a re-rendered field that came back empty is flagged cleared", () => {
+  const w = page(REPLACED);
+  runBody(w, replaceSt(""));
+  const o = run(w, "fill_fields", { fields: ST_FIELDS });
+  assert.deepEqual(Object.keys(o.recheck), ["0"]);
+  assert.match(o.recheck[0].error, /^textbox "State" was cleared after a later field changed; fill it again$/);
+});
+
+test("fill_fields: a re-rendered field found by name alone, or by its label, is rechecked", () => {
+  const w = page(`<form><label>State <input name=state class=a></label><label>Code <input id=cd></label></form>
+    <form><label>Zip <input class=z></label><label>More <input id=mo></label></form>`);
+  runBody(w, `document.getElementById('cd').addEventListener('change', () => {
+    const old = document.querySelector('.a'), n = document.createElement('input'); n.name = 'state'; n.value = 'Cordoba'; old.replaceWith(n); });
+    document.getElementById('mo').addEventListener('change', () => {
+    const old = document.querySelector('.z'), n = document.createElement('input'); n.value = ''; old.replaceWith(n); }); return 1`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "code", text: "X1" }, { label_pattern: "zip", text: "5000" }, { label_pattern: "more", text: "y" }] });
+  assert.deepEqual(Object.keys(o.recheck || {}), ["2"], JSON.stringify(o.recheck));
+  assert.match(o.recheck[2].error, /^textbox "Zip" was cleared after a later field changed/);
+});
+
+test("fill_fields: a re-rendered radio group and checkbox are rechecked on their replacements", () => {
+  const w = page(`<form><div id=g><fieldset><legend>Plan</legend><label><input type=radio name=p value=m> Monthly</label><label><input type=radio name=p value=y> Yearly</label></fieldset>
+    <label><input type=checkbox name=t value=a> Alpha</label><label><input type=checkbox name=t value=b> Beta</label></div><label>Code <input id=cd></label></form>`);
+  runBody(w, `document.getElementById('cd').addEventListener('change', () => { const g = document.getElementById('g');
+    const keep = Array.from(g.querySelectorAll('input')).map((i) => i.checked); g.innerHTML = g.innerHTML;
+    g.querySelectorAll('input').forEach((i, n) => { i.checked = n === 0 ? keep[0] : false; }); }); return 1`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "plan", option: "Monthly" }, { label_pattern: "beta", checked: true }, { label_pattern: "code", text: "X1" }] });
+  assert.deepEqual(o.results.map((r) => r.ok), [true, true, true], JSON.stringify(o.results));
+  assert.deepEqual(Object.keys(o.recheck || {}), ["1"], JSON.stringify(o.recheck));
+  assert.match(o.recheck[1].error, /^checkbox "Beta" was cleared after a later field changed/);
+});
+
+test("fill_fields: a field removed with no replacement is reported removed", () => {
+  const w = page(REPLACED);
+  runBody(w, `document.getElementById('cd').addEventListener('change', () => { document.getElementById('st').closest('label').remove(); }); return 1`);
+  const o = run(w, "fill_fields", { fields: ST_FIELDS });
+  assert.match(o.recheck[0].error, /^textbox "State" was removed after a later field changed; fill it again$/);
+});
+
 test("fill_fields: only_empty skips are never rechecked", () => {
   const w = page(`<label>State <input id=st value=Salta></label><label>Country <select id=co><option value="">Select...</option><option>Chile</option></select></label>`);
   runBody(w, CLEARS_ST + " return 1");
