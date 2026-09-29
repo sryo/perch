@@ -4,7 +4,7 @@
 // any hidden companion. Masked inputs pass on a normalized (digits) match.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, taQuery } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
 
@@ -611,4 +611,117 @@ test("typeahead: a pick that shortens the value to more than the typed text is p
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.selected, "New York, NY, USA");
   assert.equal($(dom, "#c").value, "New York");
+});
+
+// ---- short-query fallback ----
+
+// A location lookup that answers only accent-free queries of 12 characters or
+// less, the way many location services miss "Córdoba, Argentina" but find
+// "cordoba". `typed` records only typing, not a withdraw's restore.
+const SHORT_LOOKUP = (cities, answers = "q.length <= 12 && !/[^\\x00-\\x7f]/.test(q)") => `
+  const cities = ${JSON.stringify(cities)};
+  const inp = document.getElementById('loc'), hid = document.getElementById('selected-location');
+  const dd = document.querySelector('.dropdown-container');
+  const fold = (s) => s.normalize('NFD').replace(/\\p{M}+/gu, '').toLowerCase();
+  window.lookups = 0; window.typed = [];
+  inp.addEventListener('input', (e) => {
+    if (e.inputType === 'insertText') window.typed.push(inp.value);
+    hid.value = '';
+    window.__q = [];
+    const q = inp.value.toLowerCase();
+    later(() => {
+      window.lookups++;
+      const hits = q && (${answers}) ? cities.filter((c) => fold(c).startsWith(fold(q))) : [];
+      dd.innerHTML = hits.map((c) => '<div class=dropdown-item data-id=' + cities.indexOf(c) + '>' + c + '</div>').join('');
+      dd.querySelectorAll('.dropdown-item').forEach((o) => o.addEventListener('mousedown', () => {
+        inp.value = o.textContent; hid.value = 'loc-' + o.dataset.id; dd.innerHTML = '';
+      }));
+    }, 3);
+  });
+  inp.addEventListener('blur', () => { window.__q = []; dd.innerHTML = ''; if (!hid.value) inp.value = ''; });`;
+const CORDOBAS = ["Córdoba, Argentina", "Córdoba, Veracruz, Mexico", "Córdoba, Andalusia, Spain"];
+
+test("typeahead: a lookup that finds nothing for the full text retries once with a short accent-free query", async () => {
+  const { dom } = onPage(LOCATION, SHORT_LOOKUP(CORDOBAS));
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.kind, "typeahead");
+  assert.equal(o.query, "cordoba");
+  assert.equal(o.selected, "Córdoba, Argentina");
+  assert.equal($(dom, "#loc").value, "Córdoba, Argentina");
+  assert.equal($(dom, "#selected-location").value, "loc-0");
+  assert.deepEqual([...dom.typed], ["Córdoba, Argentina", "cordoba"]);
+});
+
+test("typeahead: a short query that finds two equal hits is ambiguous and puts back the prior value", async () => {
+  const { dom } = onPage(
+    LOCATION.replace("id=loc name=location type=text", "id=loc name=location type=text value=Lyon").replace("name=selectedLocation>", "name=selectedLocation value=loc-9>"),
+    SHORT_LOOKUP(["Córdoba, Córdoba, Argentina", "Córdoba, Santa Fe, Argentina", "Córdoba, Spain"]));
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.ambiguous, true);
+  assert.equal(o.query, "cordoba");
+  assert.match(o.error, /^several suggestions matched "Córdoba, Argentina" equally/);
+  assert.deepEqual(o.candidates, ["Córdoba, Córdoba, Argentina", "Córdoba, Santa Fe, Argentina", "Córdoba, Spain"]);
+  assert.equal($(dom, "#loc").value, "Lyon");
+  assert.equal($(dom, "#selected-location").value, "loc-9");
+});
+
+test("typeahead: a short query that finds nothing either withdraws once, with the query reported", async () => {
+  const { dom } = onPage(LOCATION, SHORT_LOOKUP(CORDOBAS, "false"));
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.query, "cordoba");
+  assert.match(o.error, /^no suggestion matched "Córdoba, Argentina"; the text was withdrawn/);
+  assert.equal($(dom, "#loc").value, "");
+  assert.equal($(dom, "#selected-location").value, "");
+  assert.deepEqual([...dom.typed], ["Córdoba, Argentina", "cordoba"]);
+});
+
+test("typeahead: a lookup that answers the full text never retypes", async () => {
+  const { dom } = onPage(LOCATION, SHORT_LOOKUP(CORDOBAS, "true"));
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal("query" in o, false);
+  assert.equal(o.selected, "Córdoba, Argentina");
+  assert.deepEqual([...dom.typed], ["Córdoba, Argentina"]);
+  assert.equal(dom.lookups, 1);
+});
+
+test("typeahead: suggestions without a hit for the full text withdraw without a short query", async () => {
+  const { dom } = onPage(LOCATION, SHORT_LOOKUP(["Zurich", "Zagreb"], "true").replace("cities.filter((c) => fold(c).startsWith(fold(q)))", "cities"));
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal("query" in o, false);
+  assert.deepEqual(o.candidates, ["Zurich", "Zagreb"]);
+  assert.deepEqual([...dom.typed], ["Córdoba, Argentina"]);
+  assert.equal($(dom, "#loc").value, "");
+});
+
+test("fill {fields}: a typeahead entry gets the short-query retry too", async () => {
+  const { dom } = onPage(LOCATION, SHORT_LOOKUP(CORDOBAS));
+  const o = await fill({ fields: [{ selector: "#loc", text: "Córdoba, Argentina" }, { label_pattern: "name", text: "Ada" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.results[0].kind, "typeahead");
+  assert.equal(o.results[0].query, "cordoba");
+  assert.equal(o.results[0].selected, "Córdoba, Argentina");
+  assert.equal($(dom, "#selected-location").value, "loc-0");
+  assert.equal($(dom, "[name=name]").value, "Ada");
+});
+
+test("taQuery: the first comma part, accents folded, at most two words when long; null when nothing shorter", () => {
+  assert.equal(taQuery("Córdoba, Argentina"), "cordoba");
+  assert.equal(taQuery("  São  Paulo , SP, Brazil"), "sao paulo");
+  assert.equal(taQuery("Córdoba"), "cordoba");
+  assert.equal(taQuery("Ñuñoa, Santiago"), "nunoa");
+  assert.equal(taQuery("San Miguel de Tucumán, Argentina"), "san miguel");
+  assert.equal(taQuery("Rio Grande do Sul"), "rio grande");
+  assert.equal(taQuery("Buenos Aires Province, Argentina"), "buenos aires");
+  assert.equal(taQuery("Mar del Plata, Argentina"), "mar del plata");
+  assert.equal(taQuery("Rosario"), null);
+  assert.equal(taQuery("rosario"), null);
+  assert.equal(taQuery("  Rosario  "), null);
+  assert.equal(taQuery("A, Argentina"), null);
+  assert.equal(taQuery(", Argentina"), null);
+  assert.equal(taQuery(""), null);
 });

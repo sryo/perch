@@ -4115,6 +4115,15 @@ function taBlur(el) {
   if (had) el.blur();
   if (!had || !el.ownerDocument.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
 }
+// Typed with input events and no blur, so the widget runs its own lookup.
+function taType(el, text) {
+  if (el.focus) el.focus();
+  setNativeValue(el, text);
+  const key = text.slice(-1);
+  el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: key }));
+  el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+  el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: key }));
+}
 `;
 
 // The typeahead's suggestions come only from its own lists (select's rule), else
@@ -4302,16 +4311,10 @@ function fillOne(a, only, onLand) {
     const kept = clip(el.value, 60);
     return { ok: false, el: ident(el), kept: kept, error: ident(el) + " expects " + format(el, t) + "; the page kept " + JSON.stringify(kept) };
   }
-  // Typed with input events and no blur, so the widget runs its own lookup.
   function startTypeahead(el) {
     const t = taParts(el);
     window.__perch_ta = { el: el, comp: t.comp, pop: t.pop, text: text, prior: el.value, priorComp: t.comp && t.comp.value };
-    if (el.focus) el.focus();
-    setNativeValue(el, text);
-    const key = text.slice(-1);
-    el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: key }));
-    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
-    el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: key }));
+    taType(el, text);
     return { pending: true };
   }
   function setRich(root) {
@@ -5242,6 +5245,16 @@ if (!A.final && !good) return null;
 const out = { ok: good, kind: "typeahead", el: ident(el), selected: s.picked, value: clip(shown, 120) };
 if (!good) out.error = "picked " + JSON.stringify(s.picked) + " but " + (!seen ? "the field doesn't show it" : !filled ? "the hidden field stayed empty" : "the field still shows only the typed text");
 return out;
+`,
+
+  // A lookup that showed nothing for the full text gets A.query typed instead.
+  // Matching still uses s.text, and a miss still puts back the first prior.
+  fill_ta_retype: TYPEAHEAD_LIB + String.raw`
+const s = window.__perch_ta;
+if (!s) return { ok: false, kind: "typeahead", error: "fill state lost (did the page navigate?)" };
+["missed", "cands", "tied", "sig0", "sig", "same", "answered", "blurred"].forEach(function (k) { delete s[k]; });
+taType(s.el, A.query);
+return { pending: true };
 `,
 
   // One pass over A.fields from A.from. A custom combobox needs select's
@@ -6535,7 +6548,7 @@ async function fillFields(fields, target, only) {
     watch = !!r.watch;
     if (r.defer == null) break;
     const f = A[r.defer];
-    const s = await step(() => f.text != null ? pickSuggestion(target) : selectPrefs(f, target));
+    const s = await step(() => f.text != null ? pickTypeahead(f.text, target) : selectPrefs(f, target));
     if (halted) return halted;
     results.push(s && s.__perch_ref_miss
       ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
@@ -6618,7 +6631,7 @@ async function fill(args = {}) {
     ? await trustedFill({ ref, selector, label_pattern, text: body, raise, target })
     : await runPage("fill", "fill", { ref, selector, label_pattern, text: body }, target);
   if (!r || !r.pending) return r;
-  const out = { ...await pickSuggestion(target), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
+  const out = { ...await (r.trusted ? pickSuggestion(target) : pickTypeahead(body, target)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
 }
 
@@ -6630,6 +6643,27 @@ const pickSuggestion = (target) => rt("select", {
   read: pageFn("fill_ta_read", {}), readFinal: pageFn("fill_ta_read", { final: true }),
   short: 1000, probe: pageFn("fill_ta_pick", { probe: true }),
 }, { lane: "slow" });
+
+// A shorter lookup query for text a lookup found nothing for: its first comma
+// part, accents folded, cut to two words when long. null when it would type
+// the same text again (case aside) or too little to look up.
+export function taQuery(text) {
+  const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+  let q = norm(String(text || "").split(",")[0]).normalize("NFD").replace(/\p{M}+/gu, "");
+  const words = q.split(" ");
+  if (q.length > 20 || words.length > 3) q = words.slice(0, 2).join(" ");
+  return q.length < 2 || q === norm(text) ? null : q;
+}
+
+// Only an empty or unopened list retries: suggestions that answered the full
+// text without a hit, or a tie, are the site's answer.
+async function pickTypeahead(text, target) {
+  const r = await pickSuggestion(target);
+  const query = r && r.ok === false && !r.candidates && !r.ambiguous && /^no suggestion matched/.test(r.error) ? taQuery(text) : null;
+  if (!query) return r;
+  const t = await runPage("fill", "fill_ta_retype", { query }, target);
+  return { ...(t && t.pending ? await pickSuggestion(target) : t), query };
+}
 
 // prefs: fill's ordered option list, which the tool itself never takes.
 async function select(args = {}, prefs = null) {

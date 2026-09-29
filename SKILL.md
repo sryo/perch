@@ -39,7 +39,7 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, 
 
 ## Results
 
-- `fill` returns `{ok, kind: "plain"|"rich"|"typeahead", el, len, ambiguous?, kept?, reveal?, hidden?}`. Typeaheads pick (`selected`) or fail; free text stays (`note`). `ok: true` is proof.
+- `fill` returns `{ok, kind: "plain"|"rich"|"typeahead", el, len, ambiguous?, kept?, reveal?, hidden?}`. Typeaheads pick (`selected`) or fail; an empty lookup retries once with a short query (`query`); free text stays (`note`). `ok: true` is proof.
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed (a field a later one cleared comes back `ok:false`); `unverified`: count of picks the control didn't show; an error after a field landed ends it with `error`, landed results kept. `checked` clicks only on a change; `option` also answers a radio group by question. `only_empty`: skip absent/filled/disabled fields (`skipped`).
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
 - `moved: true` with a new `tabId` (`eval_js`: in a second text item): the tab changed place; use that `tabId` from now on.
