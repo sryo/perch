@@ -34,6 +34,9 @@ function scrolled({ rect = "100,200,300,50", from = "100,1200,300,50", iw = 800,
   // Animation frames run one per page script the world sends (see install).
   dom.rafs = [];
   dom.requestAnimationFrame = (cb) => dom.rafs.push(cb);
+  // Timers fire only on a page script that finds no frame pending (see install).
+  dom.timers = [];
+  dom.setTimeout = (cb) => dom.timers.push(cb);
   dom.intoView = [];
   t.scrollIntoView = function (o) {
     dom.intoView.push(o);
@@ -53,9 +56,13 @@ const still = (opts = {}) => scrolled({ ...opts, from: opts.rect || "100,200,300
 
 test("shot_clip scrolls an element outside the viewport the least way in and reports its client rect and viewport", () => {
   const p = scrolled();
-  const c = run(p.dom, "shot_clip", { selector: "#t" });
+  const { token, ...c } = run(p.dom, "shot_clip", { selector: "#t" });
   assert.equal(JSON.stringify(p.dom.intoView), JSON.stringify([{ block: "nearest", inline: "nearest", behavior: "instant" }]));
   assert.deepEqual(c, { ok: true, x: 100, y: 200, w: 300, h: 50, iw: 800, ih: 620, moved: true });
+  assert.equal(token, p.dom.__perch_shot.token);
+  const again = scrolled();
+  again.dom.__perch_shot_n = p.dom.__perch_shot_n;
+  assert.notEqual(run(again.dom, "shot_clip", { selector: "#t" }).token, token, "each call records under its own token");
 });
 
 test("shot_clip: a fully visible element is not moved, even on a scrolled page", () => {
@@ -65,7 +72,7 @@ test("shot_clip: a fully visible element is not moved, even on a scrolled page",
     assert.equal(p.dom.intoView.length, 1, rect);
     assert.equal(c.moved, false);
     assert.deepEqual(where(p), [0, 40, 37]);
-    assert.deepEqual(run(p.dom, "shot_restore", {}), { ok: true });
+    assert.deepEqual(run(p.dom, "shot_restore", {}), { ok: true, token: c.token });
   }
 });
 
@@ -73,7 +80,17 @@ test("shot_clip: an element still clipped by a scrolling container after the scr
   // #box shows 50..450 x 100..400; the element ends at 430 even after scrolling.
   const p = scrolled({ boxRect: "50,100,400,300", rect: "100,380,300,50" });
   const c = run(p.dom, "shot_clip", { selector: "#t" });
-  assert.deepEqual(c, { ok: false, error: "screenshot: the element is clipped by a scrolling container; nothing was captured", restore: true });
+  assert.deepEqual(c, { ok: false, error: "screenshot: the element is clipped by a scrolling container; nothing was captured" });
+  assert.deepEqual(where(p), [0, 40, 37]);
+  assert.equal(p.dom.__perch_shot, null);
+});
+
+test("shot_clip: a throw after the scroll puts the scroll back in the page and drops its record", () => {
+  const p = scrolled();
+  throwAt(p.dom, "const c = el.getBoundingClientRect();");
+  assert.equal(run(p.dom, "shot_clip", { selector: "#t" }).__perch_error_name, "TypeError");
+  assert.deepEqual(where(p), [0, 40, 37]);
+  assert.equal(p.dom.__perch_shot, null);
 });
 
 test("shot_clip: an element larger than the viewport is refused before anything scrolls", () => {
@@ -88,9 +105,9 @@ test("shot_clip: an element larger than the viewport is refused before anything 
 
 test("shot_restore puts back the window's scroll and every scrolled ancestor's, then forgets them", () => {
   const p = scrolled();
-  run(p.dom, "shot_clip", { selector: "#t" });
+  const { token } = run(p.dom, "shot_clip", { selector: "#t" });
   assert.deepEqual(where(p), [0, 900, 0]);
-  assert.deepEqual(run(p.dom, "shot_restore", {}), { ok: true });
+  assert.deepEqual(run(p.dom, "shot_restore", {}), { ok: true, token });
   assert.deepEqual(where(p), [0, 40, 37]);
   assert.equal(p.dom.__perch_shot, null);
   assert.deepEqual(run(p.dom, "shot_restore", {}), { ok: false }, "a second restore has nothing to put back");
@@ -134,7 +151,11 @@ function install(p, { scale = 2, active = true, area = AREA } = {}) {
   world.state.scripts = [];
   world.state.onExecute = (spec, js) => {
     world.state.scripts.push(js);
-    if (spec.dom && spec.dom.rafs) spec.dom.rafs.splice(0).forEach((cb) => cb(0));
+    if (spec.dom && spec.dom.rafs) {
+      const frames = spec.dom.rafs.splice(0);
+      frames.forEach((cb) => cb(0));
+      if (!frames.length) spec.dom.timers.splice(0).forEach((cb) => cb());
+    }
   };
   world.run(JXA_PRELUDE);
   DAEMONS.fast = world.daemon;
@@ -294,22 +315,33 @@ test("without the capture grant, an element that had to be scrolled into view is
 // ---- the paint proof: a scrolled crop captures only a frame painted after the scroll ----
 
 const UNPAINTED = "screenshot: the window isn't painting (covered or hidden); show the window or scroll the element into view and call again; nothing was captured";
-const polls = () => world.state.scripts.filter((js) => /return \{ painted: /.test(js));
+const polls = () => world.state.scripts.filter((js) => /\{ painted: /.test(js));
 
-test("shot_clip: a moved element in a hidden document is refused for the restore; a visible one arms the paint proof", () => {
+test("shot_clip: a moved element in a hidden document is refused with the scroll put back; a visible one arms the paint proof", () => {
   const p = scrolled();
   Object.defineProperty(p.dom.document, "visibilityState", { value: "hidden", configurable: true });
-  assert.deepEqual(run(p.dom, "shot_clip", { selector: "#t" }), { ok: false, unpainted: true, restore: true });
-  assert.deepEqual(p.dom.rafs, [], "no frame armed");
-  run(p.dom, "shot_restore", {});
+  assert.deepEqual(run(p.dom, "shot_clip", { selector: "#t" }), { ok: false, unpainted: true });
+  assert.deepEqual([p.dom.rafs, p.dom.timers], [[], []], "no frame armed");
   assert.deepEqual(where(p), [0, 40, 37]);
+  assert.equal(p.dom.__perch_shot, null);
   const q = scrolled();
-  assert.equal(run(q.dom, "shot_clip", { selector: "#t" }).ok, true);
-  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: false });
+  const { token } = run(q.dom, "shot_clip", { selector: "#t" });
+  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: false, late: false, token });
   q.dom.rafs.splice(0).forEach((cb) => cb(0));
-  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: false }, "one frame is not enough");
+  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: false, late: false, token }, "one frame is not enough");
   q.dom.rafs.splice(0).forEach((cb) => cb(0));
-  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: true });
+  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: true, late: false, token });
+  q.dom.timers.splice(0).forEach((cb) => cb());
+  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: true, late: false, token }, "a timer after the frames changes nothing");
+  run(q.dom, "shot_restore", {});
+  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: false, gone: true });
+});
+
+test("shot_clip: a timer that fires before the frames marks the record late", () => {
+  const p = scrolled();
+  const { token } = run(p.dom, "shot_clip", { selector: "#t" });
+  p.dom.timers.splice(0).forEach((cb) => cb());
+  assert.deepEqual(run(p.dom, "shot_painted", {}), { painted: false, late: true, token });
 });
 
 test("shot_clip: a hidden document still crops an element that did not move", () => {
@@ -461,4 +493,158 @@ test("without ref or selector no page JS runs", async () => {
   const { meta } = await shoot({});
   assert.equal(world.counts["tab.execute"], undefined);
   assert.deepEqual(Object.keys(meta), ["window", "image"]);
+});
+
+// ---- bounded page calls, keyed records, restore on every exit ----
+
+const isClip = (js) => js.includes("scrollIntoView");
+const isPainted = (js) => /\{ painted: /.test(js);
+const isRestore = (js) => js.includes("if (!s) return { ok: false };");
+// A crop's page calls are bounded: the whole call ends well under the lane's 30s.
+const BOUND_MS = 4500;
+async function timed(args) {
+  const t0 = world.clock.t;
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, ...args });
+  return { r, ms: world.clock.t - t0, text: r.content[0].text };
+}
+function quietDialogs() {
+  const d = deps.dialogs;
+  deps.dialogs = async () => [];
+  return () => { deps.dialogs = d; };
+}
+// Another perch server's record: its crop was cut off before its restore ran.
+const staleRecord = (p) => ({ els: [[p.box, 0, 5]], x: 0, y: 3000, painted: true, late: false, token: "other" });
+
+test("a scroll record another perch left on the page is never restored for this crop's page fault", async () => {
+  const p = scrolled();
+  install(p);
+  const calls = spawns(2000);
+  p.dom.__perch_shot = staleRecord(p);
+  throwAt(p.dom, "const b = el.getBoundingClientRect();");
+  const { text, ms } = await timed({ selector: "#t" });
+  assert.deepEqual(JSON.parse(text), { ok: false, error: "screenshot: the page script failed on this page (TypeError); nothing was captured" });
+  assert.deepEqual(where(p), [0, 40, 37], "the stale record's positions were not applied");
+  assert.deepEqual([calls, world.state.shots], [[], []]);
+  assert.ok(ms < BOUND_MS, String(ms));
+});
+
+test("a stale painted record is not this crop's paint proof: the crop waits for its own frames, then restores its own scroll", async () => {
+  const p = scrolled();
+  install(p);
+  spawns(2000);
+  p.dom.__perch_shot = staleRecord(p);
+  const { meta } = await shoot({ selector: "#t" });
+  assert.equal(world.state.shots.length, 1);
+  assert.equal(polls().length, 2, "its own double requestAnimationFrame");
+  assert.equal(meta.warning, undefined);
+  assert.deepEqual(where(p), [0, 40, 37]);
+  assert.equal(p.dom.__perch_shot, null);
+});
+
+test("a poll that reads another call's record refuses rather than take its paint as proof", async () => {
+  const p = scrolled();
+  install(p);
+  spawns(2000);
+  // Another server's crop replaces the record between this one's clip and its first poll.
+  const other = staleRecord(p);
+  world.state.onExecute = (spec, js) => {
+    world.state.scripts.push(js);
+    if (isPainted(js) && spec.dom.__perch_shot && spec.dom.__perch_shot.token !== "other") spec.dom.__perch_shot = other;
+    if (spec.dom.rafs) spec.dom.rafs.splice(0).forEach((cb) => cb(0));
+  };
+  const { text, ms } = await timed({ selector: "#t" });
+  const out = JSON.parse(text);
+  assert.equal(out.ok, false);
+  assert.match(out.error, /^screenshot: the window isn't painting/);
+  assert.match(out.error, /the scroll may be left moved/);
+  assert.deepEqual(world.state.shots, []);
+  assert.ok(ms < BOUND_MS, String(ms));
+});
+
+test("frames that never come while timers do are refused at the first poll after the timer", async () => {
+  const p = scrolled();
+  p.dom.requestAnimationFrame = () => 0;
+  install(p);
+  spawns(2000);
+  const { text } = await timed({ selector: "#t" });
+  assert.deepEqual(JSON.parse(text), { ok: false, error: UNPAINTED });
+  assert.equal(polls().length, 1);
+  assert.deepEqual(where(p), [0, 40, 37]);
+});
+
+test("a paint poll that never answers is a bounded coded timeout, with the scroll restored", async () => {
+  const p = scrolled();
+  install(p);
+  const calls = spawns(2000);
+  world.state.hangIf = isPainted;
+  const back = quietDialogs();
+  try {
+    const { r, text, ms } = await timed({ selector: "#t" });
+    assert.equal(r.isError, true, text);
+    assert.match(text, /^error: timeout: screenshot: page JS got no reply within /);
+    assert.match(text, /nothing was captured/);
+    assert.doesNotMatch(text, /left moved/);
+    assert.ok(ms < BOUND_MS, String(ms));
+  } finally { back(); }
+  assert.deepEqual([calls, world.state.shots], [[], []]);
+  assert.deepEqual(where(p), [0, 40, 37]);
+});
+
+test("a clip whose reply never comes after it scrolled is a bounded coded timeout, with the scroll restored", async () => {
+  const p = scrolled();
+  install(p);
+  const calls = spawns(2000);
+  world.state.hangIf = (js) => isClip(js) ? "ran" : false;
+  const back = quietDialogs();
+  try {
+    const { r, text, ms } = await timed({ selector: "#t" });
+    assert.equal(r.isError, true, text);
+    assert.match(text, /^error: timeout: screenshot: page JS got no reply within 1s; nothing was captured/);
+    assert.ok(ms < BOUND_MS, String(ms));
+  } finally { back(); }
+  assert.deepEqual([calls, world.state.shots], [[], []]);
+  assert.deepEqual(where(p), [0, 40, 37]);
+});
+
+test("a restore that can't run says the scroll may be left moved, on a refusal, a timeout and a capture", async () => {
+  const back = quietDialogs();
+  try {
+    // A refusal: frames never paint, then the restore goes unanswered.
+    const p = scrolled();
+    p.dom.requestAnimationFrame = () => 0;
+    install(p);
+    spawns(2000);
+    world.state.hangIf = isRestore;
+    let { text, ms } = await timed({ selector: "#t" });
+    assert.match(JSON.parse(text).error, /^screenshot: the window isn't painting.*; the scroll may be left moved/);
+    assert.ok(ms < BOUND_MS, String(ms));
+    // A timeout: neither the paint poll nor the restore answers.
+    const q = scrolled();
+    install(q);
+    spawns(2000);
+    world.state.hangIf = (js) => isPainted(js) || isRestore(js);
+    ({ text, ms } = await timed({ selector: "#t" }));
+    assert.match(text, /^error: timeout: screenshot: .*the scroll may be left moved/);
+    assert.ok(ms < BOUND_MS, String(ms));
+    // A capture: the image comes back, with the warning.
+    const s = scrolled();
+    install(s);
+    spawns(2000);
+    world.state.hangIf = isRestore;
+    const { meta } = await shoot({ selector: "#t" });
+    assert.equal(world.state.shots.length, 1);
+    assert.match(meta.warning, /the scroll may be left moved/);
+  } finally { back(); }
+});
+
+test("an Accessibility walk slower than the crop's budget stops unplaced, with the scroll restored", async () => {
+  const p = scrolled();
+  install(p);
+  const calls = spawns(2000);
+  world.state.axMs = 1500;
+  const { text, ms } = await timed({ selector: "#t" });
+  assert.deepEqual(JSON.parse(text), { ok: false, error: "screenshot: Accessibility shows no page area matching this tab's viewport; nothing was captured; screenshot without ref or selector" });
+  assert.ok(ms < 3000 + 2 * 1500 + 1000, String(ms));
+  assert.deepEqual([calls, world.state.shots], [[], []]);
+  assert.deepEqual(where(p), [0, 40, 37]);
 });
