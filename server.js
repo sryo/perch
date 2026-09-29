@@ -3106,6 +3106,7 @@ const NAV_TIMEOUT = 15000;
 // gets a hint, never a guess at what was meant: http for a local host, which
 // rarely serves https.
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])$|\.(localhost|test)$/i;
+const NOT_HOST = /^(javascript|data|vbscript|mailto|tel|blob|ws|wss|chrome|arc|edge|about|view-source|file|https?)$/i;
 function checkUrl(tool, url) {
   const bad = (got) => new Error(`bad_url: ${tool} takes an absolute http(s) or file URL, or about:blank; got ${got}`);
   if (typeof url !== "string") throw bad(`a ${typeof url}`);
@@ -3115,9 +3116,10 @@ function checkUrl(tool, url) {
     try { const u = new URL(s); if (/^https?:$/.test(u.protocol) && u.hostname) return s; } catch {}
   }
   if (/^file:\/\//i.test(s)) return s;
-  // host:port reads as a scheme, so a bare host is tried first.
+  // host:port reads as a scheme, so a bare host is tried first; a known scheme
+  // (javascript:1) or a dotless name that isn't a local host is not one.
   const host = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:\d+)?(?=[/?#]|$)/i.exec(s);
-  if (host && (host[2] || host[1].includes(".") || LOCAL_HOST.test(host[1]))) {
+  if (host && !NOT_HOST.test(host[1]) && (host[1].includes(".") || host[1][0] === "[" || LOCAL_HOST.test(host[1]))) {
     let hint = "";
     try { const h = new URL("http://" + host[0]).host; hint = `; pass ${LOCAL_HOST.test(new URL("http://" + h).hostname) ? "http" : "https"}://${h}`; } catch {}
     throw bad("no scheme" + hint);
@@ -3327,7 +3329,10 @@ function honeypot(el, labelled) {
 }
 // A honeypot, an untabbable field with autofill off, or one whose name says to
 // leave it empty.
-const LEAVE_BLANK = /\bleave (this |it )?(field )?(blank|empty)\b|\bdo not fill\b/i;
+// Words may be joined by spaces, underscores or dashes (leave_blank, do-not-fill).
+const LEAVE_BLANK = /(^|[^a-z0-9])(leave[ _-](this[ _-]|it[ _-])?(field[ _-])?(blank|empty)|do[ _-]not[ _-]fill)($|[^a-z0-9])/i;
+// tabindex below 0 takes a field out of the tab order.
+function untabbable(el) { return el.hasAttribute("tabindex") && el.tabIndex < 0; }
 function trapLike(el, labelled) {
   return honeypot(el, labelled) || (attr(el, "tabindex") === "-1" && attr(el, "autocomplete") === "off")
     || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"));
@@ -3337,7 +3342,7 @@ function trapLike(el, labelled) {
 // unless it is untabbable or its label says to leave it blank.
 function wanted(el) {
   if (!el || (!el.required && attr(el, "aria-required") !== "true")) return false;
-  if (attr(el, "tabindex") === "-1" || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"))) return false;
+  if (untabbable(el) || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"))) return false;
   return (!!el.labels && Array.prototype.some.call(el.labels, vis))
     || attr(el, "aria-labelledby").split(/\s+/).some(function (id) { const t = id && el.ownerDocument.getElementById(id); return !!t && vis(t) && !!t.textContent.trim(); });
 }
@@ -3355,7 +3360,7 @@ function fieldVis(el) {
   const t = (el.type || "").toLowerCase();
   const check = /^(checkbox|radio)$/.test(t);
   if (!check && attr(el, "role") !== "combobox" && !el.hasAttribute("aria-autocomplete")) return false;
-  if (attr(el, "tabindex") === "-1" || el.closest("[aria-hidden=true]")) return false;
+  if (untabbable(el) || el.closest("[aria-hidden=true]")) return false;
   const cs = getComputedStyle(el);
   if (cs.display === "none" || cs.visibility === "hidden") return false;
   const r = el.getBoundingClientRect();
@@ -3849,11 +3854,21 @@ function checkTrap(el) {
 }
 // A checkbox or radio hidden under a visible, on-page <label> it names: a styled
 // box (display:none input, the label draws it), clicked like a shown one.
-// Never an untabbable or aria-hidden input, nor one whose label is hidden.
+// Never an untabbable or aria-hidden input, nor one whose label is hidden,
+// off-page, shrunk or clipped to a pixel, or under an ancestor faded to 0.
+function labelSeen(l) {
+  if (!vis(l) || offDoc(l) || l.closest("[aria-hidden=true]")) return false;
+  const r = l.getBoundingClientRect();
+  if (r.width <= 1 || r.height <= 1) return false;
+  const m = /rect\(([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px/.exec(getComputedStyle(l).clip || "");
+  if (m && (m[2] - m[4] <= 1 || m[3] - m[1] <= 1)) return false;
+  for (let p = l.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) if (getComputedStyle(p).opacity === "0") return false;
+  return true;
+}
 function labelShown(el) {
   if (el.tagName !== "INPUT" || !/^(checkbox|radio)$/i.test(el.type || "")) return false;
-  if (attr(el, "tabindex") === "-1" || el.closest("[aria-hidden=true]")) return false;
-  return Array.prototype.some.call(el.labels || [], function (l) { return vis(l) && !offDoc(l) && !l.closest("[aria-hidden=true]"); });
+  if (untabbable(el) || el.closest("[aria-hidden=true]")) return false;
+  return Array.prototype.some.call(el.labels || [], labelSeen);
 }
 // Best-named boxes for a.label_pattern: nameTier over accName, then over the
 // hint one tier group lower; a box wrapping another hit is that same hit.

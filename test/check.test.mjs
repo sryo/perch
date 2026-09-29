@@ -149,6 +149,12 @@ test("check: a hidden honeypot box under a visible label is still refused", () =
     [`<input type=checkbox id=c style="display:none"><label for=c>Leave this blank: subscribe</label>`, "trap"],
     [`<input type=checkbox id=c style="display:none"><label for=c style="display:none">Subscribe</label>`, "absent"],
     [`<input type=checkbox id=c style="display:none"><label for=c data-rect="-5000,0,100,20">Subscribe</label>`, "absent"],
+    [`<input type=checkbox id=c style="display:none"><label for=c data-rect="0,0,1,1">Subscribe</label>`, "absent"],
+    [`<input type=checkbox id=c style="display:none"><label for=c style="position:absolute;clip:rect(0px, 0px, 0px, 0px)">Subscribe</label>`, "absent"],
+    [`<div style="opacity:0"><div><input type=checkbox id=c style="display:none"><label for=c>Subscribe</label></div></div>`, "absent"],
+    [`<input type=checkbox id=c style="display:none" tabindex=-2><label for=c>Subscribe</label>`, "absent"],
+    [`<input type=checkbox id=c style="display:none" name=leave_blank_hp><label for=c>Subscribe</label>`, "trap"],
+    [`<input type=checkbox id=c style="display:none" name=do-not-fill><label for=c>Subscribe</label>`, "trap"],
   ]) {
     const w = page(html);
     const r = check(w, { label_pattern: "subscribe", checked: true });
