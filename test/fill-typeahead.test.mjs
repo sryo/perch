@@ -613,6 +613,42 @@ test("typeahead: a pick that shortens the value to more than the typed text is p
   assert.equal($(dom, "#c").value, "New York");
 });
 
+test("typeahead: a pick the widget ignores is not claimed when the typed text equals the option", async () => {
+  const { dom } = onPage(INERT, INERT_JS(["Buenos Aires"]));
+  const o = await fill({ label_pattern: "^city", text: "Buenos Aires" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /still shows only the typed text/);
+  assert.equal($(dom, "#c").value, "Buenos Aires");
+});
+
+test("typeahead: an exact-text pick the widget accepts by closing its list is proof", async () => {
+  const { dom } = onPage(INERT, INERT_JS(["Buenos Aires"], "ul.innerHTML = '';"));
+  const o = await fill({ label_pattern: "^city", text: "Buenos Aires" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Buenos Aires");
+  assert.equal($(dom, "#c").value, "Buenos Aires");
+});
+
+// A prefilled companion the widget keeps while typing and never updates on a pick.
+const PREFILLED_INERT_JS = LOCATION_JS().replace("hid.value = '';", "").replace("inp.value = o.textContent;", "return;")
+  .replace("const cities = ", "const cities = ['Paris, France'].concat(").replace(";\n  const inp", ");\n  const inp");
+
+test("typeahead: a pick that leaves a prefilled hidden field unchanged is not claimed", async () => {
+  const { dom } = onPage(LOCATION.replace("name=selectedLocation>", "name=selectedLocation value=loc-7>"), PREFILLED_INERT_JS);
+  const o = await fill({ label_pattern: "location", text: "Paris, France" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /hidden field didn't change/);
+  assert.equal($(dom, "#selected-location").value, "loc-7");
+  assert.equal($(dom, "#loc").value, "Paris, France");
+});
+
+test("typeahead: re-picking the value a prefilled hidden field already holds is accepted when the list closes", async () => {
+  const { dom } = onPage(LOCATION.replace("name=selectedLocation>", "name=selectedLocation value=loc-2>"), LOCATION_JS().replace("hid.value = '';", ""));
+  const o = await fill({ label_pattern: "location", text: "Toronto, ON, Canada" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal($(dom, "#selected-location").value, "loc-2");
+});
+
 // ---- short-query fallback ----
 
 // A location lookup that answers only accent-free queries of 12 characters or

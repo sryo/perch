@@ -5190,6 +5190,7 @@ s.picked = clip(opt.textContent, 80);
 s.pickedN = taNorm(opt.textContent);
 s.before = taNorm(taShown(s.el));
 s.compBefore = s.comp ? s.comp.value : null;
+s.openBefore = attr(s.el, "aria-expanded") === "true";
 press(opt);
 return { picked: true };
 `,
@@ -5227,15 +5228,20 @@ return out;
 
   // Once the pick shows (and any hidden companion holds it), blur once and
   // re-check, since these widgets clear unpicked text on blur. A.final reports.
-  fill_ta_read: TYPEAHEAD_LIB + String.raw`
+  fill_ta_read: TA_PICK_LIB + String.raw`
 const s = window.__perch_ta;
 const el = s.el;
 const shown = taShown(el);
 const v = taNorm(shown);
 const seen = !!v && (v.indexOf(s.pickedN) >= 0 || v.indexOf(taNorm(s.text)) >= 0);
-// The typed text still showing proves nothing unless the press moved something.
-const moved = v.indexOf(s.pickedN) >= 0 || v !== s.before || (!!s.comp && s.comp.value !== s.compBefore);
-const filled = !s.comp || !!s.comp.value;
+// The typed text still showing proves nothing unless the press moved something:
+// the field, the hidden companion, or the widget's own list closing.
+const compChanged = !!s.comp && s.comp.value !== s.compBefore;
+const listGone = !taOptions(s).length || (s.openBefore && attr(el, "aria-expanded") === "false");
+const moved = v !== s.before || compChanged || listGone;
+// A companion that held this same value before (re-picking on an edit form)
+// can't change, so the widget closing its list is the proof there.
+const filled = !s.comp || (!!s.comp.value && (compChanged || listGone));
 const good = seen && moved && filled;
 if (!A.final && good && !s.blurred) {
   s.blurred = true;
@@ -5244,7 +5250,7 @@ if (!A.final && good && !s.blurred) {
 }
 if (!A.final && !good) return null;
 const out = { ok: good, kind: "typeahead", el: ident(el), selected: s.picked, value: clip(shown, 120) };
-if (!good) out.error = "picked " + JSON.stringify(s.picked) + " but " + (!seen ? "the field doesn't show it" : !filled ? "the hidden field stayed empty" : "the field still shows only the typed text");
+if (!good) out.error = "picked " + JSON.stringify(s.picked) + " but " + (!seen ? "the field doesn't show it" : !filled ? (s.comp.value ? "the hidden field didn't change" : "the hidden field stayed empty") : "the field still shows only the typed text");
 return out;
 `,
 

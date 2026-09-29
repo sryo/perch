@@ -253,7 +253,7 @@
  "typeahead": [
   {
    "text": "Córdoba, Argentina",
-   "r": "{\"ok\":true,\"kind\":\"typeahead\",\"el\":\"combobox \\\"Destination\\\"\",\"selected\":\"Córdoba, Argentina\",\"value\":\"Córdoba, Argentina\"}",
+   "r": "{\"ok\":false,\"kind\":\"typeahead\",\"el\":\"combobox \\\"Destination\\\"\",\"selected\":\"Córdoba, Argentina\",\"value\":\"Córdoba, Argentina\",\"error\":\"picked \\\"Córdoba, Argentina\\\" but the field still shows only the typed text\"}",
    "value": "Córdoba, Argentina"
   },
   {
