@@ -1341,6 +1341,68 @@ test("fill {fields}: a closing combobox that reloads the page flags every field 
   assert.equal(o.warning, "the page changed after fields[2]; earlier fields may have been cleared, check them");
 });
 
+// The reload also drops the select state the readback reads: the pick was
+// pressed but never seen to land, a coded ok:false naming the press.
+const reloadsOnPick = (dom) => dom.document.getElementById("menu").addEventListener("click", () => { delete dom.__perch_select; delete dom.__perch_ff; });
+
+test("fill {fields}: a combobox whose pick drops the page's state is ok:false, naming the press", async () => {
+  const html = `<label>Name <input id=nm></label><label>Email <input id=em></label>` + CUSTOM;
+  const { world, dom } = onPage(html, CUSTOM_JS);
+  passes(world);
+  reloadsOnPick(dom);
+  const { r, o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }, { label_pattern: "email", text: "ada@example.test" }, { label_pattern: "level", option: "senior" }] });
+  assert.equal(r.isError, undefined);
+  assert.equal(o.ok, false, JSON.stringify(o));
+  const c = o.results[2];
+  assert.equal(c.ok, false);
+  assert.equal(c.kind, "select");
+  assert.match(c.error, /^the page changed/);
+  assert.equal(c.pressed, "Senior");
+  assert.equal(Object.hasOwn(c, "__perch_error"), false);
+  assert.deepEqual(o.results.slice(0, 2).map((x) => [x.ok, x.unverified]), [[true, true], [true, true]]);
+});
+
+test("fill {fields}: a preference list never takes a dropped page state as a pick", async () => {
+  const { dom } = onPage(CUSTOM, CUSTOM_JS);
+  reloadsOnPick(dom);
+  const { o } = await fill({ fields: [{ label_pattern: "first", text: "A" }, { label_pattern: "level", option: ["nope", "senior"] }] });
+  assert.equal(o.results[1].ok, false, JSON.stringify(o));
+  assert.equal(Object.hasOwn(o.results[1], "pref"), false);
+  assert.match(o.results[1].error, /^the page changed/);
+});
+
+test("select: a pick that drops the page's state replies ok:false, with no raw page error", async () => {
+  const { dom } = onPage(CUSTOM, CUSTOM_JS);
+  reloadsOnPick(dom);
+  const r = await handleCall("select", { label_pattern: "level", text: "senior" });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.doesNotMatch(r.content[0].text, /__perch_error/);
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.ok, false);
+  assert.equal(o.pressed, "Senior");
+});
+
+// A pick phase that throws stops the loop: no trusted click on an option it may
+// never have found, and no readback of a pick that never happened.
+test("select {trusted}: a pick that throws ends at once as a coded ok:false", async () => {
+  const { world, dom } = onPage(CUSTOM, CUSTOM_JS);
+  const ev = dom.eval.bind(dom), after = [];
+  let threw = false;
+  dom.eval = (js) => {
+    if (threw) after.push(js);
+    if (js.includes("s.polls++")) { threw = true; return ev(js.replace("s.polls++;", "throw new TypeError('boom');")); }
+    return ev(js);
+  };
+  const r = await handleCall("select", { label_pattern: "level", text: "senior", trusted: true });
+  assert.equal(threw, true);
+  assert.equal(after.length, 0, after.map((s) => s.slice(-300)).join("\n---\n"));
+  assert.doesNotMatch(r.content[0].text, /__perch_error/);
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.ok, false);
+  assert.equal(o.kind, "select");
+  assert.equal(o.error, "the page changed while picking; not verified (TypeError: boom)");
+});
+
 // Every pass is built from the batch alone, so a repeated batch sends the same
 // scripts, later and re-read passes included, and the browser reuses them.
 test("fill {fields}: every pass of a repeated batch is the same page script", async () => {

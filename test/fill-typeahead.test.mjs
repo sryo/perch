@@ -112,6 +112,25 @@ test("typeahead: a pick the widget drops on blur is reported", async () => {
   assert.equal($(dom, "#loc").value, "");
 });
 
+const DROPS_STATE_JS = LOCATION_JS().replace("dd.innerHTML = '';\n      }));", "dd.innerHTML = '';\n        delete window.__perch_ta;\n      }));");
+
+test("typeahead: a pick that drops the page's state is ok:false, alone and in fields", async () => {
+  assert.notEqual(DROPS_STATE_JS, LOCATION_JS());
+  onPage(LOCATION, DROPS_STATE_JS);
+  const o = await fill({ label_pattern: "location", text: "Rosario" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kind, "typeahead");
+  assert.match(o.error, /^the page changed/);
+  assert.equal(Object.hasOwn(o, "__perch_error"), false);
+  onPage(LOCATION, DROPS_STATE_JS);
+  const b = await fill({ fields: [{ label_pattern: "location", text: "Rosario" }, { label_pattern: "name", text: "Ada" }] });
+  assert.equal(b.ok, false, JSON.stringify(b));
+  assert.equal(b.results[0].ok, false);
+  assert.equal(b.results[0].kind, "typeahead");
+  assert.match(b.results[0].error, /^the page changed/);
+  assert.equal(b.results[1].ok, true);
+});
+
 test("typeahead: a hidden companion alone means a pick is required", async () => {
   const { dom } = onPage(LOCATION, LOCATION_JS().replace("if (!hid.value) inp.value = '';", ""));
   const o = await fill({ label_pattern: "location", text: "Zzyzx" });
