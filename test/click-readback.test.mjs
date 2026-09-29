@@ -46,7 +46,7 @@ test("click without readback keeps its result shape", async () => {
 test("readback returns the element's text after the click", async () => {
   const { dom } = onPage(FORM, SAVE);
   assert.deepEqual(await click({ selector: "#b", readback: "#s" }), { ok: true, el: `button "Submit"`, readback: "Saved", changed: true });
-  assert.equal(dom.__perch_rb, undefined, "readback state is cleaned up");
+  assert.equal(dom.__perch_rb.done, true, "the finished record stays, marked done, until the next arm");
 });
 
 test("readback waits for a change that lands after the click, polling from outside the page", async () => {
@@ -281,7 +281,7 @@ test("readback counts an attribute-only change inside the element as changed", a
   assert.equal(o.changed, true);
   assert.match(o.readback, /^Yes\s*No$/, "readback stays the element's text");
   assert.deepEqual(Object.keys(o).sort(), ["changed", "el", "ok", "readback"]);
-  assert.equal(dom.__perch_rb, undefined, "readback state is cleaned up");
+  assert.equal(dom.__perch_rb.done, true, "the finished record stays, marked done, until the next arm");
 });
 
 test("readback ignores class flips from hover, focus or animation", async () => {
