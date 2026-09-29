@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>perch honeypot fixture</title>
+<!-- fill {label_pattern:"email"} must land in #email and leave #trap and #decoy empty.
+     data-rect gives the happy-dom test the offscreen box the CSS gives a browser. -->
+<style>
+  body { font: 14px system-ui; margin: 2rem; }
+  .row { margin: 0.5rem 0; }
+  .ctl { position: relative; display: inline-block; }
+  .ctl input { opacity: 0; }
+  .trap { position: absolute; left: -9999px; top: 0; }
+</style>
+<form>
+  <div class="row ctl"><label for="decoy">Email</label><input id="decoy" aria-autocomplete="list"></div>
+  <div class="row"><label for="trap">Email</label><input id="trap" class="trap" name="email_confirm" data-rect="-9999,0,100,20"></div>
+  <div class="row"><label for="email">Email</label><input id="email" type="email"></div>
+</form>
