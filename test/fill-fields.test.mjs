@@ -940,3 +940,96 @@ test("fill {fields}: an all-green batch carries no new keys", async () => {
   assert.deepEqual(Object.keys(o.results[1]), ["kind", "ok", "selected", "el", "value"]);
   assert.equal(o.ok, true);
 });
+
+// ---- disabled controls: the form never submits them ----
+
+const SOLD_OUT = `<label>Size <select id=s><option value="">Pick</option><option value=m disabled>M (sold out)</option><option value=l>L</option></select></label>`;
+
+test("fill_fields option: a disabled option is refused and the select keeps its value", () => {
+  const w = page(SOLD_OUT);
+  const r = run(w, "fill_fields", { fields: [{ selector: "#s", option: "M (sold out)" }] }).results[0];
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.match(r.error, /disabled/);
+  assert.deepEqual(r.disabled, ["M (sold out)"]);
+  assert.equal(val(w, "#s").value, "");
+  const m = run(w, "fill_fields", { fields: [{ selector: "#s", option: "m" }] }).results[0];
+  assert.equal(m.ok, false, JSON.stringify(m));
+  assert.match(m.error, /disabled/);
+  assert.equal(val(w, "#s").value, "");
+});
+
+test("fill_fields option: an enabled twin of a disabled option is picked", () => {
+  const w = page(`<label>Size <select id=s><option value="">Pick</option><option value=m1 disabled>M</option><option value=m2>M</option></select></label>`);
+  const r = run(w, "fill_fields", { fields: [{ selector: "#s", option: "M" }] }).results[0];
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(val(w, "#s").value, "m2");
+});
+
+test("fill_fields option: a disabled option never ties with an enabled one", () => {
+  const w = page(`<label>Visa <select id=s><option value="">Pick</option><option value=1 disabled>Yes, sponsored</option><option value=2>Yes, citizen</option></select></label>`);
+  const r = run(w, "fill_fields", { fields: [{ selector: "#s", option: "Yes" }] }).results[0];
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(val(w, "#s").value, "2");
+});
+
+test("fill_fields option: an option in a disabled optgroup is refused", () => {
+  const w = page(`<label>Shift <select id=s><option value="">Pick</option><optgroup label=Night disabled><option value=n>Night</option></optgroup><option value=d>Day</option></select></label>`);
+  const r = run(w, "fill_fields", { fields: [{ selector: "#s", option: "Night" }] }).results[0];
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.match(r.error, /disabled/);
+  assert.equal(val(w, "#s").value, "");
+});
+
+test("fill_fields option: a disabled select or one in a disabled fieldset is refused", () => {
+  const w = page(`<label>Size <select id=s disabled><option value="">Pick</option><option value=l>L</option></select></label>
+    <fieldset disabled><label>Shift <select id=t><option value="">Pick</option><option value=d>Day</option></select></label></fieldset>`);
+  for (const [sel, option] of [["#s", "L"], ["#t", "Day"]]) {
+    const r = run(w, "fill_fields", { fields: [{ selector: sel, option }] }).results[0];
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.match(r.error, /is disabled/);
+    assert.equal(val(w, sel).value, "");
+  }
+});
+
+test("fill: a disabled input is refused by selector and by label_pattern; the value stays empty", () => {
+  const w = page(`<label>Email <input id=e disabled></label>`);
+  for (const a of [{ selector: "#e" }, { label_pattern: "email" }]) {
+    const r = run(w, "fill", { ...a, text: "ada@example.test" });
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.match(r.error, /is disabled/);
+    assert.equal(val(w, "#e").value, "");
+  }
+});
+
+test("fill: an input inside a disabled fieldset is refused", () => {
+  const w = page(`<fieldset disabled><label>Email <input id=e></label></fieldset>`);
+  for (const a of [{ selector: "#e" }, { label_pattern: "email" }]) {
+    const r = run(w, "fill", { ...a, text: "ada@example.test" });
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.match(r.error, /is disabled/);
+    assert.equal(val(w, "#e").value, "");
+  }
+});
+
+test("fill: a disabled winner is refused rather than falling to a weaker enabled field", () => {
+  const w = page(`<label>Email <input id=e disabled></label><div>Email updates <input id=f></div>`);
+  const r = run(w, "fill", { label_pattern: "email", text: "ada@example.test" });
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(val(w, "#e").value, "");
+  assert.equal(val(w, "#f").value, "");
+});
+
+test("fill_fields only_empty: a disabled field is skipped as disabled and the batch goes on", () => {
+  const w = page(`<label>Email <input id=e disabled></label><label>Name <input id=n></label>
+    <label>Size <select id=s disabled><option value="">Pick</option><option value=l>L</option></select></label>`);
+  const o = run(w, "fill_fields", { only: true, fields: [
+    { label_pattern: "email", text: "ada@example.test" },
+    { selector: "#e", text: "ada@example.test" },
+    { selector: "#s", option: "L" },
+    { label_pattern: "name", text: "Ada" },
+  ] });
+  assert.deepEqual(o.results.map((r) => [r.ok, r.skipped]), [[true, "disabled"], [true, "disabled"], [true, "disabled"], [true, undefined]]);
+  assert.equal(val(w, "#e").value, "");
+  assert.equal(val(w, "#s").value, "");
+  assert.equal(val(w, "#n").value, "Ada");
+});

@@ -3426,6 +3426,11 @@ function setNativeValue(el, v) {
   const d = Object.getOwnPropertyDescriptor(P.prototype, "value");
   if (d && d.set) d.set.call(el, v); else el.value = v;
 }
+// A form control the form leaves out of its submission: disabled itself or by a fieldset.
+function unsent(el) {
+  return /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && !!(el.disabled || el.closest("fieldset[disabled]"));
+}
+function unsentOut(el) { return { ok: false, el: ident(el), error: ident(el) + " is disabled; the form will not submit it" }; }
 function fire(el, types) { types.forEach(function (t) { el.dispatchEvent(new Event(t, { bubbles: true })); }); }
 // -> {el} or {out}, where out is the tool's return value (ref miss or no match).
 function resolveEl(a, dflt) {
@@ -3587,18 +3592,30 @@ function findCtl(a, groups, only) {
 }
 function nativeOf(ctl) { return ctl.tagName === "SELECT" ? ctl : (ctl.querySelector && ctl.querySelector("select")) || null; }
 function pickNative(nat, text) {
+  if (unsent(nat)) return unsentOut(nat);
   const w = norm(text);
   const opts = Array.from(nat.options);
-  let opt = w && opts.find(function (o) { return norm(o.value) === w; });
+  const on = function (o) { return !o.disabled && !(o.parentElement && o.parentElement.tagName === "OPTGROUP" && o.parentElement.disabled); };
+  // Matching runs over every option so a disabled best match is named, never
+  // traded for a weaker enabled one; an enabled twin of equal rank still wins.
+  const offOut = function (hits) {
+    return { ok: false, el: ident(nat), error: "option " + JSON.stringify(clip(hits[0].text, 60)) + " is disabled in " + ident(nat) + "; the form will not submit it",
+      disabled: hits.slice(0, 5).map(function (o) { return clip(o.text, 60); }) };
+  };
+  const byValue = w ? opts.filter(function (o) { return norm(o.value) === w; }) : [];
+  let opt = byValue.filter(on)[0];
+  if (!opt && byValue.length) return offOut(byValue);
   if (!opt) {
     // Several equal hits short of exact are a tie, never settled by length or
     // order; of exact ones (equal once accents fold) the unfolded match goes first.
     const m = matchTier(opts, function (o) { return norm(o.text); }, w);
-    if (m.hits.length > 1 && !m.exact) {
+    const hits = m.hits.filter(on);
+    if (m.hits.length && !hits.length) return offOut(m.hits);
+    if (hits.length > 1 && !m.exact) {
       return { ok: false, ambiguous: true, error: "several options matched " + JSON.stringify(String(text)) + " equally; give a more specific text",
-        candidates: m.hits.slice(0, 30).map(function (o) { return clip(o.text, 60); }) };
+        candidates: hits.slice(0, 30).map(function (o) { return clip(o.text, 60); }) };
     }
-    opt = m.hits.find(function (o) { return norm(o.text) === w; }) || m.hits[0];
+    opt = hits.find(function (o) { return norm(o.text) === w; }) || hits[0];
   }
   if (!opt) return { ok: false, error: "no matching option", candidates: opts.slice(0, 30).map(function (o) { return clip(o.text, 60); }) };
   const prior = nat.selectedIndex;
@@ -4184,9 +4201,11 @@ function fillOne(a, only) {
     const h = only && held(el);
     return h && h.v ? { ok: true, kind: h.kind, skipped: "has value", el: ident(host || el), value: clip(h.v, 60) } : null;
   }
+  function refuse(el) { return only ? { ok: true, skipped: "disabled", el: ident(el) } : unsentOut(el); }
   if (a.ref || a.selector) {
     const r = resolveEl(a);
     if (r.out) return r.out;
+    if (unsent(r.el)) return refuse(r.el);
     const kept = keep(r.el);
     if (kept) return kept;
     const out = tryFill(r.el);
@@ -4289,7 +4308,9 @@ function fillOne(a, only) {
     return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button, or pass its ref or selector to fill it anyway" }
       : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
   }
-  const best = shown[0];
+  // A disabled winner refuses the fill; only an enabled field of equal score stands in.
+  const best = shown.find(function (c) { return c.s === shown[0].s && !unsent(c.el); }) || shown[0];
+  if (unsent(best.el)) return refuse(best.el);
   if (only) {
     // Two fields each named by their own label, neither favoured: guessing would
     // put the value in the wrong one.
@@ -5104,7 +5125,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     else {
       const nat = nativeOf(c.el);
       if (!nat) return { results: results, defer: i };
-      o = pickNative(nat, f.option);
+      o = A.only && unsent(nat) ? { ok: true, skipped: "disabled", el: ident(nat) } : pickNative(nat, f.option);
     }
   } else if (f.checked != null) {
     kind = "check";

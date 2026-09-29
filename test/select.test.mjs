@@ -397,3 +397,17 @@ test("a list empty before the filter was typed is waited on past 0.5s (an async 
   assert.equal(o.selected, "Oslo");
   assert.equal(ms, 1000, "the answer lands 800ms after the poll that saw the filter");
 });
+
+test("native select: a disabled option or a disabled select is refused and nothing changes", async () => {
+  const { dom } = onPage(`<label>Size <select id=s><option value="">Pick</option><option value=m disabled>M (sold out)</option><option value=l>L</option></select></label>
+    <label>Shift <select id=t disabled><option value="">Pick</option><option value=d>Day</option></select></label>`);
+  const off = (await select({ selector: "#s", text: "M (sold out)" })).o;
+  assert.equal(off.ok, false, JSON.stringify(off));
+  assert.match(off.error, /disabled/);
+  assert.equal(dom.document.querySelector("#s").value, "");
+  const dis = (await select({ selector: "#t", text: "Day" })).o;
+  assert.equal(dis.ok, false, JSON.stringify(dis));
+  assert.match(dis.error, /is disabled/);
+  assert.equal(dom.document.querySelector("#t").value, "");
+  assert.equal((await select({ selector: "#s", text: "L" })).o.ok, true);
+});
