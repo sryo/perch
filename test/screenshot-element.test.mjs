@@ -176,8 +176,15 @@ test("the crop comes before the downscale", async () => {
   assert.equal(meta.clipped, undefined);
 });
 
-test("without the capture grant, sips crops the screencapture before any resample", async () => {
-  const p = scrolled({ dpr: 2 });
+// An element already in view: scrollIntoView moves nothing.
+function still(opts) {
+  const p = scrolled(opts);
+  p.t.scrollIntoView = function (o) { p.dom.intoView.push(o); };
+  return p;
+}
+
+test("without the capture grant, an element already in view is cropped by sips before any resample", async () => {
+  const p = still({ dpr: 2 });
   install(p);
   world.state.capture = false;
   const calls = spawns(2000);
@@ -193,8 +200,22 @@ test("without the capture grant, sips crops the screencapture before any resampl
   assert.deepEqual(where(p), [0, 40, 37]);
 });
 
+test("without the capture grant, an element that had to be scrolled into view is refused, not cropped from the restored page", async () => {
+  const p = scrolled({ dpr: 2 });
+  install(p);
+  world.state.capture = false;
+  const calls = spawns(2000);
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.equal(r.content.length, 1, "no image");
+  const out = JSON.parse(r.content[0].text);
+  assert.equal(out.ok, false);
+  assert.match(out.error, /^screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant/);
+  assert.deepEqual(calls, [], "no screencapture");
+  assert.deepEqual(where(p), [0, 40, 37]);
+});
+
 test("scroll positions are restored even when the capture fails", async () => {
-  const p = scrolled();
+  const p = still();
   install(p);
   world.state.capture = false;
   deps.exec = async () => { throw new Error("screencapture failed"); };
@@ -205,7 +226,7 @@ test("scroll positions are restored even when the capture fails", async () => {
   install(q);
   world.state.captureThrows = true;
   spawns(2000);
-  await shoot({ selector: "#t" });
+  await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
   assert.deepEqual(where(q), [0, 40, 37]);
 });
 

@@ -910,7 +910,10 @@ function jxaRuntime(BROWSERS, HANG) {
         // The scroll reaches the window's pixels at the browser's next paint.
         if (c.moved) delay(0.1);
         const cap = capture(I.windowNumber, a.format, a.maxWidth, m);
+        // Node's screencapture fallback runs after the restore, so it would see
+        // the page as it was, not the rect measured after the scroll.
         if (cap) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
+        else if (c.moved) Object.assign(I, { ok: false, error: SHOT_MOVED });
         else I.map = m;
         I.aim = m.aim;
         if (m.clipped || (cap && cap.cut)) I.clipped = true;
@@ -931,6 +934,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // included. The box is the element plus SHOT_MARGIN CSS px, cut at the
   // viewport; null when nothing of it is left.
   const SHOT_MARGIN = 8;
+  const SHOT_MOVED = "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it or scroll the page yourself";
   function shotMap(I, c) {
     const r = I.cgBounds || I.geom, g = SHOT_MARGIN;
     const box = { x0: Math.max(0, c.x - g), y0: Math.max(0, c.y - g), x1: Math.min(c.iw, c.x + c.w + g), y1: Math.min(c.ih, c.y + c.h + g) };
