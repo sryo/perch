@@ -6,29 +6,25 @@ allowed-tools: mcp__perch__*
 
 # perch: macOS browser bridge
 
-Which browser a tab lives in is perch's concern. Pass `target: {tabId}` from `list_tabs` or `new_tab`: stable as tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loose: `"canary"`) only filters `list_tabs` or picks `new_tab`'s browser.
+Targeting, element hints and error codes: the server instructions. `app` matches loosely (`"canary"`).
 
 ## Tools
 
+Tool descriptions come with the schema; this adds what they leave out. `new_tab`, `activate_tab`, `close_tab`, `wait`, `console_capture`, `notify`: nothing to add.
+
 | Tool | Use |
 |---|---|
-| `list_tabs` | `{tabs:[{app,tabId,url,title,active?}], total}`, 50 rows by default. `active`: the tab its window shows. Filter: `app`, `urlContains`, `titleContains`. |
-| `new_tab` | Unselected tab in a running browser, default the one in use. May focus the browser; defer while the user works. `{app,tabId}`. |
-| `activate_tab` | Raise a tab and its window. |
-| `close_tab` | By `tabId`. Refuses a window's last tab; never changes focus. |
-| `navigate` | Load a URL from the page and wait; returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed; `timeout`: not committed yet, may still load. Other URLs, or no page JS: `raise:true` (may raise the browser). |
-| `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path`: a local file, run before `script` if both. `awaitPromise` for real async. |
-| `wait` | Until `selector` exists at `readyState`, `expression` is truthy (as `value`), or `quiet` ms pass with no DOM change or fetch/XHR end. |
-| `screenshot` | On-screen window image without raising it, plus `{window, image}`: `screenX=window.x+imageX*window.w/image.w`. Not for minimized windows. |
-| `get_text` | innerText, or outerHTML with `html: true`. Paged: `offset`/`maxChars`. |
-| `accessibility_snapshot` | Page outline with refs (below), open shadow roots too. Filter: `role`, `query` (regex per line); `max: 0`: header only. |
-| `console_capture` | `start`, `read` drains `"level: text"`, `stop` restores; navigation clears it. `network` drains finished requests as `"status type ms size url"`. |
+| `list_tabs` | Filter: `app`, `urlContains`, `titleContains`. |
+| `navigate` | Returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed; `timeout`: not committed yet, may still load. |
+| `eval_js` | `awaitPromise` only for real async. |
+| `screenshot` | Not for minimized windows. |
+| `get_text` | Paged: `offset`/`maxChars`. |
+| `accessibility_snapshot` | Refs and rows below; open shadow roots too. Filter: `role`, `query` (regex per line); `max: 0`: header only. |
 | `click` | By `ref`/`selector`/`label_pattern` (button/link name; ties: `candidates`, no click). `readback: css` adds `{readback, changed, url?, invalid?}`: its text once changed (2s; 0.7s quiet, 1.2s hidden). `hover: true`: JS hover events, not CSS `:hover`. New tab: `opened.tabId` or `blocked`+`href`. `trusted`: below. |
 | `press` | `key` (`Enter`, `Escape`, `Tab`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | Inputs, textareas, rich editors; verifies it landed; `text:""` clears. `text_path`: long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>` or custom combobox, own list only; reads back. Miss or `text:""`: `candidates`. `trusted`: below. |
 | `file_upload` | File onto an `<input type=file>` or drop zone (`dropped`); bytes skip context. |
-| `notify` | macOS notification. |
 
 ## Snapshot format
 
@@ -43,7 +39,6 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, 
 
 ## Results
 
-- `{ok: false, error}` is an outcome; read it.
 - `fill` returns `{ok, kind: "plain"|"rich"|"typeahead", el, len, ambiguous?, kept?, reveal?, hidden?}`. Typeaheads pick (`selected`) or fail; free text stays (`note`). `ok: true` is proof.
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change; `option` also answers a radio group by question. `only_empty`: skip absent/filled fields (`skipped`).
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
