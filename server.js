@@ -1988,7 +1988,8 @@ function jxaRuntime(BROWSERS, HANG) {
       const deadline = Date.now() + a.timeout;
       // Each page-JS call gets at most NAV_EXEC_SECS, and never more than the time
       // left, so one unanswered execute can't carry navigate past its timeout.
-      const run = function (js) { return execWithin(t, js, Math.max(0.1, Math.min(NAV_EXEC_SECS, (deadline - Date.now()) / 1000))); };
+      const secsLeft = function (cap) { return Math.max(0.1, Math.min(cap, (deadline - Date.now()) / 1000)); };
+      const run = function (js) { return execWithin(t, js, secsLeft(NAV_EXEC_SECS)); };
       let canEval = t.kind !== "arc" || isActive(t);
       // Reads of the tab. A closed Chromium tab is stale_tab; Arc's are left as they
       // fail, since a new Arc tab's url() fails for a while. `read` makes any other
@@ -2058,7 +2059,7 @@ function jxaRuntime(BROWSERS, HANG) {
       };
       let lastErr = null;
       const tryRun = function (js, secs) {
-        try { return String(secs ? execWithin(t, js, Math.max(0.1, Math.min(secs, (deadline - Date.now()) / 1000))) : run(js)); }
+        try { return String(execWithin(t, js, secsLeft(secs || NAV_EXEC_SECS))); }
         catch (e) { if (isStale(e)) throw e; lastErr = e; return null; }
       };
       if (canEval) r = tryRun(stamp(false));
@@ -2108,7 +2109,7 @@ function jxaRuntime(BROWSERS, HANG) {
         // is only slow, is a timeout.
         if (lastErr && !isNoReply(lastErr)) {
           let answers = true;
-          try { execWithin(t, "1", Math.max(0.1, Math.min(NAV_EXEC_SECS, (deadline - Date.now()) / 1000))); } catch (e) { if (isStale(e)) throw e; answers = isNoReply(e); }
+          try { execWithin(t, "1", secsLeft(NAV_EXEC_SECS)); } catch (e) { if (isStale(e)) throw e; answers = isNoReply(e); }
           if (!answers) throw lastErr;
         }
         throw refuse("timeout", HANG.noAnswer + ", so the load may or may not have started; check the tab's url before retrying");
@@ -2131,9 +2132,12 @@ function jxaRuntime(BROWSERS, HANG) {
         }
         return false;
       };
-      // At the deadline: the tab shows another url while the old document still
-      // answers, so the load never committed.
-      const notCommitted = function (u) { return Object.assign(result(false), { notCommitted: String(u) }); };
+      const failed = function () { return Object.assign(result(true), { loadFailed: true }); };
+      // The tab shows another url while the old document still answers, so the load
+      // never committed. `after`: the time spent, when that is before the deadline.
+      const notCommitted = function (u) { return Object.assign(result(false), { notCommitted: String(u) }, Date.now() < deadline ? { after: Date.now() - deadline + a.timeout } : {}); };
+      // Loading read settled twice in a row, 300ms or more after t0.
+      const idler = function (t0) { let n = 0; return function (busy) { if (Date.now() - t0 > 300 && busy != null) n = busy ? 0 : n + 1; return n >= 2; }; };
       const checkable = arcPage ? leftArcPage() : ownPage;
       if (arcPage && !checkable && !/^arc:/i.test(a.url)) {
         const u = read(function () { return String(t.tab.url()); });
@@ -2146,12 +2150,12 @@ function jxaRuntime(BROWSERS, HANG) {
         // starts, and shows the new url before it commits, so settled idle counts
         // (as committed on a moved url, as stayed on an unmoved one) only once
         // loading was seen, or after ARC_START_GRACE.
-        let idle = 0, lastBusy = null, sawBusy = false;
+        const settled = idler(t0);
+        let lastBusy = null, sawBusy = false;
         while (Date.now() < deadline) {
           const busy = read(function () { return t.tab.loading(); });
           if (busy != null) { lastBusy = busy; if (busy) sawBusy = true; }
-          if (Date.now() - t0 > 300 && busy != null) idle = busy ? 0 : idle + 1;
-          if (idle >= 2 && (sawBusy || Date.now() - t0 > ARC_START_GRACE)) {
+          if (settled(busy) && (sawBusy || Date.now() - t0 > ARC_START_GRACE)) {
             const u = url();
             if (u != null) return u !== preUrl ? result(true, u) : result(false, null, preUrl);
           }
@@ -2181,45 +2185,42 @@ function jxaRuntime(BROWSERS, HANG) {
           delay(0.02);
         }
       }
-      let idle = 0, lastC = null;
+      let lastC = null;
+      const asked = function (x) { return x === a.url || x.replace(/\/$/, "") === a.url.replace(/\/$/, ""); };
+      // No check proved the new document complete; the tab reads url `u`, loading
+      // `busy`. Chromium shows a page-started load's pending url while the old
+      // document answers, so a moved url is committed only once a check answered
+      // from a new document, or the page, asked once more, no longer answers as the
+      // stamped one (waited only if complete). Safari has no loading read.
+      const decide = function (u, busy) {
+        if (u == null) return result(false);
+        const old = !!(lastC && lastC.old);
+        if (u === preUrl || (old && u === lastC.href)) return busy === true ? notCommitted(u) : result(false, null, u);
+        if (lastC && !old) return lastC.err ? failed() : result(true, u);
+        if (busy !== false && !(busy === true && viaPage && asked(u))) return notCommitted(u);
+        let c = null;
+        try { c = JSON.parse(String(execWithin(t, check, NAV_EXEC_SECS))); } catch (e) { if (isStale(e)) throw e; }
+        if (c && c.old) return notCommitted(u);
+        if (c && c.err) return failed();
+        return result(!!(c && c.done), c ? String(c.href) : u);
+      };
+      const settled = idler(start);
       while (Date.now() < deadline) {
         let c = null;
         try { c = JSON.parse(String(run(check))); } catch (e) { if (isStale(e)) throw e; }
         if (c) lastC = c;
-        if (c && c.done) return c.err ? Object.assign(result(true), { loadFailed: true }) : result(true, String(c.href));
+        if (c && c.done) return c.err ? failed() : result(true, String(c.href));
         // A download or 204 never replaces the document; Chrome's `loading` settles.
         // So does a load the page dropped, so it counts only if the tab's URL moved.
-        if (t.kind !== "safari" && Date.now() - start > 300) {
-          const busy = read(function () { return t.tab.loading(); });
-          if (busy != null) idle = busy ? 0 : idle + 1;
-          if (idle >= 2) {
-            const u = read(function () { return String(t.tab.url()); });
-            if (preUrl != null && u === preUrl) return result(false, null, preUrl);
-            return result(preUrl != null && u != null, u);
-          }
+        if (t.kind !== "safari" && Date.now() - start > 300 && settled(read(function () { return t.tab.loading(); }))) {
+          return decide(read(function () { return String(t.tab.url()); }), false);
         }
         delay(0.05);
       }
-      // The last check that answered still found the stamped document. A url and a
-      // loading read, only here, tell a tab that settled on its old url from a load
-      // still pending. Chromium's url shows a page-started load's pending url while
-      // the old document answers, so a moved url counts as committed only once the
-      // page, asked once more, no longer answers as the stamped document (no reply,
-      // or a new one). Safari has no loading read and may show a pending url, so it
-      // gets neither.
+      // At the deadline, only when the last check that answered still found the
+      // stamped document: a url and a loading read, made only here.
       if (lastC && lastC.old) {
-        const u = read(function () { return String(t.tab.url()); });
-        const busy = t.kind === "safari" ? null : read(function () { return t.tab.loading(); });
-        if (u === lastC.href) return busy === true ? notCommitted(u) : result(false, null, lastC.href);
-        const asked = function (x) { return x === a.url || x.replace(/\/$/, "") === a.url.replace(/\/$/, ""); };
-        if (u != null && (busy === false || (busy === true && viaPage && asked(u)))) {
-          let c = null;
-          try { c = JSON.parse(String(execWithin(t, check, NAV_EXEC_SECS))); } catch (e) { if (isStale(e)) throw e; }
-          if (c && c.old) return notCommitted(u);
-          if (c && c.err) return Object.assign(result(true), { loadFailed: true });
-          return result(!!(c && c.done), c ? String(c.href) : u);
-        }
-        if (u != null) return notCommitted(u);
+        return decide(read(function () { return String(t.tab.url()); }), t.kind === "safari" ? null : read(function () { return t.tab.loading(); }));
       }
       return result(false);
     },
@@ -2984,7 +2985,7 @@ async function navigate(url, target, raise) {
     return { ok: false, error: `load_failed: the tab stayed on ${r.stayed}, as a download, a 204 or a load the page dropped leaves it`, ...tab };
   }
   if (r && r.notCommitted != null) {
-    return { ok: false, error: `timeout: ${url} had not committed after ${NAV_TIMEOUT}ms; the tab shows ${r.notCommitted}; it may still load, check before retrying`, ...tab };
+    return { ok: false, error: `timeout: ${url} had not committed after ${r.after ?? NAV_TIMEOUT}ms; the tab shows ${r.notCommitted}; it may still load, check before retrying`, ...tab };
   }
   // waited:false: the timeout ran out after the new document committed but before
   // it finished loading, with no check ever answered, or on a tab that can't be

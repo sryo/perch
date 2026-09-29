@@ -771,3 +771,52 @@ test("navigate tool on Chrome: a load that committed and answers only after the 
   const { o } = await navTool({ url: "https://next.test/" });
   assert.deepEqual(o, { ok: true, url: "https://next.test/", waited: false, tabId: "chrome:7" });
 });
+
+// A page that runs no page JS after the load (an error page Chrome won't script)
+// gives the loop no answer, so loading settling on a moved url proves no commit.
+// The idle exit asks the page once more, bounded, before claiming a wait.
+const silentAfterStamp = (answer) => {
+  let n = 0, urlReads = 0;
+  world.state.onExecute = (spec) => {
+    if (++n !== 1) return;
+    urlReads = world.counts["tab.url"] || 0;
+    spec.dom = { eval: () => ((world.counts["tab.url"] || 0) > urlReads ? answer : undefined) };
+  };
+};
+const executesAfterLastUrlRead = () => {
+  const evs = world.aeBy("Google Chrome");
+  return evs.slice(evs.lastIndexOf("tab.url") + 1).filter((k) => k === "tab.execute").length;
+};
+
+test("navigate on Chrome: loading settled on the asked url with no check answered is one bounded check, not waited", () => {
+  install(fixture());
+  silentAfterStamp(undefined);
+  const r = runtimeNavigate("https://next.test/");
+  assert.equal(r.waited, false);
+  assert.equal(r.href, "https://next.test/");
+  assert.equal(executesAfterLastUrlRead(), 1);
+});
+
+test("navigate tool on Chrome: loading settled with no check answered, then an error page, is load_failed", async () => {
+  install(fixture());
+  silentAfterStamp(JSON.stringify({ done: true, href: "chrome-error://chromewebdata/", old: false, err: true }));
+  const { o } = await navTool({ url: "https://next.test/" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: https:\/\/next\.test\/ did not load/);
+  assert.equal(executesAfterLastUrlRead(), 1);
+});
+
+test("navigate tool on Chrome: loading settled on a moved url while the stamped document still answers is a coded timeout", async () => {
+  install(fixture());
+  world.state.commitMs = 1e9;
+  const tab = world.tabsOf("Google Chrome", 0)[0];
+  Object.defineProperty(tab, "loading", { get: () => () => false, configurable: true });
+  const t0 = world.clock.t;
+  const { o } = await navTool({ url: "https://next.test/" });
+  assert.equal(o.ok, false);
+  const ms = world.clock.t - t0;
+  assert.ok(ms < 2000, `took ${ms}ms`);
+  const m = /^timeout: https:\/\/next\.test\/ had not committed after (\d+)ms; the tab shows https:\/\/next\.test\//.exec(o.error);
+  assert.ok(m, o.error);
+  assert.ok(Number(m[1]) <= ms, "the reported wait is the time spent");
+});
