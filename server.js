@@ -2052,13 +2052,13 @@ function jxaRuntime(BROWSERS, HANG) {
       // recognized as same-document even when the two spellings differ.
       // Chrome raises its window when AppleScript sets a tab's url, so the page starts
       // the load itself (the reply ends in '!') when it can; a page can't open data:,
-      // javascript: or browser URLs that way.
-      const fromPage = /^(https?:\/\/|about:blank$)/i.test(a.url);
+      // javascript: or browser URLs that way, and a file: URL only from a file: page.
       let r = null, wasLoading = false, preUrl = null;
       if (canEval && t.kind !== "safari") {
         wasLoading = !!read(function () { return t.tab.loading(); });
         preUrl = read(function () { return String(t.tab.url()); });
       }
+      const fromPage = /^(https?:\/\/|about:blank$)/i.test(a.url) || (/^file:/i.test(a.url) && preUrl != null && /^file:/i.test(preUrl));
       // Arc's execute hangs on its own arc: pages, so no page JS runs on one: none
       // before the tab has left it (an unreadable url counts), none when going to one.
       const arcPage = t.kind === "arc" && canEval && (preUrl == null || /^arc:/i.test(preUrl) || /^arc:/i.test(a.url));
@@ -3138,7 +3138,8 @@ async function navigate(url, target, raise) {
   if (r && r.loadFailed) return { ok: false, error: `load_failed: ${url} did not load; the browser showed its error page`, ...tab };
   // A reload that settles on the url it started from is not a failure.
   if (r && r.stayed != null && !same(r.stayed, url)) {
-    return { ok: false, error: `load_failed: the tab stayed on ${r.stayed}, as a download, a 204 or a load the page dropped leaves it`, ...tab };
+    const blocked = /^file:/i.test(url) && /^file:/i.test(r.stayed) ? "; if the browser keeps pages from loading file: URLs, raise:true loads it from outside the page" : "";
+    return { ok: false, error: `load_failed: the tab stayed on ${r.stayed}, as a download, a 204 or a load the page dropped leaves it${blocked}`, ...tab };
   }
   if (r && r.notCommitted != null) {
     return { ok: false, error: `timeout: ${url} had not committed after ${r.after ?? NAV_TIMEOUT}ms; the tab shows ${r.notCommitted}; it may still load, check before retrying`, ...tab };
