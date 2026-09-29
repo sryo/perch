@@ -66,7 +66,13 @@ function jxaRuntime(BROWSERS, HANG) {
   }
   function handleOf(t) {
     try {
-      if (t.kind === "safari") return safariHandle(t.win.id(), t.idx, t.tab.url());
+      if (t.kind === "safari") {
+        const id = t.win.id();
+        if (t.idx == null) return safariHandle(id, t.idx, t.tab.url());
+        const urls = t.win.tabs.url(), h = safariHandle(id, t.idx, urls[t.idx]);
+        counted(h, urls, t.idx);
+        return h;
+      }
       if (t.tabId != null) return handle(t.app, t.tabId);
     } catch (e) {}
     return null;
@@ -258,21 +264,21 @@ function jxaRuntime(BROWSERS, HANG) {
     };
     const record = function (win, i, w) { return { tab: win.tabs[i], idx: i, tabId: null, kind: "safari", app: "Safari", win, w, P }; };
     // Which candidate is the handle's own is settled by the stamp on the first page JS (pickRun).
-    const picking = function (t, m, id, away) {
-      t.pick = { tabId: want.tabId, raw: raw, hash: hash, idx: away ? -1 : idx, winId: id, cands: m, own: !!want.own, mine: ours(want, raw) };
+    const picking = function (t, m, id, away, total) {
+      t.pick = { tabId: want.tabId, raw: raw, hash: hash, idx: away ? -1 : idx, winId: id, cands: m, total: total, cnt: want.cnt, own: !!want.own, mine: ours(want, raw) };
       return t;
     };
     // The recorded window by id: one event when the tab is still in it.
     let searched = false;
     if (/^\d+$/.test(winId)) {
       try {
-        const win = a.windows.byId(Number(winId)), m = matches(win.tabs.url());
+        const win = a.windows.byId(Number(winId)), urls = win.tabs.url(), m = matches(urls);
         searched = true;
         if (m.length) {
           // A tab at another index with the URL may be the user's, once the agent's is gone.
           if (strict && m.indexOf(idx) < 0) throw new Error("stale_tab: can't tell which tab " + want.tabId + " is; re-run list_tabs");
           if (strict) return record(win, idx, null);
-          return picking(record(win, nearest(m), null), m, winId);
+          return picking(record(win, nearest(m), null), m, winId, false, urls.length);
         }
       } catch (e) { if (isStale(e)) throw e; }
     }
@@ -292,7 +298,7 @@ function jxaRuntime(BROWSERS, HANG) {
       count += m.length;
       if (m.length === 1 && count === 1) {
         if (id == null) { try { id = String(win.id()); } catch (e) {} }
-        found = picking(record(win, m[0], w), m, id, true);
+        found = picking(record(win, m[0], w), m, id, true, urls.length);
       }
     }
     if (count > 1) throw new Error("stale_tab: tab " + want.tabId + " is gone; several tabs show its URL; re-run list_tabs");
@@ -514,6 +520,19 @@ function jxaRuntime(BROWSERS, HANG) {
     note.s = "safari:" + set;
     if (set !== raw) note.m = note.s;
   }
+  // A Safari handle's window as last read: [tabs at its URL, tabs in all], as
+  // note.c. For a handle that has stamped, an unstamped page at its recorded index
+  // is its own reload only while both still match (pickRun). `urls[i]` is the URL
+  // the handle hashes; `tally` (tallyOf(urls)) saves recounting a whole window.
+  function tallyOf(urls) {
+    const t = {};
+    urls.forEach(function (u) { const h = fp(u); t[h] = (t[h] || 0) + 1; });
+    return t;
+  }
+  function counted(handle, urls, i, tally) {
+    note = note || {};
+    (note.c = note.c || {})[handle] = [(tally || tallyOf(urls))[fp(urls[i])] || 0, urls.length];
+  }
 
   // The first page JS on a resolved Safari handle picks its tab among the
   // candidates at its URL. The tab at the recorded index is tried first, then the
@@ -530,20 +549,26 @@ function jxaRuntime(BROWSERS, HANG) {
       const r = safariJs(t, stampGuard(js, P.hash, P.mine, set, mode));
       if (r === WRONG_TAB || r === UNSTAMPED) return r;
       noted(P.raw, set);
+      if (P.total != null) (note.c = note.c || {})["safari:" + set] = [c.length, P.total];
       return { v: r };
     };
     const one = function (r) {
       if (r === WRONG_TAB || r === UNSTAMPED) throw new Error("stale_tab: tab " + P.tabId + " is gone; the tab at its URL is another one; re-run list_tabs");
       return r.v;
     };
-    if (c.length === 1) return one(run(c[0], c[0] === P.idx && !P.own ? "any" : "free"));
+    // A handle that has stamped (own) never adopts an unstamped page off its index:
+    // once its tab is gone, that is the user's tab. At the index, an unstamped page
+    // is its reload, or a tab that slid in; only unchanged counts say reload.
+    const same = P.own && P.cnt != null && P.cnt[0] === c.length && P.cnt[1] === P.total && c.indexOf(P.idx) >= 0;
+    if (c.length === 1 && (!P.own || same)) return one(run(c[0], c[0] === P.idx && !P.own ? "any" : "free"));
     if (!P.own && c.indexOf(P.idx) >= 0) return one(run(P.idx, "any"));
     const order = c.slice().sort(function (x, y) { return (x !== P.idx) - (y !== P.idx) || Math.abs(x - P.idx) - Math.abs(y - P.idx) || x - y; });
     for (const i of order) {
       const r = run(i, "ours");
       if (r !== WRONG_TAB && r !== UNSTAMPED) return r.v;
     }
-    throw new Error("stale_tab: can't tell which tab " + P.tabId + " is; several tabs show its URL; re-run list_tabs");
+    if (same) return one(run(P.idx, "free"));
+    throw new Error("stale_tab: can't tell which tab " + P.tabId + " is; " + (c.length > 1 ? "several tabs show its URL" : "the tab at its URL may be another one") + "; re-run list_tabs");
   }
 
   // One-event page JS for a target that needs no guard: a Chromium handle with a
@@ -1147,6 +1172,9 @@ function jxaRuntime(BROWSERS, HANG) {
       const win = app(W.app).windows[at.j];
       if (W.kind === "safari") {
         out.tabId = safariHandle(win.id(), at.i, url);
+        const urls = after[at.j].slice();
+        urls[at.i] = url;
+        counted(out.tabId, urls, at.i);
         out.shown = win.currentTab.index() === at.i + 1;
       } else {
         out.tabId = handle(W.app, raw);
@@ -1816,9 +1844,10 @@ function jxaRuntime(BROWSERS, HANG) {
     for (let w = 0; w < n; w++) if (!Array.isArray(r.url[w])) return false;
     for (let w = 0; w < n; w++) {
       const u = r.url[w], ti = r.title[w] || [], ids = r.id ? r.id[w] || [] : [];
+      const tally = kind === "safari" ? tallyOf(u) : null;
       for (let i = 0; i < u.length; i++) {
         const row = { app: name };
-        if (kind === "safari") row.tabId = safariHandle(r.wid[w], i, u[i]);
+        if (kind === "safari") { row.tabId = safariHandle(r.wid[w], i, u[i]); counted(row.tabId, u, i, tally); }
         else if (ids[i] != null) { row.tabId = handle(name, ids[i]); hint(name, ids[i], w); }
         else { row.windowId = r.wid[w]; row.tabIndex = i; }
         row.url = u[i] || ""; row.title = ti[i] || "";
@@ -1849,10 +1878,11 @@ function jxaRuntime(BROWSERS, HANG) {
       // `active` marks the tab each window shows (one extra read per window).
       const act = activeIndex(kind, win, win.tabs);
       yield;
+      const tally = kind === "safari" ? tallyOf(urls) : null;
       for (let i = 0; i < urls.length; i++) {
         if (kind === "chrome") hint(name, tabIds[i], w);
         const row = { app: name };
-        if (kind === "safari") row.tabId = safariHandle(id, i, urls[i]);
+        if (kind === "safari") { row.tabId = safariHandle(id, i, urls[i]); counted(row.tabId, urls, i, tally); }
         else if (tabIds[i] != null) row.tabId = handle(name, tabIds[i]);
         else { row.windowId = id; row.tabIndex = i; }
         row.url = urls[i] || ""; row.title = titles[i] || "";
@@ -2288,8 +2318,11 @@ function jxaRuntime(BROWSERS, HANG) {
       let tabId = null;
       try {
         if (kind === "safari") {
-          const i = win.tabs.length - 1;
-          tabId = safariHandle(win.id(), i, win.tabs[i].url() || a.url);
+          const urls = win.tabs.url(), i = urls.length - 1;
+          // A tab still loading reads blank: its handle hashes the URL it is loading.
+          urls[i] = urls[i] || a.url;
+          tabId = safariHandle(win.id(), i, urls[i]);
+          counted(tabId, urls, i);
         } else if (newId != null) {
           tabId = handle(name, newId);
           // Arc's new tab is put behind the one shown, so it has no window to hint.
@@ -2813,20 +2846,22 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   if (safari && (stampedHandles.has(tabId) || movedTo.has(tabId))) {
     const next = [];
     for (let h = movedTo.get(tabId); h && next.length < 10; h = movedTo.get(h)) next.push(h.slice(7));
-    args = { ...args, target: { ...args.target, own: true, next } };
+    args = { ...args, target: { ...args.target, own: true, next, cnt: stampCounts.get(tabId) } };
   }
   const call = `__perch.${fn}(${JSON.stringify(args)})`;
   let script = raw ? call : `JSON.stringify(${call})`;
-  // The runtime's note (the stamp it wrote, a moved tab's handle) rides ahead of the result.
-  if (safari) script = `(function(){__perch.takeNote();var r=${script},n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
+  // The runtime's note (the stamp it wrote, a moved tab's handle, Safari windows'
+  // tab counts) rides ahead of the result. Any call can issue a Safari handle.
+  script = `(function(){__perch.takeNote();var r=${script},n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
   let out = DIALOG_BLIND.has(fn)
     ? await jxa(script, { lane, timeout })
     : await watchDialogs(args && args.target ? args.target : {}, lane, (token) => jxa(script, { lane, timeout, token }));
-  if (safari && typeof out === "string" && out.startsWith(NOTE_MARK)) {
+  if (typeof out === "string" && out.startsWith(NOTE_MARK)) {
     const end = out.indexOf(NOTE_MARK, 1), n = JSON.parse(out.slice(1, end));
     out = out.slice(end + 1);
-    if (stampedHandles.size > 5000) { stampedHandles.clear(); movedTo.clear(); }
-    stampedHandles.add(n.s);
+    if (stampedHandles.size > 5000 || stampCounts.size > 20000) { stampedHandles.clear(); movedTo.clear(); stampCounts.clear(); }
+    if (n.s) stampedHandles.add(n.s);
+    for (const h in n.c || {}) stampCounts.set(h, n.c[h]);
     const c = callNotes.getStore();
     if (n.m) {
       if (n.m !== tabId) movedTo.set(tabId, n.m);
@@ -2844,6 +2879,11 @@ const stampedHandles = new Set();
 // A handle -> the handle a call on it answered under after its tab moved; the
 // page's stamp then names the newer one, which the older handle still accepts.
 const movedTo = new Map();
+// A Safari handle -> its window's [tabs at its URL, tabs in all] when perch last
+// read them (a listing, new_tab, a pick). A handle that has stamped takes an
+// unstamped page at its index only while these still match: a reload keeps them,
+// a same-URL tab sliding in after its tab closed changes them.
+const stampCounts = new Map();
 const callNotes = new AsyncLocalStorage();
 
 // A page's alert/confirm/prompt blocks its JS, and with it our call, until the
