@@ -599,6 +599,30 @@ test("navigate tool on Arc: a raised background tab slow to start loading is not
   assert.equal(o.waited, true);
 });
 
+// Chromium shows a pending url before commit and Arc can read loading false
+// before its load starts, so a moved url that reads idle early is not a commit.
+test("navigate tool on Arc: a raised background tab whose url moved while loading read false early is ok only after the commit", async () => {
+  install(arcFixture());
+  world.state.commitMs = 1e9;
+  const moved = (tab) => (tab.pending ? tab.pending.url : tab.page.url);
+  arcScripted((ms, tab) => ({ busy: ms >= 800 && ms < 1200, url: moved(tab) }));
+  const t0 = world.clock.t;
+  const o = await arcBg();
+  assert.equal(o.ok, true);
+  assert.equal(o.url, "https://next.test/");
+  assert.equal(o.waited, true);
+  assert.ok(world.clock.t - t0 >= 1200, `answered at ${world.clock.t - t0}ms, before the load ended`);
+});
+
+test("navigate tool on Arc: a raised background tab whose url moved at once but whose load never ends is a coded timeout", async () => {
+  install(arcFixture());
+  world.state.commitMs = 1e9;
+  arcScripted((ms, tab) => ({ busy: ms >= 800, url: tab.pending ? tab.pending.url : tab.page.url }));
+  const o = await arcBg();
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^timeout: https:\/\/next\.test\/ had not committed after 15000ms; the tab shows https:\/\/next\.test\/; it may still load/);
+});
+
 test("navigate tool on Arc: a raised background tab that never starts loading is load_failed soon after the start grace", async () => {
   install(arcFixture());
   world.state.noContent = /next\.test/;

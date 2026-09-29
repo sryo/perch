@@ -1977,17 +1977,17 @@ function jxaRuntime(BROWSERS, HANG) {
         const t0 = Date.now();
         const url = function () { return read(function () { return String(t.tab.url()); }); };
         // Arc can read loading false for a while after the set before its load
-        // starts, so an unmoved url counts as stayed only once loading was seen, or
-        // after ARC_START_GRACE.
+        // starts, and shows the new url before it commits, so settled idle counts
+        // (as committed on a moved url, as stayed on an unmoved one) only once
+        // loading was seen, or after ARC_START_GRACE.
         let idle = 0, lastBusy = null, sawBusy = false;
         while (Date.now() < deadline) {
           const busy = read(function () { return t.tab.loading(); });
           if (busy != null) { lastBusy = busy; if (busy) sawBusy = true; }
           if (Date.now() - t0 > 300 && busy != null) idle = busy ? 0 : idle + 1;
-          if (idle >= 2) {
+          if (idle >= 2 && (sawBusy || Date.now() - t0 > ARC_START_GRACE)) {
             const u = url();
-            if (u != null && u !== preUrl) return result(true, u);
-            if (u != null && (sawBusy || Date.now() - t0 > ARC_START_GRACE)) return result(false, null, preUrl);
+            if (u != null) return u !== preUrl ? result(true, u) : result(false, null, preUrl);
           }
           delay(0.05);
         }

@@ -208,9 +208,11 @@ test("navigate that loads is 7 events on Chrome and Safari, 6 on Arc's shown tab
 });
 
 // A raised background Arc tab runs no page JS, so its load is followed by
-// reading `loading` every 50ms and its url once loading settles.
+// reading `loading` every 50ms and its url once loading settles. The load reads
+// busy for 100ms: one never seen loading waits out the start grace.
 test("navigate with raise:true on a background Arc tab: the url before, the set, loading polls, the url after", async () => {
   install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(2, "a") }])], cg: [{ owner: "Arc" }] });
+  world.state.commitMs = 100;
   const { o } = await call("navigate", { url: "https://next.test/", raise: true, target: { tabId: "arc:a1" } });
   assert.equal(o.waited, true);
   const ae = world.aeBy("Arc");
