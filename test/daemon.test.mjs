@@ -37,6 +37,14 @@ test("script errors reject with the message and keep the daemon alive", async ()
   d.kill();
 });
 
+test("an Apple Event error keeps its AppleScript number; a plain throw has none", async () => {
+  const { d } = daemonWith();
+  await assert.rejects(d.run("throw Object.assign(new Error(\"Application isn't running.\"), { errorNumber: -600 })", 1000),
+    (e) => e.message === "Application isn't running. (-600)");
+  await assert.rejects(d.run("throw new Error('stale_tab: gone')", 1000), (e) => e.message === "stale_tab: gone");
+  d.kill();
+});
+
 test("a result marker split across tiny chunks still resolves", async () => {
   const { d } = daemonWith({ chunk: 3 });
   assert.equal(await d.run("'x'.repeat(50)", 1000), "x".repeat(50));
