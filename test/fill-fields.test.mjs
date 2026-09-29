@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
+import { readFileSync } from "node:fs";
 import { page, run, runBody } from "./helpers/page.mjs";
 
 const FORM = `<form>
@@ -658,4 +659,135 @@ test("fill_fields: a label miss in a batch carries its reveal list", () => {
   const o = run(w, "fill_fields", { fields: [{ label_pattern: "city", text: "Rosario" }, { label_pattern: "cover letter", text: "x" }] });
   assert.equal(o.results[0].ok, true);
   assert.deepEqual(o.results[1].reveal, [`button "Enter manually"`, `button "Attach"`]);
+});
+
+// ---- only_empty: one verified call in place of a profile autofill script ----
+
+const PROFILE = [
+  { label_pattern: "first name", text: "Ada" },
+  { label_pattern: "last name", text: "Lovelace" },
+  { label_pattern: "e-?mail", text: "ada@example.test" },
+  { label_pattern: "phone", text: "+1 555 010 0199" },
+  { label_pattern: "linkedin", text: "https://linkedin.example/ada" },
+  { label_pattern: "github", text: "https://code.example/ada" },
+  { label_pattern: "portfolio|website", text: "https://ada.example" },
+  { label_pattern: "city", text: "London" },
+  { label_pattern: "postal|zip", text: "N1" },
+  { label_pattern: "salary", text: "100" },
+  { label_pattern: "pronouns", option: "she/her" },
+  { label_pattern: "relocate", checked: true },
+];
+const PROFILE_FORM = `<form>
+  <label>First name <input name=fn></label>
+  <label>Last name <input name=ln></label>
+  <label>Email <input type=email name=em></label>
+  <label>Phone <input type=tel name=ph></label>
+  <label>LinkedIn profile <input name=li></label>
+  <button type=submit>Apply</button>
+</form>`;
+
+test("fill {fields, only_empty}: fields the form lacks are skipped as absent, the rest filled", async () => {
+  const { dom } = onPage(PROFILE_FORM);
+  const { r, o } = await fill({ fields: PROFILE, only_empty: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.skipped, 7);
+  assert.deepEqual(o.results.map((x) => x.skipped || x.kind), ["plain", "plain", "plain", "plain", "plain", "absent", "absent", "absent", "absent", "absent", "absent", "absent"]);
+  assert.ok(o.results.slice(5).every((x) => x.ok === true && x.kind));
+  assert.deepEqual(["fn", "ln", "em", "ph", "li"].map((n) => dom.document.querySelector(`[name=${n}]`).value),
+    ["Ada", "Lovelace", "ada@example.test", "+1 555 010 0199", "https://linkedin.example/ada"]);
+});
+
+test("fill {fields, only_empty}: a prefilled field keeps its value", async () => {
+  const { dom } = onPage(`<label>Email <input type=email name=em value="ada@parsed.test"></label><label>Phone <input name=ph></label>`);
+  const { o } = await fill({ fields: [{ label_pattern: "email", text: "other@example.test" }, { label_pattern: "phone", text: "5550100" }], only_empty: true });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.skipped, 1);
+  assert.deepEqual(o.results[0], { ok: true, kind: "plain", skipped: "has value", el: `textbox "Email"`, value: "ada@parsed.test" });
+  assert.equal(o.results[1].skipped, undefined);
+  assert.equal(dom.document.querySelector("[name=em]").value, "ada@parsed.test");
+  assert.equal(dom.document.querySelector("[name=ph]").value, "5550100");
+});
+
+// react-select v5 after a pick: the value shows in a single-value span and the
+// role=combobox input is empty.
+const PICKED = `<label id=lab>Level</label><div class="select__control"><div class="select__value-container"><div class="select__single-value">Senior</div><input role=combobox aria-labelledby=lab aria-expanded=false aria-autocomplete=list></div></div><div id=menu></div>`;
+const PICKED_JS = `window.opened = 0; document.querySelector('.select__control').addEventListener('mousedown', () => window.opened++);`;
+
+test("fill {fields, only_empty}: a combobox already showing a pick is never re-picked", async () => {
+  const { dom, world } = onPage(PICKED, PICKED_JS);
+  const calls = [];
+  const orig = world.ctx.__perch.select;
+  world.ctx.__perch.select = (...a) => { calls.push(a); return orig(...a); };
+  try {
+    for (const f of [{ label_pattern: "level", option: "Junior" }, { label_pattern: "level", text: "Junior" }]) {
+      const { o } = await fill({ fields: [f], only_empty: true });
+      assert.equal(o.ok, true, JSON.stringify(o));
+      assert.equal(o.results[0].skipped, "has value");
+      assert.equal(o.results[0].value, "Senior");
+    }
+  } finally { world.ctx.__perch.select = orig; }
+  assert.equal(calls.length, 0);
+  assert.equal(dom.window.opened, 0);
+  assert.equal(dom.document.querySelector(".select__single-value").textContent, "Senior");
+});
+
+test("fill_fields only_empty: a chosen select and a checked radio group are kept; a select on its placeholder is filled", () => {
+  const w = page(`<label>Country <select name=c><option value="">Pick</option><option value=ar>Argentina</option><option value=br selected>Brazil</option></select></label>
+    <label>Degree <select name=d><option value="" disabled selected>Select...</option><option value=bs>BSc</option><option value=ms>MSc</option></select></label>
+    <fieldset><legend>Need a visa?</legend><label><input type=radio name=v value=y checked> Yes</label><label><input type=radio name=v value=n> No</label></fieldset>`);
+  // happy-dom ignores the selected attribute here, so set what a parser would have.
+  runBody(w, `document.querySelector('[name=c]').value = 'br'; document.querySelector('[name=d]').selectedIndex = 0; return 1`);
+  const o = run(w, "fill_fields", { only: true, fields: [
+    { label_pattern: "country", option: "Argentina" },
+    { label_pattern: "degree", option: "MSc" },
+    { label_pattern: "visa", option: "No" },
+  ] });
+  assert.deepEqual(o.results.map((r) => [r.ok, r.skipped, r.value]), [[true, "has value", "Brazil"], [true, undefined, undefined], [true, "has value", "Yes"]]);
+  assert.equal(val(w, "[name=c]").value, "br");
+  assert.equal(val(w, "[name=d]").value, "ms");
+  assert.equal(val(w, "[value=y]").checked, true);
+});
+
+test("fill_fields only_empty: a pattern hitting two own-labelled fields writes neither", () => {
+  const w = page(`<label>Home phone <input name=a></label><label>Work phone <input name=b></label>`);
+  const r = run(w, "fill_fields", { only: true, fields: [{ label_pattern: "phone", text: "5550100" }] }).results[0];
+  assert.deepEqual(r, { ok: true, kind: "text", skipped: "ambiguous", candidates: [`textbox "Home phone"`, `textbox "Work phone"`] });
+  assert.equal(val(w, "[name=a]").value, "");
+  assert.equal(val(w, "[name=b]").value, "");
+});
+
+test("fill_fields only_empty: the honeypot fixture's trap is never written; a trap-only match is skipped", () => {
+  const html = readFileSync(new URL("./fixtures/honeypot.html", import.meta.url), "utf8");
+  const w = page(html.slice(html.indexOf("<style>")));
+  const o = run(w, "fill_fields", { only: true, fields: [{ label_pattern: "email", text: "ada@example.test" }] });
+  assert.equal(o.results[0].ok, true, JSON.stringify(o));
+  assert.equal(val(w, "#email").value, "ada@example.test");
+  assert.equal(val(w, "#trap").value, "");
+  assert.equal(val(w, "#decoy").value, "");
+  w.document.querySelectorAll("#email, #decoy").forEach((e) => e.closest(".row").remove());
+  const t = run(w, "fill_fields", { only: true, fields: [{ label_pattern: "email", text: "ada@example.test" }] }).results[0];
+  assert.deepEqual(t, { ok: true, kind: "text", skipped: "trap", el: `textbox "Email" hidden` });
+  assert.equal(val(w, "#trap").value, "");
+});
+
+test("fill {fields} without only_empty: an absent pattern fails exactly as before", async () => {
+  onPage(PROFILE_FORM);
+  const { o } = await fill({ fields: [{ label_pattern: "github", text: "x" }, { label_pattern: "pronouns", option: "x" }, { label_pattern: "relocate", checked: true }] });
+  assert.equal(o.ok, false);
+  assert.equal(o.skipped, undefined);
+  assert.deepEqual(o.results.map((x) => [x.ok, x.error]), [
+    [false, "no fillable field matched /github/i; it may appear only after clicking a button"],
+    [false, "no select, combobox or radio group matched /pronouns/i"],
+    [false, "no checkbox/radio matched /relocate/i"],
+  ]);
+  assert.ok(o.results.every((x) => !("absent" in x) && !("skipped" in x)));
+});
+
+test("fill: only_empty takes fields", async () => {
+  onPage(PROFILE_FORM);
+  const err = async (args) => (await handleCall("fill", args)).content[0].text;
+  assert.match(await err({ label_pattern: "email", text: "a@b.test", only_empty: true }), /fill: only_empty takes `fields`/);
+  assert.match(await err({ label_pattern: "relocate", checked: true, only_empty: true }), /fill: only_empty takes `fields`/);
+  assert.equal(TOOLS.find((x) => x.name === "fill").inputSchema.properties.only_empty.type, "boolean");
 });
