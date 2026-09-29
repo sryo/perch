@@ -6721,7 +6721,9 @@ async function fill(args = {}) {
     if (text != null || text_path != null || ref || selector || label_pattern) throw new Error("fill: pass `fields` OR a single field, not both");
     if (trusted || raise) throw new Error("fill: `fields` does not take trusted/raise; fill trusted fields one at a time");
     if (fields_path != null) fields = await readFieldsFile(fields_path);
-    return fillFields(fields, target, !!only_empty);
+    const r = await fillFields(fields, target, !!only_empty);
+    if (r && Array.isArray(r.results)) r.results = r.results.map((x, i) => fields[i] && fields[i].text != null && !fields[i].trusted ? hintTrusted(x) : x);
+    return r;
   }
   const { checked, option } = args;
   if (checked != null || option != null) {
@@ -6745,8 +6747,8 @@ async function fill(args = {}) {
   const r = trusted
     ? await trustedFill({ ref, selector, label_pattern, text: body, raise, target })
     : await runPage("fill", "fill", { ref, selector, label_pattern, text: body }, target);
-  if (!r || !r.pending) return r;
-  const out = { ...await (r.trusted ? pickSuggestion(target) : pickTypeahead(body, target)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
+  if (!r || !r.pending) return trusted ? r : hintTrusted(r);
+  const out = { ...await (r.trusted ? pickSuggestion(target) : pickTypeahead(body, target).then(hintTrusted)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
 }
 
@@ -6812,6 +6814,15 @@ async function pickTypeahead(text, target) {
   if (!query) return r;
   const t = await runPage("fill", "fill_ta_retype", { query }, target);
   return { ...(t && t.pending ? await pickSuggestion(target) : pageFault(t, "typeahead")), query };
+}
+
+// Misses a page makes by ignoring synthetic input: no suggestion list ever
+// appeared, or the field put its value back. Trusted typing may land either.
+const TRUSTED_HINT = "; retry with fill {trusted:true}";
+function hintTrusted(r) {
+  if (!r || r.ok !== false || r.trusted || typeof r.error !== "string") return r;
+  const noList = r.kind === "typeahead" && !r.candidates && !r.ambiguous && /^no suggestion matched/.test(r.error);
+  return noList || r.error.endsWith("the page reverted the write") ? { ...r, error: r.error + TRUSTED_HINT } : r;
 }
 
 // prefs: fill's ordered option list, which the tool itself never takes.
