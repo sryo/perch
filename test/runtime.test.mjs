@@ -199,7 +199,8 @@ test("navigate tells the caller a load it gave up on didn't finish", async () =>
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }] });
   world.state.linger = 1e9;
   const { o } = await call("navigate", { url: "https://slow.test/" });
-  assert.equal(o.waited, false);
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^timeout: https:\/\/slow\.test\/ had not committed/);
 });
 
 test("navigate on an Arc background tab sets the url without evaluating", async () => {
@@ -207,7 +208,7 @@ test("navigate on an Arc background tab sets the url without evaluating", async 
   const { r } = await call("navigate", { url: "https://n.test/", target: { tabIndex: 1 } });
   assert.equal(r.isError, undefined);
   assert.deepEqual(world.log.filter((l) => l[0] === "navigate"), [["navigate", "Arc", "https://n.test/"]]);
-  assert.equal(JSON.parse(r.content[0].text).waited, false);
+  assert.equal(JSON.parse(r.content[0].text).waited, true);
   assert.equal(world.counts["tab.execute"] || 0, 0);
 });
 

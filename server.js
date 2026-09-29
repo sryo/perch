@@ -1859,6 +1859,10 @@ function jxaRuntime(BROWSERS, HANG) {
         }
         throw refuse("timeout", HANG.noAnswer + ", so the load may or may not have started; check the tab's url before retrying");
       }
+      // A raised background Arc tab runs no page JS (execute hangs there), so its load
+      // is followed through its url and loading properties alone.
+      const arcBehind = t.kind === "arc" && !canEval && !arcPage;
+      if (arcBehind) preUrl = read(function () { return String(t.tab.url()); });
       if (!viaPage) onTab(t, function () { t.tab.url = a.url; });
       if (/^same/.test(r || "")) return result(true);
       // Until the url commits the tab still reads arc:. Arc can drop a url set while
@@ -1873,9 +1877,36 @@ function jxaRuntime(BROWSERS, HANG) {
         }
         return false;
       };
-      if (!canEval && !(arcPage ? leftArcPage() : ownPage)) return result(false);
-      // Chrome commits a failed load as its error page, chrome-error://chromewebdata/.
-      const check = "(function(){try{return JSON.stringify({done:window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete',href:location.href,err:location.protocol==='chrome-error:'})}catch(e){return 'null'}})()";
+      // At the deadline: the tab shows another url while the old document still
+      // answers, so the load never committed.
+      const notCommitted = function (u) { return Object.assign(result(false), { notCommitted: String(u) }); };
+      const checkable = arcPage ? leftArcPage() : ownPage;
+      if (arcPage && !checkable && !/^arc:/i.test(a.url)) {
+        const u = read(function () { return String(t.tab.url()); });
+        return u != null && !/^arc:/i.test(u) ? result(false, u) : result(false, null, u || "arc://newtab");
+      }
+      if (arcBehind && preUrl != null && !/^arc:/i.test(a.url)) {
+        const t0 = Date.now();
+        const url = function () { return read(function () { return String(t.tab.url()); }); };
+        let idle = 0;
+        while (Date.now() < deadline) {
+          const busy = read(function () { return t.tab.loading(); });
+          if (Date.now() - t0 > 300 && busy != null) idle = busy ? 0 : idle + 1;
+          if (idle >= 2) {
+            const u = url();
+            if (u != null) return u === preUrl ? result(false, null, preUrl) : result(true, u);
+          }
+          delay(0.05);
+        }
+        const u = url();
+        if (u == null) return result(false);
+        return u === preUrl ? notCommitted(u) : result(false, u);
+      }
+      if (!canEval && !checkable) return result(false);
+      // A failed load commits the browser's error page: chrome-error://chromewebdata/,
+      // or a safari-resource: document.
+      const check = "(function(){try{return JSON.stringify({done:window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete',href:location.href,old:window.__perch_nav===" + JSON.stringify(token) +
+        ",err:location.protocol==='chrome-error:'||/^safari-resource:/i.test(location.href)})}catch(e){return 'null'}})()";
       const start = Date.now();
       // Page JS sent before the new document commits may never be answered, and
       // Chromium's `loading` is already true when setting url returns, so hold off
@@ -1889,10 +1920,11 @@ function jxaRuntime(BROWSERS, HANG) {
           delay(0.02);
         }
       }
-      let idle = 0;
+      let idle = 0, lastC = null;
       while (Date.now() < deadline) {
         let c = null;
         try { c = JSON.parse(String(run(check))); } catch (e) { if (isStale(e)) throw e; }
+        if (c) lastC = c;
         if (c && c.done) return c.err ? Object.assign(result(true), { loadFailed: true }) : result(true, String(c.href));
         // A download or 204 never replaces the document; Chrome's `loading` settles.
         // So does a load the page dropped, so it counts only if the tab's URL moved.
@@ -1902,10 +1934,17 @@ function jxaRuntime(BROWSERS, HANG) {
           if (idle >= 2) {
             const u = read(function () { return String(t.tab.url()); });
             if (preUrl != null && u === preUrl) return result(false, null, preUrl);
-            return result(preUrl != null && u != null);
+            return result(preUrl != null && u != null, u);
           }
         }
         delay(0.05);
+      }
+      // The last check that answered still found the stamped document: the load never
+      // committed. One url read, only here, tells a tab that stayed from one that moved.
+      if (lastC && lastC.old) {
+        const u = read(function () { return String(t.tab.url()); });
+        if (u === lastC.href) return result(false, null, lastC.href);
+        if (u != null) return notCommitted(u);
       }
       return result(false);
     },
@@ -2608,8 +2647,12 @@ async function navigate(url, target, raise) {
   if (r && r.stayed != null && !same(r.stayed, url)) {
     return { ok: false, error: `load_failed: the tab stayed on ${r.stayed}, as a download, a 204 or a load the page dropped leaves it`, ...tab };
   }
-  // waited:false: the new page wasn't confirmed loaded (the timeout ran out, or
-  // a background Arc tab can't be checked).
+  if (r && r.notCommitted != null) {
+    return { ok: false, error: `timeout: ${url} had not committed after ${NAV_TIMEOUT}ms; the tab shows ${r.notCommitted}`, ...tab };
+  }
+  // waited:false: the timeout ran out after the new document committed but before
+  // it finished loading, with no check ever answered, or on a tab that can't be
+  // checked (an arc: url, an Arc tab whose url can't be read yet).
   const committed = r && r.href != null ? r.href : url;
   const out = { ok: true, url: committed };
   if (!same(committed, url)) out.requested = url;
