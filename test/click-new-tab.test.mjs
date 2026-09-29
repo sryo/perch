@@ -12,6 +12,12 @@ import { page, run } from "./helpers/page.mjs";
 const LINK = `<a id=a href="/job/1" target=_blank>Apply</a><a id=same href="/job/2">Details</a><button id=b>Save</button><p id=s>Idle</p>`;
 // The second pass: a short script that runs what the first pass kept.
 const go = (w) => JSON.parse(w.eval(CLICK_BLANK_GO));
+// The first pass on a new-tab element answers the owner token it kept the element under.
+const probe = (w, selector) => {
+  const { tok, ...r } = run(w, "click", { selector, probe: true });
+  assert.match(tok, /^\d+\.[a-z0-9]+$/);
+  return { r, tok };
+};
 const count = (w, sel) => w.eval(`(function(){var n=0;document.querySelector(${JSON.stringify(sel)}).addEventListener('click',function(){n++});return function(){return n}})()`);
 
 // ---- page script ----
@@ -19,13 +25,13 @@ const count = (w, sel) => w.eval(`(function(){var n=0;document.querySelector(${J
 test("the first pass on a _blank link returns its absolute URL without clicking", () => {
   const w = page(LINK);
   const n = count(w, "#a");
-  assert.deepEqual(run(w, "click", { selector: "#a", probe: true }), { ok: true, blank: { href: "https://a.test/job/1" } });
+  assert.deepEqual(probe(w, "#a").r, { ok: true, blank: { href: "https://a.test/job/1" } });
   assert.equal(n(), 0);
 });
 
 test("a submit button in a form aimed at _blank is a candidate too; a plain button is not", () => {
   const w = page(`<form action="/apply" target=_blank><input name=q><button id=go>Send</button><button id=t type=button>Toggle</button></form>`);
-  assert.deepEqual(run(w, "click", { selector: "#go", probe: true }), { ok: true, blank: { href: "https://a.test/apply" } });
+  assert.deepEqual(probe(w, "#go").r, { ok: true, blank: { href: "https://a.test/apply" } });
   const n = count(w, "#t");
   assert.deepEqual(run(w, "click", { selector: "#t", probe: true }), { ok: true, el: `button "Toggle"` });
   assert.equal(n(), 1);
@@ -43,20 +49,21 @@ test("same-tab links, buttons, downloads and non-http _blank links click in the 
 test("the second pass clicks the element the first pass found, and refuses when the page changed", () => {
   const w = page(LINK);
   const n = count(w, "#a");
-  run(w, "click", { selector: "#a", probe: true });
-  assert.deepEqual(go(w), { ok: true, el: `link "Apply"` });
+  const { tok } = probe(w, "#a");
+  assert.deepEqual(go(w), { ok: true, el: `link "Apply"`, tok });
   assert.equal(n(), 1);
   const again = go(w);
   assert.equal(again.ok, false);
   assert.match(again.error, /nothing was clicked/);
+  assert.equal(again.taken, tok, "a spent slot still names the call it ran");
   assert.equal(n(), 1);
 });
 
 test("the second pass says when the page cancelled the link's default", () => {
   const w = page(LINK);
   w.eval(`document.getElementById('a').addEventListener('click', function (e) { e.preventDefault(); })`);
-  run(w, "click", { selector: "#a", probe: true });
-  assert.deepEqual(go(w), { ok: true, el: `link "Apply"`, cancelled: true });
+  const { tok } = probe(w, "#a");
+  assert.deepEqual(go(w), { ok: true, el: `link "Apply"`, cancelled: true, tok });
 });
 
 test("window.open during the click: a null return is blocked, a window is opened; the original is restored", () => {

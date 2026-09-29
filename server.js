@@ -1517,11 +1517,18 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     return r;
   }
-  // `go` is the click's second page call (the first found a new-tab element).
-  function clickBlank(W, href, go) {
+  // `go` is the click's second page call (the first found a new-tab element and
+  // answered `tok`). A second pass that ran another call's element, or found
+  // this call's element run by another's, is not this click's outcome.
+  function clickBlank(W, href, tok, go) {
     const before = tabSet(W);
     const r = go();
-    if (!r || r.ok !== true) return r;
+    if (!r) return r;
+    const mine = r.tok === tok, taken = r.taken === tok;
+    delete r.tok; delete r.taken;
+    if (taken) return { ok: false, error: "click: another perch call on this tab sent this click; not verified" };
+    if (r.ok !== true) return r;
+    if (!mine) return { ok: false, error: "click: sent on another perch call's element; not verified" };
     if (!before) { delete r.cancelled; return r; }
     return noteOpened(r, W, before, href);
   }
@@ -2768,13 +2775,13 @@ function jxaRuntime(BROWSERS, HANG) {
       try { r = JSON.parse(String(v)); } catch (e) {}
       if (!r || !r.blank) return v;
       const W = t ? winOf(t) : at;
-      return JSON.stringify(clickBlank(W, r.blank.href, function () { return JSON.parse(String(t ? exec(t, a.go) : at.run(a.go))); }));
+      return JSON.stringify(clickBlank(W, r.blank.href, r.tok, function () { return JSON.parse(String(t ? exec(t, a.go) : at.run(a.go))); }));
     },
     // Plain click with readback: click (arming the pre-click text), then poll.
     click(a) {
       const t = pageTarget(a.target, "click");
       let r = stepRead(t, a.click);
-      if (r && r.blank) r = clickBlank(winOf(t), r.blank.href, function () { return stepRead(t, a.go); });
+      if (r && r.blank) r = clickBlank(winOf(t), r.blank.href, r.tok, function () { return stepRead(t, a.go); });
       if (!r || r.ok !== true) return r;
       const tok = r.rbTok;
       delete r.rbTok;
@@ -5172,11 +5179,19 @@ function editClear(el) {
 // mutations anywhere (takeRecords too, since the observer's callback may not
 // have run between polls) and completed fetch/XHR requests, as resource timing
 // entries. A request still in flight shows only once it completes. rbWatch keeps
-// the state on window[key] under a fresh owner token (a per-document counter
-// plus a random suffix), so a caller can tell its own state from one another
-// perch server's call put there; one that is never read again stops its
-// observer at the first mutation after `life` ms and marks itself dead.
-const QUIET_LIB = String.raw`
+// the state on window[key] under a fresh owner token, so a caller can tell its
+// own state from one another perch server's call put there; one that is never
+// read again stops its observer at the first mutation after `life` ms and marks
+// itself dead.
+// An owner token: a per-document counter plus a random suffix, made in the page
+// so no per-call value enters script source.
+const TOK_LIB = String.raw`
+function rbTok() {
+  window.__perch_tok_n = (window.__perch_tok_n | 0) + 1;
+  return window.__perch_tok_n + "." + Math.random().toString(36).slice(2, 10);
+}
+`;
+const QUIET_LIB = TOK_LIB + String.raw`
 function rbNet() {
   try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
   catch (e) { return 0; }
@@ -5204,10 +5219,6 @@ function rbBusy(s) {
   const act = rbAct(s), busy = act !== s.act;
   s.act = act;
   return busy;
-}
-function rbTok() {
-  window.__perch_tok_n = (window.__perch_tok_n | 0) + 1;
-  return window.__perch_tok_n + "." + Math.random().toString(36).slice(2, 10);
 }
 function rbStop(s) { if (s && s.obs) s.obs.disconnect(); }
 function rbWatch(s, key, life) {
@@ -5446,8 +5457,14 @@ const el = r.el, off = inertCtl(el);
 if (off) return inertOut(off);
 const href = A.probe && blankHref(el);
 if (!href) return clickNow(el, false);
-window.__perch_blank = { run: function () { return el.isConnected ? clickNow(el, true) : null; } };
-return { ok: true, blank: { href: href } };
+const held = window.__perch_blank;
+if (held && !held.done && Date.now() - held.at < 10000) {
+  if (!held.clash) window.__perch_blank = { clash: true, at: Date.now() };
+  return { ok: false, error: "another perch call on this tab is mid-click; nothing was clicked, retry" };
+}
+const tok = rbTok();
+window.__perch_blank = { tok: tok, at: Date.now(), run: function () { return el.isConnected ? clickNow(el, true) : null; } };
+return { ok: true, blank: { href: href }, tok: tok };
 `;
 
 // Trusted input: find the element, scroll it into view, estimate its screen
@@ -6242,9 +6259,12 @@ return out;
 
   // A.probe: a click that opens a new tab stops before clicking, keeping a
   // closure over its element that CLICK_BLANK_GO, the second pass, runs; the
-  // runtime brackets that with reads of the window's tabs. Only a readback
-  // click carries READBACK_LIB (click_readback).
-  click: BLANK_LIB + CLICK_BODY,
+  // runtime brackets that with reads of the window's tabs. The closure sits
+  // under an owner token, and a probe that finds another call's closure still
+  // waiting (under 10s old) clicks nothing and marks the slot a clash, which that
+  // call's second pass refuses too. Only a readback click carries READBACK_LIB
+  // (click_readback), whose QUIET_LIB holds TOK_LIB.
+  click: TOK_LIB + BLANK_LIB + CLICK_BODY,
   click_readback: READBACK_LIB + BLANK_LIB + CLICK_BODY,
 
   readback_arm: READBACK_LIB + String.raw`
@@ -7189,9 +7209,17 @@ export function chunkUtf16(text, max = 20) {
 }
 
 const pageFn = (name, A) => buildEvalWrapper(pageScript(name, A));
-// A new-tab click's second pass: runs what the first pass kept, once.
-export const CLICK_BLANK_GO = buildEvalWrapper(`const k = window.__perch_blank; window.__perch_blank = null;
-return (k && k.run && k.run()) || { ok: false, error: "the page changed before the click; nothing was clicked" };`);
+// A new-tab click's second pass: runs what the first pass kept, once, and
+// answers with the kept owner token for the runtime to check against its probe's.
+// A run slot becomes `done`, so the call that owned it hears, as `taken`, that
+// another call's second pass ran its element.
+export const CLICK_BLANK_GO = buildEvalWrapper(`const k = window.__perch_blank;
+if (k && k.run) window.__perch_blank = { done: k.tok, at: Date.now() };
+else if (k && k.clash) window.__perch_blank = null;
+if (k && k.clash) return { ok: false, error: "another perch call on this tab is mid-click; nothing was clicked, retry" };
+const r = k && k.run && k.run();
+if (r) { r.tok = k.tok; return r; }
+return { ok: false, error: "the page changed before the click; nothing was clicked", taken: (k && k.done) || undefined };`);
 
 // How long click {readback} waits for the element's text or the url to change.
 const READBACK_SETTLE = 2000;
