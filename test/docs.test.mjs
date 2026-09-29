@@ -9,6 +9,7 @@ test("SKILL.md covers every tool and stays short", async () => {
   const skill = await read("SKILL.md");
   for (const t of TOOLS) assert.ok(skill.includes("`" + t.name + "`"), `SKILL.md misses ${t.name}`);
   assert.ok(skill.length < 6800, `SKILL.md is ${skill.length} bytes`);
+  assert.ok(skill.includes("Refs die on re-snapshot or navigation."), "SKILL.md says when refs die");
 });
 
 test("docs don't mention removed tools, params or shapes", async () => {

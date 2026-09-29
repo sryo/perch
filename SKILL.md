@@ -6,7 +6,7 @@ allowed-tools: mcp__perch__*
 
 # perch: macOS browser bridge
 
-Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `tabId` from `list_tabs` or `new_tab`: stable as tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loose: `"canary"`) only filters `list_tabs` or picks `new_tab`'s browser.
+Which browser a tab lives in is perch's concern. Pass `target: {tabId}` from `list_tabs` or `new_tab`: stable as tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loose: `"canary"`) only filters `list_tabs` or picks `new_tab`'s browser.
 
 ## Tools
 
@@ -16,14 +16,14 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `new_tab` | Unselected tab in a running browser, default the one in use. May focus the browser; defer while the user works. `{app,tabId}`. |
 | `activate_tab` | Raise a tab and its window. |
 | `close_tab` | By `tabId`. Refuses a window's last tab; never changes focus. |
-| `navigate` | Load a URL from the page and wait for it; returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed; `timeout`: not committed yet, may still load. Other URLs, or no page JS: `raise:true` (may raise the browser). |
+| `navigate` | Load a URL from the page and wait; returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed; `timeout`: not committed yet, may still load. Other URLs, or no page JS: `raise:true` (may raise the browser). |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path`: a local file, run before `script` if both. `awaitPromise` for real async. |
 | `wait` | Until `selector` exists at `readyState`, `expression` is truthy (as `value`), or `quiet` ms pass with no DOM change or fetch/XHR end. |
 | `screenshot` | On-screen window image without raising it, plus `{window, image}`: `screenX=window.x+imageX*window.w/image.w`. Not for minimized windows. |
-| `get_text` | innerText, or outerHTML with `html: true`. Paged: `offset` / `maxChars`. |
+| `get_text` | innerText, or outerHTML with `html: true`. Paged: `offset`/`maxChars`. |
 | `accessibility_snapshot` | Page outline with refs (below), open shadow roots too. Filter: `role`, `query` (regex per line); `max: 0`: header only. |
 | `console_capture` | `start`, `read` drains `"level: text"`, `stop` restores; navigation clears it. `network` drains finished requests as `"status type ms size url"`. |
-| `click` | By `ref` / `selector` / `label_pattern` (button/link name; ties: `candidates`, no click). `readback: css` adds `{readback, changed, url?, invalid?}`: its text once changed (2s; 0.7s quiet, 1.2s hidden). `hover: true`: JS hover events, not CSS `:hover`. New tab: `opened.tabId` or `blocked`+`href`. `trusted`: below. |
+| `click` | By `ref`/`selector`/`label_pattern` (button/link name; ties: `candidates`, no click). `readback: css` adds `{readback, changed, url?, invalid?}`: its text once changed (2s; 0.7s quiet, 1.2s hidden). `hover: true`: JS hover events, not CSS `:hover`. New tab: `opened.tabId` or `blocked`+`href`. `trusted`: below. |
 | `press` | `key` (`Enter`, `Escape`, `Tab`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | Inputs, textareas, rich editors; verifies it landed; `text:""` clears. `text_path`: long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>` or custom combobox, own list only; reads back. Miss or `text:""`: `candidates`. `trusted`: below. |
@@ -39,7 +39,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 3 combobox "Country" options=["Argentina","Brazil"] value="AR"
 ```
 
-Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Header `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
+Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Refs die on re-snapshot or navigation. Header `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
 
 ## Results
 
@@ -59,7 +59,7 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, 
 
 ## Trusted input
 
-`fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input`, value verified) wherever page JS runs, minimized too, selecting no tab, taking no focus. `click {trusted: true}` reaches an on-screen window's shown tab (else `tab_not_visible`) without activating it or moving the cursor. So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked); other tabs, or a menu the click leaves shut: a filter typed into its own empty box (`"typed"`). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored.
+`fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input`, value verified) wherever page JS runs, minimized too, no tab switch, no focus. `click {trusted: true}` reaches an on-screen window's shown tab (else `tab_not_visible`) without activating it or moving the cursor. So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked); other tabs, or a menu the click leaves shut: a filter typed into its own empty box (`"typed"`). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored.
 
 `accessibility_snapshot {frames:true}` adds iframe controls as `fN` rows, never values. `fN` takes only `click {trusted:true}`; read its `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's.
 
