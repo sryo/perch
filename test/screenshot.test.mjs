@@ -5,6 +5,8 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
+import { readdirSync } from "node:fs";
+import { SHOT_NO_IMAGE, BOUND, RAW, ownTmp, clean, hung } from "./helpers/shot.mjs";
 import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 
@@ -238,6 +240,58 @@ test("two empty captures fall back to screencapture", async () => {
   assert.ok(calls[0].includes("jpg"), calls[0].join(" "));
   assert.equal(r.content[0].mimeType, "image/jpeg");
   assert.deepEqual(meta.image, { w: 1000, h: 1000 });
+});
+
+// ---- Node's screencapture fallback: bounded, coded, no leftovers ----
+
+test("a screencapture fallback that hangs is killed at 3s and is a coded timeout, its file removed", { timeout: 2000 }, async (t) => {
+  const dir = ownTmp(t);
+  canary();
+  world.state.capture = false;
+  const seen = [];
+  deps.exec = hung("screencapture", seen);
+  const r = await handleCall("screenshot", {});
+  assert.deepEqual(seen, [["screencapture", BOUND]]);
+  assert.equal(r.content[0].text, "error: " + SHOT_NO_IMAGE);
+  clean(r.content[0].text);
+  assert.deepEqual(readdirSync(dir), []);
+});
+
+test("a screencapture fallback that exits nonzero, writes nothing or writes no image is window_offscreen, never execFile's or fs's words", async (t) => {
+  const dir = ownTmp(t);
+  const cases = {
+    exit: async () => { throw Object.assign(new Error(RAW), { code: 1, killed: false, stderr: "could not create image from window" }); },
+    nofile: async () => ({ stdout: "" }),
+    garbage: async (cmd, a) => { await writeFile(a[a.length - 1], "not an image"); return { stdout: "" }; },
+  };
+  for (const [name, fake] of Object.entries(cases)) {
+    canary();
+    world.state.capture = false;
+    deps.exec = fake;
+    const r = await handleCall("screenshot", {});
+    assert.equal(r.isError, true, name);
+    assert.match(r.content[0].text, /^error: window_offscreen: screenshot: the window capture gave no image/, name);
+    clean(r.content[0].text);
+    assert.deepEqual(readdirSync(dir), [], name);
+  }
+});
+
+test("the fallback's resample sips is bounded and stays best effort", async (t) => {
+  const dir = ownTmp(t);
+  canary();
+  world.state.capture = false;
+  spawns();
+  const capture = deps.exec;
+  const opts = [];
+  deps.exec = async (cmd, a, o) => {
+    opts.push([cmd, o]);
+    if (cmd === "sips") throw Object.assign(new Error("Command failed: sips"), { killed: true });
+    return capture(cmd, a, o);
+  };
+  const { meta } = await shoot({});
+  assert.deepEqual(opts, [["screencapture", BOUND], ["sips", BOUND]]);
+  assert.deepEqual(meta.image, { w: 3000, h: 1000 }, "the full-size capture still goes back");
+  assert.deepEqual(readdirSync(dir), []);
 });
 
 test("screenshot runs no page JS, so the dialog watchdog never probes for it", async () => {

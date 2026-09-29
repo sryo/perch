@@ -3,9 +3,10 @@
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall, withTabLock, tabLocks } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, withTabLock, tabLocks, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
+import { SHOT_NO_IMAGE, ownTmp, hung } from "./helpers/shot.mjs";
 
 const FORM = `<label>Name <input name=name></label><label>City <input name=city></label>`;
 
@@ -231,4 +232,29 @@ test("tab lock: two wait {quiet} calls on one tab run one after the other", asyn
   const bFirst = firstSent(log, '"quiet":150');
   const aLast = log.findLastIndex((s) => s.startsWith("end:") && s.includes('"quiet":100'));
   assert.ok(aLast >= 0 && bFirst > aLast, `B's first script (${bFirst}) waits for A's last reply (${aLast})`);
+});
+
+test("tab lock: a screenshot {selector} whose screencapture fallback hangs releases its tab after the bounded kill", { timeout: 3000 }, async (t) => {
+  ownTmp(t);
+  const dom = page(`<label>Name <input name=name id=t data-rect="100,200,300,50"></label>`);
+  for (const [k, v] of Object.entries({ innerWidth: 800, innerHeight: 620 })) Object.defineProperty(dom, k, { value: v, configurable: true });
+  const world = makeWorld({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 100, y: 50, w: 1000, h: 700, tabs: [{ url: "https://a.test/", id: "x", dom }] }] }],
+    cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 100, y: 50, w: 1000, h: 700, ax: { web: [{ x: 300, y: 130, w: 800, h: 620 }] } }],
+  });
+  world.run(JXA_PRELUDE);
+  world.state.capture = false;
+  const saved = { fast: DAEMONS.fast, slow: DAEMONS.slow, exec: deps.exec };
+  t.after(() => { Object.assign(DAEMONS, { fast: saved.fast, slow: saved.slow }); deps.exec = saved.exec; });
+  DAEMONS.fast = DAEMONS.slow = world.daemon;
+  const seen = [];
+  deps.exec = hung("screencapture", seen);
+  const target = { tabId: "chrome:x" };
+  const shot = handleCall("screenshot", { selector: "#t", target });
+  const r = await handleCall("fill", { label_pattern: "name", text: "Ada", target });
+  assert.equal((await shot).content[0].text, "error: " + SHOT_NO_IMAGE);
+  assert.equal(seen.length, 1);
+  assert.equal(parsed(r).ok, true, r.content[0].text);
+  assert.equal(dom.document.querySelector("[name=name]").value, "Ada");
+  assert.equal(tabLocks.size, 0);
 });
