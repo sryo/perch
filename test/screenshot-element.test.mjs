@@ -230,6 +230,35 @@ test("when Accessibility finds no page area the crop is refused, with the scroll
   assert.deepEqual(where(p), [0, 40, 37]);
 });
 
+test("an element already in view is captured while Accessibility places it; one that scrolled only after", async () => {
+  for (const [make, early] of [[still, true], [scrolled, false]]) {
+    const p = make();
+    install(p);
+    spawns(2000);
+    world.state.axMs = 20;
+    world.state.captureMs = 150;
+    const t0 = world.clock.t;
+    const { meta } = await shoot({ selector: "#t" });
+    const [s] = world.state.shots;
+    assert.equal(s.axBefore === 0, early, make.name);
+    assert.deepEqual(s.args.slice(-3, -1), ["-t", "tiff"]);
+    assert.deepEqual(meta.clip, { x: 584, y: 544, w: 632, h: 132 });
+    if (early) assert.ok(world.clock.t - t0 < 150 + world.counts.AX * 20, `took ${world.clock.t - t0}ms`);
+    assert.deepEqual(world.state.files, {});
+  }
+});
+
+test("a capture started before Accessibility refuses the crop is stopped and its file removed", async () => {
+  const p = still();
+  install(p, { area: { x: 300, y: 130, w: 500, h: 300 } });
+  const calls = spawns(2000);
+  world.state.captureMs = Infinity;
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.match(JSON.parse(r.content[0].text).error, /^screenshot: Accessibility shows no page area/);
+  assert.equal(world.state.shots[0].killed, true);
+  assert.deepEqual([calls, world.state.files], [[], {}]);
+});
+
 test("an element scrolled out of view inside an overflow box is scrolled in, cropped there, and the box put back", async () => {
   const p = scrolled({ boxRect: "50,100,400,300", from: "100,20,300,50", rect: "100,200,300,50" });
   install(p);
