@@ -8,6 +8,7 @@ import { JXA_PRELUDE, DAEMONS, handleCall, taQuery } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
 import { throwAt, noRaw } from "./helpers/fault.mjs";
+import { readFileSync } from "node:fs";
 
 // The page's async work runs on window.__q, one step per execute, standing in
 // for timers that fire between JXA polls.
@@ -805,6 +806,34 @@ test("fill {fields}: a trusted entry that fails is never told to retry with trus
   assert.match(o.results[0].error, /^no suggestion matched/);
   assert.ok(!o.results[0].error.includes("retry with fill {trusted:true}"), o.results[0].error);
   assert.equal($(dom, "[name=name]").value, "Ada");
+});
+
+// test/fixtures/trusted-select.html's react-select-like location field: a pick
+// empties the text box and shows the choice in the control's value span.
+const TS_FIXTURE = readFileSync(new URL("./fixtures/trusted-select.html", import.meta.url), "utf8");
+const LOC_CTL = /<div class="field"><label id="loc-label"[\s\S]*?<\/ul><\/div>/.exec(TS_FIXTURE)[0] + "<label>Name <input name=name></label>";
+const LOC_CTL_JS = /<script>([\s\S]*?)<\/script>/.exec(TS_FIXTURE)[1] + TRUSTED_ONLY_JS("");
+
+test("fill {trusted}: a pick the control shows in its value span while the text box empties is verified", async () => {
+  for (const fields of [false, true]) {
+    const { dom } = onPage(LOC_CTL, LOC_CTL_JS);
+    const one = { label_pattern: "location", text: "Córdoba, Argentina", trusted: true };
+    const o = fields ? await fill({ fields: [one, { label_pattern: "name", text: "Ada" }] }) : await fill(one);
+    const r = fields ? o.results[0] : o;
+    assert.equal(r.ok, true, JSON.stringify(o));
+    assert.deepEqual([r.kind, r.selected, r.trusted], ["typeahead", "Córdoba, Argentina", true]);
+    assert.equal($(dom, "#loc-input").value, "");
+    assert.equal($(dom, ".loc__value").textContent, "Córdoba, Argentina");
+    assert.deepEqual([...dom.pickerLog], ["loc:Córdoba, Argentina"]);
+  }
+});
+
+test("fill {trusted}: a control that shows something other than the pick fails closed", async () => {
+  const { dom } = onPage(LOC_CTL, LOC_CTL_JS.replace("shown.textContent = li.textContent;", "shown.textContent = 'Córdoba, Argentina (closed)';"));
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina", trusted: true });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /^picked "Córdoba, Argentina" but the field doesn't show it/);
+  assert.equal($(dom, "#loc-input").value, "");
 });
 
 // A combobox whose own listbox offers suggestions but whose pick handler runs

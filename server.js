@@ -4280,10 +4280,12 @@ function taType(el, text) {
 // A typeahead's shown text and blur, for the scripts that read back or leave a pick.
 const TA_UI_LIB = String.raw`
 const taNorm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
-// What the field shows: its text, else (an emptied react-select input) its control's.
+// What the field shows: its text, else (an emptied react-select input) its
+// control box's single value, else the box's whole text.
 function taShown(el) {
-  const ctl = el.closest('.select__control, [class*="-control"]');
-  return el.value || (ctl ? textOf(ctl) : "");
+  if (el.value) return el.value;
+  const ctl = el.closest('.select__control, [class*="-control"], [class*="__control"]');
+  return ctl ? shownValue(el) || textOf(ctl) : "";
 }
 // A background tab's blur() fires no events, so send them when the page lacks focus.
 function taBlur(el) {
@@ -5402,7 +5404,8 @@ if (!s) return { ok: false, kind: "typeahead", error: "the page changed after th
 const el = s.el;
 const shown = taShown(el);
 const v = taNorm(shown);
-const seen = !!v && (v.indexOf(s.pickedN) >= 0 || v.indexOf(taNorm(s.text)) >= 0);
+// Text the box holds may carry the pick among more; a control's own value must be it.
+const seen = !!v && (el.value ? v.indexOf(s.pickedN) >= 0 || v.indexOf(taNorm(s.text)) >= 0 : v === s.pickedN);
 // The typed text still showing proves nothing unless the press moved something:
 // the field, the hidden companion, or the widget's own list closing, which
 // counts only once the field shows the picked option.
