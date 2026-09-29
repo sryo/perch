@@ -124,3 +124,17 @@ test("the snapshot page script is byte-identical across calls", async () => {
   assert.equal(snaps.length, 2);
   assert.equal(snaps[0], snaps[1]);
 });
+
+test("a page that sets the ref counter to garbage still gets distinct, resolvable refs", async () => {
+  for (const bad of [NaN, Infinity, 1e21, -5, 2.5]) {
+    const dom = page(HTML);
+    dom.__perch_refN = bad;
+    install(dom);
+    const s = text(await handleCall("accessibility_snapshot", {}));
+    const refs = rows(s).map(([r]) => r);
+    assert.equal(new Set(refs).size, refs.length, `${bad}: ${s}`);
+    const r = await handleCall("click", { ref: refOf(s, "Beta") });
+    assert.ok(!r.isError, text(r));
+    assert.deepEqual(dom.clicked, ["b"], String(bad));
+  }
+});
