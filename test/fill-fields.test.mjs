@@ -574,6 +574,21 @@ test("fill: a button named like the field is listed; submit-bar buttons never ar
   assert.deepEqual(o.reveal, [`button "Write cover letter"`]);
 });
 
+test("fill: a reveal hint never reaches past the field's own section", () => {
+  const six = ["A", "B", "C", "D", "E", "F"].map((n) => `<label>${n} <input></label>`).join("");
+  for (const html of [
+    `<main><h2>Customer details</h2><label>Name <input></label><label>Email <input></label><div><button type=button>Expand all</button></div></main>`,
+    `<div><h2>Customer details</h2><form><label>Name <input></label><label>Email <input></label></form><div><button type=button>Expand all</button></div></div>`,
+    `<div role=main><h2>Customer details</h2><label>Name <input></label><label>Email <input></label><div><button type=button>Expand all</button></div></div>`,
+    `<div><h2>Customer details</h2>${six}<div><button type=button>Expand all</button></div></div>`,
+  ]) {
+    const o = run(page(html), "fill", { label_pattern: "customer", text: "x" });
+    assert.equal(o.ok, false, html);
+    assert.equal(o.reveal, undefined, html);
+    assert.match(o.error, /^no fillable field matched \/customer\/i; it may appear only after clicking a button/, html);
+  }
+});
+
 test("fill: no candidate button leaves the plain miss", () => {
   const w = page(`<label>Name <input></label><button type=button>Help</button>`);
   const o = run(w, "fill", { label_pattern: "cover letter", text: "x" });

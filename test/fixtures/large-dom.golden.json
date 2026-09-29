@@ -156,10 +156,7 @@
    "p": "customer",
    "r": {
     "ok": false,
-    "error": "no fillable field matched /customer/i; it may appear after clicking one of reveal (click {label_pattern} it, then fill again)",
-    "reveal": [
-     "button \"Expand all alpha echo 0index alpha 1alph…\""
-    ]
+    "error": "no fillable field matched /customer/i; it may appear only after clicking a button"
    },
    "changed": []
   },
@@ -175,10 +172,7 @@
    "p": "monthly",
    "r": {
     "ok": false,
-    "error": "no fillable field matched /monthly/i; it may appear after clicking one of reveal (click {label_pattern} it, then fill again)",
-    "reveal": [
-     "button \"Expand all alpha echo 0index alpha 1alph…\""
-    ]
+    "error": "no fillable field matched /monthly/i; it may appear only after clicking a button"
    },
    "changed": []
   },

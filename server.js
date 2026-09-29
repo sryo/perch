@@ -3280,12 +3280,22 @@ const REVEAL_SKIP = /submit|apply|next|continue|save/i;
 const REVEAL_TYPING = /\b(enter|type|write|paste|add|edit)\b|manual/i;
 function revealers(re, nearHit) {
   const found = [];
+  // A section ends below the page's main region and any ancestor holding a form
+  // or more than 5 fields: text there names the whole page, not one field.
+  const wide = new Map();
+  const outside = function (p) {
+    if (!wide.has(p)) {
+      wide.set(p, /^(FORM|MAIN|BODY|HTML)$/.test(p.tagName) || attr(p, "role") === "main" || !!p.querySelector("form") ||
+        p.querySelectorAll("input:not([type=hidden]), textarea, select, [contenteditable]").length > 5);
+    }
+    return wide.get(p);
+  };
   Array.prototype.forEach.call(document.querySelectorAll("button, [role=button], a[href], input[type=button]"), function (el, i) {
     if (!vis(el) || isDisabled(el) || attr(el, "type").toLowerCase() === "submit") return;
     const name = accName(el);
     if (!name || REVEAL_SKIP.test(name)) return;
     let tier = re.test(name) ? 0 : re.test(nearText(el)) ? 1 : -1;
-    for (let p = el.parentElement, d = 0; tier < 0 && d < 4 && p && !/^(FORM|BODY|HTML)$/.test(p.tagName); d++, p = p.parentElement) if (nearHit(p)) tier = 1;
+    for (let p = el.parentElement, d = 0; tier < 0 && d < 4 && p && !outside(p); d++, p = p.parentElement) if (nearHit(p)) tier = 1;
     if (tier < 0) return;
     found.push({ line: role(el) + " " + JSON.stringify(clip(name, 40)), rank: [tier, tier && !REVEAL_TYPING.test(name) ? 1 : 0, i] });
   });
