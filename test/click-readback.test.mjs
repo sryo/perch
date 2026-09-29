@@ -180,6 +180,50 @@ test("readback after the document was replaced reports navigated", async () => {
   assert.equal(o.readback, "Welcome");
 });
 
+// A navigation stand-in: the first eval arms, then the document loses perch's
+// state and its body is replaced with `body`.
+async function navigatedTo(body, readback = "body") {
+  const { dom } = onPage(FORM);
+  afterEvals(dom, 1, () => { delete dom.__perch_rb; dom.document.body.innerHTML = body; });
+  return click({ selector: "#b", readback });
+}
+const NAV = `<nav>${"Jobs Teams About ".repeat(24)}</nav>`;
+
+test("a navigated readback reports the new page's h1 past a long nav, readback still the first 300 chars", async () => {
+  const o = await navigatedTo(`${NAV}<h1>Thank you for applying</h1><p>We will be in touch.</p>`);
+  assert.equal(o.navigated, true);
+  assert.deepEqual(o.page, { heading: "Thank you for applying" });
+  assert.ok(o.readback.startsWith("Jobs Teams About"));
+  assert.ok(o.readback.length <= 301, `len ${o.readback.length}`);
+});
+
+test("a navigated readback with no h1 takes the page heading from the first visible h2", async () => {
+  const o = await navigatedTo(`<h2>Application received</h2><h2>Next steps</h2>`);
+  assert.deepEqual(o.page, { heading: "Application received" });
+});
+
+test("a navigated readback skips a hidden h1 for a visible h2", async () => {
+  const o = await navigatedTo(`<h1 style="display:none">Apply now</h1><h2>Application received</h2>`);
+  assert.deepEqual(o.page, { heading: "Application received" });
+});
+
+test("a navigated readback reports the new page's alert text", async () => {
+  const o = await navigatedTo(`<form><div role=alert>Please enter your location</div><input name=loc></form>`);
+  assert.deepEqual(o.page, { alert: "Please enter your location" });
+});
+
+test("a navigated readback with no heading or alert keeps the old shape", async () => {
+  const o = await navigatedTo(`<p id=s>Welcome</p>`, "#s");
+  assert.deepEqual(o, { ok: true, el: `button "Submit"`, readback: "Welcome", changed: true, navigated: true, url: "https://a.test/p" });
+});
+
+test("a same-document readback reports no page key, even with a heading and alert on the page", async () => {
+  onPage(`<h1>Apply</h1><div role=alert>Heads up</div>${FORM}`, SAVE);
+  const o = await click({ selector: "#b", readback: "#s" });
+  assert.equal(o.readback, "Saved");
+  assert.equal(o.page, undefined);
+});
+
 test("readback text is clipped", async () => {
   onPage(`<button id=b>Go</button><p id=s>${"word ".repeat(200)}</p>`);
   const o = await click({ selector: "#b", readback: "#s" });
