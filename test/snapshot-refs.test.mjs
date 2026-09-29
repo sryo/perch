@@ -135,6 +135,6 @@ test("a page that sets the ref counter to garbage still gets distinct, resolvabl
     assert.equal(new Set(refs).size, refs.length, `${bad}: ${s}`);
     const r = await handleCall("click", { ref: refOf(s, "Beta") });
     assert.ok(!r.isError, text(r));
-    assert.deepEqual(dom.clicked, ["b"], String(bad));
+    assert.equal(JSON.stringify(dom.clicked), JSON.stringify(["b"]), String(bad));
   }
 });
