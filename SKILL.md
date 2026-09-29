@@ -6,7 +6,7 @@ allowed-tools: mcp__perch__*
 
 # perch: macOS browser bridge
 
-Which browser a tab lives in is perch's concern. Pass `target: {tabId}` from `list_tabs` or `new_tab`: stable as tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loose: `"canary"`) only filters `list_tabs` or picks `new_tab`'s browser.
+Pass `target: {tabId}` from `list_tabs` or `new_tab`: any browser, stable as tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loose: `"canary"`) only filters `list_tabs` or picks `new_tab`'s browser.
 
 ## Tools
 
@@ -61,7 +61,7 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, 
 
 `fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input`, value verified) wherever page JS runs, minimized too, no tab switch, no focus. `click {trusted: true}` reaches an on-screen window's shown tab (else `tab_not_visible`) without activating it or moving the cursor. So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked); other tabs, or a menu the click leaves shut: a filter typed into its own empty box (`"typed"`). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored.
 
-`accessibility_snapshot {frames:true}` adds iframe controls as `fN` rows, never values. `fN` takes only `click {trusted:true}`; read its `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's.
+`accessibility_snapshot {frames:true}` adds iframe controls as `fN` rows, never values. `fN` takes only `click {trusted:true}`; read its `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's. `frames_unreadable`: retry.
 
 ## Permissions
 

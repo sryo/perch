@@ -250,3 +250,86 @@ test("frames:true drops the Accessibility rows of a same-origin frame already wa
   assert.equal(h.fr, undefined, "the frame rects stay private");
   assert.deepEqual(h.iframes.map((f) => f.same), [true, false]);
 });
+
+// A page with a same-origin frame at CSS (100,100) 400x300, i.e. screen
+// (156,257) in AREA, and the Accessibility frames `frames` inside AREA.
+function framesWorld(dom, frames) {
+  Object.defineProperty(dom, "innerWidth", { value: 598, configurable: true });
+  Object.defineProperty(dom, "innerHeight", { value: 500, configurable: true });
+  const world = makeWorld({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 900, tabs: [{ url: "https://a.test/p", id: "t", dom }] }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 900, ax: { web: [{ ...AREA, frames }] } }],
+  });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  world.reset();
+  return world;
+}
+const MINE_BOX = { x: 156, y: 257, w: 400, h: 300 };
+const frameSnap = async (args = {}) => {
+  const s = (await handleCall("accessibility_snapshot", { frames: true, ...args })).content[0].text;
+  const [h, ...lines] = s.split("\n");
+  return { s, head: JSON.parse(h.slice(2)), lines, f: lines.filter((l) => /^f\d+ /.test(l)) };
+};
+
+test("frames:true keeps a cross-origin frame nested in a walked same-origin frame, and drops the walked frame's own rows", async () => {
+  const { w: dom } = sameOrigin();
+  dom.document.getElementById("app").setAttribute("data-rect", "100,100,400,300");
+  const card = { url: "https://pay.example/card", box: { x: 166, y: 347, w: 300, h: 100 }, kids: [{ role: "AXTextField", title: "Card", box: { x: 176, y: 357, w: 200, h: 30 } }] };
+  const mine = { url: "https://a.test/app", box: MINE_BOX, kids: [{ role: "AXTextField", title: "First name", box: { x: 166, y: 267, w: 200, h: 30 } }], frames: [card] };
+  framesWorld(dom, [mine]);
+  const { s, head, lines, f } = await frameSnap();
+  assert.deepEqual(f, [`f1 textbox "Card" frame="pay.example"`], s);
+  assert.ok(lines.includes(`2 textbox "First name" name="first" required frame=0`), s);
+  assert.deepEqual(head.frames, { count: 1 });
+});
+
+for (const [name, err] of [
+  ["an AppleScript -1728", Object.assign(new Error("Can't get object."), { errorNumber: -1728 })],
+  ["an ObjC bridge message", new Error("Error: -[__NSCFNumber count]: unrecognized selector sent to instance 0x8f1c")],
+]) {
+  test(`a frame walk that throws ${name} gives a coded frames.error beside the page rows`, async () => {
+    const { w: dom } = sameOrigin();
+    const world = framesWorld(dom, [{ url: "https://pay.example/card", box: { x: 156, y: 600, w: 300, h: 50 }, kids: [] }]);
+    world.state.axThrow = err;
+    const { s, head, lines } = await frameSnap();
+    assert.match(head.frames.error, /^[a-z][a-z_]*: /, s);
+    assert.doesNotMatch(head.frames.error, /NSCFNumber|Can't get object/, s);
+    assert.equal(lines[0], `1 heading "Careers" level=1`);
+  });
+}
+
+// Five buttons fill max:5, so the same-origin frame's document is never walked.
+function truncatedPage() {
+  const w = page(`${[1, 2, 3, 4, 5].map((i) => `<button>B${i}</button>`).join("")}<iframe id=app data-rect="100,100,400,300"></iframe>`);
+  w.document.getElementById("app").contentDocument.body.innerHTML = `<label for=fn>First name</label><input id=fn><label for=ln>Last name</label><input id=ln>`;
+  return w;
+}
+const MINE = { url: "https://a.test/app", box: MINE_BOX, kids: [
+  { role: "AXTextField", title: "First name", box: { x: 166, y: 267, w: 200, h: 30 } },
+  { role: "AXTextField", title: "Last name", box: { x: 166, y: 307, w: 200, h: 30 } },
+] };
+
+test("a page cut at max before a same-origin frame leaves the frame out of the walked boxes, so its controls come back as frame rows", async () => {
+  const w = truncatedPage();
+  const { head, lines } = snap(w, { max: 5, frames: true });
+  assert.equal(head.truncated, true);
+  assert.deepEqual(head.iframes.map((f) => f.same), [true]);
+  assert.equal(head.fr, undefined);
+  assert.ok(!lines.some((l) => / frame=0$/.test(l)), lines.join("\n"));
+  assert.deepEqual(snap(w, { max: 500, frames: true }).head.fr, [[100, 100, 400, 300]]);
+
+  framesWorld(w, [MINE]);
+  const r = await frameSnap({ max: 5 });
+  assert.equal(r.head.truncated, true);
+  assert.deepEqual(r.f, [`f1 textbox "First name" frame="a.test"`, `f2 textbox "Last name" frame="a.test"`], r.s);
+});
+
+test("an untruncated same-origin frame is listed once, by the page walk", async () => {
+  framesWorld(truncatedPage(), [MINE]);
+  const r = await frameSnap();
+  assert.deepEqual(r.f, [], r.s);
+  assert.deepEqual(r.lines.slice(5), [`6 textbox "First name" frame=0`, `7 textbox "Last name" frame=0`]);
+  assert.deepEqual(r.head.frames, { count: 0 });
+});

@@ -644,6 +644,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         if (el.d && !state.dialogs.includes(el.d)) return -25202;
         // A kid removed from its frame is gone, like a closed dialog's elements.
         if (el.fk && el.fk.gone) return -25202;
+        // state.axThrow: reading a frame's web area throws it, as a bridge failure would.
+        if (el.fr && state.axThrow) throw state.axThrow;
         if (name.js === "AXParent" && el.parent !== undefined) {
           if (!el.parent) return -25205;
           out[0] = el.parent;
