@@ -1303,6 +1303,17 @@ test("fill {fields}: a batch of only the combobox has nothing to recheck and no 
   assert.equal(o.ok, true, JSON.stringify(o));
 });
 
+// The first pass carries no per-call nonce, so a repeated batch is the same
+// source and the browser reuses its compiled script.
+test("fill {fields}: the same batch twice sends the same page script", async () => {
+  const { world } = onPage(FORM);
+  const sent = passes(world);
+  await fill({ fields: FIVE });
+  await fill({ fields: FIVE });
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0], sent[1]);
+});
+
 test("fill {fields}: a page that navigated before the extra pass is not failed", async () => {
   const { world, dom } = onPage(CUSTOM_CLEARS, CUSTOM_CLEARS_JS);
   const sent = passes(world);

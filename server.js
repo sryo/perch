@@ -5270,11 +5270,13 @@ function chosen(c) {
   const t = shownWhole(box) ? textOf(box).trim() : "";
   return PLACEHOLDERISH.test(t) ? "" : t;
 }
-// This run's landed fields by index (A.run names the call; a pass from 0 starts
-// it over). The last pass re-reads them, since a later field's handler may
-// clear or change one, as a country resets its state.
+// This run's landed fields by index. A pass from 0 starts it over and names it
+// (a deferring pass returns the name, later passes send it as A.run), so a
+// batch's first pass is the same source every call and stays in the page's
+// compile cache. The last pass re-reads them, since a later field's handler
+// may clear or change one, as a country resets its state.
 let ff = window.__perch_ff;
-if (!A.from) ff = window.__perch_ff = { run: A.run, items: {} };
+if (!A.from) ff = window.__perch_ff = { run: Math.random().toString(36).slice(2), items: {} };
 else if (!ff || ff.run !== A.run) ff = null;
 const AFTER = " after a later field changed; fill it again";
 // A framework re-render replaces a node but keeps its value: a disconnected
@@ -5340,6 +5342,7 @@ function drift(it, again) {
 const results = [];
 const stop = function (i) {
   const out = { results: results, defer: i };
+  if (ff && !A.from) out.run = ff.run;
   if (ff && Object.keys(ff.items).length) out.watch = true;
   return out;
 };
@@ -6515,7 +6518,7 @@ async function fillFields(fields, target, only) {
       halt(e && e.message);
     }
   };
-  const run = Math.random().toString(36).slice(2);
+  let run;
   const recheck = (r) => { for (const [i, x] of Object.entries(r.recheck || {})) if (results[i]) results[i] = x; };
   let watch = false;
   for (let from = 0; from < A.length;) {
@@ -6527,6 +6530,7 @@ async function fillFields(fields, target, only) {
       return halted;
     }
     results.push(...r.results);
+    if (!from) run = r.run;
     recheck(r);
     watch = !!r.watch;
     if (r.defer == null) break;
