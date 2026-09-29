@@ -4,6 +4,8 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
+import { readdirSync } from "node:fs";
+import { BOUND, RAW, ownTmp, clean, hung } from "./helpers/shot.mjs";
 import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
@@ -562,6 +564,32 @@ test("an unmoved crop whose capture exits nonzero is cropped by Node's screencap
   await shoot({ selector: "#t" });
   assert.deepEqual(calls.map((c) => c[0]).slice(0, 2), ["screencapture", "sips"]);
   assert.deepEqual(world.state.files, {});
+});
+
+test("a Node crop whose sips fails or hangs is a coded refusal, bounded, never sips's or fs's words, every file removed", { timeout: 2000 }, async (t) => {
+  const dir = ownTmp(t);
+  const fail = (rest) => async (cmd, a, o) => {
+    if (cmd === "sips") throw Object.assign(new Error(RAW), { code: 1, killed: false, stderr: "Error: unable to crop" });
+    return rest(cmd, a, o);
+  };
+  const nofile = (rest) => async (cmd, a, o) => (cmd === "sips" ? { stdout: "" } : rest(cmd, a, o));
+  for (const [name, make, code] of [["exit", fail, "window_offscreen"], ["nofile", nofile, "window_offscreen"], ["hung", (rest) => hung("sips", [], rest), "timeout"]]) {
+    const p = still();
+    install(p);
+    world.state.capture = false;
+    spawns(2000);
+    const rest = deps.exec;
+    const opts = [];
+    const inner = make(rest);
+    deps.exec = (cmd, a, o) => { opts.push([cmd, o]); return inner(cmd, a, o); };
+    const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+    assert.equal(r.isError, true, name);
+    assert.match(r.content[0].text, new RegExp(`^error: ${code}: screenshot: could not place the element in the window's capture`), name);
+    clean(r.content[0].text);
+    assert.deepEqual(opts, [["screencapture", BOUND], ["sips", BOUND]], name);
+    assert.deepEqual(readdirSync(dir), [], name);
+    assert.deepEqual(where(p), [0, 40, 37], name);
+  }
 });
 
 test("a capture that ignores SIGTERM is SIGKILLed before its file is dropped", async () => {

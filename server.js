@@ -3501,6 +3501,31 @@ function clipPixels(m, W, H) {
   return { x, y, w: Math.min(W, x1) - x, h: Math.min(H, y1) - y, cut: x0 < 0 || y0 < 0 || x1 > W || y1 > H };
 }
 
+// Node's screencapture/sips fallback, bounded like the runtime's capture
+// (SHOT_CAPTURE_SECS there). A failed run says what the call can act on, never
+// execFile's command line or a temp path. The window is not resolved again to
+// tell why a capture came back empty: a window that closed, minimized or left
+// the Space since it was measured is the case that happens.
+const NODE_SHOT_SECS = 3;
+const NODE_SHOT_NO_IMAGE = `timeout: screenshot: the window capture gave no image within ${NODE_SHOT_SECS}s; nothing was captured`;
+const NODE_SHOT_GONE = "window_offscreen: screenshot: the window capture gave no image (the window closed, minimized or left this Space since it was measured); nothing was captured";
+const NODE_SHOT_UNPLACED = "window_offscreen: screenshot: could not place the element in the window's capture (the window may have changed since it was measured); nothing was cropped";
+const NODE_SHOT_CROP_TIMEOUT = `timeout: screenshot: could not place the element in the window's capture within ${NODE_SHOT_SECS}s; nothing was cropped`;
+
+// Runs screencapture or sips into the path it ends with: the image read back
+// with its size, "killed" for a run stopped at the bound, or null for any other
+// failure (nonzero exit, no file, not a PNG or JPEG).
+async function shotChild(cmd, argv) {
+  try {
+    await deps.exec(cmd, argv, { timeout: NODE_SHOT_SECS * 1000, killSignal: "SIGKILL" });
+  } catch (e) {
+    return e && e.killed ? "killed" : null;
+  }
+  const buf = await readFile(argv[argv.length - 1]).catch(() => null);
+  const dims = buf && imageDims(buf);
+  return dims ? { buf, dims } : null;
+}
+
 async function screenshot(args = {}) {
   const { raise = false, target, format = "png", maxWidth = 1568, ref, selector } = args;
   const aimed = (ref != null && ref !== "") || (selector != null && selector !== "");
@@ -3525,31 +3550,30 @@ async function screenshot(args = {}) {
   try {
     // A missing CGWindowID is rejected by shotGeom: a screen-rect capture would
     // show the user's foreground app rather than a minimized browser window.
-    await deps.exec("screencapture", ["-l", String(g.windowNumber), "-x", "-o", "-t", ext, files[0]]);
-    let buf = await readFile(files[0]);
-    let dims = imageDims(buf);
+    let img = await shotChild("screencapture", ["-l", String(g.windowNumber), "-x", "-o", "-t", ext, files[0]]);
+    if (img === "killed") throw new Error(NODE_SHOT_NO_IMAGE);
+    if (!img) throw new Error(NODE_SHOT_GONE);
+    let { buf, dims } = img;
     let clip, clipped = g.clipped;
     if (g.map) {
-      const c = dims && clipPixels(g.map, dims.w, dims.h);
-      if (!c || !(c.w > 0 && c.h > 0)) throw new Error("screenshot: could not place the element in the window's capture; nothing was cropped");
+      const c = clipPixels(g.map, dims.w, dims.h);
+      if (!(c.w > 0 && c.h > 0)) throw new Error(NODE_SHOT_UNPLACED);
       files.push(`${base}-c.${ext}`);
-      await deps.exec("sips", ["--cropToHeightWidth", String(c.h), String(c.w), "--cropOffset", String(c.y), String(c.x), ...quality, files[0], "--out", files[1]]);
-      buf = await readFile(files[1]);
-      dims = imageDims(buf);
+      img = await shotChild("sips", ["--cropToHeightWidth", String(c.h), String(c.w), "--cropOffset", String(c.y), String(c.x), ...quality, files[0], "--out", files[1]]);
+      if (img === "killed") throw new Error(NODE_SHOT_CROP_TIMEOUT);
+      if (!img) throw new Error(NODE_SHOT_UNPLACED);
+      ({ buf, dims } = img);
       clip = { x: c.x, y: c.y, w: c.w, h: c.h };
       clipped = clipped || c.cut;
     }
-    if (maxWidth > 0 && dims && dims.w > maxWidth) {
+    if (maxWidth > 0 && dims.w > maxWidth) {
       const src = files[files.length - 1];
       files.push(`${base}-s.${ext}`);
       // Best effort: if sips fails, the full-size capture still goes back.
-      try {
-        await deps.exec("sips", ["--resampleWidth", String(maxWidth), ...quality, src, "--out", files[files.length - 1]]);
-        buf = await readFile(files[files.length - 1]);
-        dims = imageDims(buf);
-      } catch {}
+      img = await shotChild("sips", ["--resampleWidth", String(maxWidth), ...quality, src, "--out", files[files.length - 1]]);
+      if (img && img !== "killed") ({ buf, dims } = img);
     }
-    return { __image: true, data: buf.toString("base64"), mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: dims ? meta(dims, clip, clipped) : undefined };
+    return { __image: true, data: buf.toString("base64"), mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: meta(dims, clip, clipped) };
   } finally {
     await Promise.all(files.map((f) => unlink(f).catch(() => {})));
   }
