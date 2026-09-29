@@ -198,6 +198,9 @@ test("navigate gives up at its timeout when the new document never arrives", asy
 test("navigate tells the caller a load it gave up on didn't finish", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(1) }])], cg: [{ owner: "Google Chrome" }] });
   world.state.linger = 1e9;
+  // Chromium keeps showing the old url while a page-started load is pending.
+  const tab = world.tabsOf("Google Chrome", 0)[0];
+  tab.shownUrl = () => tab.page.url;
   const { o } = await call("navigate", { url: "https://slow.test/" });
   assert.equal(o.ok, false);
   assert.match(o.error, /^timeout: https:\/\/slow\.test\/ had not committed/);

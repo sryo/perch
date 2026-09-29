@@ -654,3 +654,40 @@ test("navigate on Safari: loads from page JS, and a fallback carries no Chromium
   assert.deepEqual(paths().slice(1), [["navigate", "Safari", "https://next.test/"]]);
   assert.equal(world.winSpec("Safari", 0).active, 0);
 });
+
+// Chromium keeps showing the old url while a page-started load waits on a slow
+// server, and the old document keeps answering.
+test("navigate tool on Chrome: a page-started load still pending at the deadline is a coded timeout, not load_failed", async () => {
+  install(fixture());
+  world.state.commitMs = 1e9;
+  const tab = world.tabsOf("Google Chrome", 0)[0];
+  tab.shownUrl = () => tab.page.url;
+  const { o } = await navTool({ url: "https://next.test/" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^timeout: https:\/\/next\.test\/ had not committed after 15000ms; the tab shows http:\/\/127\.0\.0\.1:8787\/fixture\.html; it may still load, check before retrying/);
+  assert.equal(o.tabId, "chrome:7");
+});
+
+test("navigate tool on Chrome: a tab that settled on its old url only at the deadline is load_failed", async () => {
+  install(fixture());
+  world.state.commitMs = 1e9;
+  const tab = world.tabsOf("Google Chrome", 0)[0];
+  tab.shownUrl = () => tab.page.url;
+  const t0 = world.clock.t;
+  Object.defineProperty(tab, "loading", { get: () => () => world.clock.t < t0 + NAV_TIMEOUT, configurable: true });
+  const { o } = await navTool({ url: "https://next.test/" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: the tab stayed on http:\/\/127\.0\.0\.1:8787\/fixture\.html/);
+});
+
+// The new document committed, but no check after the commit got a reply, so the
+// last answer came from the old one.
+test("navigate tool on Chrome: a load that committed with every later check unanswered is ok, unwaited", async () => {
+  install(fixture());
+  world.state.loadTicks = 1e9;
+  world.state.commitMs = 4000;
+  const t0 = world.clock.t;
+  world.state.onExecute = () => { if (world.clock.t >= t0 + 4000) world.state.hung = true; };
+  const { o } = await navTool({ url: "https://next.test/" });
+  assert.deepEqual(o, { ok: true, url: "https://next.test/", waited: false, tabId: "chrome:7" });
+});

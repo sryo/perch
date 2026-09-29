@@ -1939,11 +1939,17 @@ function jxaRuntime(BROWSERS, HANG) {
         }
         delay(0.05);
       }
-      // The last check that answered still found the stamped document: the load never
-      // committed. One url read, only here, tells a tab that stayed from one that moved.
+      // The last check that answered still found the stamped document. A url and a
+      // loading read, only here, tell a tab that settled from a load still pending
+      // (Chromium shows the old url while a page-started load waits on its server)
+      // and from a document that committed after the last answer. Safari has no
+      // loading read, and may show a pending url, so it gets neither.
       if (lastC && lastC.old) {
         const u = read(function () { return String(t.tab.url()); });
-        if (u === lastC.href) return result(false, null, lastC.href);
+        const busy = t.kind === "safari" ? null : read(function () { return t.tab.loading(); });
+        if (u === lastC.href) return busy === true ? notCommitted(u) : result(false, null, lastC.href);
+        const asked = function (x) { return x === a.url || x.replace(/\/$/, "") === a.url.replace(/\/$/, ""); };
+        if (u != null && (busy === false || (busy === true && viaPage && asked(u)))) return result(false, u);
         if (u != null) return notCommitted(u);
       }
       return result(false);
@@ -2648,7 +2654,7 @@ async function navigate(url, target, raise) {
     return { ok: false, error: `load_failed: the tab stayed on ${r.stayed}, as a download, a 204 or a load the page dropped leaves it`, ...tab };
   }
   if (r && r.notCommitted != null) {
-    return { ok: false, error: `timeout: ${url} had not committed after ${NAV_TIMEOUT}ms; the tab shows ${r.notCommitted}`, ...tab };
+    return { ok: false, error: `timeout: ${url} had not committed after ${NAV_TIMEOUT}ms; the tab shows ${r.notCommitted}; it may still load, check before retrying`, ...tab };
   }
   // waited:false: the timeout ran out after the new document committed but before
   // it finished loading, with no check ever answered, or on a tab that can't be
