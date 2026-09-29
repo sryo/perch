@@ -772,6 +772,53 @@ test("fill {fields}: a typeahead entry gets the short-query retry too", async ()
   assert.equal($(dom, "[name=name]").value, "Ada");
 });
 
+// A perch page script that throws is reported by its error name alone.
+const SECRET = "throw new TypeError('secret-internal detail');";
+function throwAt(dom, marker) {
+  const ev = dom.eval.bind(dom);
+  let threw = 0;
+  dom.eval = (js) => js.includes(marker) ? (threw++, ev(js.replace(marker, SECRET + marker))) : ev(js);
+  return () => threw;
+}
+const noRaw = (x) => {
+  const s = JSON.stringify(x);
+  for (const k of ["secret-internal", "__perch_error", "stack"]) assert.ok(!s.includes(k), s);
+};
+
+test("typeahead: a pick that throws is ok:false with the error name only", async () => {
+  const { dom } = onPage(LOCATION, LOCATION_JS());
+  const threw = throwAt(dom, "if (A.probe) return !!(s.comp");
+  const o = await fill({ label_pattern: "location", text: "Rosario" });
+  assert.ok(threw() > 0);
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kind, "typeahead");
+  assert.match(o.error, /\(TypeError\)/);
+  assert.doesNotMatch(o.error, /page changed/);
+  noRaw(o);
+});
+
+test("typeahead: a short-query retype that throws is ok:false with the error name only, alone and in fields", async () => {
+  let { dom } = onPage(LOCATION, SHORT_LOOKUP(CORDOBAS));
+  let threw = throwAt(dom, "taType(s.el, A.query);");
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina" });
+  assert.equal(threw(), 1);
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kind, "typeahead");
+  assert.equal(o.query, "cordoba");
+  assert.match(o.error, /\(TypeError\)/);
+  noRaw(o);
+  ({ dom } = onPage(LOCATION, SHORT_LOOKUP(CORDOBAS)));
+  threw = throwAt(dom, "taType(s.el, A.query);");
+  const b = await fill({ fields: [{ selector: "#loc", text: "Córdoba, Argentina" }, { label_pattern: "name", text: "Ada" }] });
+  assert.equal(threw(), 1);
+  assert.equal(b.ok, false, JSON.stringify(b));
+  assert.equal(b.results[0].ok, false);
+  assert.equal(b.results[0].kind, "typeahead");
+  assert.match(b.results[0].error, /\(TypeError\)/);
+  assert.equal(b.results[1].ok, true);
+  noRaw(b);
+});
+
 test("taQuery: the first comma part, accents folded, at most two words when long; null when nothing shorter", () => {
   assert.equal(taQuery("Córdoba, Argentina"), "cordoba");
   assert.equal(taQuery("  São  Paulo , SP, Brazil"), "sao paulo");

@@ -968,7 +968,7 @@ test("fill {fields}: a later page pass that errors keeps the fields that landed"
   assert.equal(r.isError, undefined, JSON.stringify(o));
   halted(o, 3);
   assert.equal(o.results[1].selected, "Senior");
-  assert.deepEqual(o.results[2], { ok: false, error: codeOsaError("x") });
+  assert.deepEqual(o.results[2], { ok: false, error: "fill: the page script failed on this page (Error); nothing verified" });
 });
 
 test("fill {fields}: an uncoded failure on the first field still throws", async () => {
@@ -979,12 +979,12 @@ test("fill {fields}: an uncoded failure on the first field still throws", async 
   assert.equal(o, "error: page JS failed");
 });
 
-test("fill {fields}: the first page pass erroring is returned as it was", async () => {
+test("fill {fields}: the first page pass erroring is ok:false as a single call would be", async () => {
   const { world, dom } = onPage(CUSTOM, CUSTOM_JS);
   breakPassFrom(world, dom, 0);
-  const { r } = await fill({ fields: TWO });
-  assert.equal(r.isError, true);
-  assert.equal(JSON.parse(r.content[0].text).__perch_error, "x");
+  const { r, o } = await fill({ fields: TWO });
+  assert.equal(r.isError, undefined);
+  assert.deepEqual(o, { ok: false, error: "fill: the page script failed on this page (Error); nothing verified" });
 });
 
 test("fill {fields}: a halted batch keeps its skipped and unverified counts", async () => {
@@ -1400,7 +1400,60 @@ test("select {trusted}: a pick that throws ends at once as a coded ok:false", as
   const o = JSON.parse(r.content[0].text);
   assert.equal(o.ok, false);
   assert.equal(o.kind, "select");
-  assert.equal(o.error, "the page changed while picking; not verified (TypeError: boom)");
+  assert.equal(o.error, "select: the page script failed on this page (TypeError); nothing verified");
+});
+
+// A perch page script that throws is reported by its error name alone: the
+// message and stack are page internals, not something the agent can act on.
+const SECRET = "throw new TypeError('secret-internal detail');";
+// Makes the nth (by `when`) page script containing `marker` throw just before it.
+function throwAt(dom, marker, when = () => true) {
+  const ev = dom.eval.bind(dom);
+  let n = 0, threw = 0;
+  dom.eval = (js) => js.includes(marker) && when(++n, js) ? (threw++, ev(js.replace(marker, SECRET + marker))) : ev(js);
+  return () => threw;
+}
+const noRaw = (x) => {
+  const s = JSON.stringify(x);
+  for (const k of ["secret-internal", "__perch_error", "stack"]) assert.ok(!s.includes(k), s);
+};
+
+test("select: a pick or read that throws is ok:false with the error name only", async () => {
+  for (const marker of ["s.polls++;", `if (!s) return { ok: false, error: "the page changed after the pick was pressed; not verified" };`]) {
+    const { dom } = onPage(CUSTOM, CUSTOM_JS);
+    const threw = throwAt(dom, marker);
+    const r = await handleCall("select", { label_pattern: "level", text: "senior" });
+    assert.ok(threw() > 0, marker);
+    assert.equal(r.isError, undefined, r.content[0].text);
+    const o = JSON.parse(r.content[0].text);
+    assert.equal(o.ok, false);
+    assert.equal(o.kind, "select");
+    assert.match(o.error, /\(TypeError\)/);
+    assert.doesNotMatch(o.error, /page changed/);
+    noRaw(o);
+  }
+});
+
+const FF_PASS = `const href = location.href.split("#")[0];`;
+
+test("fill {fields}: a first page pass that throws is ok:false with the error name only", async () => {
+  const { dom } = onPage(CUSTOM, CUSTOM_JS);
+  throwAt(dom, FF_PASS);
+  const { r, o } = await fill({ fields: TWO });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^fill: .*\(TypeError\)/);
+  noRaw(o);
+});
+
+test("fill {fields}: a later page pass that throws halts with the error name only", async () => {
+  const { dom } = onPage(CUSTOM, CUSTOM_JS);
+  throwAt(dom, FF_PASS, (n) => n === 2);
+  const { r, o } = await fill({ fields: [...TWO, { label_pattern: "last", text: "B" }] });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  halted(o, 3);
+  assert.match(o.error, /\(TypeError\)/);
+  noRaw(o);
 });
 
 // Every pass is built from the batch alone, so a repeated batch sends the same

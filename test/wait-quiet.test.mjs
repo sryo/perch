@@ -115,6 +115,16 @@ test("a new document mid-wait restarts the quiet window", async () => {
   assert.ok(o.waited >= 7 * 50 + 500, `waited ${o.waited}`);
 });
 
+test("a quiet poll that throws is a coded error naming only the error name", async () => {
+  const { dom } = onPage();
+  const orig = dom.eval.bind(dom), marker = "if (s && s.id === A.id)";
+  dom.eval = (js) => orig(js.includes(marker) ? js.replace(marker, "throw new TypeError('secret-internal detail');" + marker) : js);
+  const { r, t } = await call({ quiet: 300, timeout: 2000 });
+  assert.equal(r.isError, true, t);
+  assert.match(t, /^error: wait: .*\(TypeError\)/);
+  for (const k of ["secret-internal", "__perch_error", "stack"]) assert.ok(!t.includes(k), t);
+});
+
 test("the MutationObserver stops at the first mutation after its timeout", async () => {
   const { dom } = onPage();
   await call({ quiet: 200, timeout: 1000 });
