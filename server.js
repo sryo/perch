@@ -3895,6 +3895,64 @@ function dropOn(U) {
 }
 `;
 
+// Trusted input: find the element, scroll it into view, estimate its screen
+// point, and arm listeners: mousemove for calibration, mousedown for `hit`.
+// Estimate: screen origin + browser chrome (outer - inner, assumed left and top)
+// + the element's center. A hidden tab's screenX/outerWidth are stale, so it
+// asks to retry until the tab is visible. An element that is or sits under an
+// embedded frame is refused: frame controls take an fN ref.
+const TRUSTED_PROBE_HEAD = String.raw`
+if (document.visibilityState === "hidden") return { ok: false, retry: "hidden" };
+let el;
+if (A.select) {
+  // select {trusted}: the control select pressed, or the option it picked (gone once its list closed).
+  const s = window.__perch_select;
+  if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
+  el = A.select === "option" ? s.optEl : s.openEl;
+  if (A.select === "option" && !(el && el.isConnected && vis(el))) return { ok: false, gone: true };
+} else if (A.ref || A.selector || !A.forFill) {
+  const r = A.ref || A.selector ? resolveEl(A) : clickableByLabel(A);
+  if (r.out) return r.out;
+  el = r.el;
+} else {
+  const re = new RegExp(A.label_pattern, "i");
+  const fields = Array.from(document.querySelectorAll("input, textarea")).filter(function (e) {
+    return !(e.tagName === "INPUT" && INPUT_SKIP.indexOf((e.type || "text").toLowerCase()) >= 0) && !e.disabled && !e.readOnly;
+  });
+  const hit = function (e) { return re.test(labelText(e)) || re.test(hintText(e)); };
+  el = fields.filter(vis).find(hit) || fields.find(hit);
+  if (!el) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
+}
+if (A.forFill && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, error: "fill {trusted:true} types into plain inputs/textareas only; rich editors work without trusted" };
+const FRAMED = " is or lies under an embedded frame; reach frame controls through accessibility_snapshot {frames:true} and click an fN ref with trusted:true";
+const inFrame = function (e) { return !!(e && e.closest && e.closest("iframe, frame, object, embed")); };
+if (inFrame(el)) return { ok: false, error: ident(el) + FRAMED };
+try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
+const r = el.getBoundingClientRect();
+if (!r.width || !r.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
+const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+if (inFrame(document.elementFromPoint && document.elementFromPoint(cx, cy))) return { ok: false, error: ident(el) + FRAMED };
+`;
+const TRUSTED_PROBE_TAIL = String.raw`if (A.forFill && !A.background) { setNativeValue(el, ""); fire(el, ["input"]); }
+const prev = window.__perch_trusted;
+if (prev && prev.off) prev.off();
+const st = window.__perch_trusted = { el: el, down: null, moves: [] };
+const onMove = function (e) { if (st.moves.length < 20) st.moves.push([e.clientX, e.clientY, e.screenX, e.screenY]); };
+const onDown = function (e) { st.down = el === e.target || el.contains(e.target); window.removeEventListener("mousedown", onDown, true); };
+window.addEventListener("mousemove", onMove, true);
+window.addEventListener("mousedown", onDown, true);
+st.off = function () { window.removeEventListener("mousemove", onMove, true); window.removeEventListener("mousedown", onDown, true); };
+return {
+  ok: true,
+  el: ident(el),
+  x: window.screenX + (window.outerWidth - window.innerWidth) + cx,
+  y: window.screenY + (window.outerHeight - window.innerHeight) + cy,
+  cx: cx,
+  cy: cy,
+  iw: window.innerWidth,
+  ih: window.innerHeight,
+};`;
+
 export const PAGE_SCRIPTS = {
   get_text: String.raw`
 const r = resolveEl(A, A.html ? "html" : "body");
@@ -4683,62 +4741,15 @@ if (all.length > st.seen) out.more = all.length - st.seen;
 return out;
 `,
 
-  // Trusted input: find the element, scroll it into view, estimate its screen
-  // point, and arm listeners: mousemove for calibration, mousedown for `hit`.
-  // Estimate: screen origin + browser chrome (outer - inner, assumed left and top)
-  // + the element's center. A hidden tab's screenX/outerWidth are stale, so it
-  // asks to retry until the tab is visible. An element that is or sits under an
-  // embedded frame is refused: frame controls take an fN ref.
-  trusted_probe: String.raw`
-if (document.visibilityState === "hidden") return { ok: false, retry: "hidden" };
-let el;
-if (A.select) {
-  // select {trusted}: the control select pressed, or the option it picked (gone once its list closed).
-  const s = window.__perch_select;
-  if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
-  el = A.select === "option" ? s.optEl : s.openEl;
-  if (A.select === "option" && !(el && el.isConnected && vis(el))) return { ok: false, gone: true };
-} else if (A.ref || A.selector || !A.forFill) {
-  const r = A.ref || A.selector ? resolveEl(A) : clickableByLabel(A);
-  if (r.out) return r.out;
-  el = r.el;
-} else {
-  const re = new RegExp(A.label_pattern, "i");
-  const fields = Array.from(document.querySelectorAll("input, textarea")).filter(function (e) {
-    return !(e.tagName === "INPUT" && INPUT_SKIP.indexOf((e.type || "text").toLowerCase()) >= 0) && !e.disabled && !e.readOnly;
-  });
-  const hit = function (e) { return re.test(labelText(e)) || re.test(hintText(e)); };
-  el = fields.filter(vis).find(hit) || fields.find(hit);
-  if (!el) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
+  trusted_probe: TRUSTED_PROBE_HEAD + TRUSTED_PROBE_TAIL,
+  // fill's probe also records a typeahead (as trusted_fill_background does)
+  // before the field is cleared, so the check can hand it to the pick.
+  trusted_fill_probe: TYPEAHEAD_LIB + TRUSTED_PROBE_HEAD + String.raw`
+if (A.forFill) {
+  const ta = isTypeahead(el) && taParts(el);
+  window.__perch_ta = ta ? { el: el, comp: ta.comp, pop: ta.pop, prior: el.value, priorComp: ta.comp && ta.comp.value } : null;
 }
-if (A.forFill && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, error: "fill {trusted:true} types into plain inputs/textareas only; rich editors work without trusted" };
-const FRAMED = " is or lies under an embedded frame; reach frame controls through accessibility_snapshot {frames:true} and click an fN ref with trusted:true";
-const inFrame = function (e) { return !!(e && e.closest && e.closest("iframe, frame, object, embed")); };
-if (inFrame(el)) return { ok: false, error: ident(el) + FRAMED };
-try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
-const r = el.getBoundingClientRect();
-if (!r.width || !r.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
-const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-if (inFrame(document.elementFromPoint && document.elementFromPoint(cx, cy))) return { ok: false, error: ident(el) + FRAMED };
-if (A.forFill && !A.background) { setNativeValue(el, ""); fire(el, ["input"]); }
-const prev = window.__perch_trusted;
-if (prev && prev.off) prev.off();
-const st = window.__perch_trusted = { el: el, down: null, moves: [] };
-const onMove = function (e) { if (st.moves.length < 20) st.moves.push([e.clientX, e.clientY, e.screenX, e.screenY]); };
-const onDown = function (e) { st.down = el === e.target || el.contains(e.target); window.removeEventListener("mousedown", onDown, true); };
-window.addEventListener("mousemove", onMove, true);
-window.addEventListener("mousedown", onDown, true);
-st.off = function () { window.removeEventListener("mousemove", onMove, true); window.removeEventListener("mousedown", onDown, true); };
-return {
-  ok: true,
-  el: ident(el),
-  x: window.screenX + (window.outerWidth - window.innerWidth) + cx,
-  y: window.screenY + (window.outerHeight - window.innerHeight) + cy,
-  cx: cx,
-  cy: cy,
-  iw: window.innerWidth,
-  ih: window.innerHeight,
-};`,
+` + TRUSTED_PROBE_TAIL,
 
   // A click by point has no element to probe, so it takes the viewport rects of
   // the page's embedded frames, plus the page's own estimate of its screen origin
@@ -4796,10 +4807,20 @@ const st = window.__perch_trusted || {};
 if (st.off) st.off();
 const out = { hit: st.down };
 if (A.forFill && st.el) {
-  const got = String(st.el.value || "");
+  const got = String(st.el.value || ""), text = A.text;
+  const norm = function (s) { return s.replace(/\r\n/g, "\n").replace(/\s+/g, " "); };
+  // A phone mask reformats or drops a country code (plain fill's rule).
+  const d = got.replace(/\D/g, ""), t = text.replace(/\D/g, "");
+  const masked = d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t);
   out.len = got.length;
-  out.ok = got.replace(/\s/g, "").length >= Math.floor(A.text.replace(/\s/g, "").length * 0.9);
-  if (!out.ok) out.error = "trusted typing did not land (got " + got.length + " chars)";
+  out.ok = got === text || norm(got) === norm(text) || masked;
+  if (!out.ok) out.error = "trusted typing left a different value (" + got.length + " chars: " + JSON.stringify(clip(got, 40)) + ")";
+  // A typeahead keeps only a picked suggestion: Node picks next.
+  const ta = window.__perch_ta;
+  if (out.ok && ta && ta.el === st.el) {
+    if (out.hit !== true) { out.ok = false; out.error = "the click did not reach " + ident(st.el) + ", so no suggestion can be picked"; }
+    else { ta.text = text; return { hit: true, pending: true, trusted: true }; }
+  }
 }
 return out;
 `,
@@ -5066,7 +5087,7 @@ async function trustedFill({ ref, selector, label_pattern, text, raise, target }
   if (!raise) return runPage("fill", "trusted_fill_background", { ref, selector, label_pattern, text }, target);
   return rt("trustedFill", {
     target, raise,
-    probe: pageFn("trusted_probe", { ref, selector, label_pattern, forFill: true, background: !raise }),
+    probe: pageFn("trusted_fill_probe", { ref, selector, label_pattern, forFill: true, background: !raise }),
     cal: pageFn("trusted_cal", {}),
     calReset: pageFn("trusted_cal", { reset: true }),
     check: pageFn("trusted_check", { forFill: true, text }),
@@ -5275,7 +5296,7 @@ async function fill(args = {}) {
     ? await trustedFill({ ref, selector, label_pattern, text: body, raise, target })
     : await runPage("fill", "fill", { ref, selector, label_pattern, text: body }, target);
   if (!r || !r.pending) return r;
-  const out = { ...await pickSuggestion(target), ...(r.trusted ? { trusted: true } : {}) };
+  const out = { ...await pickSuggestion(target), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
 }
 
