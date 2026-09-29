@@ -902,6 +902,72 @@ test("fill {trusted}: a value span showing another option, a cut word or extra t
   }
 });
 
+// A pick verified in both fill {trusted} and a trusted fill {fields} entry.
+const fillLoc = async (one, fields) => {
+  const o = fields ? await fill({ fields: [one, { label_pattern: "name", text: "Ada" }] }) : await fill(one);
+  return [fields ? o.results[0] : o, o];
+};
+const LI = `'<li role="option">' + x + "</li>"`;
+
+test("fill {trusted}: a flat option whose control settles on a shorter sibling option fails closed", async () => {
+  const [html, js] = locVariant(["New York City", "New York"], "'New York'");
+  // A row flex option lays its blockified children side by side, on one line.
+  const flex = `'<li role="option" style="display:flex">' + x.replace(/^New York/, '<span style="display:block">New York</span><span style="display:block">') + "</span></li>"`;
+  for (const [li, fields] of [[LI, false], [LI, true], [flex, false], [flex, true]]) {
+    const { dom } = onPage(html, js.replace(LI, li));
+    const [r, o] = await fillLoc({ label_pattern: "location", text: "New York City", trusted: true }, fields);
+    assert.equal(r.ok, false, JSON.stringify(o));
+    assert.match(r.error, /^picked "New York City" but the field doesn't show it/);
+    assert.equal($(dom, "#loc-input").value, "");
+  }
+});
+
+test("fill {trusted}: an option whose leading unit is its own element or line verifies that unit", async () => {
+  const shapes = {
+    block: `'<li role="option">' + x.replace(', ', ' <small style="display:block">') + "</small></li>"`,
+    inline: `'<li role="option"><span>' + x.replace(', ', '</span><span class=sub>, ') + "</span></li>"`,
+  };
+  for (const [name, li] of Object.entries(shapes)) {
+    const [html, js] = locVariant(["Paris, Texas", "Rosario, Argentina"], "li.firstChild.textContent.trim()");
+    for (const fields of [false, true]) {
+      const { dom } = onPage(html, js.replace(LI, li));
+      const [r, o] = await fillLoc({ label_pattern: "location", text: "Paris", trusted: true }, fields);
+      assert.equal(r.ok, true, name + " " + JSON.stringify(o));
+      assert.equal(r.value, "Paris");
+      assert.equal($(dom, ".loc__value").textContent, "Paris");
+    }
+  }
+});
+
+test("fill {trusted}: an option's leading unit that the control already showed before the press fails closed", async () => {
+  const [html, js] = locVariant(["Paris, Texas", "Rosario, Argentina"]);
+  const prior = html.replace('<span class="loc__value placeholder">Type a city</span>', '<span class="loc__single-value">Paris</span>');
+  const li = `'<li role="option"><span>' + x.replace(', ', '</span><span class=sub>, ') + "</span></li>"`;
+  for (const fields of [false, true]) {
+    const { dom } = onPage(prior, js.replace(LI, li).replace("shown.textContent = li.textContent;", "").replace('shown.className = "loc__value";', ""));
+    const [r, o] = await fillLoc({ label_pattern: "location", text: "Paris", trusted: true }, fields);
+    assert.equal(r.ok, false, JSON.stringify(o));
+    assert.match(r.error, /the field doesn't show it/);
+    assert.equal($(dom, ".loc__single-value").textContent, "Paris");
+  }
+});
+
+test("fill {trusted}: the typeahead pick and read scripts are the same source for every text", async () => {
+  const [html, js] = locVariant(["New York City", "Paris, Texas"]);
+  const ta = [];
+  for (const text of ["New York City", "Paris, Texas"]) {
+    const { dom } = onPage(html, js);
+    const ev = dom.eval;
+    const seen = [];
+    dom.eval = (s) => { if (/s\.pickedN|const pk = /.test(s)) seen.push(s); return ev(s); };
+    const o = await fill({ label_pattern: "location", text, trusted: true });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    ta.push([...new Set(seen)].sort());
+  }
+  assert.ok(ta[0].length >= 2, "saw " + ta[0].length);
+  assert.deepEqual(ta[1], ta[0]);
+});
+
 // A combobox whose own listbox offers suggestions but whose pick handler runs
 // only `onPick` (nothing by default); it keeps whatever text is typed on blur.
 const INERT = `<form><label for=c>City</label><input id=c role=combobox aria-autocomplete=list aria-controls=c-list><ul id=c-list role=listbox></ul>
