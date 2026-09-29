@@ -449,7 +449,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     const box = el.role === "AXWindow" ? (el.c && (el.c.axFrame || el.c)) || (el.d && !el.inner ? dialogFrame(el.d) : null) : el.box;
     if (name === "AXRole") return el.role;
     if (name === "AXSubrole") return el.subrole;
-    if (name === "AXTitle") return el.title;
+    if (name === "AXTitle") return el.c ? el.c.axTitle : el.title;
     if (name === "AXValue") return el.role === "AXTextField" ? el.d.value || "" : el.value;
     // A dialog `{pid, texts, buttons, field?}`, shaped as Chrome Canary showed it
     // live: a window (subrole AXUnknown) holding another, holding a group with
@@ -674,7 +674,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // window's web areas (the page, and a side panel's). No `ax`: nothing matches.
       AXUIElementCreateApplication: (pid) => ({ role: "AXApplication", pid }),
       // An entry's `axFrame` is its AX window's frame when it differs from CG's;
-      // `axWid` is the CGWindowID its AX window reports (unreadable without one).
+      // `axWid` is the CGWindowID its AX window reports (unreadable without one),
+      // `axTitle` that window's AXTitle.
       _AXUIElementGetWindow: (el, out) => {
         bump("AX");
         if (!el.c || el.c.axWid == null) return -25205;

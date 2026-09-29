@@ -830,14 +830,14 @@ function jxaRuntime(BROWSERS, HANG) {
     let geom = null;
     if (t.kind !== "arc") { try { const b = t.win.bounds(); geom = { x: b.x, y: b.y, w: b.width, h: b.height }; } catch (e) {} }
     const cands = t.P.wins[t.app] || [];
-    let best = null, ambiguous = false;
+    let best = null, tied = [];
     if (geom) {
       const score = function (c) { return Math.abs(c.x - geom.x) + Math.abs(c.y - geom.y) + Math.abs(c.w - geom.w) + Math.abs(c.h - geom.h); };
       let bestScore = Infinity;
       cands.forEach(function (c) { if (score(c) < bestScore) { bestScore = score(c); best = c; } });
       // Another entry about as close: geometry can't say which CGWindowID is ours.
-      ambiguous = cands.some(function (c) { return c !== best && score(c) <= bestScore + 2; });
-      if (best && (Math.abs(best.x - geom.x) > 4 || Math.abs(best.w - geom.w) > 4 || Math.abs(best.y - geom.y) > 120 || Math.abs(best.h - geom.h) > 120)) { best = null; ambiguous = false; }
+      tied = cands.filter(function (c) { return score(c) <= bestScore + 2; });
+      if (best && (Math.abs(best.x - geom.x) > 4 || Math.abs(best.w - geom.w) > 4 || Math.abs(best.y - geom.y) > 120 || Math.abs(best.h - geom.h) > 120)) { best = null; tied = []; }
     } else {
       best = byTitle(t, cands);
       if (best) geom = { x: best.x, y: best.y, w: best.w, h: best.h };
@@ -849,11 +849,12 @@ function jxaRuntime(BROWSERS, HANG) {
       windowNumber: best ? best.wid : null,
       cgBounds: best ? { x: best.x, y: best.y, w: best.w, h: best.h } : null,
     };
-    if (ambiguous) I.ambiguous = true;
+    if (tied.length > 1) { I.ambiguous = true; I.tied = tied; }
     return I;
   }
 
-  // Input and frame reads need the one window that is ours; screenshots don't check.
+  // Input and frame reads need the one window that is ours; screenshots refuse
+  // too, unless Accessibility names the window (axNamed).
   function ownWindow(I) {
     if (I.windowNumber == null) throw new Error(OFFSCREEN);
     if (I.ambiguous) throw new Error(AMBIGUOUS);
@@ -886,7 +887,25 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     const I = ids(t);
     if (I.windowNumber == null) throw new Error(OFFSCREEN);
+    if (I.ambiguous) axNamed(t, I);
     return { t: t, I: I };
+  }
+  // Tied CG entries (identical frames, say) leave the frame no use, so the
+  // window is the one AX window titled like the target's whose CGWindowID is
+  // among the tied ones. None, several, or no Accessibility: refused.
+  function axNamed(t, I) {
+    let trusted = false, name = "";
+    try { ObjC.import("ApplicationServices"); trusted = !!$.AXIsProcessTrusted(); } catch (e) {}
+    if (trusted && I.pid != null) { try { name = String(t.win.name() || ""); } catch (e) {} }
+    if (!name) throw new Error(AMBIGUOUS);
+    const ax = axInit(), tiedWid = function (n) { return I.tied.some(function (c) { return c.wid === n; }); };
+    const hits = axWindowsAt(I.pid, I.cgBounds || I.geom).filter(function (w) { return w.wid != null && tiedWid(w.wid) && ax.str(w.el, "AXTitle") === name; });
+    if (hits.length !== 1) throw new Error(AMBIGUOUS);
+    const c = I.tied.filter(function (e) { return e.wid === hits[0].wid; })[0];
+    I.windowNumber = c.wid;
+    I.cgBounds = { x: c.x, y: c.y, w: c.w, h: c.h };
+    delete I.ambiguous;
+    delete I.tied;
   }
   function shotGeom(a) { return shotTarget(a).I; }
 
@@ -1677,17 +1696,12 @@ function jxaRuntime(BROWSERS, HANG) {
       const m = v && new RegExp(a + ":(-?[\\d.]+) " + b + ":(-?[\\d.]+)").exec(String(ObjC.unwrap(v.description)));
       return m ? [Number(m[1]), Number(m[2])] : null;
     };
-    const r = I.cgBounds || I.geom;
-    // Every AX window within 8pt of the target's frame. When one reports its
-    // CGWindowID, the ids decide; otherwise geometry must leave exactly one.
-    let near = list(attr($.AXUIElementCreateApplication(I.pid), "AXWindows")).filter(function (w) {
-      const p = pair(w, "AXPosition", "x", "y"), s = pair(w, "AXSize", "w", "h");
-      return !!p && !!s && Math.abs(p[0] - r.x) + Math.abs(p[1] - r.y) + Math.abs(s[0] - r.w) + Math.abs(s[1] - r.h) <= 8;
-    });
-    const wids = near.map(ax.wid);
-    if (wids.some(function (n) { return n != null; })) near = near.filter(function (w, i) { return wids[i] === I.windowNumber; });
+    // When an AX window near the frame reports its CGWindowID, the ids decide;
+    // otherwise geometry must leave exactly one.
+    let near = axWindowsAt(I.pid, I.cgBounds || I.geom);
+    if (near.some(function (w) { return w.wid != null; })) near = near.filter(function (w) { return w.wid === I.windowNumber; });
     if (near.length !== 1) return null;
-    const win = near[0];
+    const win = near[0].el;
     let best = null, miss = Infinity, seen = 0;
     const queue = [win];
     while (queue.length && seen < 600) {
@@ -1701,6 +1715,16 @@ function jxaRuntime(BROWSERS, HANG) {
       if (scale > 0.2 && scale < 5 && d <= 2 && d < miss) { miss = d; best = { x: p[0], y: p[1], scale: scale, el: el }; }
     }
     return best;
+  }
+
+  // The pid's AX windows within 8pt of the frame r, each as {el, wid}, wid being
+  // the CGWindowID it reports (null when unreadable).
+  function axWindowsAt(pid, r) {
+    const ax = axInit();
+    return ax.list(ax.attr($.AXUIElementCreateApplication(pid), "AXWindows")).filter(function (w) {
+      const f = ax.frame(w);
+      return !!f && Math.abs(f.x - r.x) + Math.abs(f.y - r.y) + Math.abs(f.w - r.w) + Math.abs(f.h - r.h) <= 8;
+    }).map(function (w) { return { el: w, wid: ax.wid(w) }; });
   }
 
   // Accessibility bindings, bound once per REPL. `attr` is null for a missing

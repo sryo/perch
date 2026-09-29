@@ -330,3 +330,62 @@ test("the frame match allows a titlebar and toolbar in y and h, not a shifted or
     assert.match(geomErr({}), /^window_offscreen: /, JSON.stringify(f));
   }
 });
+
+// ---- two windows the frame can't tell apart ----
+
+// Two maximized Chrome windows: same bounds, CG entries that tie. The first CG
+// entry (80) scores best; the target's window is the second (81), titled "b0".
+// `ax` gives each CG entry an AX window reporting its own CGWindowID and a title,
+// its window's name unless `ax` overrides it.
+function twins(ax) {
+  const win = (id, p) => ({ id, active: 0, x: 0, y: 25, w: 1440, h: 850, tabs: tabs(1, p) });
+  const cg = (wid, title) => ({ owner: "Google Chrome", pid: 50, wid, x: 0, y: 25, w: 1440, h: 875, ...(ax && { ax: { web: [] }, axWid: wid, axTitle: ax[wid] ?? title }) });
+  install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [win(1, "a"), win(2, "b")] }],
+    cg: [cg(80, "a0"), cg(81, "b0")],
+  });
+  return spawns();
+}
+const B0 = { tabId: "chrome:b0" };
+
+test("screenshot of one of two windows with the same frame, without Accessibility, is window_ambiguous and captures nothing", async () => {
+  for (const ax of [null, {}]) {
+    const calls = twins(ax);
+    if (ax) world.state.ax = false;
+    const r = await handleCall("screenshot", { target: B0 });
+    assert.match(r.content[0].text, /^error: window_ambiguous: /);
+    assert.deepEqual([calls, world.state.shots], [[], []], "no capture, in the runtime or from Node");
+  }
+});
+
+test("screenshot of one of two windows with the same frame captures the one whose AX window names the target's CGWindowID", async () => {
+  const calls = twins({});
+  const { meta } = await shoot({ target: B0 });
+  assert.deepEqual(world.state.shots.map((s) => s.wid), [81], "the target's window, not the best-scoring 80");
+  assert.deepEqual(calls, []);
+  assert.deepEqual(meta.window, { x: 0, y: 25, w: 1440, h: 875 });
+});
+
+test("screenshot refuses when AX titles name two tied windows or none, or give no CGWindowID", async () => {
+  for (const ax of [{ 80: "b0" }, { 81: "other" }, "noWid"]) {
+    const calls = twins(typeof ax === "object" ? ax : {});
+    if (ax === "noWid") world.cg.forEach((c) => { delete c.axWid; });
+    const r = await handleCall("screenshot", { target: B0 });
+    assert.match(r.content[0].text, /^error: window_ambiguous: /, JSON.stringify(ax));
+    assert.deepEqual([calls, world.state.shots], [[], []]);
+  }
+});
+
+test("an element screenshot of one of two tied windows still refuses without a capture", async () => {
+  const calls = twins(null);
+  const r = await handleCall("screenshot", { target: B0, selector: "body" });
+  assert.match(r.content[0].text, /window_ambiguous/);
+  assert.deepEqual([calls, world.state.shots], [[], []]);
+});
+
+test("a window no other entry ties with reads no Accessibility for a screenshot", async () => {
+  canary();
+  spawns();
+  await shoot({});
+  assert.equal(world.counts.AX, undefined);
+});
