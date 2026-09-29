@@ -693,18 +693,26 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // state.shotScale (default 2, a Retina display) times its frame, or an empty
       // image for a window not in the list or with state.shotEmpty.
       // state.capture false: no Screen Recording grant. Each capture is recorded
-      // in state.shots as {rect, opt, wid, imgOpt}, plus `scaled` (the bitmap
-      // context it was drawn into) and `encoded` ({type, props, w, h}).
+      // in state.shots as {rect, opt, wid, imgOpt}, plus `crop` (the pixel rect cut
+      // from it), `scaled` (the bitmap context it was drawn into) and `encoded`
+      // ({type, props, w, h}). state.captureThrows: the capture itself throws.
       CGPreflightScreenCaptureAccess: () => { bump("CGPreflight"); return state.capture !== false; },
       CGRectNull: { x: Infinity, y: Infinity, w: 0, h: 0, isNull: true },
       CGRectMake: (x, y, w, h) => ({ x, y, w, h }),
       CGWindowListCreateImage: (rect, opt, wid, imgOpt) => {
         bump("CGWindowListCreateImage");
+        if (state.captureThrows) throw new Error("capture failed");
         const shot = { rect, opt, wid, imgOpt };
         state.shots.push(shot);
         const c = cgEntries.find((e) => (e.wid ?? 1) === wid);
         const s = state.shotScale ?? 2;
         return c && !state.shotEmpty ? { w: (c.w ?? 800) * s, h: (c.h ?? 600) * s, shot } : { w: 0, h: 0, shot };
+      },
+      // A crop keeps the pixels inside the image; the rect is recorded as shot.crop.
+      CGImageCreateWithImageInRect: (img, r) => {
+        img.shot.crop = { x: r.x, y: r.y, w: r.w, h: r.h };
+        const w = Math.max(0, Math.min(img.w, r.x + r.w) - Math.max(0, r.x)), h = Math.max(0, Math.min(img.h, r.y + r.h) - Math.max(0, r.y));
+        return w && h ? { w, h, shot: img.shot } : null;
       },
       CGImageGetWidth: (img) => (img ? img.w : 0),
       CGImageGetHeight: (img) => (img ? img.h : 0),
