@@ -87,6 +87,9 @@ function jxaRuntime(BROWSERS, HANG) {
   // A running browser whose tabs couldn't be read (Automation denied, no answer,
   // its handler failed), as opposed to one that quit or has no windows.
   const UNLISTED = [-1743, -1712, -10000, -1708];
+  // Of those, a running browser that failed or didn't understand the event:
+  // busy, starting up or behind a modal dialog, so it says nothing of any tab.
+  const UNREAD = [-10000, -1708];
   // The browser quit, or dropped the connection, during the call.
   const QUIT = [-600, -609];
 
@@ -284,20 +287,20 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     const names = candidates(P, want.app);
     // A browser that couldn't be read is why nothing matched, if one was.
-    let blocked = null;
-    const note = function (e) { if (!blocked && e && (UNLISTED.indexOf(e.errorNumber) >= 0 || QUIT.indexOf(e.errorNumber) >= 0)) blocked = e; };
+    let blocked = null, blockedApp = null;
+    const note = function (e, name) { if (!blocked && e && (UNLISTED.indexOf(e.errorNumber) >= 0 || QUIT.indexOf(e.errorNumber) >= 0)) { blocked = e; blockedApp = name; } };
     // The front window's shown tab in one event; a window showing no tab (or no
     // window) falls through to the walk.
     if (want.windowId == null && want.tabIndex == null && (KIND[names[0]] === "chrome" || KIND[names[0]] === "arc")) {
       try {
         const win = app(names[0]).windows[0], id = win.activeTab.id();
         if (id != null) return { tab: win.tabs.byId(id), idx: null, tabId: id, kind: KIND[names[0]], app: names[0], win, w: 0, P, shown: true };
-      } catch (e) { note(e); }
+      } catch (e) { note(e, names[0]); }
     }
     for (const name of names) {
       const a = app(name), kind = KIND[name];
       let n;
-      try { n = a.windows.length; } catch (e) { note(e); continue; }
+      try { n = a.windows.length; } catch (e) { note(e, name); continue; }
       for (let w = 0; w < n; w++) {
         const win = a.windows[w];
         if (want.windowId != null) {
@@ -305,7 +308,7 @@ function jxaRuntime(BROWSERS, HANG) {
           if (String(id) !== String(want.windowId)) continue;
         }
         let tabs, len;
-        try { tabs = win.tabs; len = tabs.length; if (!len) continue; } catch (e) { note(e); continue; }
+        try { tabs = win.tabs; len = tabs.length; if (!len) continue; } catch (e) { note(e, name); continue; }
         if (kind === "arc") {
           let id;
           if (want.tabIndex != null) {
@@ -328,6 +331,10 @@ function jxaRuntime(BROWSERS, HANG) {
       }
     }
     if (want.app && !KIND[want.app]) throw new Error("no_browser: unknown browser " + want.app);
+    // No tab was ever matched, so a browser that didn't answer is no_browser, not stale_tab.
+    if (blocked && UNREAD.indexOf(blocked.errorNumber) >= 0) {
+      throw new Error("no_browser: no browser window with an open tab answered; " + blockedApp + " did not answer (busy, starting up or showing a dialog), so retry in a moment or target another app (AppleScript " + blocked.errorNumber + ")");
+    }
     if (blocked) throw blocked;
     throw new Error("no_browser: no browser window with an open tab" + (want.app ? " in " + want.app : ""));
   }
@@ -2527,15 +2534,26 @@ export function shapeTabs(rows, { urlContains, titleContains, limit = 50 } = {})
   return { tabs: rows.slice(0, Math.max(0, limit)), total: rows.length };
 }
 
+// A browser list_tabs couldn't read, coded as for any call except that it is
+// never stale_tab: a listing names no tab to go stale, and "re-run list_tabs"
+// would only repeat the call. A failed or misunderstood event (-10000, -1708) is
+// a browser too busy to answer, so a transient timeout.
+function listFailure(f) {
+  const msg = codeOsaError(f.error);
+  if (!/^stale_tab: /.test(msg)) return msg;
+  const num = / \((-\d+)\)$/.exec(f.error);
+  return `timeout: ${f.app} did not answer the tab listing (busy, starting up or showing a dialog); wait a moment and try again, or pass app to list another browser` + (num ? ` (AppleScript ${num[1]})` : "");
+}
+
 async function listTabs(args = {}) {
   const { urlContains = null, titleContains = null, limit = 50 } = args;
   const r = await rt("listTabs", { app: args.app || null, urlContains, titleContains, limit });
   // A browser that couldn't be read fails the call when nothing else listed, so
   // "no tabs" always means none.
-  if (r.failed && !r.rows.length && !r.more) throw new Error(codeOsaError(r.failed[0].error));
+  if (r.failed && !r.rows.length && !r.more) throw new Error(listFailure(r.failed[0]));
   const out = shapeTabs(r.rows, args);
   out.total += r.more;
-  if (r.failed) out.warning = r.failed.map((f) => `${f.app} not listed: ${codeOsaError(f.error)}`).join("; ");
+  if (r.failed) out.warning = r.failed.map((f) => `${f.app} not listed: ${listFailure(f)}`).join("; ");
   return out;
 }
 

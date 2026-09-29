@@ -35,10 +35,19 @@ const CASES = [
   [-600, "Application isn't running.", /^error: no_browser: .*\(AppleScript -600\)$/],
   [-609, "Connection is invalid.", /^error: no_browser: .*\(AppleScript -609\)$/],
   [-1712, "AppleEvent timed out.", /^error: timeout: .*\(AppleScript -1712\)$/],
-  [-10000, "AppleEvent handler failed.", /^error: stale_tab: .*re-run list_tabs \(AppleScript -10000\)$/],
-  [-1708, "Message not understood.", /^error: stale_tab: .*re-run list_tabs \(AppleScript -1708\)$/],
+  [-10000, "AppleEvent handler failed.", /^error: (stale_tab: .*re-run list_tabs|no_browser: .*retry in a moment.*) \(AppleScript -10000\)$/],
+  [-1708, "Message not understood.", /^error: (stale_tab: .*re-run list_tabs|no_browser: .*retry in a moment.*) \(AppleScript -1708\)$/],
   [-1743, "Not authorized to send Apple events to Google Chrome.", null],
 ];
+
+// A browser whose handler failed or didn't understand the event was never
+// listed, so list_tabs answers a transient timeout (never stale_tab, which
+// would send the caller back to list_tabs). A page call's own execute failing
+// stays stale_tab; finding the tab failing is no_browser, since no tab matched.
+const LISTED_RE = {
+  "-10000": /^error: timeout: Google Chrome did not answer the tab listing .*\(AppleScript -10000\)$/,
+  "-1708": /^error: timeout: Google Chrome did not answer the tab listing .*\(AppleScript -1708\)$/,
+};
 
 // A browser that quit has no tabs to list, so list_tabs lists none rather than failing.
 const QUIT = new Set([-600, -609]);
@@ -58,7 +67,8 @@ for (const [errorNumber, message, re] of CASES) {
           continue;
         }
         const t = await text(name, args);
-        if (re) assert.match(t, re, `${name}: ${t}`);
+        if (LISTED_RE[errorNumber] && name === "list_tabs") assert.match(t, LISTED_RE[errorNumber], `${name}: ${t}`);
+        else if (re) assert.match(t, re, `${name}: ${t}`);
         else assert.equal(t, `error: ${ERR.automation}`, name);
         assert.doesNotMatch(t, new RegExp("^error: " + message.replace(/[.]/g, "\\.")), name);
       }
@@ -99,6 +109,37 @@ test("list_tabs: a browser it couldn't read is a warning beside the others' tabs
   assert.match(out.warning, /^Safari not listed: Automation permission denied/);
   // Alone, the same browser fails the call: an empty list would claim it has no tabs.
   assert.match(await text("list_tabs", { app: "Safari" }), /^error: Automation permission denied/);
+});
+
+test("list_tabs never answers stale_tab, alone or as a warning beside another browser's tabs", async () => {
+  for (const errorNumber of [-10000, -1708]) {
+    const world = makeWorld({
+      browsers: [
+        { name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: tabs(2) }] },
+        { name: "Safari", kind: "safari", windows: [{ id: 3, active: 0, tabs: [{ url: "https://s.test/", title: "s" }] }] },
+      ],
+      cg: [{ owner: "Google Chrome", pid: 100, wid: 1 }, { owner: "Safari", pid: 200, wid: 3 }],
+    });
+    world.run(JXA_PRELUDE);
+    DAEMONS.fast = DAEMONS.slow = world.daemon;
+    // Only the bulk reads fail: the per-window walk that follows finds nothing either.
+    world.state.aeFail = { errorNumber, message: "AppleEvent handler failed.", app: "Safari" };
+    const out = JSON.parse((await handleCall("list_tabs", {})).content[0].text);
+    assert.equal(out.tabs.length, 2);
+    assert.match(out.warning, new RegExp(`^Safari not listed: timeout: Safari did not answer the tab listing .*\\(AppleScript ${errorNumber}\\)$`));
+    const alone = await text("list_tabs", { app: "Safari" });
+    assert.match(alone, /^error: timeout: /);
+    assert.doesNotMatch(alone, /stale_tab|re-run list_tabs/);
+  }
+});
+
+test("a default target no readable browser matched is no_browser, naming the one that didn't answer", async () => {
+  for (const errorNumber of [-10000, -1708]) {
+    const world = install();
+    world.state.aeFail = { errorNumber, message: "AppleEvent handler failed.", key: /^(tab\.id|tabs\.|windows)/ };
+    const t = await text("click", { selector: "#go", target: { app: "Google Chrome" } });
+    assert.match(t, new RegExp(`^error: no_browser: .*Google Chrome did not answer .*\\(AppleScript ${errorNumber}\\)$`), t);
+  }
 });
 
 test("a lane that died or was killed mid-call is a timeout that says the call may have run", async () => {
