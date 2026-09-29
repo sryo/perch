@@ -412,3 +412,155 @@ test("fill: a single option field answers a radio question through the tool", as
   assert.equal(dom.document.querySelector("[name=spons][value=n]").checked, true);
   assert.equal(dom.document.querySelector("[name=auth][value=n]").checked, false);
 });
+
+// ---- exact values on sanitizing inputs ----
+
+// happy-dom already applies the HTML value sanitization algorithm to date,
+// month, color and a range's min/max clamp. Where it does not, sanitize()
+// puts the rule on the element as an instance getter: fill writes through the
+// prototype setter, then reads el.value back as the page would.
+const sanitize = (w, sel, rule) => {
+  const el = w.document.querySelector(sel);
+  const d = Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, "value");
+  Object.defineProperty(el, "value", { configurable: true, set(v) { d.set.call(this, v); }, get() { return rule(d.get.call(this), this); } });
+  return el;
+};
+// input type=number: "If the value of the element is not a valid floating-point
+// number, then set it to the empty string instead."
+const numberRule = (v) => (/^-?(\d+(\.\d+)?|\.\d+)([eE][-+]?\d+)?$/.test(v) ? v : "");
+// input type=range: a value that suffers a step mismatch is rounded to the
+// nearest allowed value (step base min), preferring the larger on a tie.
+const stepRule = (v, el) => {
+  const min = Number(el.getAttribute("min") || 0), step = Number(el.getAttribute("step"));
+  return String(min + Math.round((Number(v) - min) / step) * step);
+};
+// Time serialized with seconds, as a browser does when the step allows them.
+const secondsRule = (v) => (/^\d\d:\d\d$/.test(v) ? v + ":00" : v);
+
+test("fill: a range input keeps its clamp and fill says so", () => {
+  const w = page(`<input type=range min=0 max=10 aria-label=Level>`);
+  const o = run(w, "fill", { selector: "input", text: "15" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kept, "10");
+  assert.equal(o.el, `slider "Level"`);
+  assert.match(o.error, /a number between 0 and 10/);
+  assert.equal(run(w, "fill", { selector: "input", text: "7" }).ok, true);
+});
+
+test("fill: a range step mismatch reports the rounded value and the step", () => {
+  const w = page(`<input type=range min=0 max=10 step=5 aria-label=Level>`);
+  sanitize(w, "input", stepRule);
+  const o = run(w, "fill", { selector: "input", text: "7" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kept, "5");
+  assert.match(o.error, /between 0 and 10 in steps of 5/);
+});
+
+test("fill: a date takes only YYYY-MM-DD", () => {
+  const w = page(`<label>Start date <input type=date></label>`);
+  assert.deepEqual(run(w, "fill", { label_pattern: "start", text: "2026-03-15" }), { ok: true, kind: "plain", el: `textbox "Start date"`, len: 10 });
+  const o = run(w, "fill", { label_pattern: "start", text: "03/15/2026" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kept, "");
+  assert.match(o.error, /expects YYYY-MM-DD/);
+});
+
+test("fill: a month and a color are checked exactly too", () => {
+  const w = page(`<label>Since <input type=month></label><label>Tint <input type=color></label>`);
+  const m = run(w, "fill", { label_pattern: "since", text: "3/2026" });
+  assert.equal(m.ok, false);
+  assert.match(m.error, /expects YYYY-MM\b/);
+  assert.equal(run(w, "fill", { label_pattern: "since", text: "2026-03" }).ok, true);
+  const c = run(w, "fill", { selector: "[type=color]", text: "red" });
+  assert.equal(c.ok, false);
+  assert.equal(c.kept, "#000000");
+  assert.equal(run(w, "fill", { selector: "[type=color]", text: "#FF8800" }).ok, true);
+});
+
+test("fill: a number keeps only a number, compared by value", () => {
+  const w = page(`<label>Salary <input type=number></label>`);
+  sanitize(w, "input", numberRule);
+  const bad = run(w, "fill", { label_pattern: "salary", text: "3,000" });
+  assert.equal(bad.ok, false, JSON.stringify(bad));
+  assert.equal(bad.kept, "");
+  assert.match(bad.error, /expects a number/);
+  assert.equal(run(w, "fill", { label_pattern: "salary", text: "3000" }).ok, true);
+  assert.equal(run(w, "fill", { label_pattern: "salary", text: "3000.0" }).ok, true);
+});
+
+test("fill: a time passes with or without the seconds the browser adds", () => {
+  const w = page(`<label>From <input type=time></label><label>To <input type=time id=to></label>`);
+  sanitize(w, "#to", secondsRule);
+  assert.equal(run(w, "fill", { label_pattern: "from", text: "09:30" }).ok, true);
+  const o = run(w, "fill", { label_pattern: "^to", text: "09:30" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(w.document.querySelectorAll("input")[1].value, "09:30:00");
+});
+
+test("fill: text-like inputs keep the tolerant check", () => {
+  const w = page(`<label>Phone <input type=tel></label><label>City <input id=city></label>`);
+  // A phone mask that drops the country code and reformats.
+  sanitize(w, "[type=tel]", (v) => { const d = v.replace(/\D/g, "").slice(-10); return d ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : ""; });
+  const p = run(w, "fill", { label_pattern: "phone", text: "+54 9 351 555 1234" });
+  assert.equal(p.ok, true, JSON.stringify(p));
+  assert.equal(w.document.querySelector("[type=tel]").value, "(351) 555-1234");
+  sanitize(w, "#city", (v) => v.trim());
+  assert.equal(run(w, "fill", { label_pattern: "city", text: "  Rosario " }).ok, true);
+});
+
+test("fill_fields: a bad date fails its own field with what the page kept", () => {
+  const w = page(`<label>Company <input name=co></label><label>Start date <input type=date></label>`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "company", text: "Acme" }, { label_pattern: "start", text: "03/15/2026" }] });
+  assert.equal(o.results[0].ok, true);
+  assert.deepEqual(o.results[1], { ok: false, el: `textbox "Start date"`, kept: "", error: `textbox "Start date" expects YYYY-MM-DD; the page kept ""`, kind: "text" });
+});
+
+// ---- a label miss names the button that reveals the field ----
+
+const COVER = `<form>
+  <div><label>Resume</label><button type=button>Upload file</button></div>
+  <div><label>Cover letter</label><div><button type=button>Attach</button><button type=button>Enter manually</button></div></div>
+  <div class=bar><button>Submit application</button></div>
+</form>`;
+
+test("fill: a label miss lists the buttons in the matching section, typing ones first", () => {
+  const w = page(COVER);
+  const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+  assert.equal(o.ok, false);
+  assert.deepEqual(o.reveal, [`button "Enter manually"`, `button "Attach"`]);
+  assert.equal(o.error, "no fillable field matched /cover letter/i; it may appear after clicking one of reveal (click {label_pattern} it, then fill again)");
+});
+
+test("fill: a revealed field fills after clicking the listed button by name", () => {
+  const w = page(COVER);
+  runBody(w, `const b = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Enter manually');
+    b.addEventListener('click', () => { const t = document.createElement('textarea'); t.setAttribute('aria-label', 'Cover letter'); b.parentElement.appendChild(t); }); return 1`);
+  const miss = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+  const name = miss.reveal[0].match(/"(.*)"/)[1];
+  assert.equal(run(w, "click", { label_pattern: name }).ok, true);
+  const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(w.document.querySelector("textarea").value, "Dear team");
+});
+
+test("fill: a button named like the field is listed; submit-bar buttons never are", () => {
+  const w = page(`<div><label>Cover letter</label><button type=submit>Send</button><button type=button>Save draft</button><button type=button>Next</button></div>
+    <button type=button>Write cover letter</button>`);
+  const o = run(w, "fill", { label_pattern: "cover letter", text: "x" });
+  assert.deepEqual(o.reveal, [`button "Write cover letter"`]);
+});
+
+test("fill: no candidate button leaves the plain miss", () => {
+  const w = page(`<label>Name <input></label><button type=button>Help</button>`);
+  const o = run(w, "fill", { label_pattern: "cover letter", text: "x" });
+  assert.deepEqual(o, { ok: false, error: "no fillable field matched /cover letter/i; it may appear only after clicking a button" });
+});
+
+test("fill_fields: a label miss in a batch carries its reveal list", () => {
+  // Nested past the 6 ancestors fill's label search walks, so the page text
+  // around the City field doesn't match "cover letter".
+  const w = page(COVER + `<div><div><div><div><label>City <input></label></div></div></div></div>`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "city", text: "Rosario" }, { label_pattern: "cover letter", text: "x" }] });
+  assert.equal(o.results[0].ok, true);
+  assert.deepEqual(o.results[1].reveal, [`button "Enter manually"`, `button "Attach"`]);
+});

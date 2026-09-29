@@ -3247,6 +3247,28 @@ function taMatch(opts, text) {
 `;
 
 const FILL_LIB = TYPEAHEAD_LIB + String.raw`
+// Up to 2 visible, enabled buttons that may reveal a field fill found no match
+// for, as ident-style lines under the name click {label_pattern} matches: named
+// by re themselves, else sitting in a section whose question text matches
+// (nearText, or an ancestor up to 4 levels, never the whole form). Submit-bar
+// buttons are never listed. Among section matches, names that suggest typing
+// ("Enter manually", "Write") come before attach/upload ones.
+const REVEAL_SKIP = /submit|apply|next|continue|save/i;
+const REVEAL_TYPING = /\b(enter|type|write|paste|add|edit)\b|manual/i;
+function revealers(re, nearHit) {
+  const found = [];
+  Array.prototype.forEach.call(document.querySelectorAll("button, [role=button], a[href], input[type=button]"), function (el, i) {
+    if (!vis(el) || isDisabled(el) || attr(el, "type").toLowerCase() === "submit") return;
+    const name = accName(el);
+    if (!name || REVEAL_SKIP.test(name)) return;
+    let tier = re.test(name) ? 0 : re.test(nearText(el)) ? 1 : -1;
+    for (let p = el.parentElement, d = 0; tier < 0 && d < 4 && p && !/^(FORM|BODY|HTML)$/.test(p.tagName); d++, p = p.parentElement) if (nearHit(p)) tier = 1;
+    if (tier < 0) return;
+    found.push({ line: role(el) + " " + JSON.stringify(clip(name, 40)), rank: [tier, tier && !REVEAL_TYPING.test(name) ? 1 : 0, i] });
+  });
+  found.sort(function (x, y) { return x.rank[0] - y.rank[0] || x.rank[1] - y.rank[1] || x.rank[2] - y.rank[2]; });
+  return found.slice(0, 2).map(function (f) { return f.line; });
+}
 // -> fill's result for one field {ref|selector|label_pattern, text}.
 function fillOne(a) {
   const text = a.text;
@@ -3262,10 +3284,35 @@ function fillOne(a) {
   function isRich(el) {
     return !!el && (editable(el) || !!(el.classList && (el.classList.contains("fr-element") || el.classList.contains("ql-editor") || el.classList.contains("ProseMirror"))));
   }
+  // Input types whose value the browser sanitizes on set: only the exact value
+  // counts, and a miss names the format the type accepts.
+  const FORMATS = { date: "YYYY-MM-DD", time: "HH:MM", "datetime-local": "YYYY-MM-DDTHH:MM", month: "YYYY-MM", week: "YYYY-Www", color: "#rrggbb", number: "", range: "" };
+  const noSeconds = function (s) { return s.replace(/:00(\.0+)?$/, ""); };
+  function exact(t, v) {
+    if (t === "number" || t === "range") return v.trim() !== "" && Number(v) === Number(text);
+    if (t === "time" || t === "datetime-local") return noSeconds(v) === noSeconds(text);
+    if (t === "color") return v.toLowerCase() === text.toLowerCase();
+    return v === text;
+  }
+  function format(el, t) {
+    if (FORMATS[t]) return FORMATS[t];
+    let f = "a number";
+    const lo = attr(el, "min"), hi = attr(el, "max"), step = attr(el, "step");
+    if (lo && hi) f += " between " + lo + " and " + hi;
+    else if (lo) f += " of at least " + lo;
+    else if (hi) f += " of at most " + hi;
+    if (step && step !== "any") f += " in steps of " + step;
+    return f;
+  }
+  // -> true, false (not landed), or a miss result for a sanitizing type.
   function setPlain(el) {
     setNativeValue(el, text);
     fire(el, ["input", "change", "blur"]);
-    return landed(el.value);
+    const t = el.tagName === "INPUT" ? (el.type || "text").toLowerCase() : "";
+    if (!Object.prototype.hasOwnProperty.call(FORMATS, t)) return landed(el.value);
+    if (exact(t, el.value)) return true;
+    const kept = clip(el.value, 60);
+    return { ok: false, el: ident(el), kept: kept, error: ident(el) + " expects " + format(el, t) + "; the page kept " + JSON.stringify(kept) };
   }
   // Typed with input events and no blur, so the widget runs its own lookup.
   function startTypeahead(el) {
@@ -3298,7 +3345,10 @@ function fillOne(a) {
   }
   function tryFill(el, host) {
     if (isField(el) && isTypeahead(el)) return startTypeahead(el);
-    if (isField(el)) return setPlain(el) ? { ok: true, kind: "plain", el: ident(el), len: el.value.length } : null;
+    if (isField(el)) {
+      const r = setPlain(el);
+      return r === true ? { ok: true, kind: "plain", el: ident(el), len: el.value.length } : r || null;
+    }
     if (isRich(el)) return setRich(el) ? { ok: true, kind: "rich", el: ident(host || el), len: textOf(el).length } : null;
     return null;
   }
@@ -3307,6 +3357,7 @@ function fillOne(a) {
     if (r.out) return r.out;
     const out = tryFill(r.el);
     if (!out) return { ok: false, error: ident(r.el) + " is not fillable or rejected the text" };
+    if (out.ok === false) return out;
     if (a.selector) {
       const hits = Array.from(document.querySelectorAll(a.selector)).filter(vis);
       if (hits.length > 1) out.ambiguous = hits.slice(0, 3).map(ident);
@@ -3342,10 +3393,16 @@ function fillOne(a) {
     scored.push({ el: el, root: root, s: s });
   });
   scored.sort(function (a, b) { return b.s - a.s; });
-  if (!scored.length) return { ok: false, error: "no fillable field matched /" + a.label_pattern + "/i; it may appear only after clicking a button" };
+  if (!scored.length) {
+    const miss = "no fillable field matched /" + a.label_pattern + "/i; it may appear ";
+    const reveal = revealers(re, nearHit);
+    if (!reveal.length) return { ok: false, error: miss + "only after clicking a button" };
+    return { ok: false, error: miss + "after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
+  }
   const best = scored[0];
   const out = tryFill(isField(best.el) ? best.el : best.root, best.el);
   if (!out) return { ok: false, error: ident(best.el) + " did not accept the text" };
+  if (out.ok === false) return out;
   const rivals = scored.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
   if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
   return out;

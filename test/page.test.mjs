@@ -140,7 +140,8 @@ test("fill by label with no matching field says the field may appear after a cli
   const w = page(`<label>Cover letter</label><button>Enter manually</button>`);
   const o = run(w, "fill", { label_pattern: "cover letter", text: "hi" });
   assert.equal(o.ok, false);
-  assert.match(o.error, /^no fillable field matched .*after clicking a button/);
+  assert.match(o.error, /^no fillable field matched .*after clicking one of reveal/);
+  assert.deepEqual(o.reveal, [`button "Enter manually"`]);
 });
 
 test("fill by label skips a field whose container is hidden", () => {
