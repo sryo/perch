@@ -121,3 +121,74 @@ test("accName: a wrapping label's hidden text and popups are not part of the nam
     <span style="display:none">Loading</span><span hidden>Loading</span></label>`);
   assert.equal(runBody(w, `return accName(document.getElementById('x'))`), "Current location ✱");
 });
+
+// ---- validation errors ----
+
+const lineOf = (lines, name) => lines.find((l) => l.includes(`"${name}"`));
+
+test("snapshot: aria-invalid with an aria-describedby error shows invalid and the message", () => {
+  const w = page(`<form>
+    <div><label for=loc>Location</label><input id=loc name=loc aria-invalid=true aria-describedby=loc-err><div id=loc-err>Please enter your location</div></div>
+    <div><label for=nm>Name</label><input id=nm name=nm value=Ada></div>
+  </form>`);
+  const { head, lines } = snap(w);
+  assert.equal(lineOf(lines, "Location"), `1 textbox "Location" name="loc" invalid error="Please enter your location"`);
+  assert.doesNotMatch(lineOf(lines, "Name"), /invalid|error=/);
+  assert.equal(head.form.invalid, 1);
+});
+
+test("snapshot: a role=alert in the field's own box beats a neutral describedby hint", () => {
+  const w = page(`<form>
+    <div class=f><label for=em>Email</label><input id=em aria-invalid=true aria-describedby=em-hint><small id=em-hint>We will not share it</small><span role=alert>Email is required</span></div>
+    <div class=f><label for=ph>Phone</label><input id=ph></div>
+  </form>`);
+  assert.match(lineOf(snap(w).lines, "Email"), / invalid error="Email is required"$/);
+});
+
+test("snapshot: an error in another field's box never attaches to this one", () => {
+  const w = page(`<form>
+    <div class=f><label for=a>First</label><input id=a><span role=alert>First is wrong</span></div>
+    <div class=f><label for=b>Second</label><input id=b aria-invalid=true></div>
+  </form>`);
+  const { head, lines } = snap(w);
+  assert.equal(lineOf(lines, "First"), `1 textbox "First"`);
+  assert.match(lineOf(lines, "Second"), / textbox "Second" invalid$/);
+  assert.equal(head.form.invalid, 1);
+});
+
+test("snapshot: a native constraint failure counts only once the field holds a value", () => {
+  // happy-dom implements validity and validationMessage for type=email, with a generic message.
+  const w = page(`<form>
+    <label for=e>Email</label><input id=e type=email required value=abc>
+    <label for=p>Phone</label><input id=p type=tel required>
+    <label><input type=checkbox required> Terms</label>
+  </form>`);
+  const { head, lines } = snap(w);
+  const msg = w.document.getElementById("e").validationMessage;
+  assert.ok(msg, "happy-dom gives a validationMessage");
+  assert.equal(lineOf(lines, "Email"), `1 textbox "Email" type="email" value="abc" required invalid error=${JSON.stringify(msg)}`);
+  assert.doesNotMatch(lineOf(lines, "Phone"), /invalid/);
+  assert.doesNotMatch(lineOf(lines, "Terms"), /invalid/);
+  assert.equal(head.form.invalid, 1);
+  assert.equal(head.form.requiredEmpty, 1);
+});
+
+test("snapshot: aria-errormessage wins over aria-describedby", () => {
+  const w = page(`<form>
+    <div><label for=z>Zip</label><input id=z aria-invalid=true aria-describedby=z-d aria-errormessage=z-e><p id=z-d class=error>Zip looks off</p></div>
+    <p id=z-e>Enter a 5 digit zip</p>
+  </form>`);
+  assert.match(lineOf(snap(w).lines, "Zip"), / invalid error="Enter a 5 digit zip"$/);
+});
+
+test("snapshot: aria-invalid on a react-select combobox input marks its line", () => {
+  const w = page(`<form><div class=field><div id=c-l>Country</div>${RS("rs", { id: "c" }).replace("role=combobox", "role=combobox aria-invalid=true")}<div class=field-error>Select a country</div></div></form>`);
+  const { head, lines } = snap(w);
+  assert.equal(lineOf(lines, "Country"), `1 combobox "Country" required invalid error="Select a country"`);
+  assert.equal(head.form.invalid, 1);
+});
+
+test("snapshot: a form with no invalid field has no invalid key", () => {
+  const w = page(`<form><label for=a>A</label><input id=a required></form>`);
+  assert.deepEqual(snap(w).head.form, { fields: 1, requiredEmpty: 1 });
+});

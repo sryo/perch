@@ -294,6 +294,64 @@ test("readback with no state change on the element stays changed:false", async (
   assert.match(o.readback, /^Yes\s*No$/);
 });
 
+// ---- validation errors ----
+
+const APPLY = `<form onsubmit="return false">
+  <div class=f><label for=loc>Location</label><input id=loc><div id=loc-e class=error></div></div>
+  <div class=f><label for=ph>Phone</label><input id=ph><div id=ph-e class=error></div></div>
+  <button id=b type=button>Next</button><p id=s>Step 1</p></form>`;
+const REJECT = `(() => {
+  document.getElementById('loc').setAttribute('aria-invalid', 'true');
+  document.getElementById('loc-e').textContent = 'Please enter your location';
+  document.getElementById('ph').setAttribute('aria-invalid', 'true');
+  document.getElementById('ph-e').textContent = 'Phone is required';
+})`;
+
+test("readback lists the fields a Next click marked invalid, with their messages", async () => {
+  onPage(APPLY, `document.getElementById('b').addEventListener('click', ${REJECT});`);
+  const o = await click({ selector: "#b", readback: "#s" });
+  assert.deepEqual(o, { ok: true, el: `button "Next"`, readback: "Step 1", changed: true,
+    invalid: ["Location: Please enter your location", "Phone: Phone is required"] });
+});
+
+test("readback catches errors that render a tick after the click", async () => {
+  const { dom } = onPage(APPLY);
+  afterEvals(dom, 3, () => dom.eval(`${REJECT}()`));
+  const o = await click({ selector: "#b", readback: "#s" });
+  assert.equal(o.changed, true);
+  assert.equal(o.navigated, undefined);
+  assert.deepEqual(o.invalid, ["Location: Please enter your location", "Phone: Phone is required"]);
+});
+
+test("a click that clears the errors reads changed with no invalid key", async () => {
+  onPage(APPLY, `${REJECT}(); document.getElementById('b').addEventListener('click', () => {
+    document.querySelectorAll('[aria-invalid]').forEach((el) => el.removeAttribute('aria-invalid'));
+    document.querySelectorAll('.error').forEach((el) => { el.textContent = ''; });
+  });`);
+  assert.deepEqual(await click({ selector: "#b", readback: "#s" }), { ok: true, el: `button "Next"`, readback: "Step 1", changed: true });
+});
+
+test("errors already on the page before the click are not reported again", async () => {
+  onPage(APPLY, `${REJECT}(); document.getElementById('b').addEventListener('click', () => { document.getElementById('s').textContent = 'Step 1 of 3'; });`);
+  assert.deepEqual(await click({ selector: "#b", readback: "#s" }), { ok: true, el: `button "Next"`, readback: "Step 1 of 3", changed: true });
+});
+
+test("readback caps the invalid list at 5 and counts the rest", async () => {
+  const fields = Array.from({ length: 7 }, (_, i) => `<div><label for=f${i}>Field ${i}</label><input id=f${i}></div>`).join("");
+  onPage(`<form>${fields}<button id=b type=button>Submit</button><p id=s>x</p></form>`,
+    `document.getElementById('b').addEventListener('click', () => document.querySelectorAll('input').forEach((el) => el.setAttribute('aria-invalid', 'true')));`);
+  const o = await click({ selector: "#b", readback: "#s" });
+  assert.deepEqual(o.invalid, ["Field 0", "Field 1", "Field 2", "Field 3", "Field 4"]);
+  assert.equal(o.invalidCount, 7);
+});
+
+test("a radio group marked invalid reports its question", async () => {
+  onPage(`<form><div role=radiogroup aria-label="Authorized to work?"><label><input type=radio name=w> Yes</label><label><input type=radio name=w> No</label><span class=error-text></span></div>
+    <button id=b type=button>Submit</button><p id=s>x</p></form>`,
+    `document.getElementById('b').addEventListener('click', () => { const g = document.querySelector('[role=radiogroup]'); g.setAttribute('aria-invalid', 'true'); g.querySelector('.error-text').textContent = 'Pick one'; });`);
+  assert.deepEqual((await click({ selector: "#b", readback: "#s" })).invalid, ["Authorized to work?: Pick one"]);
+});
+
 // ---- trusted click ----
 
 function trustedTab(html, setup) {
@@ -329,6 +387,14 @@ test("trusted click by point reads back too", async () => {
   assert.equal(o.ok, true);
   assert.equal(o.readback, "Saved");
   assert.equal(o.changed, true);
+});
+
+test("trusted click with readback reports fields the click marked invalid", async () => {
+  const { world, dom } = trustedTab(APPLY.replace("<p id=s>Step 1</p>", "<p id=s>Idle</p>"));
+  world.state.onPost = (e) => { if (e.type === 2 && e.pt.x >= 0) dom.eval(`${REJECT}()`); };
+  const o = await click({ trusted: true, raise: true, selector: "#b", readback: "#s" });
+  assert.equal(o.changed, true);
+  assert.deepEqual(o.invalid, ["Location: Please enter your location", "Phone: Phone is required"]);
 });
 
 test("trusted click with a bad readback selector posts nothing", async () => {

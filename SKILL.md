@@ -6,7 +6,7 @@ allowed-tools: mcp__perch__*
 
 # perch: macOS browser bridge
 
-Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `tabId` from `list_tabs` or `new_tab`: stable as tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loose, e.g. `"canary"`) only filters `list_tabs` or picks `new_tab`'s browser.
+Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `tabId` from `list_tabs` or `new_tab`: stable as tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loose: `"canary"`) only filters `list_tabs` or picks `new_tab`'s browser.
 
 ## Tools
 
@@ -19,16 +19,16 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `navigate` | Load a URL from the page and wait for it; returns the tab's current `tabId`. `waited:false`: not confirmed. Other URLs, or no page JS: `raise:true` (may raise the browser). |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path`: a local file, run before `script` if both. `awaitPromise` for real async. |
 | `wait` | Until `selector` exists at `readyState`, `expression` is truthy (as `value`), or `quiet` ms pass with no DOM change or fetch/XHR end. |
-| `screenshot` | On-screen window image without raising it, plus `{window, image}`: `screenX = window.x + imageX * window.w / image.w`. Not for minimized windows. |
+| `screenshot` | On-screen window image without raising it, plus `{window, image}`: `screenX=window.x+imageX*window.w/image.w`. Not for minimized windows. |
 | `get_text` | innerText, or outerHTML with `html: true`. Paged by `offset` / `maxChars`. |
 | `accessibility_snapshot` | Page outline with refs (below), open shadow roots too. Filter: `role`, `query` (regex per line); `max: 0`: header only. |
 | `console_capture` | `start`, `read` drains `"level: text"`, `stop` restores; navigation clears it. `network` drains finished requests as `"status type ms size url"`. |
-| `click` | By `ref` / `selector` / `label_pattern` (button/link name; ties: `candidates`, no click). `readback: css` adds `{readback, changed, url?}`: its text once changed (2s; 0.7s if quiet). `hover: true`: hover events only (JS menus, not CSS `:hover`). `trusted`: below. |
+| `click` | By `ref` / `selector` / `label_pattern` (button/link name; ties: `candidates`, no click). `readback: css` adds `{readback, changed, url?, invalid?}`: its text once changed (2s; 0.7s if quiet). `hover: true`: hover events (JS menus, not CSS `:hover`). `trusted`: below. |
 | `press` | `key` (`Enter`, `Escape`, `Tab`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | Inputs, textareas, rich editors; verifies it landed. `text_path` for long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>` or custom combobox, own list only; reads back. Miss or `text:""`: `candidates`. `trusted`: below. |
 | `file_upload` | File onto an `<input type=file>` or drop zone (`dropped`); bytes skip context. |
-| `notify` | macOS notification for the user. |
+| `notify` | macOS notification. |
 
 ## Snapshot format
 
@@ -40,7 +40,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 4 checkbox "I agree" checked
 ```
 
-Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`. Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`. Refs die on the next snapshot or navigation.
+Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`. Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`. Refs die on the next snapshot or navigation.
 
 ## Results
 
