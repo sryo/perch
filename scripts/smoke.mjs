@@ -8,10 +8,10 @@
 // on any FAIL.
 
 import { execFileSync } from "node:child_process";
-import { writeFile, mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { connect, text, sameTab } from "./mcp-client.mjs";
+import { tempDir } from "./temp.mjs";
 import { SCHEMA_BUDGET } from "../server.js";
 
 const withTabCreation = process.argv.includes("--with-tab-creation");
@@ -119,7 +119,7 @@ try {
 
   await check("eval_js script_path + script in one call", async () => {
     if (!scratch) return skip("no scratch tab");
-    const dir = await mkdtemp(join(tmpdir(), "perch-smoke-"));
+    const dir = tempDir("perch-smoke-");
     const lib = join(dir, "lib.js");
     await writeFile(lib, "(function(){ window.__smoke = 41 })()");
     const out = text(await call("eval_js", { script_path: lib, script: "return window.__smoke + 1", target: scratch }));

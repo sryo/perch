@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFile, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
+import { tempDir } from "../scripts/temp.mjs";
 import { join } from "node:path";
 import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, composeEvalScript, shapeTabs, formatResult, JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
@@ -43,8 +43,7 @@ test("tool surface is the agreed 17", () => {
 });
 
 test("composeEvalScript: file then script, either alone, neither errors", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "perch-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = tempDir("perch-", t);
   const f = join(dir, "lib.js");
   await writeFile(f, "(function(){ window.__x = 41 })()");
   assert.equal(await composeEvalScript({ script_path: f, script: "return window.__x + 1" }), "(function(){ window.__x = 41 })()\n;\nreturn window.__x + 1");
@@ -60,8 +59,7 @@ test("eval_js takes a ref", () => {
 });
 
 test("composeEvalScript: no ref is byte-identical; a ref splices only its JSON literal", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "perch-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = tempDir("perch-", t);
   const f = join(dir, "lib.js");
   await writeFile(f, "window.__x = 41");
   for (const a of [{ script: "return 1" }, { script_path: f }, { script_path: f, script: "return 2" }]) {

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFile, mkdtemp, rm, truncate } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile, truncate } from "node:fs/promises";
+import { tempDir } from "../scripts/temp.mjs";
 import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
@@ -117,8 +117,7 @@ function onPage(html, setup) {
   return { dom, world };
 }
 async function cvFile(t) {
-  const dir = await mkdtemp(join(tmpdir(), "perch-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = tempDir("perch-", t);
   const f = join(dir, "cv.pdf");
   await writeFile(f, "%PDF-1.4");
   return f;
@@ -174,8 +173,7 @@ test("file_upload: a name shown at once needs no wait", async (t) => {
 // ---- size cap: checked from a stat, before a byte is read or an Apple Event sent ----
 
 async function sizedFile(t, bytes) {
-  const dir = await mkdtemp(join(tmpdir(), "perch-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = tempDir("perch-", t);
   const f = join(dir, "big.pdf");
   await writeFile(f, "");
   await truncate(f, bytes);

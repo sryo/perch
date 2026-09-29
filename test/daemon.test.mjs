@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
+import { tempDir } from "../scripts/temp.mjs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OsaDaemon, jxa, ERR } from "../server.js";
@@ -217,8 +217,7 @@ test("warm on a deaf REPL disables it; a call queued behind the handshake falls 
 
 // The entry block, run for real with a fake `osascript` on PATH that records each spawn.
 async function startServer(t, env = {}) {
-  const dir = await mkdtemp(join(tmpdir(), "perch-warm-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = tempDir("perch-warm-", t);
   const log = join(dir, "spawns");
   await writeFile(join(dir, "osascript"), `#!/bin/sh\necho spawn >> "${log}"\nexec cat > /dev/null\n`);
   await chmod(join(dir, "osascript"), 0o755);

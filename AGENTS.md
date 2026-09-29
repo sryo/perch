@@ -21,6 +21,7 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 │   ├── bench.mjs    # live latency/payload bench, compared against bench/baseline.json
 │   ├── compare.mjs  # perch side of the perch vs Claude in Chrome suite
 │   ├── mcp-client.mjs  # tiny MCP stdio client shared by the live scripts
+│   ├── temp.mjs     # the only way tests and scripts make temp dirs; removed on test end or process exit
 │   └── skylight-probe.js  # proof that SkyLight event routing binds from pure JXA
 ├── bench/           # baseline.json (the number to beat), fixture.html (the benched page), compare/ (fixture + history); runs/ is gitignored
 ├── install.sh       # macOS installer: clone, npm install, `claude mcp add`

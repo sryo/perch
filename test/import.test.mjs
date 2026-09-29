@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, symlink, writeFile } from "node:fs/promises";
+import { tempDir } from "../scripts/temp.mjs";
 import { join } from "node:path";
 import { ROOT } from "../scripts/mcp-client.mjs";
 
@@ -16,8 +16,8 @@ test("HANDLERS and TOOLS name the same tools", async () => {
   assert.deepEqual(Object.keys(HANDLERS).sort(), TOOLS.map((t) => t.name).sort());
 });
 
-test("server started through a symlink still answers tools/list", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "perch-"));
+test("server started through a symlink still answers tools/list", async (t) => {
+  const dir = tempDir("perch-", t);
   const link = join(dir, "perch");
   await symlink(join(ROOT, "server.js"), link);
   const child = spawn("node", [link], { stdio: ["pipe", "pipe", "ignore"] });
@@ -37,7 +37,7 @@ test("server started through a symlink still answers tools/list", async () => {
   try {
     const msg = await reply;
     assert.ok(msg.result.tools.length > 0);
-  } finally { child.kill(); await rm(dir, { recursive: true, force: true }); }
+  } finally { child.kill(); }
 });
 
 // Once a client disconnects, the server and its osascript daemons must go:
@@ -47,8 +47,7 @@ test("server started through a symlink still answers tools/list", async () => {
 // server's own shutdown can end it. The ceilings only catch a hang.
 test("server exits with its daemons when stdin closes", async (t) => {
   const { execFileSync } = await import("node:child_process");
-  const dir = await mkdtemp(join(tmpdir(), "perch-exit-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = tempDir("perch-exit-", t);
   const log = join(dir, "replies");
   await writeFile(join(dir, "osascript"), [
     "#!/bin/sh",

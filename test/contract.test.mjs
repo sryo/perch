@@ -1,10 +1,10 @@
 // What perch's dependents rely on, pinned so a change here fails in perch
 // rather than in them: avis (SKILL.md, references/setup.md) and an unattended
 // form-filling agent. Each test names who depends on it.
-import { test, after } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
+import { tempDir } from "../scripts/temp.mjs";
 import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
@@ -70,8 +70,7 @@ test("eval_js: objects come back as JSON text, strings as raw text, once (avis)"
 
 // ---- local files: ~ and relative paths ----
 
-const tmp = await mkdtemp(join(tmpdir(), "perch-contract-"));
-after(() => rm(tmp, { recursive: true, force: true }));
+const tmp = tempDir("perch-contract-");
 
 async function inFakeHome(fn) {
   const home = process.env.HOME, cwd = process.cwd();
