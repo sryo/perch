@@ -599,3 +599,11 @@ test("trusted click with readback reports the form outcome too", async () => {
   assert.equal(o.readback, "Step 2 of 3");
   assert.deepEqual(o.form, { step: "2/3" });
 });
+
+test("a disabled button with readback refuses and arms nothing", async () => {
+  const { dom } = onPage(`<button id=save disabled>Save</button><p id=out>Idle</p>`);
+  const o = await click({ selector: "#save", readback: "#out" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /is disabled; nothing was clicked/);
+  assert.equal(dom.__perch_rb, undefined);
+});

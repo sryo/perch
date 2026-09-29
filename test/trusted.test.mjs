@@ -418,6 +418,18 @@ test("trusted click by label posts at the resolved control in a shown background
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
 });
 
+test("trusted click on a disabled button refuses before any mouse event", async () => {
+  const { world } = backgroundTab(`<button id=save disabled>Save</button>`, 1);
+  const r = await handleCall("click", { trusted: true, selector: "#save", target: { tabIndex: 1 } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.ok, false);
+  assert.match(o.error, /button "Save" is disabled; nothing was clicked/);
+  assert.equal(world.posted.length, 0);
+  assert.deepEqual(world.state.warps, []);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+});
+
 test("trusted click by label in a hidden tab is tab_not_visible and activates nothing", async () => {
   const { world } = backgroundTab(LABELLED, 0);
   const r = await handleCall("click", { trusted: true, label_pattern: "apply", target: { tabIndex: 1 } });
