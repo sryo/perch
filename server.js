@@ -2741,21 +2741,23 @@ function vis(el) {
 // of the document, under aria-hidden, or (unless a combobox, whose input shrinks
 // while empty) shrunk or clipped to a pixel. A 0x0 box is plain hidden, not a
 // trap. Bots fill these; people never do.
-function honeypot(el) {
+// labelled: a visible label names it, so a pixel or clip is an sr-only custom
+// input, not a trap.
+function honeypot(el, labelled) {
   if (!el || !(el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && !/^(checkbox|radio|file|hidden)$/i.test(el.type || "")))) return false;
   if (el.closest("[aria-hidden=true]")) return true;
   const r = el.getBoundingClientRect();
   if (!r.width && !r.height) return false;
   if (r.right + (window.scrollX || 0) <= 0 || r.bottom + (window.scrollY || 0) <= 0) return true;
-  if (attr(el, "role") === "combobox" || el.hasAttribute("aria-autocomplete")) return false;
+  if (labelled || attr(el, "role") === "combobox" || el.hasAttribute("aria-autocomplete")) return false;
   if (r.width <= 1 || r.height <= 1) return true;
   const m = /rect\(([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px/.exec(getComputedStyle(el).clip || "");
   return !!m && (m[2] - m[4] <= 1 || m[3] - m[1] <= 1);
 }
 // A honeypot, an untabbable field with autofill off, or one whose name says to
 // leave it empty.
-function trapLike(el) {
-  return honeypot(el) || (attr(el, "tabindex") === "-1" && attr(el, "autocomplete") === "off")
+function trapLike(el, labelled) {
+  return honeypot(el, labelled) || (attr(el, "tabindex") === "-1" && attr(el, "autocomplete") === "off")
     || /\bleave (this |it )?(field )?(blank|empty)\b|\bdo not fill\b/i.test(labelText(el) + " " + attr(el, "name"));
 }
 // vis(), plus a styled control's own input faded (opacity 0) or shrunk to a
@@ -2815,6 +2817,8 @@ function labelText(el) {
   return wrap ? clip(labelWords(wrap), 120) : "";
 }
 function hintText(el) { return attr(el, "placeholder") || attr(el, "name") || attr(el, "data-tooltip") || attr(el, "title"); }
+const REVEAL_SKIP = /submit|apply|next|continue|save/i;
+const REVEAL_TYPING = /\b(enter|type|write|paste|add|edit)\b|manual/i;
 const FIELD_CTL = "input, select, textarea, button, [role=combobox], [role=textbox], [contenteditable]";
 function isField(el) {
   if (el.tagName === "INPUT") return !/^(submit|button|image|reset|hidden)$/i.test(el.type);
@@ -3426,8 +3430,6 @@ const FILL_LIB = TYPEAHEAD_LIB + String.raw`
 // (nearText, or an ancestor up to 4 levels, never the whole form). Submit-bar
 // buttons are never listed. Among section matches, names that suggest typing
 // ("Enter manually", "Write") come before attach/upload ones.
-const REVEAL_SKIP = /submit|apply|next|continue|save/i;
-const REVEAL_TYPING = /\b(enter|type|write|paste|add|edit)\b|manual/i;
 function revealers(re, nearHit) {
   const found = [];
   // A section ends below the page's main region and any ancestor holding a form
@@ -3908,14 +3910,16 @@ function unpicked(el) {
   const c = taParts(el).comp;
   return !!c && !c.value;
 }
-let n = 0, matched = 0, truncated = false;
-for (const el of deepAll(SEL)) {
-  const r = role(el);
-  if (roles && roles.indexOf(r) < 0) continue;
-  if (!snapVis(el)) continue;
-  if (!re && n >= A.max) { truncated = true; break; }
+const FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
+function reqEmpty(el) {
+  if (!el.required && attr(el, "aria-required") !== "true") return false;
+  if (String(el.value || el.textContent || "").trim()) return unpicked(el);
+  return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
+}
+function decoy(el) { return trapLike(el, !!el.labels && Array.prototype.some.call(el.labels, vis)); }
+function describe(el, r, name) {
   const tag = el.tagName;
-  let line = r + " " + q(accName(el));
+  let line = r + " " + q(name);
   const kv = function (k, v) { line += " " + k + "=" + q(v); };
   if (r === "heading") { const m = /^H([1-6])$/.exec(tag); kv("level", m ? Number(m[1]) : Number(attr(el, "aria-level")) || 0); }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) && el.name) kv("name", el.name);
@@ -3941,12 +3945,103 @@ for (const el of deepAll(SEL)) {
   if (attr(el, "aria-expanded") === "true") line += " expanded";
   if (unpicked(el)) line += " unpicked";
   if (invCarrier(el, false)) { line += " invalid"; const m = invMsg(el); if (m) kv("error", m); }
+  if (reqEmpty(el) && honeypot(el) && !decoy(el)) line += " hidden";
+  return line;
+}
+let n = 0, matched = 0, truncated = false;
+for (const el of deepAll(SEL)) {
+  const r = role(el);
+  if (roles && roles.indexOf(r) < 0) continue;
+  if (!snapVis(el)) continue;
+  if (!re && n >= A.max) { truncated = true; break; }
+  const line = describe(el, r, accName(el));
   if (re && !re.test(line)) continue;
   matched++;
   if (n >= A.max) { truncated = true; continue; }
   const ref = String(++n);
   refs[ref] = el;
   lines.push(ref + " " + line);
+}
+// The shown boxes around a hidden field, nearest first, up to one holding more
+// than 5 fields: their label text names the field when nothing else does, and
+// they hold the button that reveals it.
+function sections(el) {
+  const out = [];
+  for (let p = el.parentElement, d = 0; p && d < 6 && !/^(FORM|MAIN|BODY|HTML)$/.test(p.tagName) && attr(p, "role") !== "main"; p = p.parentElement, d++) {
+    if (p.querySelectorAll("input:not([type=hidden]), textarea, select, [contenteditable]").length > 5) break;
+    if (vis(p)) out.push(p);
+  }
+  return out;
+}
+// A shown, enabled, non-submit button in the field's nearest section that has
+// one: controlling the field first, then one suggesting typing ("Enter
+// manually"), then one expanding something collapsed.
+function revealer(el, secs) {
+  for (const p of secs) {
+    let best = null, rank = 3;
+    for (const b of p.querySelectorAll("button, [role=button], input[type=button]")) {
+      if (!vis(b) || isDisabled(b) || attr(b, "type").toLowerCase() === "submit") continue;
+      const name = accName(b);
+      if (!name || REVEAL_SKIP.test(name)) continue;
+      const ctl = attr(b, "aria-controls").split(/\s+/).some(function (id) { const t = id && document.getElementById(id); return !!t && t.contains(el); });
+      const k = ctl ? 0 : REVEAL_TYPING.test(name) ? 1 : attr(b, "aria-expanded") === "false" ? 2 : 3;
+      if (k < rank) { best = b; rank = k; }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+// Rows for required-empty form fields no row shows, after the ordinary rows:
+// at most 10, under the same role and query filters. A trap never gets one,
+// nor a hidden twin of a shown field (a faded decoy, a mirror).
+function hiddenRows(cands) {
+  const listed = new Map(), twins = new Set();
+  for (const k in refs) { listed.set(refs[k], k); twins.add(role(refs[k]) + " " + accName(refs[k])); }
+  let shown = 0;
+  for (const el of cands) {
+    if (shown >= 10) break;
+    const r = role(el);
+    if ((roles && roles.indexOf(r) < 0) || decoy(el)) continue;
+    const secs = sections(el);
+    let name = clip(labelText(el) || nearText(el) || attr(el, "placeholder"), 120);
+    if (!name) for (const p of secs) { const t = clip(labelWords(p), 121); if (t && t.length <= 120) { name = clip(t, 80); break; } }
+    if (!name) name = accName(el);
+    if (twins.has(r + " " + name)) continue;
+    const line = describe(el, r, name) + " hidden";
+    if (re && !re.test(line)) continue;
+    matched++;
+    if (n >= A.max) { truncated = true; continue; }
+    shown++;
+    const ref = String(++n);
+    refs[ref] = el;
+    const b = revealer(el, secs);
+    let bref = b && listed.get(b), bline = null;
+    if (b && !bref && n < A.max) { bref = String(++n); refs[bref] = b; listed.set(b, bref); bline = bref + " " + describe(b, role(b), accName(b)); }
+    lines.push(ref + " " + line + (bref ? " reveal=" + q(bref) : ""));
+    if (bline) lines.push(bline);
+  }
+}
+let form = null;
+const forms = Array.from(document.querySelectorAll("form")).filter(vis);
+if (forms.length) {
+  let big = forms[0];
+  forms.forEach(function (f) { if (f.querySelectorAll(FIELDS).length > big.querySelectorAll(FIELDS).length) big = f; });
+  // A file input is a field to fill too (through file_upload). An input that is
+  // both aria-hidden and out of the tab order is a widget's stand-in for native
+  // validation (react-select's required input), not a field of its own.
+  const fields = Array.from(big.querySelectorAll(FIELDS)).filter(function (el) {
+    const t = (el.type || "text").toLowerCase();
+    if (el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0) return false;
+    return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
+  });
+  const loose = fields.filter(unpicked);
+  const empty = fields.filter(reqEmpty);
+  form = { fields: fields.length, requiredEmpty: empty.length };
+  if (loose.length) form.unpicked = loose.length;
+  const inv = invalidSet().filter(function (c) { return big.contains(c.el); }).length;
+  if (inv) form.invalid = inv;
+  const unseen = empty.filter(function (el) { return !snapVis(el); });
+  if (unseen.length) hiddenRows(unseen);
 }
 const head = { url: location.href, title: document.title, ready: document.readyState, count: n };
 // For the frame walk's page-area match; Node drops them from the header.
@@ -3962,30 +4057,7 @@ if (act && act !== document.body && act !== document.documentElement) {
 }
 const dialogs = Array.from(document.querySelectorAll("[role=dialog], [aria-modal=true], dialog[open]")).filter(vis).slice(0, 5).map(accName);
 if (dialogs.length) head.dialogs = dialogs;
-const forms = Array.from(document.querySelectorAll("form")).filter(vis);
-if (forms.length) {
-  const FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
-  let big = forms[0];
-  forms.forEach(function (f) { if (f.querySelectorAll(FIELDS).length > big.querySelectorAll(FIELDS).length) big = f; });
-  // A file input is a field to fill too (through file_upload). An input that is
-  // both aria-hidden and out of the tab order is a widget's stand-in for native
-  // validation (react-select's required input), not a field of its own.
-  const fields = Array.from(big.querySelectorAll(FIELDS)).filter(function (el) {
-    const t = (el.type || "text").toLowerCase();
-    if (el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0) return false;
-    return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
-  });
-  const loose = fields.filter(unpicked);
-  const requiredEmpty = fields.filter(function (el) {
-    if (!el.required && attr(el, "aria-required") !== "true") return false;
-    if (String(el.value || el.textContent || "").trim()) return loose.indexOf(el) >= 0;
-    return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
-  }).length;
-  head.form = { fields: fields.length, requiredEmpty: requiredEmpty };
-  if (loose.length) head.form.unpicked = loose.length;
-  const inv = invalidSet().filter(function (c) { return big.contains(c.el); }).length;
-  if (inv) head.form.invalid = inv;
-}
+if (form) head.form = form;
 return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "");
 `,
 
