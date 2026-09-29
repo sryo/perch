@@ -42,13 +42,13 @@ function beforeEvals(dom, fn) {
 
 const FORM = `<button id=b>Submit</button><p id=s>Idle</p><div id=spin></div>`;
 const COUNT = `window.n = 0; document.getElementById('b').addEventListener('click', () => { document.getElementById('s').textContent = 'Saved ' + (++window.n); });`;
-const READ = "const text = rbText();";
+const READ = "const s = window.__perch_rb;";
 const REPLACED = "timeout: click sent, but another perch call on this tab took over its readback state; the outcome is not verified";
 const w = (name, A) => buildEvalWrapper(pageScript(name, A));
 const rbSteps = (readback) => ({ read: w("readback_read", { readback }), readFinal: w("readback_read", { readback, final: true }), settle: 2000 });
 // B's whole click {readback}, as its server's runtime runs it.
-const clickB = (world, readback = "#s") => JSON.parse(world.run(`JSON.stringify(__perch.click(${JSON.stringify({
-  click: w("click_readback", { ref: null, selector: "#b", label_pattern: null, probe: true, readback }), go: CLICK_BLANK_GO, ...rbSteps(readback),
+const clickB = (world, readback = "#s", selector = "#b") => JSON.parse(world.run(`JSON.stringify(__perch.click(${JSON.stringify({
+  click: w("click_readback", { ref: null, selector, label_pattern: null, probe: true, readback }), go: CLICK_BLANK_GO, ...rbSteps(readback),
 })}))`));
 
 function assertRefused(o) {
@@ -118,6 +118,77 @@ test("a finished readback keeps its record; a new document still reads navigated
   assert.equal(third.o.navigated, true, JSON.stringify(third.o));
   assert.equal(third.o.changed, true);
   assert.equal(third.o.readback, "Welcome");
+});
+
+// ---- readback on another selector ----
+// A clicks #go and reads back #noop; B clicks #noop and reads back #go. A read
+// of B's record must never measure A's element against B's baseline.
+
+const PAIR = `<button id=go>Submit</button><button id=noop>Other</button><p id=s>Idle</p>`;
+const armB = (dom) => run(dom, "click_readback", { ref: null, selector: "#noop", label_pattern: null, probe: true, readback: "#go" });
+const pollOwn = (dom, readback) => {
+  let v = null;
+  for (let i = 0; i < 40 && !(v && !v.pending); i++) v = run(dom, "readback_read", { readback });
+  return v;
+};
+function assertRefusedOn(o, el) {
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.error, REPLACED);
+  assert.equal(o.el, el);
+  for (const k of ["navigated", "changed", "readback", "url", "form", "invalid", "page"]) assert.ok(!(k in o), `${k} in ${JSON.stringify(o)}`);
+}
+
+test("readback overlap: B's whole click runs at A's first read; neither reads the other's element", async () => {
+  const { dom, world } = onPage(PAIR);
+  let b = null;
+  beforeEvals(dom, (n, js) => { if (!b && js.includes(READ)) b = clickB(world, "#go", "#noop"); });
+  const { o } = await call("click", { selector: "#go", readback: "#noop" });
+  assert.ok(b, "B ran inside A's poll");
+  assert.deepEqual(b, { ok: true, el: `button "Other"`, readback: "Submit", changed: false });
+  assertRefusedOn(o, `button "Submit"`);
+});
+
+test("readback overlap: B arms after A's 3rd read; A is refused and B reads its own element", async () => {
+  const { dom } = onPage(PAIR);
+  let reads = 0, arm = null;
+  beforeEvals(dom, (n, js) => {
+    if (!js.includes(READ)) return;
+    if (++reads === 4) arm = armB(dom);
+  });
+  const { o } = await call("click", { selector: "#go", readback: "#noop" });
+  assert.ok(arm && arm.ok, JSON.stringify(arm));
+  assertRefusedOn(o, `button "Submit"`);
+  assert.ok(!dom.__perch_rb.done, "A's read left B's record pending");
+  const v = pollOwn(dom, "#go");
+  assert.equal(v.tok, arm.rbTok, JSON.stringify(v));
+  assert.equal(v.readback, "Submit", JSON.stringify(v));
+  assert.equal(v.changed, false);
+});
+
+test("readback overlap: A finishes before B arms; both get their own results", async () => {
+  const { world } = onPage(PAIR);
+  const { o } = await call("click", { selector: "#go", readback: "#noop" });
+  assert.deepEqual(o, { ok: true, el: `button "Submit"`, readback: "Other", changed: false });
+  assert.deepEqual(clickB(world, "#go", "#noop"), { ok: true, el: `button "Other"`, readback: "Submit", changed: false });
+});
+
+test("readback overlap: a read with another selector answers pending with the owner's token and touches nothing", () => {
+  const { dom } = onPage(PAIR);
+  const arm = run(dom, "readback_arm", { readback: "#go" });
+  assert.equal(arm.ok, true, JSON.stringify(arm));
+  const r = dom.__perch_rb;
+  let stops = 0;
+  const disconnect = r.obs.disconnect.bind(r.obs);
+  r.obs.disconnect = () => { stops++; disconnect(); };
+  const snap = () => ({ quiet: r.quiet, act: r.act, clsSeen: r.clsSeen, calm: r.calm, done: r.done, mut: r.mut, away: r.away, text: r.text, sig: r.sig, cls: r.cls });
+  const before = snap();
+  for (let i = 0; i < 5; i++) assert.deepEqual(run(dom, "readback_read", { readback: "#noop" }), { pending: true, tok: arm.tok });
+  assert.equal(dom.__perch_rb, r, "the record is the owner's");
+  assert.deepEqual(snap(), before);
+  assert.equal(stops, 0, "the observer is still connected");
+  for (let i = 1; i < 10; i++) assert.deepEqual(run(dom, "readback_read", { readback: "#go" }), { pending: true, tok: arm.tok }, `owner read ${i}`);
+  assert.deepEqual(run(dom, "readback_read", { readback: "#go" }), { readback: "Submit", changed: false, tok: arm.tok });
+  assert.equal(stops, 1);
 });
 
 // ---- wait {quiet} ----

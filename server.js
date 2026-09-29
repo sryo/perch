@@ -5265,10 +5265,10 @@ function stepOf(scope) {
 // or animation ones) and still hold on the next poll, so transient effects
 // don't pass for a change.
 const READBACK_LIB = QUIET_LIB + INVALID_LIB + STEP_LIB + String.raw`
-function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
+function rbText(sel) { const n = document.querySelector(sel); return n ? clip(textOf(n), 300) : null; }
 // noOff leaves out the disabled flags, which a form sets while it posts.
-function rbSig(noOff) {
-  const n = document.querySelector(A.readback);
+function rbSig(sel, noOff) {
+  const n = document.querySelector(sel);
   if (!n) return null;
   const els = [n].concat(Array.prototype.slice.call(n.querySelectorAll("*"), 0, 50));
   return els.map(function (el) {
@@ -5279,8 +5279,8 @@ function rbSig(noOff) {
     return JSON.stringify(f);
   }).join("|");
 }
-function rbCls() {
-  const n = document.querySelector(A.readback);
+function rbCls(sel) {
+  const n = document.querySelector(sel);
   if (!n) return null;
   const els = [n].concat(Array.prototype.slice.call(n.querySelectorAll("*"), 0, 50));
   return els.map(function (el) {
@@ -5334,7 +5334,8 @@ function rbSubmits(b) {
 }
 function rbArm(el) {
   let s;
-  try { s = { text: rbText(), sig: rbSig(), sigOn: rbSig(true), cls: rbCls(), url: location.href, inv: invalidSet() }; }
+  const sel = A.readback;
+  try { s = { sel: sel, text: rbText(sel), sig: rbSig(sel), sigOn: rbSig(sel, true), cls: rbCls(sel), url: location.href, inv: invalidSet() }; }
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
   const scope = el ? rbScope(el) : null;
   if (scope && rbShown(scope)) {
@@ -6258,7 +6259,10 @@ return rbArm(A.probed && window.__perch_trusted ? window.__perch_trusted.el : nu
   readback_read: READBACK_LIB + String.raw`
 const s = window.__perch_rb;
 if (s && s.done) return s.out || { done: true, tok: s.tok };
-const text = rbText();
+// A record armed for another element is another call's: measuring this call's
+// element against its baseline would hand that call a false outcome.
+if (s && s.sel !== A.readback) return { pending: true, tok: s.tok };
+const text = rbText(s ? s.sel : A.readback);
 if (!s) {
   if (!A.final && (text == null || document.readyState === "loading")) return null;
   const out = { readback: text, changed: true, navigated: true, url: location.href }, page = {};
@@ -6271,7 +6275,7 @@ if (!s) {
 }
 const moved = location.href !== s.url;
 // A class change must still be there on the next poll.
-const cls = rbCls();
+const cls = rbCls(s.sel);
 const clsMoved = cls !== s.cls && cls === s.clsSeen;
 s.clsSeen = cls !== s.cls ? cls : null;
 // Invalid fields added or reworded since arming end the wait, and so do cleared
@@ -6283,7 +6287,7 @@ const invGone = s.inv.some(function (p) { return !inv.some(function (c) { return
 // A busy flag the form scope didn't show at arm time: it is posting, so disabled
 // flags that differ are not an outcome.
 const held = !!s.held && s.form.isConnected && rbHeld(s.form).some(function (el) { return s.held.indexOf(el) < 0; });
-const sigMoved = held ? rbSig(true) !== s.sigOn : rbSig() !== s.sig;
+const sigMoved = held ? rbSig(s.sel, true) !== s.sigOn : rbSig(s.sel) !== s.sig;
 // The form's own outcome: gone, a new step, or a new alert or live-region text.
 let form = null;
 if (s.form) {
@@ -6303,7 +6307,7 @@ const changed = moved || text !== s.text || sigMoved || clsMoved || invNew.lengt
 // for one until the page settles. That holds whatever the readback is on, while
 // nothing outside the button and those flags changed.
 const busy = rbBusy(s);
-const node = s.btn && s.btn.isConnected ? document.querySelector(A.readback) : null;
+const node = s.btn && s.btn.isConnected ? document.querySelector(s.sel) : null;
 const onBtn = !!node && (node === s.btn || s.btn.contains(node));
 const inFlight = !!s.btn && s.btn.isConnected && (onBtn || !s.away) && (textOf(s.btn) !== s.btnText || !!s.btn.disabled !== s.btnOff || held) && !moved && !clsMoved && !invNew.length && !invGone && !form;
 // Ten polls in a row with no page activity (about 670ms live) settle it early.
