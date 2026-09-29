@@ -19,6 +19,7 @@ test("target lists only tabId and app; windowId and tabIndex are still accepted"
   for (const t of targeted) {
     const target = t.inputSchema.properties.target;
     assert.deepEqual(Object.keys(target.properties), ["tabId", "app"], t.name);
+    assert.equal(target.properties.tabId.type, "string", t.name);
     assert.notEqual(target.additionalProperties, false, t.name);
   }
   const world = makeWorld({ browsers: [{ name: "Google Chrome", kind: "chrome", windows: [
