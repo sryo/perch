@@ -6063,8 +6063,18 @@ return true;
 `,
 };
 
+// Page scripts cross the Apple Event bridge on every call and every poll. They
+// hold no backtick, block comment or line continuation, so no string spans a
+// line and whole comment lines and indentation can go. Newlines stay, so ASI
+// and trailing comments read as written.
+function lean(s) {
+  return s.split("\n").filter((l) => !/^\s*\/\//.test(l)).map((l) => l.trimStart()).filter(Boolean).join("\n");
+}
+const LEAN_PRELUDE = lean(PAGE_PRELUDE);
+const LEAN_SCRIPTS = new Map(Object.entries(PAGE_SCRIPTS).map(([k, v]) => [k, lean(v)]));
+
 export function pageScript(name, A) {
-  return PAGE_PRELUDE + "\nconst A = " + JSON.stringify(A) + ";\n" + (name ? PAGE_SCRIPTS[name] : "");
+  return LEAN_PRELUDE + "\nconst A = " + JSON.stringify(A) + ";\n" + (name ? LEAN_SCRIPTS.get(name) : "");
 }
 
 export function validateLabelPattern(tool, p, param = "label_pattern") {
