@@ -264,7 +264,7 @@ test("navigate on Chrome: a file: page with raise:true still loads a file: url",
 
 test("navigate on Chrome: a file: url from an http page behind another app still needs raise:true", () => {
   install(away(fixture()));
-  assert.throws(() => navWith({ url: "file:///tmp/proto/b.html" }), (e) => /^tab_not_visible: .*about:blank itself/.test(e.message) && OPT_IN.test(e.message));
+  assert.throws(() => navWith({ url: "file:///tmp/proto/b.html" }), (e) => /^tab_not_visible: a page can only load an absolute http\(s\) URL, about:blank, or \(from a file:\/\/ page\) another file:\/\/ URL itself;/.test(e.message) && OPT_IN.test(e.message));
   assert.equal(world.counts["tab.url="], undefined);
   assert.equal(world.counts["tab.execute"] || 0, 0);
 });

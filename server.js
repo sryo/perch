@@ -2085,7 +2085,7 @@ function jxaRuntime(BROWSERS, HANG) {
       };
       if (ownPage && !mayRaise()) throw refuse("tab_not_scriptable", "navigate can't run page JS on the browser's own pages (new tab, settings)");
       if (!canEval && !mayRaise()) throw refuse("tab_not_visible", arcPage ? "navigate can't run page JS on the browser's own pages or load them from a page" : "navigate can't run page JS in a tab its window doesn't show");
-      if (canEval && !fromPage && !mayRaise()) throw refuse("tab_not_visible", "a page can only load an absolute http(s) URL or about:blank itself");
+      if (canEval && !fromPage && !mayRaise()) throw refuse("tab_not_visible", "a page can only load an absolute http(s) URL, about:blank, or (from a file:// page) another file:// URL itself");
       const q = JSON.stringify(a.url), tok = JSON.stringify(token);
       // On a retry, a document without the stamp is the one the lost call's load
       // committed when it shows the URL asked for (unless the tab already showed it),
