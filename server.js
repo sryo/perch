@@ -3941,6 +3941,11 @@ function isTypeahead(el) {
 `;
 const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
 const taNorm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
+// What the field shows: its text, else (an emptied react-select input) its control's.
+function taShown(el) {
+  const ctl = el.closest('.select__control, [class*="-control"]');
+  return el.value || (ctl ? textOf(ctl) : "");
+}
 // A background tab's blur() fires no events, so send them when the page lacks focus.
 function taBlur(el) {
   const had = el.ownerDocument.activeElement === el;
@@ -4994,6 +4999,8 @@ if (!opt) {
 }
 s.picked = clip(opt.textContent, 80);
 s.pickedN = taNorm(opt.textContent);
+s.before = taNorm(taShown(s.el));
+s.compBefore = s.comp ? s.comp.value : null;
 press(opt);
 return { picked: true };
 `,
@@ -5034,11 +5041,13 @@ return out;
   fill_ta_read: TYPEAHEAD_LIB + String.raw`
 const s = window.__perch_ta;
 const el = s.el;
-const ctl = el.closest('.select__control, [class*="-control"]');
-const shown = el.value || (ctl ? textOf(ctl) : "");
+const shown = taShown(el);
 const v = taNorm(shown);
 const seen = !!v && (v.indexOf(s.pickedN) >= 0 || v.indexOf(taNorm(s.text)) >= 0);
-const good = seen && (!s.comp || !!s.comp.value);
+// The typed text still showing proves nothing unless the press moved something.
+const moved = v.indexOf(s.pickedN) >= 0 || v !== s.before || (!!s.comp && s.comp.value !== s.compBefore);
+const filled = !s.comp || !!s.comp.value;
+const good = seen && moved && filled;
 if (!A.final && good && !s.blurred) {
   s.blurred = true;
   taBlur(el);
@@ -5046,7 +5055,7 @@ if (!A.final && good && !s.blurred) {
 }
 if (!A.final && !good) return null;
 const out = { ok: good, kind: "typeahead", el: ident(el), selected: s.picked, value: clip(shown, 120) };
-if (!good) out.error = "picked " + JSON.stringify(s.picked) + " but " + (seen ? "the hidden field stayed empty" : "the field doesn't show it");
+if (!good) out.error = "picked " + JSON.stringify(s.picked) + " but " + (!seen ? "the field doesn't show it" : !filled ? "the hidden field stayed empty" : "the field still shows only the typed text");
 return out;
 `,
 

@@ -258,12 +258,12 @@
   },
   {
    "text": "Zone 777",
-   "r": "{\"ok\":true,\"kind\":\"typeahead\",\"el\":\"combobox \\\"Destination\\\"\",\"selected\":\"Medellín, Sweden, Zone 777\",\"value\":\"Zone 777\"}",
+   "r": "{\"ok\":false,\"kind\":\"typeahead\",\"el\":\"combobox \\\"Destination\\\"\",\"selected\":\"Medellín, Sweden, Zone 777\",\"value\":\"Zone 777\",\"error\":\"picked \\\"Medellín, Sweden, Zone 777\\\" but the field still shows only the typed text\"}",
    "value": "Zone 777"
   },
   {
    "text": "medellin, paraguay",
-   "r": "{\"ok\":true,\"kind\":\"typeahead\",\"el\":\"combobox \\\"Destination\\\"\",\"selected\":\"Medellín, Paraguay\",\"value\":\"medellin, paraguay\"}",
+   "r": "{\"ok\":false,\"kind\":\"typeahead\",\"el\":\"combobox \\\"Destination\\\"\",\"selected\":\"Medellín, Paraguay\",\"value\":\"medellin, paraguay\",\"error\":\"picked \\\"Medellín, Paraguay\\\" but the field still shows only the typed text\"}",
    "value": "medellin, paraguay"
   },
   {
