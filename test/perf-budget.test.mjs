@@ -465,3 +465,31 @@ test("navigate on Chrome costs a fixed count of Apple Events for a load the firs
   assert.equal(o.waited, true);
   assert.equal(appleEvents(), 2 + 2 + 2 + 1 + 2, breakdown());
 });
+
+// fill {fields} on native fields is one page call, whatever the order-dependent
+// recheck finds. A batch ending on a custom combobox pays select's own polls,
+// plus one recheck pass for the fields an earlier pass landed.
+test("fill {fields}: native fields cost one Apple Event; a batch ending on a custom combobox adds one recheck pass", async () => {
+  const html = `<label>State <input id=st></label><label>Country <select id=co><option value="">Select...</option><option>Chile</option></select></label>
+    <label><input type=checkbox id=ag> I agree</label>
+    <label id=lab>Level</label><div class="select__control"><div role=combobox aria-labelledby=lab aria-expanded=false tabindex=0><span class=v>Choose</span></div></div><div id=menu></div>`;
+  const cost = {};
+  for (const [label, fields] of [
+    ["native", [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "country", option: "Chile" }, { label_pattern: "agree", checked: true }]],
+    ["ends on combobox", [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }]],
+  ]) {
+    const dom = page(html, { url: "https://c0.test/" });
+    dom.eval(`const cb = document.querySelector('[role=combobox]');
+      document.querySelector('.select__control').addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || !e.view) return;
+        cb.setAttribute('aria-expanded', 'true');
+        document.getElementById('menu').innerHTML = '<div role=option>Junior</div><div role=option>Senior</div>';
+        document.querySelectorAll('[role=option]').forEach(o => o.addEventListener('click', () => { cb.querySelector('.v').textContent = o.textContent; }));
+      });`);
+    install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+    const { o } = await call("fill", { fields });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    cost[label] = appleEvents();
+  }
+  assert.deepEqual(cost, { native: 1, "ends on combobox": 8 + 1 });
+});
