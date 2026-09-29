@@ -333,3 +333,92 @@ test("an untruncated same-origin frame is listed once, by the page walk", async 
   assert.deepEqual(r.lines.slice(5), [`6 textbox "First name" frame=0`, `7 textbox "Last name" frame=0`]);
   assert.deepEqual(r.head.frames, { count: 0 });
 });
+
+// Nested frames: a same-origin wrapper's own iframes are listed too, each with
+// `in`, the index of its parent's entry.
+function nestedCross(doc, id, src) {
+  const f = doc.getElementById(id);
+  Object.defineProperty(f, "src", { get: () => src, configurable: true });
+  Object.defineProperty(f, "contentDocument", { get: () => { throw new Error("SecurityError: blocked a frame"); }, configurable: true });
+  return f;
+}
+function wrapper(inner, rect = "0,0,800,600") {
+  const w = page(`<h1>Careers</h1><iframe id=wrap data-rect="${rect}"></iframe>`);
+  const d = w.document.getElementById("wrap").contentDocument;
+  d.body.innerHTML = `<p>Apply</p>${inner}`;
+  return { w, d };
+}
+const FORM = `<form><label for=em>Email</label><input id=em name=email required></form>`;
+
+test("nested (a) a cross-origin form inside a fieldless wrapper is listed with `in`, and fill's miss names it", () => {
+  const { w, d } = wrapper(`<iframe id=ats data-rect="10,10,600,500"></iframe>`);
+  nestedCross(d, "ats", "https://forms.example/apply?t=x");
+  const { head } = snap(w);
+  assert.deepEqual(head.iframes, [
+    { src: "about:blank", w: 800, h: 600, same: true },
+    { src: "https://forms.example/apply", w: 600, h: 500, same: false, in: 0 },
+  ]);
+  const o = run(w, "fill", { label_pattern: "email", text: "a@b.co" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /the page embeds a form frame at https:\/\/forms\.example\/apply: navigate or new_tab there$/);
+  assert.doesNotMatch(o.error, /frame=0/);
+});
+
+test("nested (b) a wrapper holding fields is still the hint at frame=0", () => {
+  const { w, d } = wrapper(`${FORM}<iframe id=ats data-rect="10,10,600,500"></iframe>`);
+  nestedCross(d, "ats", "https://forms.example/apply");
+  const o = run(w, "fill", { label_pattern: "first name", text: "Ada" });
+  assert.match(o.error, /same-origin form frame: accessibility_snapshot lists its fields \(frame=0\); fill them by ref$/);
+});
+
+test("nested (c) a same-origin form inside a fieldless wrapper is walked with its own index, named by the hint, and fills by ref", () => {
+  const { w, d } = wrapper(`<iframe id=inner data-rect="10,20,600,500"></iframe>`);
+  const inner = d.getElementById("inner").contentDocument;
+  inner.body.innerHTML = FORM;
+  const { head, lines } = snap(w);
+  assert.deepEqual(head.iframes, [{ src: "about:blank", w: 800, h: 600, same: true }, { src: "about:blank", w: 600, h: 500, same: true, in: 0 }]);
+  assert.deepEqual(lines, [`1 heading "Careers" level=1`, `2 textbox "Email" name="email" required frame=1`]);
+  const miss = run(w, "fill", { label_pattern: "first name", text: "Ada" });
+  assert.match(miss.error, /accessibility_snapshot lists its fields \(frame=1\); fill them by ref$/);
+  snap(w);
+  const f = run(w, "fill", { ref: "2", text: "a@b.co" });
+  assert.equal(f.ok, true, JSON.stringify(f));
+  assert.equal(inner.getElementById("em").value, "a@b.co");
+  // frames:true places the nested frame's box in top-page coordinates.
+  w.document.getElementById("wrap").setAttribute("data-rect", "30,40,800,600");
+  assert.deepEqual(snap(w, { frames: true }).head.fr, [[30, 40, 800, 600], [40, 60, 600, 500]]);
+});
+
+test("nested (d) a wrapper too small to list hides its children", () => {
+  const { w, d } = wrapper(`<iframe id=ats data-rect="0,0,600,500"></iframe>`, "0,0,100,100");
+  nestedCross(d, "ats", "https://forms.example/apply");
+  assert.equal(snap(w).head.iframes, undefined);
+  assert.doesNotMatch(run(w, "fill", { label_pattern: "email", text: "x" }).error, /embeds/);
+});
+
+function capPage(tops, kidRect) {
+  const w = page(`${tops.map((i) => `<iframe id=t${i} data-rect="0,0,900,${600 + i}"></iframe>`).join("")}<iframe id=wrap data-rect="0,0,300,200"></iframe>`);
+  tops.forEach((i) => crossOrigin(w, "t" + i, `https://ads.example/t${i}`));
+  const wd = w.document.getElementById("wrap").contentDocument;
+  wd.body.innerHTML = `<iframe id=kid data-rect="${kidRect}"></iframe>`;
+  nestedCross(wd, "kid", "https://forms.example/apply");
+  return snap(w).head.iframes.map((f) => [f.src.replace(/^https:\/\/[^/]+\//, ""), f.in]);
+}
+
+test("nested (e) depth 4 is not listed; the cap of 5 holds and no `in` names a dropped entry", () => {
+  const { w, d } = wrapper(`<iframe id=l2 data-rect="0,0,700,500"></iframe>`);
+  const d2 = d.getElementById("l2").contentDocument;
+  d2.body.innerHTML = `<iframe id=l3 data-rect="0,0,600,400"></iframe>`;
+  const d3 = d2.getElementById("l3").contentDocument;
+  d3.body.innerHTML = `<iframe id=l4 data-rect="0,0,500,300"></iframe>`;
+  d3.getElementById("l4").contentDocument.body.innerHTML = `<input name=deep>`;
+  const { head, lines } = snap(w);
+  assert.deepEqual(head.iframes.map((f) => [f.w, f.in]), [[800, undefined], [700, 0], [600, 1]]);
+  assert.ok(!lines.some((l) => /deep/.test(l)), lines.join("\n"));
+
+  // A child bigger than its parent sorts first; its `in` points past it.
+  assert.deepEqual(capPage([1, 2, 3], "0,0,850,700"), [["apply", 4], ["t3", undefined], ["t2", undefined], ["t1", undefined], ["about:blank", undefined]]);
+  // The cap cuts the wrapper, so its child goes too.
+  assert.deepEqual(capPage([1, 2, 3, 4], "0,0,850,700"), [["t4", undefined], ["t3", undefined], ["t2", undefined], ["t1", undefined]]);
+  assert.deepEqual(capPage([1, 2, 3, 4, 5], "0,0,250,160"), [5, 4, 3, 2, 1].map((i) => ["t" + i, undefined]));
+});

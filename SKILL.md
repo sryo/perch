@@ -35,7 +35,7 @@ Tool descriptions come with the schema; this adds what they leave out. `new_tab`
 3 combobox "Country" options=["Argentina","Brazil"] value="AR"
 ```
 
-Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Refs die on re-snapshot or navigation. Header `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
+Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Refs die on re-snapshot or navigation. Header `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`; `in`: parent row. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
 
 ## Results
 

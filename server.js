@@ -2929,16 +2929,30 @@ function viewOf(el) {
 }
 // A same-origin frame that navigates or reloads leaves its old document alive,
 // and the nodes a ref kept there still read isConnected: such a document is
-// live only while a connected iframe of this page still shows it.
-function liveDoc(d) {
+// live only while a connected iframe still shows it, in this page or (up to 3
+// frames deep) in a live same-origin frame.
+function frameOf(d, root, depth) {
+  for (const x of root.getElementsByTagName("iframe")) {
+    let c = null;
+    try { c = x.contentDocument; } catch (e) {}
+    if (!c) continue;
+    if (c === d) return x;
+    const f = depth < 3 && frameOf(d, c, depth + 1);
+    if (f) return f;
+  }
+  return null;
+}
+function liveDoc(d, depth) {
   if (d === document) return true;
+  depth = depth || 1;
   const v = d && d.defaultView;
-  if (!v) return false;
+  if (!v || depth > 3) return false;
   let f = null;
   try { f = v.frameElement; } catch (e) {}
-  if (f == null) for (const x of document.getElementsByTagName("iframe")) { try { if (x.contentDocument === d) { f = x; break; } } catch (e) {} }
-  if (!f || f.ownerDocument !== document || !f.isConnected) return false;
-  try { return f.contentDocument === d; } catch (e) { return false; }
+  if (f == null) f = frameOf(d, document, 1);
+  if (!f || !f.isConnected) return false;
+  try { if (f.contentDocument !== d) return false; } catch (e) { return false; }
+  return liveDoc(f.ownerDocument, depth + 1);
 }
 function getComputedStyle(el, p) { return (el.ownerDocument === document ? window : viewOf(el)).getComputedStyle(el, p); }
 // querySelectorAll over the document and every open shadow root, in document
@@ -3688,29 +3702,43 @@ function taMatch(opts, text) {
 `;
 
 // Embedded frames big enough to hold a form: visible iframes of at least
-// 200x150 CSS px, largest first, at most 5, as {f, src, w, h, same}. src keeps
-// only an http(s) URL's origin and path; same says page JS can read the frame's
-// document (a cross-origin frame's reads null or throws).
+// 200x150 CSS px, in the page and (up to 3 frames deep) inside listed
+// same-origin frames, largest first, at most 5, as {f, src, w, h, same, in, p}.
+// src keeps only an http(s) URL's origin and path; same says page JS can read
+// the frame's document (a cross-origin frame's reads null or throws); a nested
+// entry's p is its parent entry and in that entry's index. A nested entry whose
+// parent the cap cut is dropped, so in always names a listed entry.
 const EMBED_LIB = String.raw`
 function embeds() {
-  const out = [];
-  for (const f of document.getElementsByTagName("iframe")) {
-    if (!vis(f)) continue;
-    const r = f.getBoundingClientRect();
-    if (r.width < 200 || r.height < 150) continue;
-    let same = false;
-    try { same = !!f.contentDocument; } catch (e) {}
-    let src = f.hasAttribute("srcdoc") ? "about:srcdoc" : String(f.src || "about:blank");
-    try { const u = new URL(src); if (/^https?:$/.test(u.protocol)) src = u.origin + u.pathname; } catch (e) {}
-    out.push({ f: f, src: clip(src, 150), w: Math.round(r.width), h: Math.round(r.height), same: same });
-  }
-  return out.sort(function (a, b) { return b.w * b.h - a.w * a.h; }).slice(0, 5);
+  const all = [];
+  (function scan(doc, parent, depth) {
+    for (const f of doc.getElementsByTagName("iframe")) {
+      if (!vis(f)) continue;
+      const r = f.getBoundingClientRect();
+      if (r.width < 200 || r.height < 150) continue;
+      let cd = null;
+      try { cd = f.contentDocument; } catch (e) {}
+      let src = f.hasAttribute("srcdoc") ? "about:srcdoc" : String(f.src || "about:blank");
+      try { const u = new URL(src); if (/^https?:$/.test(u.protocol)) src = u.origin + u.pathname; } catch (e) {}
+      const e = { f: f, src: clip(src, 150), w: Math.round(r.width), h: Math.round(r.height), same: !!cd, p: parent };
+      all.push(e);
+      if (cd && depth < 3) scan(cd, e, depth + 1);
+    }
+  })(document, null, 1);
+  const cut = all.sort(function (a, b) { return b.w * b.h - a.w * a.h; }).slice(0, 5);
+  const out = cut.filter(function (e) { for (let p = e.p; p; p = p.p) if (cut.indexOf(p) < 0) return false; return true; });
+  out.forEach(function (e) { if (e.p) e.in = out.indexOf(e.p); });
+  return out;
 }
-// For fill's label miss: where the field may live instead, from the largest frame.
-function frameHint() {
-  const e = embeds()[0];
-  if (!e) return "";
-  return e.same ? "; the page embeds a same-origin form frame: accessibility_snapshot lists its fields (frame=0); fill them by ref"
+// For fill's label miss: where the field may live instead. The largest listed
+// frame that is cross-origin or whose document holds a field (hasField): a
+// fieldless same-origin wrapper never is.
+function frameHint(hasField) {
+  const list = embeds();
+  const i = list.findIndex(function (e) { return !e.same || hasField(e.f.contentDocument); });
+  if (i < 0) return "";
+  const e = list[i];
+  return e.same ? "; the page embeds a same-origin form frame: accessibility_snapshot lists its fields (frame=" + i + "); fill them by ref"
     : "; the page embeds a form frame at " + e.src + ": navigate or new_tab there";
 }
 `;
@@ -3889,6 +3917,7 @@ function fillOne(a, only) {
     if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return false;
     return !el.hasAttribute("contenteditable") || editable(el);
   };
+  const inFrame = function (d) { try { return !!d && deepAll(EDITABLES, d).some(fillable); } catch (e) { return false; } };
   const crowd = new Map();
   const fieldsIn = function (p) {
     if (!crowd.has(p)) crowd.set(p, Array.prototype.filter.call(p.querySelectorAll(EDITABLES), fillable).length);
@@ -3939,7 +3968,7 @@ function fillOne(a, only) {
   if (!scored.length) {
     const miss = "no fillable field matched /" + a.label_pattern + "/i; it may appear ";
     const reveal = revealers(re, nearHit);
-    const framed = !reveal.length && frameHint();
+    const framed = !reveal.length && frameHint(inFrame);
     const out = framed ? { ok: false, error: "no fillable field matched /" + a.label_pattern + "/i" + framed }
       : !reveal.length ? { ok: false, error: miss + "only after clicking a button" }
       : { ok: false, error: miss + "after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
@@ -3958,7 +3987,7 @@ function fillOne(a, only) {
     if (scored.every(function (c) { return trapLike(c.el); })) return only ? { ok: true, skipped: "trap", el: el } : { ok: false, el: el, error: el + " matched /" + a.label_pattern + "/i but it looks like a bot trap; leave it empty" };
     const reveal = revealers(re, nearHit);
     const why = el + " matched /" + a.label_pattern + "/i but the field is hidden; ";
-    const framed = !reveal.length && frameHint();
+    const framed = !reveal.length && frameHint(inFrame);
     if (framed) return { ok: false, el: el, error: why + framed.slice(2) + ", or pass its ref or selector to fill it anyway" };
     return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button, or pass its ref or selector to fill it anyway" }
       : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
@@ -4518,7 +4547,9 @@ if (A.frames) {
   // Content boxes of the frames walked here, so the frame walk skips them.
   const fr = embedded.filter(function (e, i) { return walkedFrames.has(i); }).map(function (e) {
     const b = e.f.getBoundingClientRect();
-    return [b.left + (e.f.clientLeft || 0), b.top + (e.f.clientTop || 0), e.f.clientWidth || b.width, e.f.clientHeight || b.height];
+    let x = b.left + (e.f.clientLeft || 0), y = b.top + (e.f.clientTop || 0);
+    for (let p = e.p; p; p = p.p) { const q = p.f.getBoundingClientRect(); x += q.left + (p.f.clientLeft || 0); y += q.top + (p.f.clientTop || 0); }
+    return [x, y, e.f.clientWidth || b.width, e.f.clientHeight || b.height];
   });
   if (fr.length) head.fr = fr;
 }
@@ -4526,8 +4557,7 @@ if (re) head.matched = matched;
 if (truncated) head.truncated = true;
 let act = document.activeElement;
 while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
-const inner = embedded.some(function (e) { return e.same && e.f === act; }) ? act.contentDocument : null;
-if (inner && inner.activeElement && inner.activeElement !== inner.body) {
+for (let inner; act && (inner = embedded.some(function (e) { return e.same && e.f === act; }) ? act.contentDocument : null) && inner.activeElement && inner.activeElement !== inner.body;) {
   act = inner.activeElement;
   while (act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
 }
@@ -4539,7 +4569,11 @@ if (act && act !== document.body && act !== document.documentElement) {
 const dialogs = Array.from(document.querySelectorAll("[role=dialog], [aria-modal=true], dialog[open]")).filter(vis).slice(0, 5).map(accName);
 if (dialogs.length) head.dialogs = dialogs;
 if (form) head.form = form;
-if (embedded.length) head.iframes = embedded.map(function (e) { return { src: e.src, w: e.w, h: e.h, same: e.same }; });
+if (embedded.length) head.iframes = embedded.map(function (e) {
+  const o = { src: e.src, w: e.w, h: e.h, same: e.same };
+  if (e.p) o.in = e.in;
+  return o;
+});
 return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "");
 `,
 
