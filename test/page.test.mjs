@@ -144,6 +144,27 @@ test("fill by label with no matching field says the field may appear after a cli
   assert.deepEqual(o.reveal, [`button "Enter manually"`]);
 });
 
+test("fill by label never claims another field through page text around it", () => {
+  for (const [html, near] of [
+    [`<h1>Pick a location</h1><label>Name <input></label><label>Email <input type=email></label>`, 0],
+    [`<div><h2>Delivery location</h2><label>Name <input></label><label>Email <input type=email></label></div>`, 2],
+  ]) {
+    const w = page(html);
+    const o = run(w, "fill", { label_pattern: "location", text: "Rosario" });
+    assert.equal(o.ok, false, JSON.stringify(o));
+    assert.match(o.error, /^no fillable field matched \/location\/i/);
+    assert.equal((o.candidates || []).length, near);
+    assert.deepEqual([...w.document.querySelectorAll("input")].map((i) => i.value), ["", ""]);
+  }
+});
+
+test("fill by label still takes the one field its section text names", () => {
+  const w = page(`<h1>Checkout location</h1><div><span>Location</span><input></div><label>Name <input></label>`);
+  const o = run(w, "fill", { label_pattern: "location", text: "Rosario" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual([...w.document.querySelectorAll("input")].map((i) => i.value), ["Rosario", ""]);
+});
+
 test("fill by label skips a field whose container is hidden", () => {
   const w = page(`<div style="display:none"><textarea aria-label="Message"></textarea></div><textarea aria-label="Message body"></textarea>`);
   const o = run(w, "fill", { label_pattern: "message", text: "hi" });

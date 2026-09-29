@@ -63,11 +63,11 @@
    "r": {
     "ok": true,
     "kind": "plain",
-    "el": "textbox \"Full name 0\"",
+    "el": "textbox \"What is your phone 33? *\"",
     "len": 7
    },
    "changed": [
-    "400=Ab 12 x"
+    "433=Ab 12 x"
    ]
   },
   {
@@ -145,24 +145,23 @@
    "r": {
     "ok": true,
     "kind": "plain",
-    "el": "textbox \"Full name 0\"",
+    "el": "textbox \"Shipping city 20\"",
     "len": 7
    },
    "changed": [
-    "400=Ab 12 x"
+    "420=Ab 12 x"
    ]
   },
   {
    "p": "customer",
    "r": {
-    "ok": true,
-    "kind": "plain",
-    "el": "textbox \"Full name 0\"",
-    "len": 7
+    "ok": false,
+    "error": "no fillable field matched /customer/i; it may appear after clicking one of reveal (click {label_pattern} it, then fill again)",
+    "reveal": [
+     "button \"Expand all alpha echo 0index alpha 1alph…\""
+    ]
    },
-   "changed": [
-    "400=Ab 12 x"
-   ]
+   "changed": []
   },
   {
    "p": "zzz",
@@ -175,14 +174,13 @@
   {
    "p": "monthly",
    "r": {
-    "ok": true,
-    "kind": "plain",
-    "el": "textbox \"Full name 0\"",
-    "len": 7
+    "ok": false,
+    "error": "no fillable field matched /monthly/i; it may appear after clicking one of reveal (click {label_pattern} it, then fill again)",
+    "reveal": [
+     "button \"Expand all alpha echo 0index alpha 1alph…\""
+    ]
    },
-   "changed": [
-    "400=Ab 12 x"
-   ]
+   "changed": []
   },
   {
    "p": "destination x",

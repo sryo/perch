@@ -3386,18 +3386,36 @@ function fillOne(a) {
     if (!near.has(p)) near.set(p, re.test(p.textContent || ""));
     return near.get(p);
   };
-  deepAll("textarea, input, [contenteditable], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe").forEach(function (el) {
-    if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return;
-    if (el.hasAttribute("contenteditable") && !editable(el)) return;
+  const EDITABLES = "textarea, input, [contenteditable], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe";
+  const fillable = function (el) {
+    if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return false;
+    return !el.hasAttribute("contenteditable") || editable(el);
+  };
+  const crowd = new Map();
+  const fieldsIn = function (p) {
+    if (!crowd.has(p)) crowd.set(p, Array.prototype.filter.call(p.querySelectorAll(EDITABLES), fillable).length);
+    return crowd.get(p);
+  };
+  // Named by its own label or hint, a field is claimed by surrounding text only
+  // when that text's container holds no other field; the page body never counts.
+  // Fields passed over in a small section are offered back as candidates.
+  const passed = [];
+  deepAll(EDITABLES).forEach(function (el) {
+    if (!fillable(el)) return;
     const root = el.tagName === "IFRAME" ? el.contentDocument && el.contentDocument.body : el;
     if (!root) return;
     let s;
-    if (re.test(labelText(el))) s = 100;
-    else if (re.test(hintText(el))) s = 40;
+    const own = labelText(el), hint = hintText(el);
+    if (re.test(own)) s = 100;
+    else if (re.test(hint)) s = 40;
     else {
       let p = el, hit = false;
-      for (let i = 0; i < 6 && p; i++, p = p.parentElement) if (nearHit(p)) { hit = true; break; }
+      for (let i = 0; i < 6 && p && !/^(BODY|HTML)$/.test(p.tagName); i++, p = p.parentElement) if (nearHit(p)) { hit = true; break; }
       if (!hit) return;
+      if (p !== el && (own || hint) && fieldsIn(p) > 1) {
+        if (fieldsIn(p) <= 5) passed.push(el);
+        return;
+      }
       s = 10;
     }
     if (vis(el)) s += 20;
@@ -3408,8 +3426,13 @@ function fillOne(a) {
   if (!scored.length) {
     const miss = "no fillable field matched /" + a.label_pattern + "/i; it may appear ";
     const reveal = revealers(re, nearHit);
-    if (!reveal.length) return { ok: false, error: miss + "only after clicking a button" };
-    return { ok: false, error: miss + "after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
+    const out = !reveal.length ? { ok: false, error: miss + "only after clicking a button" }
+      : { ok: false, error: miss + "after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
+    if (passed.length) {
+      out.error += "; candidates sit near matching text but carry other labels";
+      out.candidates = passed.slice(0, 5).map(ident);
+    }
+    return out;
   }
   const best = scored[0];
   const out = tryFill(isField(best.el) ? best.el : best.root, best.el);
