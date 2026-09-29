@@ -4077,7 +4077,9 @@ function reqEmpty(el) {
   if (String(el.value || el.textContent || "").trim()) return unpicked(el);
   return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
 }
-function decoy(el) { return trapLike(el, !!el.labels && Array.prototype.some.call(el.labels, vis)); }
+// Judged as fill judges it: visible text excuses sr-only styling only on a
+// field the form wants filled.
+function decoy(el) { return trapLike(el, wanted(el)); }
 function describe(el, r, name) {
   const tag = el.tagName;
   let line = r + " " + q(name);
@@ -4106,7 +4108,6 @@ function describe(el, r, name) {
   if (attr(el, "aria-expanded") === "true") line += " expanded";
   if (unpicked(el)) line += " unpicked";
   if (invCarrier(el, false)) { line += " invalid"; const m = invMsg(el); if (m) kv("error", m); }
-  if (reqEmpty(el) && honeypot(el) && !decoy(el)) line += " hidden";
   return line;
 }
 let n = 0, matched = 0, truncated = false;
@@ -4154,7 +4155,8 @@ function revealer(el, secs) {
 }
 // Rows for required-empty form fields no row shows, after the ordinary rows:
 // at most 10, under the same role and query filters. A trap never gets one,
-// nor a hidden twin of a shown field (a faded decoy, a mirror).
+// nor a hidden twin of a shown field (a faded decoy, a mirror). One fill takes
+// for shown (a faded combobox input in its painted box) is not flagged hidden.
 function hiddenRows(cands) {
   const listed = new Map(), twins = new Set();
   for (const k in refs) { listed.set(refs[k], k); twins.add(role(refs[k]) + " " + accName(refs[k])); }
@@ -4168,14 +4170,15 @@ function hiddenRows(cands) {
     if (!name) for (const p of secs) { const t = clip(labelWords(p), 121); if (t && t.length <= 120) { name = clip(t, 80); break; } }
     if (!name) name = accName(el);
     if (twins.has(r + " " + name)) continue;
-    const line = describe(el, r, name) + " hidden";
+    const seen = fieldVis(el);
+    const line = describe(el, r, name) + (seen ? "" : " hidden");
     if (re && !re.test(line)) continue;
     matched++;
     if (n >= A.max) { truncated = true; continue; }
     shown++;
     const ref = String(++n);
     refs[ref] = el;
-    const b = revealer(el, secs);
+    const b = seen ? null : revealer(el, secs);
     let bref = b && listed.get(b), bline = null;
     if (b && !bref && n < A.max) { bref = String(++n); refs[bref] = b; listed.set(b, bref); bline = bref + " " + describe(b, role(b), accName(b)); }
     lines.push(ref + " " + line + (bref ? " reveal=" + q(bref) : ""));
