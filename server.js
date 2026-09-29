@@ -3514,13 +3514,15 @@ function fillOne(a) {
     return crowd.get(p);
   };
   // A placeholder names another field when it is a short name ("Name",
-  // "Company name") sharing no word with the pattern, not a prompt for an
-  // answer ("Type your response", "Start typing...").
+  // "Company name", "Enter your email") sharing no word with the pattern, not a
+  // prompt for an answer ("Type your response", "Start typing..."). A prompt
+  // word naming a field noun still names that field.
   const PROMPT = /\b(your|type|typing|enter|write|add|answer|response|here|something|optional)\b/i;
+  const NOUN = /\b(name|e-?mail|phone|number|address|company|city|website|url)\b/i;
   const src = a.label_pattern.toLowerCase();
   const namesOther = function (ph) {
     const words = ph.trim().split(/\s+/).filter(Boolean);
-    if (!words.length || words.length > 4 || PROMPT.test(ph) || re.test(ph)) return false;
+    if (!words.length || words.length > 4 || (PROMPT.test(ph) && !NOUN.test(ph)) || re.test(ph)) return false;
     return !words.some(function (w) { w = w.toLowerCase().replace(/[^a-z0-9]/g, ""); return w.length > 2 && src.indexOf(w) >= 0; });
   };
   // Surrounding text (an ancestor's, never the page body's) claims a field only

@@ -213,6 +213,10 @@ test("fill by label never claims a lone field whose placeholder names something 
   for (const html of [
     `<form><h3>Cover letter</h3><input placeholder="Name"></form>`,
     `<div><h3>Cover letter</h3><input placeholder="Company name"></div>`,
+    `<div><h3>Cover letter</h3><input placeholder="Your name"></div>`,
+    `<div><h3>Cover letter</h3><input placeholder="Enter your phone"></div>`,
+    `<div><h3>Cover letter</h3><input placeholder="Enter your email"></div>`,
+    `<div><h3>Cover letter</h3><input placeholder="Type your address"></div>`,
   ]) {
     const w = page(html);
     const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
