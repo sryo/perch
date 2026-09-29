@@ -543,6 +543,56 @@ test("console capture falls back to a local patch when CSP blocks the bridge", (
   run(w, "console_stop");
 });
 
+const blockBridge = (w) => {
+  for (const root of [w.document.head, w.document.documentElement]) {
+    const orig = root.appendChild.bind(root);
+    root.appendChild = (n) => (n.tagName === "SCRIPT" ? n : orig(n));
+  }
+};
+const throwOn = (w, message, error, loc = { filename: "https://a.test/app.js", lineno: 12, colno: 7 }) =>
+  w.dispatchEvent(new w.ErrorEvent("error", { message, error, ...loc }));
+// happy-dom has no PromiseRejectionEvent; the listener reads only .reason.
+const rejectOn = (w, reason) => {
+  const ev = new w.Event("unhandledrejection");
+  Object.defineProperty(ev, "reason", { value: reason });
+  w.dispatchEvent(ev);
+};
+
+for (const bridge of [true, false]) {
+  test(`console capture records uncaught errors, unhandled rejections and failed asserts (bridge:${bridge})`, () => {
+    const w = page(``);
+    if (!bridge) blockBridge(w);
+    assert.equal(run(w, "console_start").bridge, bridge);
+    throwOn(w, "Uncaught TypeError: x is not a function", new w.TypeError("x is not a function"));
+    assert.deepEqual(run(w, "console_read").entries, ["error: Uncaught TypeError: x is not a function (https://a.test/app.js:12:7)"]);
+    throwOn(w, "Uncaught boom", "boom", {});
+    assert.deepEqual(run(w, "console_read").entries, ["error: Uncaught boom"]);
+    rejectOn(w, "r");
+    rejectOn(w, { code: 5 });
+    assert.deepEqual(run(w, "console_read").entries, ["error: Unhandled rejection: r", 'error: Unhandled rejection: {"code":5}']);
+    w.eval("console.assert(false, 'x', {a: 1}); console.assert(true, 'y'); console.assert(0)");
+    assert.deepEqual(run(w, "console_read").entries, ['error: Assertion failed: x {"a":1}', "error: Assertion failed"]);
+    throwOn(w, "", new w.Error("m".repeat(5000)));
+    const [long] = run(w, "console_read").entries;
+    assert.match(long, /^error: Uncaught Error: m+\.\.\.\[\+\d+ chars\]$/);
+    assert.ok(long.length < 1100, String(long.length));
+    // A resource that fails to load fires 'error' on the element, not the window.
+    const img = w.document.createElement("img");
+    w.document.body.appendChild(img);
+    img.dispatchEvent(new w.Event("error", { bubbles: true }));
+    assert.deepEqual(run(w, "console_read").entries, []);
+    assert.equal(run(w, "console_stop").ok, true);
+    run(w, "console_start");
+    run(w, "console_stop");
+    throwOn(w, "late", new w.Error("late"));
+    rejectOn(w, "late");
+    w.eval("console.assert(false, 'late')");
+    run(w, "console_start");
+    assert.deepEqual(run(w, "console_read").entries, []);
+    run(w, "console_stop");
+  });
+}
+
 test("wait_check: readyState ordering and selector presence", () => {
   const w = page(`<p id=x></p>`);
   assert.equal(run(w, "wait_check", { readyState: "interactive" }), true);

@@ -6074,7 +6074,7 @@ return dropOn(U);
   console_start: String.raw`
 const s = window.__perch_console;
 if (s && s.installed) return { ok: true, already: true, count: s.entries.length };
-const st = { entries: [], dropped: 0, orig: {}, installed: true, bridge: false };
+const st = { entries: [], dropped: 0, installed: true, bridge: false, unhook: null };
 window.__perch_console = st;
 function safe(v) {
   let out;
@@ -6087,9 +6087,8 @@ function safe(v) {
   // Capped at record time so a page logging huge payloads can't bloat the buffer.
   return out.length > 1000 ? out.slice(0, 1000) + "...[+" + (out.length - 1000) + " chars]" : out;
 }
-function mainWorld(safe) {
-  if (window.__perchConsoleBridge) return;
-  window.__perchConsoleBridge = true;
+// Runs in whichever world ends up patched; the returned function undoes it all.
+function hooks(safe, emit) {
   const orig = {};
   ["log", "info", "warn", "error", "debug"].forEach(function (level) {
     orig[level] = console[level];
@@ -6097,14 +6096,52 @@ function mainWorld(safe) {
       try {
         const parts = [];
         for (let i = 0; i < arguments.length; i++) parts.push(safe(arguments[i]));
-        document.dispatchEvent(new CustomEvent("perch:console", { detail: level + ": " + parts.join(" ") }));
+        emit(level + ": " + parts.join(" "));
       } catch (e) {}
       return orig[level].apply(this, arguments);
     };
   });
+  orig.assert = console.assert;
+  console.assert = function (cond) {
+    try {
+      if (!cond) {
+        const parts = [];
+        for (let i = 1; i < arguments.length; i++) parts.push(safe(arguments[i]));
+        emit("error: Assertion failed" + (parts.length ? ": " + parts.join(" ") : ""));
+      }
+    } catch (e) {}
+    return orig.assert.apply(this, arguments);
+  };
+  const onError = function (ev) {
+    try {
+      // A failed <img>/<script> load fires on the element (a Node); script errors fire on window.
+      if (ev.target && ev.target.nodeType) return;
+      const er = ev.error;
+      let text = String(ev.message || "").replace(/^Uncaught /, "");
+      if (er && typeof er === "object" && er.name) text = er.name + ": " + (typeof er.message === "string" ? er.message : text);
+      let loc = "";
+      if (ev.filename) loc = " (" + [ev.filename].concat(ev.lineno ? [ev.lineno].concat(ev.colno ? [ev.colno] : []) : []).join(":") + ")";
+      emit("error: " + safe("Uncaught " + text + loc));
+    } catch (e) {}
+  };
+  const onRejection = function (ev) {
+    try { emit("error: Unhandled rejection: " + safe(ev.reason)); } catch (e) {}
+  };
+  window.addEventListener("error", onError);
+  window.addEventListener("unhandledrejection", onRejection);
+  return function () {
+    for (const k in orig) console[k] = orig[k];
+    window.removeEventListener("error", onError);
+    window.removeEventListener("unhandledrejection", onRejection);
+  };
+}
+function mainWorld(safe, hooks) {
+  if (window.__perchConsoleBridge) return;
+  window.__perchConsoleBridge = true;
+  const unhook = hooks(safe, function (entry) { document.dispatchEvent(new CustomEvent("perch:console", { detail: entry })); });
   const ping = function () { document.dispatchEvent(new CustomEvent("perch:console-pong")); };
   const stop = function () {
-    for (const k in orig) console[k] = orig[k];
+    unhook();
     delete window.__perchConsoleBridge;
     document.removeEventListener("perch:console-ping", ping);
     document.removeEventListener("perch:console-stop", stop);
@@ -6119,24 +6156,14 @@ function push(entry) {
 st.relay = function (e) { if (typeof e.detail === "string") push(e.detail); };
 document.addEventListener("perch:console", st.relay);
 const script = document.createElement("script");
-script.textContent = "(" + mainWorld + ")(" + safe + ");";
+script.textContent = "(" + mainWorld + ")(" + safe + ", " + hooks + ");";
 (document.head || document.documentElement).appendChild(script);
 script.remove();
 const pong = function () { st.bridge = true; };
 document.addEventListener("perch:console-pong", pong);
 document.dispatchEvent(new CustomEvent("perch:console-ping"));
 document.removeEventListener("perch:console-pong", pong);
-if (!st.bridge) {
-  ["log", "info", "warn", "error", "debug"].forEach(function (level) {
-    const orig = st.orig[level] = console[level];
-    console[level] = function () {
-      const parts = [];
-      for (let i = 0; i < arguments.length; i++) parts.push(safe(arguments[i]));
-      push(level + ": " + parts.join(" "));
-      return orig.apply(console, arguments);
-    };
-  });
-}
+if (!st.bridge) st.unhook = hooks(safe, push);
 return { ok: true, started: true, bridge: st.bridge };
 `,
 
@@ -6152,7 +6179,7 @@ return out;
 const s = window.__perch_console;
 if (!s || !s.installed) return { ok: false, error: "console_capture not started" };
 if (s.bridge) document.dispatchEvent(new CustomEvent("perch:console-stop"));
-for (const k in s.orig) console[k] = s.orig[k];
+if (s.unhook) s.unhook();
 document.removeEventListener("perch:console", s.relay);
 s.installed = false;
 return { ok: true, entries: s.entries.splice(0) };
@@ -7125,7 +7152,7 @@ const TOOLS = [
     frames: { type: "boolean", description: "Add iframe controls from Accessibility as `fN` rows (the tab its window shows); fN takes only click {trusted:true}." },
     target: TARGET,
   }),
-  tool("console_capture", "`start` patches console.*, `read` drains \"level: text\" lines, `stop` restores; navigation clears it. `network` drains finished requests as \"status type ms size url\" (Resource Timing, no start).", {
+  tool("console_capture", "`start` records console.*, uncaught errors and rejections, `read` drains \"level: text\" lines, `stop` restores; navigation clears it. `network` drains finished requests as \"status type ms size url\" (Resource Timing, no start).", {
     mode: { type: "string", enum: ["start", "read", "stop", "network"], description: "Default read." },
     target: TARGET,
   }),
