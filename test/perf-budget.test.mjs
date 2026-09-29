@@ -368,3 +368,14 @@ test("a timed-out wait costs the polls that fit in its timeout, no more", async 
   assert.equal(world.counts.NSAppleScript, 6, breakdown());
   assert.equal(appleEvents(), 2 * 6, breakdown());
 });
+
+// A raised background Arc tab is followed through url and loading reads alone:
+// one loading read per 50ms poll, a url read only once loading settles.
+test("navigate on a raised background Arc tab costs a fixed count of Apple Events for a load that commits", async () => {
+  install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(2, "a") }])], cg: [{ owner: "Finder", pid: 50 }, { owner: "Arc" }] });
+  world.state.commitMs = 200;
+  const { o } = await call("navigate", { url: "https://next.test/", raise: true, target: { tabId: "arc:a1" } });
+  assert.equal(o.ok, true);
+  assert.equal(o.waited, true);
+  assert.equal(appleEvents(), 16, breakdown());
+});

@@ -506,6 +506,9 @@ function jxaRuntime(BROWSERS, HANG) {
   const BROWSER_PAGE = /^(chrome|chrome-untrusted|chrome-search|devtools|edge|brave|vivaldi|opera):/i;
   // How long navigate holds page JS while the tab reports loading.
   const NAV_GATE_MS = 2000;
+  // Provisional: how long a background Arc tab may read not loading after its url
+  // is set before a load that never started counts as failed. Not yet measured live.
+  const ARC_START_GRACE = 1500;
   // A poll's page JS answers in tens of ms, or seconds on a loaded machine; a reply
   // dropped mid-navigation costs at most this.
   const POLL_EXEC_SECS = 2;
@@ -1888,19 +1891,26 @@ function jxaRuntime(BROWSERS, HANG) {
       if (arcBehind && preUrl != null && !/^arc:/i.test(a.url)) {
         const t0 = Date.now();
         const url = function () { return read(function () { return String(t.tab.url()); }); };
-        let idle = 0;
+        // Arc can read loading false for a while after the set before its load
+        // starts, so an unmoved url counts as stayed only once loading was seen, or
+        // after ARC_START_GRACE.
+        let idle = 0, lastBusy = null, sawBusy = false;
         while (Date.now() < deadline) {
           const busy = read(function () { return t.tab.loading(); });
+          if (busy != null) { lastBusy = busy; if (busy) sawBusy = true; }
           if (Date.now() - t0 > 300 && busy != null) idle = busy ? 0 : idle + 1;
           if (idle >= 2) {
             const u = url();
-            if (u != null) return u === preUrl ? result(false, null, preUrl) : result(true, u);
+            if (u != null && u !== preUrl) return result(true, u);
+            if (u != null && (sawBusy || Date.now() - t0 > ARC_START_GRACE)) return result(false, null, preUrl);
           }
           delay(0.05);
         }
+        // Chromium shows a pending url while the old document still answers, so a
+        // moved url counts as committed only when loading last read settled.
         const u = url();
         if (u == null) return result(false);
-        return u === preUrl ? notCommitted(u) : result(false, u);
+        return u !== preUrl && lastBusy === false ? result(false, u) : notCommitted(u);
       }
       if (!canEval && !checkable) return result(false);
       // A failed load commits the browser's error page: chrome-error://chromewebdata/,

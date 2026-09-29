@@ -551,13 +551,62 @@ test("navigate tool on Arc: a raised background tab still loading its old url at
   assert.match(o.error, /^timeout: https:\/\/next\.test\/ had not committed after 15000ms; the tab shows https:\/\/a1\.test\//);
 });
 
-test("navigate tool on Arc: a raised background tab that moved but is still loading at the deadline is ok, unwaited", async () => {
+// Chromium shows a pending url while the old document still answers, so a moved
+// url alone is not a commit.
+test("navigate tool on Arc: a raised background tab that moved but is still loading at the deadline is a coded timeout", async () => {
   install(arcFixture());
   world.state.commitMs = 1e9;
   const o = await arcBg();
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^timeout: https:\/\/next\.test\/ had not committed after 15000ms; the tab shows https:\/\/next\.test\/; it may still load/);
+  assert.equal(o.tabId, "arc:a1");
+});
+
+test("navigate tool on Arc: a raised background tab that commits just before the deadline is ok, waited", async () => {
+  install(arcFixture());
+  world.state.commitMs = NAV_TIMEOUT - 200;
+  const o = await arcBg();
   assert.equal(o.ok, true);
   assert.equal(o.url, "https://next.test/");
-  assert.equal(o.waited, false);
+  assert.equal(o.waited, true);
+});
+
+// `phases(ms, tab)` gets the ms since the call and returns {busy, url}; busy
+// "throw" makes the loading read fail.
+const arcScripted = (phases) => {
+  const tab = world.tabsOf("Arc", 0)[1], t0 = world.clock.t;
+  const now = () => phases(world.clock.t - t0, tab);
+  Object.defineProperty(tab, "loading", { get: () => () => { const b = now().busy; if (b === "throw") throw new Error("Can't get object."); return b; }, configurable: true });
+  tab.shownUrl = () => now().url;
+};
+
+test("navigate tool on Arc: a raised background tab whose loading reads all fail is a timeout, never ok", async () => {
+  install(arcFixture());
+  world.state.commitMs = 1e9;
+  arcScripted((ms, tab) => ({ busy: "throw", url: tab.pending ? tab.pending.url : tab.page.url }));
+  const o = await arcBg();
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^timeout: https:\/\/next\.test\/ had not committed after 15000ms; the tab shows https:\/\/next\.test\//);
+});
+
+test("navigate tool on Arc: a raised background tab slow to start loading is not taken for a failed load", async () => {
+  install(arcFixture());
+  world.state.commitMs = 1e9;
+  arcScripted((ms) => ms < 500 ? { busy: false, url: "https://a1.test/" } : ms < 1000 ? { busy: true, url: "https://next.test/" } : { busy: false, url: "https://next.test/" });
+  const o = await arcBg();
+  assert.equal(o.ok, true);
+  assert.equal(o.url, "https://next.test/");
+  assert.equal(o.waited, true);
+});
+
+test("navigate tool on Arc: a raised background tab that never starts loading is load_failed soon after the start grace", async () => {
+  install(arcFixture());
+  world.state.noContent = /next\.test/;
+  const t0 = world.clock.t;
+  const o = await arcBg();
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: the tab stayed on https:\/\/a1\.test\//);
+  assert.ok(world.clock.t - t0 <= 1500 + 150, `took ${world.clock.t - t0}ms`);
 });
 
 test("navigate tool on Arc: a tab still on its new-tab page at the deadline is load_failed, not ok", async () => {
