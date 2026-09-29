@@ -7,6 +7,7 @@ import { writeFile } from "node:fs/promises";
 import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
+import { throwAt, noRaw } from "./helpers/fault.mjs";
 
 const saved = { fast: DAEMONS.fast, slow: DAEMONS.slow, exec: deps.exec };
 afterEach(() => Object.assign(DAEMONS, { fast: saved.fast, slow: saved.slow }) && Object.assign(deps, { exec: saved.exec }));
@@ -263,6 +264,37 @@ test("a stale ref or no match captures nothing and says why", async () => {
   const none = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#nope" });
   assert.deepEqual(JSON.parse(none.content[0].text), { ok: false, error: "no element for selector #nope" });
   assert.deepEqual(world.state.shots, []);
+  assert.deepEqual(where(p), [0, 40, 37]);
+});
+
+test("a shot_clip page fault is reported in neutral words, captures nothing and restores the scroll", async () => {
+  for (const marker of ["const b = el.getBoundingClientRect();", "const c = el.getBoundingClientRect();"]) {
+    const p = scrolled();
+    install(p);
+    const calls = spawns(2000);
+    const threw = throwAt(p.dom, marker);
+    for (const how of [{ selector: "#t" }, { ref: "e4" }]) {
+      p.dom.__perch_refs = { e4: p.t };
+      const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, ...how });
+      assert.equal(r.content.length, 1, "no image");
+      const out = JSON.parse(r.content[0].text);
+      assert.deepEqual(out, { ok: false, error: "screenshot: the page script failed on this page (TypeError); nothing was captured" });
+      noRaw(out);
+      assert.deepEqual(where(p), [0, 40, 37], marker);
+    }
+    assert.equal(threw(), 2);
+    assert.deepEqual([calls, world.state.shots], [[], []]);
+  }
+});
+
+test("a shot_clip PerchStaleRef is the call's ref miss", async () => {
+  const p = scrolled();
+  install(p);
+  spawns(2000);
+  p.dom.__perch_refs = { e4: p.t };
+  throwAt(p.dom, "const c = el.getBoundingClientRect();", () => true, "throw Object.assign(new Error('x'), { name: 'PerchStaleRef' });");
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, ref: "e4" });
+  assert.match(r.content[0].text, /^error: ref e4 is stale or unknown; call accessibility_snapshot again/);
   assert.deepEqual(where(p), [0, 40, 37]);
 });
 

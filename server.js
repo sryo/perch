@@ -898,8 +898,10 @@ function jxaRuntime(BROWSERS, HANG) {
     visibleGuard(t, "screenshot");
     const c = parseExec(t, a.clip);
     if (!c || c.ok !== true) {
-      if (threw(c)) try { exec(t, a.restore); } catch (e) {}
-      return c;
+      if (!threw(c)) return c;
+      try { exec(t, a.restore); } catch (e) {}
+      // PerchStaleRef stays raw for handleCall, which maps it to the call's ref miss.
+      return faultName(c) === "PerchStaleRef" ? c : { ok: false, error: "screenshot: the page script failed on this page (" + faultName(c) + "); nothing was captured" };
     }
     let err = null;
     try {
