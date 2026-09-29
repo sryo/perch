@@ -1748,6 +1748,64 @@ test("fill {fields}: fields outside any form carry no form census", async () => 
   assert.equal("form" in o, false);
 });
 
+// ---- required ticks, form= fields and disabled ones in the census ----
+
+const NM = [{ label_pattern: "^nm$", text: "Ada" }];
+const TOS = (checked = "") => `<form><input name=nm aria-label=nm required><label><input type=checkbox name=tos required ${checked}> I agree</label></form>`;
+
+test("fill {fields}: an unticked required checkbox is still wanted; a ticked one is not", async () => {
+  onPage(TOS());
+  let { o } = await fill({ fields: NM });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(o.form, { requiredEmpty: 1, left: [{ name: "tos", label: "I agree" }] });
+  onPage(TOS("checked"));
+  ({ o } = await fill({ fields: NM }));
+  assert.deepEqual(o.form, { requiredEmpty: 0 });
+});
+
+const WORK = (checked = "") => `<form><input name=nm aria-label=nm required><fieldset><legend>Authorized to work?</legend>
+  <label><input type=radio name=auth value=y required ${checked}> Yes</label><label><input type=radio name=auth value=n> No</label><label><input type=radio name=auth value=s> Soon</label></fieldset></form>`;
+
+test("fill {fields}: a required radio group with none picked counts once, named by its question", async () => {
+  onPage(WORK());
+  let { o } = await fill({ fields: NM });
+  assert.deepEqual(o.form, { requiredEmpty: 1, left: [{ name: "auth", label: "Authorized to work?" }] });
+  onPage(WORK("checked"));
+  ({ o } = await fill({ fields: NM }));
+  assert.deepEqual(o.form, { requiredEmpty: 0 });
+});
+
+const SPONSOR = (on = "false") => `<form><input name=nm aria-label=nm required><div role=radiogroup aria-required=true aria-label=Sponsorship>
+  <div role=radio aria-checked=${on} tabindex=0>Yes</div><div role=radio aria-checked=false tabindex=-1>No</div></div></form>`;
+
+test("fill {fields}: a required ARIA radiogroup counts until one radio is checked", async () => {
+  onPage(SPONSOR());
+  let { o } = await fill({ fields: NM });
+  assert.deepEqual(o.form, { requiredEmpty: 1, left: [{ label: "Sponsorship" }] });
+  onPage(SPONSOR("true"));
+  ({ o } = await fill({ fields: NM }));
+  assert.deepEqual(o.form, { requiredEmpty: 0 });
+});
+
+test("fill {fields}: disabled and display:none required ticks are not wanted", async () => {
+  onPage(`<form><input name=nm aria-label=nm required><input name=o required disabled><fieldset disabled><input name=fd required></fieldset>
+    <div style="display:none"><label><input type=checkbox name=gone required> Gone</label></div></form>`);
+  const { o } = await fill({ fields: NM });
+  assert.deepEqual(o.form, { requiredEmpty: 0 });
+});
+
+test("fill {fields}: a required field tied to the form by form= is counted", async () => {
+  onPage(`<form id=f1><input name=a aria-label=a required value=x></form><input name=ph form=f1 required>`);
+  const { o } = await fill({ fields: [{ label_pattern: "^a$", text: "y" }] });
+  assert.deepEqual(o.form, { requiredEmpty: 1, left: [{ name: "ph" }] });
+});
+
+test("fill {fields}: a nameless, unlabelled required field is still named in left", async () => {
+  onPage(`<form><input name=nm aria-label=nm required><div><input required></div></form>`);
+  const { o } = await fill({ fields: NM });
+  assert.deepEqual(o.form, { requiredEmpty: 1, left: [{ type: "text" }] });
+});
+
 // ---- fields_path and ordered option preferences ----
 
 const PROFILE_FX = (() => { const h = readFileSync(new URL("./fixtures/profile.html", import.meta.url), "utf8"); return h.slice(h.indexOf("<style>")); })();

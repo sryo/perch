@@ -171,7 +171,7 @@ test("snapshot: a native constraint failure counts only once the field holds a v
   assert.doesNotMatch(lineOf(lines, "Phone"), /invalid/);
   assert.doesNotMatch(lineOf(lines, "Terms"), /invalid/);
   assert.equal(head.form.invalid, 1);
-  assert.equal(head.form.requiredEmpty, 1);
+  assert.equal(head.form.requiredEmpty, 2, "Phone, and the unticked required Terms box");
 });
 
 test("snapshot: aria-errormessage wins over aria-describedby", () => {
