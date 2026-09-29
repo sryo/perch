@@ -120,6 +120,126 @@ test("a finished readback keeps its record; a new document still reads navigated
   assert.equal(third.o.readback, "Welcome");
 });
 
+// ---- click on a new-tab link ----
+
+const LINKS = `<a id=x href="/job/x" target=_blank>Apply X</a><a id=y href="/job/y" target=_blank>Apply Y</a>`;
+// Each link counts its clicks on window.clicks and, as the browser would, opens a tab.
+const opens = (world, dom) => {
+  dom.eval("window.clicks = { x: 0, y: 0 }");
+  for (const id of ["x", "y"]) dom.document.getElementById(id).addEventListener("click", (e) => {
+    dom.clicks[id]++;
+    world.openTab("Google Chrome", 0, e.currentTarget.href);
+  });
+};
+const GO = "window.__perch_blank = null";
+const MID = "another perch call on this tab is mid-click; nothing was clicked, retry";
+const FOREIGN = "click: sent on another perch call's element; not verified";
+const probeArgs = (sel) => ({ ref: null, selector: sel, label_pattern: null, probe: true });
+// B's whole plain click, as its server's runtime runs it.
+const clickPageB = (world, sel) => parse(world.run(`__perch.clickPage(${JSON.stringify({ click: w("click", probeArgs(sel)), go: CLICK_BLANK_GO })})`));
+const tabCount = (world) => world.tabsOf("Google Chrome", 0).length;
+const noOpened = (o) => { for (const k of ["opened", "blocked", "unconfirmed", "rbTok", "tok", "taken"]) assert.ok(!(k in o), `${k} in ${JSON.stringify(o)}`); };
+
+test("new-tab click: another server's whole click between A's probe and A's second pass clicks nothing", async () => {
+  const { dom, world } = onPage(LINKS);
+  opens(world, dom);
+  let b = null;
+  beforeEvals(dom, (n, js) => { if (!b && js.includes(GO)) b = clickPageB(world, "#y"); });
+  const { o } = await call("click", { selector: "#x" });
+  assert.ok(b, "B ran between A's probe and A's second pass");
+  assert.deepEqual(b, { ok: false, error: MID });
+  assert.deepEqual(o, { ok: false, error: MID });
+  assert.deepEqual({ ...dom.clicks }, { x: 0, y: 0 });
+  assert.equal(tabCount(world), 1, "no tab opened");
+  assert.equal(dom.__perch_blank, null, "A's second pass cleared the clash");
+});
+
+test("new-tab click with readback: B's probe inside A's second pass clicks nothing and hands A no token", async () => {
+  const { dom, world } = onPage(LINKS);
+  opens(world, dom);
+  let b = null;
+  beforeEvals(dom, (n, js) => { if (!b && js.includes(GO)) b = run(dom, "click_readback", { ...probeArgs("#y"), readback: "#y" }); });
+  const { o } = await call("click", { selector: "#x", readback: "#x" });
+  assert.deepEqual(b, { ok: false, error: MID });
+  assert.deepEqual(o, { ok: false, error: MID });
+  noOpened(o);
+  // B's runtime would not send its second pass; one sent anyway clicks nothing.
+  const late = JSON.parse(dom.eval(CLICK_BLANK_GO));
+  assert.equal(late.ok, false);
+  assert.match(late.error, /nothing was clicked/);
+  assert.deepEqual({ ...dom.clicks }, { x: 0, y: 0 });
+  assert.equal(tabCount(world), 1);
+});
+
+test("new-tab click: a probe over a fresh clash still refuses until its owner's second pass clears it", () => {
+  const dom = page(LINKS);
+  assert.equal(run(dom, "click", probeArgs("#x")).blank.href, "https://a.test/job/x");
+  assert.deepEqual(run(dom, "click", probeArgs("#y")), { ok: false, error: MID });
+  assert.deepEqual(run(dom, "click", probeArgs("#y")), { ok: false, error: MID });
+  assert.deepEqual(JSON.parse(dom.eval(CLICK_BLANK_GO)), { ok: false, error: MID });
+  const again = run(dom, "click", probeArgs("#y"));
+  assert.equal(again.ok, true, JSON.stringify(again));
+  assert.equal(typeof again.tok, "string");
+});
+
+test("new-tab click: a stale slot is replaced; A's late second pass is not verified, B still succeeds", async () => {
+  const { dom, world } = onPage(LINKS);
+  opens(world, dom);
+  let b = null;
+  beforeEvals(dom, (n, js) => {
+    if (b || !js.includes(GO)) return;
+    dom.__perch_blank.at -= 20000;
+    b = clickPageB(world, "#y");
+  });
+  const { o } = await call("click", { selector: "#x" });
+  assert.equal(b.ok, true, JSON.stringify(b));
+  assert.equal(b.opened.url, "https://a.test/job/y");
+  assert.equal(o.ok, false, JSON.stringify(o));
+  noOpened(o);
+  assert.deepEqual({ ...dom.clicks }, { x: 0, y: 1 });
+  assert.equal(tabCount(world), 2);
+});
+
+test("new-tab click: A's late second pass on B's element says so, and B's second pass does not deny the click", async () => {
+  const { dom, world } = onPage(LINKS);
+  opens(world, dom);
+  let bProbe = null;
+  beforeEvals(dom, (n, js) => {
+    if (bProbe || !js.includes(GO)) return;
+    dom.__perch_blank.at -= 20000;
+    bProbe = run(dom, "click", probeArgs("#y"));
+  });
+  const { o } = await call("click", { selector: "#x" });
+  assert.equal(bProbe.ok, true, JSON.stringify(bProbe));
+  assert.deepEqual(o, { ok: false, error: FOREIGN });
+  assert.deepEqual({ ...dom.clicks }, { x: 0, y: 1 });
+  // B's second pass: the page answers with B's token, which B's runtime reads as its element already clicked.
+  const bGo = JSON.parse(dom.eval(CLICK_BLANK_GO));
+  assert.equal(bGo.ok, false);
+  assert.equal(bGo.taken, bProbe.tok);
+  assert.deepEqual({ ...dom.clicks }, { x: 0, y: 1 });
+});
+
+test("new-tab click: B's element run by another call's second pass is B's refusal, not 'nothing was clicked'", () => {
+  const { dom, world } = onPage(LINKS);
+  opens(world, dom);
+  run(dom, "click", probeArgs("#x"));
+  dom.__perch_blank.at -= 20000;
+  let a = null;
+  beforeEvals(dom, (n, js) => { if (!a && js.includes(GO)) a = JSON.parse(dom.eval(CLICK_BLANK_GO)); });
+  const b = clickPageB(world, "#y");
+  assert.equal(a.ok, true, "A's stale second pass ran B's element");
+  assert.deepEqual(b, { ok: false, error: "click: another perch call on this tab sent this click; not verified" });
+  assert.deepEqual({ ...dom.clicks }, { x: 0, y: 1 });
+});
+
+test("every script that makes owner tokens defines rbTok once", () => {
+  for (const name of ["click", "click_readback", "wait_quiet", "readback_read"]) {
+    const src = pageScript(name, { selector: "#x", probe: true, readback: "#x", life: 1 });
+    assert.equal(src.split("function rbTok(").length - 1, 1, name);
+  }
+});
+
 // ---- wait {quiet} ----
 
 const QUIET_POLL = "const s = window.__perch_quiet;";
