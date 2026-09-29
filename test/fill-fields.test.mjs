@@ -1265,7 +1265,7 @@ test("fill_fields: a later pass on a page without this batch's record writes not
   assert.equal(val(w, "#st").value, "Cordoba");
   assert.equal(val(w, "#co").value, "");
   runBody(w, "document.getElementById('st').value = ''; return 1");
-  assert.deepEqual(run(w, "fill_fields", { from: 2, fields }), { results: [] });
+  assert.deepEqual(run(w, "fill_fields", { from: 2, fields }), { gone: true, results: [] });
 });
 
 // The combobox pick clears State, as a country widget clears its dependents.
@@ -1317,16 +1317,28 @@ test("fill {fields}: the same batch twice sends the same page script", async () 
   assert.equal(sent[0], sent[1]);
 });
 
-test("fill {fields}: a page that navigated before the extra pass is not failed", async () => {
+test("fill {fields}: a page that navigated before the extra pass is not failed, but its earlier fields are flagged", async () => {
   const { world, dom } = onPage(CUSTOM_CLEARS, CUSTOM_CLEARS_JS);
   const sent = passes(world);
   dom.document.getElementById("menu").addEventListener("click", () => { delete dom.__perch_ff; });
   const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }] });
   assert.equal(sent.length, 2);
-  assert.deepEqual(o.results.map((x) => x.ok), [true, true]);
+  assert.deepEqual(o.results.map((x) => [x.ok, x.unverified]), [[true, true], [true, undefined]]);
   assert.equal(o.ok, true);
-  assert.equal(o.warning, undefined);
-  assert.equal(o.unverified, undefined);
+  assert.equal(o.warning, "the page changed after fields[1]; earlier fields may have been cleared, check them");
+  assert.equal(o.unverified, 1);
+});
+
+test("fill {fields}: a closing combobox that reloads the page flags every field before it", async () => {
+  const html = `<label>Name <input id=nm></label><label>Email <input id=em></label>` + CUSTOM;
+  const { world, dom } = onPage(html, CUSTOM_JS);
+  passes(world);
+  dom.document.getElementById("menu").addEventListener("click", () => { delete dom.__perch_ff; });
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }, { label_pattern: "email", text: "ada@example.test" }, { label_pattern: "level", option: "senior" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(o.results.map((x) => [x.ok, x.unverified]), [[true, true], [true, true], [true, undefined]]);
+  assert.equal(o.unverified, 2);
+  assert.equal(o.warning, "the page changed after fields[2]; earlier fields may have been cleared, check them");
 });
 
 // Every pass is built from the batch alone, so a repeated batch sends the same
@@ -1360,6 +1372,9 @@ test("fill {fields}: a pick that loads another page stops the batch before the n
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.results.length, 3);
   assert.deepEqual(o.results[2], { ok: false, error: "the page changed after fields[1]; not filled" });
+  assert.equal(o.results[0].unverified, true);
+  assert.equal(o.unverified, 1);
+  assert.equal(o.warning, "the page changed after fields[1]; earlier fields may have been cleared, check them");
 });
 
 const failSecondPass = (world, fail) => {

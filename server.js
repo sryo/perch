@@ -5287,16 +5287,13 @@ function chosen(c) {
 // This batch's landed fields by index. A pass from 0 starts it over, keyed by a
 // hash of the fields alone, so every pass of a batch is the same source every
 // call and stays in the page's compile cache. A later pass that finds no record
-// or another batch's is on another document, which it must not write to. The
-// last pass re-reads them, since a later field's handler may clear or change
-// one, as a country resets its state.
+// or another batch's is on another document, which it must not write to or
+// vouch for. The last pass re-reads them, since a later field's handler may
+// clear or change one, as a country resets its state.
 const fp = (function (s) { let h = 5381; for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + s.length; })(JSON.stringify(A.fields));
 let ff = window.__perch_ff;
 if (!A.from) ff = window.__perch_ff = { fp: fp, items: {} };
-else if (!ff || ff.fp !== fp) {
-  if (A.from < A.fields.length) return { gone: true, results: [] };
-  ff = null;
-}
+else if (!ff || ff.fp !== fp) return { gone: true, results: [] };
 const AFTER = " after a later field changed; fill it again";
 // A framework re-render replaces a node but keeps its value: a disconnected
 // field is looked up again by id, then by name in its form, then by the call's
@@ -6538,6 +6535,12 @@ async function fillFields(fields, target, only) {
   };
   const recheck = (r) => { for (const [i, x] of Object.entries(r.recheck || {})) if (results[i]) results[i] = x; };
   let watch = false, warning = null;
+  // The document the earlier fields landed in is gone, so nothing proves they
+  // survived; the ones that landed are flagged rather than failed.
+  const changedAfter = (i) => {
+    for (let k = 0; k < i; k++) if (results[k] && results[k].ok === true && !results[k].skipped) results[k].unverified = true;
+    warning = `the page changed after fields[${i}]; earlier fields may have been cleared, check them`;
+  };
   for (let from = 0; from < A.length;) {
     const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target));
     if (halted) return halted;
@@ -6547,8 +6550,9 @@ async function fillFields(fields, target, only) {
       return halted;
     }
     if (r.gone) {
+      changedAfter(from - 1);
       for (let i = from; i < A.length; i++) results.push({ ok: false, error: `the page changed after fields[${from - 1}]; not filled` });
-      return { ok: false, results, ...counts() };
+      return { ok: false, results, ...counts(), warning };
     }
     results.push(...r.results);
     recheck(r);
@@ -6571,7 +6575,8 @@ async function fillFields(fields, target, only) {
       if (why) {
         for (let i = 0; i < A.length - 1; i++) if (results[i].ok === true && !results[i].skipped) results[i].unverified = true;
         warning = `the final re-read did not run (${why}); earlier fields are unverified`;
-      } else recheck(x);
+      } else if (x.gone) changedAfter(A.length - 1);
+      else recheck(x);
     }
   }
   return { ok: results.every((x) => x.ok === true), results, ...counts(), ...(warning ? { warning } : {}) };
