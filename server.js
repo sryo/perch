@@ -878,7 +878,7 @@ function jxaRuntime(BROWSERS, HANG) {
 
   // Only the active tab of a window is rendered. Never switch tabs implicitly:
   // that can put Chrome's window into focus even without app.activate().
-  function shotGeom(a) {
+  function shotTarget(a) {
     const t = resolve(a.target);
     if (a.raise) { focus(t); delay(0.25); t.P = procs(); }
     else if (a.target && (a.target.tabIndex != null || a.target.tabId != null) && !isActive(t)) {
@@ -886,14 +886,82 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     const I = ids(t);
     if (I.windowNumber == null) throw new Error(OFFSCREEN);
+    return { t: t, I: I };
+  }
+  function shotGeom(a) { return shotTarget(a).I; }
+
+  // screenshot {ref|selector}: a.clip scrolls the element into view and measures
+  // it, the capture is cut to it, and a.restore puts every scroll position back
+  // before the call returns, whatever the capture did.
+  function shotClip(a) {
+    const s = shotTarget(a), t = s.t, I = s.I;
+    visibleGuard(t, "screenshot");
+    const c = parseExec(t, a.clip);
+    if (!c || c.ok !== true) {
+      if (threw(c)) try { exec(t, a.restore); } catch (e) {}
+      return c;
+    }
+    let err = null;
+    try {
+      const m = shotMap(I, c);
+      if (!m) {
+        Object.assign(I, { ok: false, error: "screenshot: the element is outside the visible page even after scrolling it into view; nothing was captured" });
+      } else {
+        // The scroll reaches the window's pixels at the browser's next paint.
+        if (c.moved) delay(0.1);
+        const cap = capture(I.windowNumber, a.format, a.maxWidth, m);
+        if (cap) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
+        else I.map = m;
+        I.aim = m.aim;
+        if (m.clipped || (cap && cap.cut)) I.clipped = true;
+      }
+    } catch (e) { err = e; }
+    let back = null;
+    try { back = parseExec(t, a.restore); } catch (e) {}
+    if (err) throw err;
+    if (!back || back.ok !== true) I.warning = "the page's scroll positions may not have been restored";
     return I;
+  }
+
+  // Where the clip's CSS box lands in the capture: pixel = k * (ox + s*v) + d*v
+  // for a CSS coordinate v, k being capture pixels per window point and (ox, oy)
+  // the viewport's origin in window points. The Accessibility page area gives the
+  // origin and points per CSS px (s) exactly; without it the page's estimate
+  // places the origin and devicePixelRatio is pixels per CSS px (d), zoom
+  // included. The box is the element plus SHOT_MARGIN CSS px, cut at the
+  // viewport; null when nothing of it is left.
+  const SHOT_MARGIN = 8;
+  function shotMap(I, c) {
+    const r = I.cgBounds || I.geom, g = SHOT_MARGIN;
+    const box = { x0: Math.max(0, c.x - g), y0: Math.max(0, c.y - g), x1: Math.min(c.iw, c.x + c.w + g), y1: Math.min(c.ih, c.y + c.h + g) };
+    if (!(box.x1 > box.x0 && box.y1 > box.y0)) return null;
+    let w = null;
+    try {
+      ObjC.import("ApplicationServices");
+      if ($.AXIsProcessTrusted()) w = axPageArea(I, { iw: c.iw, ih: c.ih });
+    } catch (e) {}
+    const m = w ? { ox: w.x - r.x, oy: w.y - r.y, s: w.scale, d: 0, aim: "ax" } : { ox: c.ox - r.x, oy: c.oy - r.y, s: 0, d: c.dpr || 1, aim: "estimate" };
+    m.box = box;
+    m.cw = r.w;
+    m.clipped = c.x < 0 || c.y < 0 || c.x + c.w > c.iw || c.y + c.h > c.ih;
+    return m;
+  }
+  // A shot map's box in pixels of a W x H capture, kept inside it (cut if it had
+  // to be). Node's clipPixels does the same for the screencapture fallback.
+  function clipPixels(m, W, H) {
+    const k = W / m.cw, px = function (o, v) { return k * (o + m.s * v) + m.d * v; };
+    const x0 = Math.floor(px(m.ox, m.box.x0) + 1e-6), y0 = Math.floor(px(m.oy, m.box.y0) + 1e-6);
+    const x1 = Math.ceil(px(m.ox, m.box.x1) - 1e-6), y1 = Math.ceil(px(m.oy, m.box.y1) - 1e-6);
+    const x = Math.max(0, x0), y = Math.max(0, y0);
+    return { x: x, y: y, w: Math.min(W, x1) - x, h: Math.min(H, y1) - y, cut: x0 < 0 || y0 < 0 || x1 > W || y1 > H };
   }
 
   // The window's own pixels, captured and encoded here rather than by spawning
   // screencapture and sips. CGPreflightScreenCaptureAccess never prompts; without
   // the grant, or on an empty image, it returns null and screencapture (which
   // asks for the grant itself) takes over, as it does after a failed downscale.
-  function capture(wid, format, maxWidth) {
+  // With a shot map it keeps only the map's box, cut before any downscale.
+  function capture(wid, format, maxWidth, map) {
     try {
       ObjC.import("CoreGraphics");
       appKit();
@@ -903,6 +971,14 @@ function jxaRuntime(BROWSERS, HANG) {
       let img = $.CGWindowListCreateImage($.CGRectNull, 8, wid, 1);
       let w = Number($.CGImageGetWidth(img)), h = Number($.CGImageGetHeight(img));
       if (!w || !h) return null;
+      let clip = null;
+      if (map) {
+        clip = clipPixels(map, w, h);
+        if (!(clip.w > 0 && clip.h > 0)) return null;
+        img = $.CGImageCreateWithImageInRect(img, $.CGRectMake(clip.x, clip.y, clip.w, clip.h));
+        w = Number($.CGImageGetWidth(img)); h = Number($.CGImageGetHeight(img));
+        if (w !== clip.w || h !== clip.h) return null;
+      }
       if (maxWidth > 0 && w > maxWidth) {
         const sh = Math.round(h * maxWidth / w);
         // kCGImageAlphaPremultipliedLast, kCGInterpolationHigh.
@@ -920,7 +996,9 @@ function jxaRuntime(BROWSERS, HANG) {
         ? rep.representationUsingTypeProperties($.NSBitmapImageFileTypeJPEG, $({ NSImageCompressionFactor: 0.8 }))
         : rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $());
       if (!data || !Number(data.length)) return null;
-      return { data: data.base64EncodedStringWithOptions(0).js, image: { w: w, h: h } };
+      const out = { data: data.base64EncodedStringWithOptions(0).js, image: { w: w, h: h } };
+      if (clip) { out.clip = { x: clip.x, y: clip.y, w: clip.w, h: clip.h }; if (clip.cut) out.cut = true; }
+      return out;
     } catch (e) { return null; }
   }
 
@@ -2392,6 +2470,7 @@ function jxaRuntime(BROWSERS, HANG) {
     // The geometry plus, when the runtime could capture, `data` (base64) and
     // `image` {w,h}; without them the caller runs screencapture.
     shot(a) {
+      if (a.clip) return shotClip(a);
       const I = shotGeom(a), c = capture(I.windowNumber, a.format, a.maxWidth);
       if (c) { I.data = c.data; I.image = c.image; }
       return I;
@@ -2918,7 +2997,7 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   // The runtime's note (the stamp it wrote, a moved tab's handle, Safari windows'
   // tab counts) rides ahead of the result. Any call can issue a Safari handle.
   script = `(function(){__perch.takeNote();var r=${script},n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
-  let out = DIALOG_BLIND.has(fn)
+  let out = DIALOG_BLIND.has(fn) && !(args && args.clip)
     ? await jxa(script, { lane, timeout })
     : await watchDialogs(args && args.target ? args.target : {}, lane, (token) => jxa(script, { lane, timeout, token }));
   if (typeof out === "string" && out.startsWith(NOTE_MARK)) {
@@ -3012,7 +3091,8 @@ const callNotes = new AsyncLocalStorage();
 // again every DIALOG_REPROBE_MS; a hit aborts the hung job with dialog_open. A
 // dialog it cannot tie to the target is ignored and the plain timeout stands.
 // Without the daemon it looks once, when the call times out. Entries that never
-// run page JS, and the dialog entries themselves, are not watched.
+// run page JS, and the dialog entries themselves, are not watched; a shot that
+// crops to an element (a.clip) runs page JS and is.
 const DIALOG_PROBE_MS = 1500, DIALOG_REPROBE_MS = 2000;
 // Timeouts that may mean page JS was blocked: the REPL killed, or an execute
 // whose reply never came. A wait, wait {quiet} or awaitPromise that ran out
@@ -3233,31 +3313,64 @@ export function imageDims(buf) {
 // Process spawning behind a seam so tests can fake screencapture/sips.
 export const deps = { exec, dialogs: probeDialogs };
 
+// The runtime's clipPixels, for a screencapture of W x H pixels.
+function clipPixels(m, W, H) {
+  const k = W / m.cw, px = (o, v) => k * (o + m.s * v) + m.d * v;
+  const x0 = Math.floor(px(m.ox, m.box.x0) + 1e-6), y0 = Math.floor(px(m.oy, m.box.y0) + 1e-6);
+  const x1 = Math.ceil(px(m.ox, m.box.x1) - 1e-6), y1 = Math.ceil(px(m.oy, m.box.y1) - 1e-6);
+  const x = Math.max(0, x0), y = Math.max(0, y0);
+  return { x, y, w: Math.min(W, x1) - x, h: Math.min(H, y1) - y, cut: x0 < 0 || y0 < 0 || x1 > W || y1 > H };
+}
+
 async function screenshot(args = {}) {
-  const { raise = false, target, format = "png", maxWidth = 1568 } = args;
-  const g = await rt("shot", { target, raise, format, maxWidth });
+  const { raise = false, target, format = "png", maxWidth = 1568, ref, selector } = args;
+  const aimed = (ref != null && ref !== "") || (selector != null && selector !== "");
+  const g = await rt("shot", aimed
+    ? { target, raise, format, maxWidth, clip: pageFn("shot_clip", { ref, selector }), restore: pageFn("shot_restore", {}) }
+    : { target, raise, format, maxWidth });
+  // The element's own outcome: a ref miss, no match, a page fault, nothing visible.
+  if (aimed && (!g || g.windowNumber == null || g.ok === false)) return g;
   const ext = format === "jpeg" ? "jpg" : "png";
   // Both captures cover the CG bounds (titlebar included), not AppleScript's inner geom.
   const rect = g.cgBounds || g.geom;
-  if (g.data) return { __image: true, data: g.data, mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: { window: rect, image: g.image } };
+  const meta = (image, clip = g.clip, clipped = g.clipped) => ({
+    window: rect, image,
+    ...(aimed && { clip, aim: g.aim }),
+    ...(clipped && { clipped: true }),
+    ...(g.warning && { warning: g.warning }),
+  });
+  if (g.data) return { __image: true, data: g.data, mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: meta(g.image) };
   const base = join(tmpdir(), `perch-${process.pid}-${Date.now().toString(36)}`);
   const files = [`${base}.${ext}`];
+  const quality = ext === "jpg" ? ["-s", "formatOptions", "80"] : [];
   try {
     // A missing CGWindowID is rejected by shotGeom: a screen-rect capture would
     // show the user's foreground app rather than a minimized browser window.
     await deps.exec("screencapture", ["-l", String(g.windowNumber), "-x", "-o", "-t", ext, files[0]]);
     let buf = await readFile(files[0]);
     let dims = imageDims(buf);
+    let clip, clipped = g.clipped;
+    if (g.map) {
+      const c = dims && clipPixels(g.map, dims.w, dims.h);
+      if (!c || !(c.w > 0 && c.h > 0)) throw new Error("screenshot: could not place the element in the window's capture; nothing was cropped");
+      files.push(`${base}-c.${ext}`);
+      await deps.exec("sips", ["--cropToHeightWidth", String(c.h), String(c.w), "--cropOffset", String(c.y), String(c.x), ...quality, files[0], "--out", files[1]]);
+      buf = await readFile(files[1]);
+      dims = imageDims(buf);
+      clip = { x: c.x, y: c.y, w: c.w, h: c.h };
+      clipped = clipped || c.cut;
+    }
     if (maxWidth > 0 && dims && dims.w > maxWidth) {
+      const src = files[files.length - 1];
       files.push(`${base}-s.${ext}`);
       // Best effort: if sips fails, the full-size capture still goes back.
       try {
-        await deps.exec("sips", ["--resampleWidth", String(maxWidth), ...(ext === "jpg" ? ["-s", "formatOptions", "80"] : []), files[0], "--out", files[1]]);
-        buf = await readFile(files[1]);
+        await deps.exec("sips", ["--resampleWidth", String(maxWidth), ...quality, src, "--out", files[files.length - 1]]);
+        buf = await readFile(files[files.length - 1]);
         dims = imageDims(buf);
       } catch {}
     }
-    return { __image: true, data: buf.toString("base64"), mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: dims ? { window: rect, image: dims } : undefined };
+    return { __image: true, data: buf.toString("base64"), mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: dims ? meta(dims, clip, clipped) : undefined };
   } finally {
     await Promise.all(files.map((f) => unlink(f).catch(() => {})));
   }
@@ -6191,6 +6304,40 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
   // What a frame click needs from the page: its URL and viewport.
   viewport: "return { url: location.href, iw: innerWidth, ih: innerHeight };",
 
+  // screenshot {ref|selector}: the element's client rect once scrolled into
+  // view. Every scroll position that can move (each ancestor's, across shadow
+  // roots, and the window's) is kept on window.__perch_shot for shot_restore,
+  // and only once the element is known to have a box. ox/oy: the viewport's
+  // screen origin as trusted input estimates it (browser chrome left and top).
+  shot_clip: String.raw`
+const r = resolveEl(A);
+if (r.out) return r.out;
+const el = r.el;
+if (el.ownerDocument !== document) return { ok: false, error: ident(el) + " lies in an embedded frame; screenshot without ref or selector" };
+const b = el.getBoundingClientRect();
+if (!b.width || !b.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
+const els = [];
+for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
+const st = window.__perch_shot = { els: els, x: window.scrollX, y: window.scrollY };
+try { el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (e) {}
+const c = el.getBoundingClientRect();
+const moved = window.scrollX !== st.x || window.scrollY !== st.y || els.some(function (e) { return e[0].scrollLeft !== e[1] || e[0].scrollTop !== e[2]; });
+return { ok: true, x: c.left, y: c.top, w: c.width, h: c.height, iw: innerWidth, ih: innerHeight, dpr: window.devicePixelRatio || 1, ox: screenX + outerWidth - innerWidth, oy: screenY + outerHeight - innerHeight, moved: moved };
+`,
+  // Puts back what shot_clip kept, instantly even under scroll-behavior: smooth.
+  shot_restore: String.raw`
+const s = window.__perch_shot;
+window.__perch_shot = null;
+if (!s) return { ok: false };
+const to = function (n, x, y) {
+  if (n.scrollLeft === x && n.scrollTop === y) return;
+  try { n.scrollTo({ left: x, top: y, behavior: "instant" }); } catch (e) { n.scrollLeft = x; n.scrollTop = y; }
+};
+s.els.forEach(function (e) { to(e[0], e[1], e[2]); });
+if (window.scrollX !== s.x || window.scrollY !== s.y) window.scrollTo({ left: s.x, top: s.y, behavior: "instant" });
+return { ok: true };
+`,
+
   // wait {quiet}: the arm drops any earlier wait's state and starts this one's;
   // each poll after it says whether the page was busy since the last, or, with
   // no state (a new document), arms again and answers fresh. Neither carries a
@@ -6878,7 +7025,9 @@ const TOOLS = [
     timeout: { type: "number", description: "ms, default 10000." },
     target: TARGET,
   }),
-  tool("screenshot", "Capture the target window without raising it; the tab must be the one its window shows. Returns the image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w.", {
+  tool("screenshot", "Capture the target window without raising it; the tab must be the one its window shows. Returns the image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w. ref/selector: scroll it into view, crop to it (meta.clip).", {
+    ref: REF,
+    selector: SEL,
     raise: { type: "boolean" },
     maxWidth: { type: "number", description: "Default 1568; 0 = full size." },
     format: { type: "string", enum: ["png", "jpeg"] },
@@ -7041,7 +7190,7 @@ function withMoved(name, result, tabId) {
 // Multi-step tools keep state on window globals between page calls (a typeahead
 // pick, fill {fields}' record, select, click readback, upload, the armed target
 // of click {trusted} and select {trusted}, press {trusted}'s key watch, wait
-// {quiet}'s activity watch), so two such calls on one tab run one at a time. Keyed by the target as given: untargeted calls
+// {quiet}'s activity watch, screenshot {ref|selector}'s saved scroll positions), so two such calls on one tab run one at a time. Keyed by the target as given: untargeted calls
 // share "default", and a targeted and an untargeted call on the same tab are
 // not serialized (resolving the default tab first would cost Apple Events).
 export const tabLocks = new Map();
@@ -7056,7 +7205,8 @@ export function withTabLock(key, fn) {
 const LOCKED_TOOLS = new Set(["fill", "select", "file_upload"]);
 const tabLockKey = (name, args) =>
   LOCKED_TOOLS.has(name) || (name === "click" && (args.readback || args.trusted)) ||
-  (name === "press" && args.trusted) || (name === "wait" && args.quiet != null)
+  (name === "press" && args.trusted) || (name === "wait" && args.quiet != null) ||
+  (name === "screenshot" && (args.ref || args.selector))
     ? (args.target && args.target.tabId != null ? "tab:" + args.target.tabId : "default")
     : null;
 

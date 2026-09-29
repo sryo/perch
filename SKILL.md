@@ -17,7 +17,7 @@ Tool descriptions come with the schema; this adds what they leave out. `new_tab`
 | `list_tabs` | Filter: `app`, `urlContains`, `titleContains`. |
 | `navigate` | Returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed; `timeout`: not committed yet, may still load. |
 | `eval_js` | `awaitPromise` only for real async. `ref` binds `el` (a parameter): `return __avis.add(el, 'x')`. |
-| `screenshot` | Not for minimized windows. |
+| `screenshot` | Not for minimized windows. `ref`: element only; scroll restored; `clipped`: cut. |
 | `get_text` | Paged: `offset`/`maxChars`. |
 | `accessibility_snapshot` | Refs and rows below; open shadow roots too. Filter: `role`, `query` (regex per line); `max: 0`: header only. |
 | `click` | By `ref`/`selector`/`label_pattern` (button/link name; ties: `candidates`, no click). Natively disabled (own or fieldset's): `ok:false`, not clicked, trusted too; `aria-disabled` clicks. `readback: css` adds `{readback, changed, url?, invalid?, form?}`: text once changed (2s; 0.7s quiet, 1.2s hidden). `form`: {gone, alert, step} after a submit/Next; decide success yourself. `hover: true`: JS events, not `:hover`. New tab: `opened.tabId`; `blocked`/`unconfirmed`+`href`. `trusted`: below. |
