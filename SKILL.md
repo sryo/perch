@@ -16,7 +16,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `new_tab` | Unselected tab in a running browser, default the one in use. May focus the browser; defer while the user works. `{app,tabId}`. |
 | `activate_tab` | Raise a tab and its window. |
 | `close_tab` | By `tabId`. Refuses a window's last tab; never changes focus. |
-| `navigate` | Load a URL from the page and wait for it; returns the tab's current `tabId`. `waited:false`: not confirmed. Other URLs, or no page JS: `raise:true` (may raise the browser). |
+| `navigate` | Load a URL from the page and wait for it; returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed. Other URLs, or no page JS: `raise:true` (may raise the browser). |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path`: a local file, run before `script` if both. `awaitPromise` for real async. |
 | `wait` | Until `selector` exists at `readyState`, `expression` is truthy (as `value`), or `quiet` ms pass with no DOM change or fetch/XHR end. |
 | `screenshot` | On-screen window image without raising it, plus `{window, image}`: `screenX=window.x+imageX*window.w/image.w`. Not for minimized windows. |
