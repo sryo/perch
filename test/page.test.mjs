@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PAGE_PRELUDE, PAGE_SCRIPTS, pageScript, buildEvalWrapper, validateLabelPattern } from "../server.js";
+import { readFileSync } from "node:fs";
 import { page, run, runBody } from "./helpers/page.mjs";
 
 // ---- prelude ----
@@ -265,8 +266,69 @@ test("fill by label never lands in a honeypot input faded inside a visible box",
   const lone = page(`<form><div class=box><label for=t>Leave this field empty</label><input id=t style="opacity:0"></div></form>`);
   const o = run(lone, "fill", { label_pattern: "leave this field", text: "x" });
   assert.equal(o.ok, false, JSON.stringify(o));
-  assert.match(o.error, /the field is hidden/);
+  assert.match(o.error, /bot trap/);
+  assert.doesNotMatch(o.error, /anyway/);
   assert.equal(lone.document.querySelector("input").value, "");
+});
+
+test("fill by label prefers a plainly visible field over a faded combobox decoy before it", () => {
+  const w = page(`<div class=ctl><label for=d>Email</label><input id=d aria-autocomplete=list style=opacity:0></div><label for=e>Email</label><input id=e>`);
+  const o = run(w, "fill", { label_pattern: "email", text: "ada@x.test" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(w.document.getElementById("e").value, "ada@x.test");
+  assert.equal(w.document.getElementById("d").value, "");
+});
+
+test("fill by label skips an offscreen or pixel-sized honeypot", () => {
+  for (const hp of [`data-rect="-9999,0,100,20"`, `data-rect="0,0,1,1"`, `data-rect="0,0,100,1"`]) {
+    const w = page(`<div><label for=hp>Email</label><input id=hp name=email_confirm ${hp}></div><label for=em>Email</label><input id=em>`);
+    const o = run(w, "fill", { label_pattern: "email", text: "ada@x.test" });
+    assert.equal(o.ok, true, hp + " " + JSON.stringify(o));
+    assert.equal(w.document.getElementById("em").value, "ada@x.test", hp);
+    assert.equal(w.document.getElementById("hp").value, "", hp);
+  }
+});
+
+test("fill by label on the honeypot fixture lands in the visible field only", () => {
+  const html = readFileSync(new URL("./fixtures/honeypot.html", import.meta.url), "utf8");
+  const w = page(html.slice(html.indexOf("<style>")));
+  const o = run(w, "fill", { label_pattern: "email", text: "ada@x.test" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(["decoy", "trap", "email"].map((id) => w.document.getElementById(id).value), ["", "", "ada@x.test"]);
+});
+
+test("honeypot: a text input clipped to nothing, as the browser computes clip", () => {
+  const w = page(`<input id=a><input id=b type=checkbox>`);
+  const gcs = w.getComputedStyle.bind(w);
+  w.getComputedStyle = (el) => new Proxy(gcs(el), { get: (cs, k) => (k === "clip" ? "rect(0px, 0px, 0px, 0px)" : cs[k]) });
+  assert.deepEqual(runBody(w, `return ['a', 'b'].map(id => honeypot(document.getElementById(id)))`), [true, false]);
+});
+
+test("fill by label refuses a lone bot trap without offering to fill it anyway", () => {
+  for (const hp of [`tabindex=-1 autocomplete=off style="opacity:0"`, `data-rect="-9999,0,100,20"`, `data-rect="0,-500,100,20"`]) {
+    const w = page(`<div class=row><label for=hp>Email</label><input id=hp name=email_confirm ${hp}></div>`);
+    const o = run(w, "fill", { label_pattern: "email", text: "ada@x.test" });
+    assert.equal(o.ok, false, hp + " " + JSON.stringify(o));
+    assert.match(o.error, /bot trap/, hp);
+    assert.doesNotMatch(o.error, /anyway/, hp);
+    assert.equal(o.reveal, undefined, hp);
+    assert.equal(w.document.getElementById("hp").value, "", hp);
+  }
+});
+
+test("fill by label checks an sr-only checkbox inside its label", () => {
+  const w = page(`<label><input id=c type=checkbox style="position:absolute;opacity:0" data-rect="0,0,1,1"><span>Agree</span></label>`);
+  assert.equal(runBody(w, `return fieldVis(document.getElementById('c'))`), true);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "agree", checked: true }] });
+  assert.equal(o.results[0].ok, true, JSON.stringify(o));
+  assert.equal(w.document.getElementById("c").checked, true);
+});
+
+test("fill miss names its candidates by their own names, not the section heading", () => {
+  const w = page(`<section><h2>Contact details</h2><input placeholder="Company name"><input placeholder=City></section>`);
+  const o = run(w, "fill", { label_pattern: "contact details", text: "x" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.candidates, [`textbox "Company name"`, `textbox "City"`]);
 });
 
 test("fill by selector counts only shown fields as ambiguous, honeypots aside", () => {
@@ -279,8 +341,8 @@ test("fill by selector counts only shown fields as ambiguous, honeypots aside", 
 test("fieldVis: a styled control's faded input in a visible box is shown; plain, aria-hidden or untabbable ones are not", () => {
   const w = page(`
     <label class=check><input id=a type=checkbox style="opacity:0;position:absolute"><span>Agree</span></label>
-    <div class=ctl><div><div><input id=b role=combobox autocomplete=off style="opacity:0"></div></div></div>
-    <div class=ctl><input id=c aria-autocomplete=list data-zero></div>
+    <div class=ctl><div>Select...</div><div><div><input id=b role=combobox autocomplete=off style="opacity:0"></div></div></div>
+    <div class=ctl><div>Select...</div><input id=c aria-autocomplete=list data-zero></div>
     <div class=ctl><input id=d role=combobox style="display:none"></div>
     <div class=ctl><input id=e role=combobox style="visibility:hidden;opacity:0"></div>
     <div style="display:none"><input id=f role=combobox style="opacity:0"></div>
@@ -289,9 +351,10 @@ test("fieldVis: a styled control's faded input in a visible box is shown; plain,
     <div class=ctl><input id=i style="opacity:0"></div>
     <div class=ctl><input id=j role=combobox tabindex=-1 style="opacity:0"></div>
     <div class=ctl aria-hidden=true><label><input id=k type=radio style="opacity:0"> Yes</label></div>
-    <div class=ctl><input id=l autocomplete=off data-zero></div>`);
-  assert.deepEqual(runBody(w, `return 'abcdefghijkl'.split('').map(id => fieldVis(document.getElementById(id)))`),
-    [true, true, true, false, false, false, false, false, false, false, false, false]);
+    <div class=ctl><input id=l autocomplete=off data-zero></div>
+    <div class=ctl><input id=m role=combobox style="opacity:0"></div>`);
+  assert.deepEqual(runBody(w, `return 'abcdefghijklm'.split('').map(id => fieldVis(document.getElementById(id)))`),
+    [true, true, true, false, false, false, false, false, false, false, false, false, false]);
 });
 
 test("fill by selector into a hidden field still writes and says hidden", () => {

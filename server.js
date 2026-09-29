@@ -2716,17 +2716,41 @@ function vis(el) {
   const r = el.getBoundingClientRect();
   return !(r.width === 0 && r.height === 0);
 }
+// A text input or textarea placed where no one can see it: wholly above or left
+// of the document, under aria-hidden, or (unless a combobox, whose input shrinks
+// while empty) shrunk or clipped to a pixel. A 0x0 box is plain hidden, not a
+// trap. Bots fill these; people never do.
+function honeypot(el) {
+  if (!el || !(el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && !/^(checkbox|radio|file|hidden)$/i.test(el.type || "")))) return false;
+  if (el.closest("[aria-hidden=true]")) return true;
+  const r = el.getBoundingClientRect();
+  if (!r.width && !r.height) return false;
+  if (r.right + (window.scrollX || 0) <= 0 || r.bottom + (window.scrollY || 0) <= 0) return true;
+  if (attr(el, "role") === "combobox" || el.hasAttribute("aria-autocomplete")) return false;
+  if (r.width <= 1 || r.height <= 1) return true;
+  const m = /rect\(([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px/.exec(getComputedStyle(el).clip || "");
+  return !!m && (m[2] - m[4] <= 1 || m[3] - m[1] <= 1);
+}
+// A honeypot, an untabbable field with autofill off, or one whose name says to
+// leave it empty.
+function trapLike(el) {
+  return honeypot(el) || (attr(el, "tabindex") === "-1" && attr(el, "autocomplete") === "off")
+    || /\bleave (this |it )?(field )?(blank|empty)\b|\bdo not fill\b/i.test(labelText(el) + " " + attr(el, "name"));
+}
 // vis(), plus a styled control's own input faded (opacity 0) or shrunk to a
 // pixel inside a visible, sized box at most 3 levels up that contains it: a
 // combobox input (react-select after a pick) or a custom checkbox or radio.
-// A plain faded input is a honeypot, not a control, and so is anything
-// untabbable (tabindex=-1) or aria-hidden. display:none, visibility:hidden and
-// a box that is itself hidden still hide it.
+// A combobox's box must paint something besides the input (its value, a
+// placeholder, an arrow). A plain faded input is a honeypot, not a control, and
+// so is anything untabbable (tabindex=-1) or aria-hidden. display:none,
+// visibility:hidden and a box that is itself hidden still hide it.
 function fieldVis(el) {
+  if (honeypot(el)) return false;
   if (vis(el)) return true;
   if (!el || el.hidden || el.tagName !== "INPUT") return false;
   const t = (el.type || "").toLowerCase();
-  if (!/^(checkbox|radio)$/.test(t) && attr(el, "role") !== "combobox" && !el.hasAttribute("aria-autocomplete")) return false;
+  const check = /^(checkbox|radio)$/.test(t);
+  if (!check && attr(el, "role") !== "combobox" && !el.hasAttribute("aria-autocomplete")) return false;
   if (attr(el, "tabindex") === "-1" || el.closest("[aria-hidden=true]")) return false;
   const cs = getComputedStyle(el);
   if (cs.display === "none" || cs.visibility === "hidden") return false;
@@ -2734,7 +2758,17 @@ function fieldVis(el) {
   for (let p = el.parentElement, i = 0; p && i < 3 && !/^(BODY|HTML)$/.test(p.tagName); p = p.parentElement, i++) {
     if (!vis(p)) continue;
     const b = p.getBoundingClientRect();
-    if (b.width > 1 && b.height > 1 && r.left >= b.left - 1 && r.top >= b.top - 1 && r.right <= b.right + 1 && r.bottom <= b.bottom + 1) return true;
+    if (b.width > 1 && b.height > 1 && r.left >= b.left - 1 && r.top >= b.top - 1 && r.right <= b.right + 1 && r.bottom <= b.bottom + 1 && (check || paints(p, el))) return true;
+  }
+  return false;
+}
+// Box p shows visible text or a visible element that doesn't wrap el.
+function paints(p, el) {
+  const tw = document.createTreeWalker(p, 5);
+  for (let k = 0; k < 60 && tw.nextNode(); k++) {
+    const n = tw.currentNode;
+    if (n.nodeType === 3) { if (n.nodeValue.trim() && vis(n.parentElement)) return true; }
+    else if (n !== el && !n.contains(el) && vis(n)) return true;
   }
   return false;
 }
@@ -3549,7 +3583,7 @@ function fillOne(a) {
       }
       s = 10;
     }
-    if (fieldVis(el)) s += 20;
+    if (fieldVis(el)) s += vis(el) ? 20 : 10;
     if (!el.disabled && !el.readOnly) s += 10;
     scored.push({ el: el, root: root, s: s });
   });
@@ -3561,13 +3595,18 @@ function fillOne(a) {
       : { ok: false, error: miss + "after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
     if (passed.length) {
       out.error += "; candidates sit near matching text but carry other labels";
-      out.candidates = passed.slice(0, 5).map(ident);
+      out.candidates = passed.slice(0, 5).map(function (el) {
+        const own = labelText(el) || attr(el, "placeholder") || attr(el, "name") || nearText(el);
+        return role(el) + " " + JSON.stringify(clip(own, 120)) + (fieldVis(el) ? "" : " hidden");
+      });
     }
     return out;
   }
   const shown = scored.filter(function (c) { return fieldVis(c.el); });
   if (!shown.length) {
-    const reveal = revealers(re, nearHit), el = ident(scored[0].el);
+    const el = ident(scored[0].el);
+    if (scored.every(function (c) { return trapLike(c.el); })) return { ok: false, el: el, error: el + " matched /" + a.label_pattern + "/i but it looks like a bot trap; leave it empty" };
+    const reveal = revealers(re, nearHit);
     const why = el + " matched /" + a.label_pattern + "/i but the field is hidden; ";
     return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button, or pass its ref or selector to fill it anyway" }
       : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
