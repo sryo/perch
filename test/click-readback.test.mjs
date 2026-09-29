@@ -521,6 +521,47 @@ test("form: a submit button that only relabels itself settles on the quiet windo
   assert.ok(world.clock.t - t0 >= 450, `spent ${world.clock.t - t0}ms`);
 });
 
+// A submit handler that sets busy flags on the form while posting: `busy` runs
+// at submit, `after` 400ms later (none: the post never resolves).
+function busyForm(busy, after) {
+  return wizard(`show(3); document.getElementById('wiz').addEventListener('submit', function (e) { e.stopImmediatePropagation(); e.preventDefault(); ${busy} ${after ? `setTimeout(function () { ${after} }, 400);` : ""} }, true);`);
+}
+const FIELDSET_BUSY = `document.querySelector('fieldset[data-step="3"]').disabled = true; document.getElementById('send').textContent = 'Submitting...';`;
+const REPLACE = `var d = document.createElement('div'); d.textContent = 'Thanks'; document.getElementById('wiz').replaceWith(d);`;
+for (const target of ["#wiz", "body"]) {
+  test(`form: with readback on ${target}, a submit that disables its fieldset still waits for the form to go`, async () => {
+    busyForm(FIELDSET_BUSY, REPLACE);
+    const o = await click({ selector: "#send", readback: target });
+    assert.equal(o.changed, true);
+    assert.deepEqual(o.form, { gone: true }, JSON.stringify(o));
+    assert.doesNotMatch(String(o.readback), /Submitting/);
+  });
+}
+
+const FIELDS = `document.querySelectorAll('#wiz input, #wiz textarea')`;
+test("form: aria-busy on the form with every field disabled waits for the alert it shows", async () => {
+  busyForm(`document.getElementById('wiz').setAttribute('aria-busy', 'true'); ${FIELDS}.forEach(function (f) { f.disabled = true; });`,
+    `var a = document.createElement('div'); a.setAttribute('role', 'alert'); a.textContent = 'Email taken'; document.getElementById('wiz').appendChild(a); document.getElementById('wiz').removeAttribute('aria-busy'); ${FIELDS}.forEach(function (f) { f.disabled = false; });`);
+  const o = await click({ selector: "#send", readback: "#wiz" });
+  assert.equal(o.changed, true);
+  assert.deepEqual(o.form, { alert: "Email taken" }, JSON.stringify(o));
+});
+
+test("form: a form that only disables itself and never resolves claims no outcome and ends within the cap", async () => {
+  const { world } = busyForm(`document.getElementById('wiz').setAttribute('aria-busy', 'true'); document.querySelector('fieldset[data-step="3"]').disabled = true;`);
+  const t0 = world.clock.t;
+  const o = await click({ selector: "#send", readback: "#wiz" });
+  assert.deepEqual(o, { ok: true, el: `button "Submit"`, readback: o.readback, changed: false }, JSON.stringify(o));
+  assert.ok(world.clock.t - t0 >= 450 && world.clock.t - t0 <= 2300, `spent ${world.clock.t - t0}ms`);
+});
+
+test("form: a disable that clears again with nothing else ends changed:false", async () => {
+  busyForm(`${FIELDS}.forEach(function (f) { f.disabled = true; });`, `${FIELDS}.forEach(function (f) { f.disabled = false; });`);
+  const o = await click({ selector: "#send", readback: "#wiz" });
+  assert.equal(o.changed, false, JSON.stringify(o));
+  assert.equal(o.form, undefined);
+});
+
 test("form: a modal holding the fields in plain divs reads gone once Next removes it", async () => {
   wizard();
   const o = await click({ selector: "#qnext", readback: "#quick" });
