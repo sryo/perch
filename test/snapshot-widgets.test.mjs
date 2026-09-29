@@ -4,6 +4,7 @@
 // The layout stub treats data-zero as a 0x0 box (a width:0;height:0 input).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { page, run, runBody } from "./helpers/page.mjs";
 
 const snap = (w, A = {}) => {
@@ -191,4 +192,65 @@ test("snapshot: aria-invalid on a react-select combobox input marks its line", (
 test("snapshot: a form with no invalid field has no invalid key", () => {
   const w = page(`<form><label for=a>A</label><input id=a required></form>`);
   assert.deepEqual(snap(w).head.form, { fields: 1, requiredEmpty: 1 });
+});
+
+// ---- typeaheads ----
+
+// A location typeahead keeps typed text; only its hidden companion holds a pick.
+const LOC = ({ required = true, comp = "" } = {}) => `<form><div class=loc><label for=li>Location</label>
+  <input id=li ${required ? "required" : ""}><input type=hidden id=sl name=selected-location value="${comp}"><div class=dropdown-results></div></div>
+  <label for=nm>Name</label><input id=nm></form>`;
+const type = (w, id, v) => Object.getOwnPropertyDescriptor(w.HTMLInputElement.prototype, "value").set.call(w.document.getElementById(id), v);
+
+test("snapshot: typed text in a typeahead whose hidden companion is empty is unpicked", () => {
+  const w = page(LOC());
+  type(w, "li", "Buenos");
+  let { head, lines } = snap(w);
+  assert.equal(lineOf(lines, "Location"), `1 textbox "Location" value="Buenos" required unpicked`);
+  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 1, unpicked: 1 });
+  w.document.getElementById("sl").value = "ChIJ0a";
+  ({ head, lines } = snap(w));
+  assert.equal(lineOf(lines, "Location"), `1 textbox "Location" value="Buenos" required`);
+  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 0 });
+});
+
+test("snapshot: an optional typeahead is flagged unpicked without counting as required", () => {
+  const w = page(LOC({ required: false }));
+  type(w, "li", "Buenos");
+  const { head, lines } = snap(w);
+  assert.match(lineOf(lines, "Location"), / unpicked$/);
+  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 0, unpicked: 1 });
+});
+
+test("snapshot: empty text, a prefilled companion, a shared box or a honeypot is never unpicked", () => {
+  let w = page(LOC());
+  let { head, lines } = snap(w);
+  assert.doesNotMatch(lineOf(lines, "Location"), /unpicked/);
+  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 1 });
+  w = page(LOC({ comp: "ChIJ0a" }));
+  type(w, "li", "Buenos");
+  assert.doesNotMatch(snap(w).lines.join("\n"), /unpicked/);
+  w = page(`<form><div class=row><input type=hidden name=csrf><label for=a>City</label><input id=a><label for=b>Zip</label><input id=b></div>
+    <div class=hp><input id=h name=website style="opacity:0" data-zero><input type=hidden name=hp></div>
+    <input id=h2 name=url style="opacity:0"></form>`);
+  for (const id of ["a", "h", "h2"]) type(w, id, "x");
+  ({ head, lines } = snap(w));
+  assert.doesNotMatch(lines.join("\n"), /unpicked/);
+  assert.equal(head.form.unpicked, undefined);
+});
+
+test("snapshot: the pickers fixture's location field reads unpicked until a suggestion is picked", () => {
+  const html = readFileSync(new URL("./fixtures/pickers.html", import.meta.url), "utf8");
+  const w = page(/<body>([\s\S]*?)<script>/.exec(html)[1]);
+  w.eval(/<script>([\s\S]*?)<\/script>/.exec(html)[1]);
+  const li = w.document.getElementById("li");
+  li.value = "Ros";
+  li.dispatchEvent(new w.Event("input", { bubbles: true }));
+  let { head, lines } = snap(w);
+  assert.match(lineOf(lines, "Work location"), /value="Ros" required unpicked$/);
+  assert.deepEqual(head.form, { fields: 1, requiredEmpty: 1, unpicked: 1 });
+  w.document.querySelector(".loc-pick .dropdown-item").dispatchEvent(new w.MouseEvent("mousedown", { bubbles: true }));
+  ({ head, lines } = snap(w));
+  assert.match(lineOf(lines, "Work location"), /value="Rosario, Santa Fe, Argentina" required$/);
+  assert.deepEqual(head.form, { fields: 1, requiredEmpty: 0 });
 });

@@ -3320,14 +3320,7 @@ function pickRadio(g, text) {
 // A typeahead keeps only a picked suggestion, often mirrored into a hidden
 // input: typed text alone is cleared on blur or rejected on submit. fill types,
 // then fill_ta_pick / fill_ta_read run polled from JXA, as select's phases do.
-const TYPEAHEAD_LIB = String.raw`
-const taNorm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
-// A background tab's blur() fires no events, so send them when the page lacks focus.
-function taBlur(el) {
-  const had = document.activeElement === el;
-  if (had) el.blur();
-  if (!had || !document.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
-}
+const TA_BOX_LIB = String.raw`
 // The widget's own box: the highest ancestor (below the form) holding no other control.
 function taRoot(el) {
   let root = el;
@@ -3342,6 +3335,15 @@ const TA_POP = "[class*=dropdown], [class*=autocomplete], [class*=suggest], [cla
 function taParts(el) {
   const root = taRoot(el);
   return { comp: root === el ? null : root.querySelector("input[type=hidden]"), pop: root === el ? null : root.querySelector(TA_POP) };
+}
+`;
+const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
+const taNorm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
+// A background tab's blur() fires no events, so send them when the page lacks focus.
+function taBlur(el) {
+  const had = document.activeElement === el;
+  if (had) el.blur();
+  if (!had || !document.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
 }
 function isTypeahead(el) {
   if (el.tagName !== "INPUT" || (el.type || "text").toLowerCase() !== "text" || /^(tel|numeric|decimal|email)$/.test(attr(el, "inputmode"))) return false;
@@ -3839,7 +3841,7 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
 `,
 
   // Line format: "# {header json}", then "<ref> <role> <json name> key=<json>... flags".
-  snapshot: INVALID_LIB + String.raw`
+  snapshot: INVALID_LIB + TA_BOX_LIB + String.raw`
 const refs = {};
 window.__perch_refs = refs;
 const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
@@ -3878,6 +3880,13 @@ function snapVis(el) {
   if (wrap) ls.push(wrap);
   return ls.some(vis);
 }
+// Typed text a typeahead has not taken: the hidden input in its own box, where
+// a pick lands, is still empty.
+function unpicked(el) {
+  if (el.tagName !== "INPUT" || el.readOnly || !/^(text|search)$/.test(el.type) || !el.value.trim() || !snapVis(el)) return false;
+  const c = taParts(el).comp;
+  return !!c && !c.value;
+}
 let n = 0, matched = 0, truncated = false;
 for (const el of deepAll(SEL)) {
   const r = role(el);
@@ -3909,6 +3918,7 @@ for (const el of deepAll(SEL)) {
   if (attr(el, "aria-selected") === "true") line += " selected";
   if (el.disabled) line += " disabled";
   if (attr(el, "aria-expanded") === "true") line += " expanded";
+  if (unpicked(el)) line += " unpicked";
   if (invCarrier(el, false)) { line += " invalid"; const m = invMsg(el); if (m) kv("error", m); }
   if (re && !re.test(line)) continue;
   matched++;
@@ -3944,12 +3954,14 @@ if (forms.length) {
     if (el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0) return false;
     return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
   });
+  const loose = fields.filter(unpicked);
   const requiredEmpty = fields.filter(function (el) {
     if (!el.required && attr(el, "aria-required") !== "true") return false;
-    if (String(el.value || el.textContent || "").trim()) return false;
+    if (String(el.value || el.textContent || "").trim()) return loose.indexOf(el) >= 0;
     return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
   }).length;
   head.form = { fields: fields.length, requiredEmpty: requiredEmpty };
+  if (loose.length) head.form.unpicked = loose.length;
   const inv = invalidSet().filter(function (c) { return big.contains(c.el); }).length;
   if (inv) head.form.invalid = inv;
 }
