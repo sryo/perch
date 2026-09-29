@@ -73,7 +73,8 @@ function asyncWorld(connected) {
   DAEMONS.fast = w.daemon;
   DAEMONS.slow = w.daemon;
   w.reset();
-  w.page("Google Chrome", 0, 0).__perch_refs = { e4: { id: "b", tagName: "BUTTON", isConnected: connected, ownerDocument: { defaultView: {} } } };
+  const p = w.page("Google Chrome", 0, 0);
+  p.__perch_refs = { e4: { id: "b", tagName: "BUTTON", isConnected: connected, ownerDocument: p.document } };
   return w;
 }
 
@@ -119,4 +120,24 @@ test("eval_js {ref} costs the same Apple Events as plain eval_js", async () => {
   w.reset();
   await handleCall("eval_js", { ref, script: "return el.id" });
   assert.equal(appleEvents(w), plain);
+});
+
+// A frame that navigates or reloads leaves its old document alive, so its
+// nodes still read isConnected; the ref no longer names the frame's document.
+test("eval_js {ref} into a same-origin frame runs, and is stale once the frame's document is replaced", async () => {
+  const w = install(`<iframe id=app data-rect="0,100,600,800"></iframe>`);
+  const app = w.dom.document.getElementById("app");
+  app.contentDocument.body.innerHTML = `<label for=fn>First name</label><input id=fn>`;
+  const ref = await snapRef("First name");
+  const ok = await handleCall("eval_js", { ref, script: "return el.id" });
+  assert.equal(ok.isError, undefined, text(ok));
+  assert.equal(text(ok), "fn");
+  const old = app.contentDocument.getElementById("fn");
+  const fresh = w.dom.document.implementation.createHTMLDocument("");
+  Object.defineProperty(app, "contentDocument", { get: () => fresh, configurable: true });
+  assert.equal(old.isConnected, true);
+  const r = await handleCall("eval_js", { ref, script: "window.__ran = 1; return 1" });
+  assert.equal(r.isError, true, text(r));
+  assert.match(text(r), new RegExp(`ref ${ref} is stale or unknown`));
+  assert.equal(w.dom.__ran, undefined);
 });

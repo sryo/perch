@@ -6850,6 +6850,11 @@ export const HANDLERS = {
   select:        (a) => select(a),
 };
 
+// liveDoc and frameOf from the page library, for eval_js's ref check: a ref's
+// document is the page's, or a same-origin frame's that its frame still shows.
+const EVAL_LIVE_DOC = "function __perch_frame(d, root, depth) { for (const x of root.getElementsByTagName('iframe')) { let c = null; try { c = x.contentDocument; } catch (e) {} if (!c) continue; if (c === d) return x; const f = depth < 3 && __perch_frame(d, c, depth + 1); if (f) return f; } return null; }\n" +
+  "function __perch_live(d, depth) { if (d === document) return true; const v = d && d.defaultView; if (!v || depth > 3) return false; let f = null; try { f = v.frameElement; } catch (e) {} if (f == null) f = __perch_frame(d, document, 1); if (!f || !f.isConnected) return false; try { if (f.contentDocument !== d) return false; } catch (e) { return false; } return __perch_live(f.ownerDocument, depth + 1); }\n";
+
 // File first, then `script`, in one function body: one call can inject a library and read it back.
 // With a ref, the body runs as a function of `el`, resolved in the same page
 // call; the ref's JSON literal is the only part that varies between calls.
@@ -6860,8 +6865,8 @@ export async function composeEvalScript({ script, script_path, ref, awaitPromise
   const body = file && script ? file + "\n;\n" + script : file || script;
   if (ref == null || ref === "") return body;
   const k = JSON.stringify(String(ref));
-  return `var __perch_el = (window.__perch_refs || {})[${k}];\n` +
-    `if (!__perch_el || !__perch_el.isConnected || !__perch_el.ownerDocument || !__perch_el.ownerDocument.defaultView) return { __perch_ref_miss: true, ref: ${k} };\n` +
+  return `var __perch_el = (window.__perch_refs || {})[${k}];\n` + EVAL_LIVE_DOC +
+    `if (!__perch_el || !__perch_el.isConnected || !__perch_live(__perch_el.ownerDocument, 1)) return { __perch_ref_miss: true, ref: ${k} };\n` +
     `return (${awaitPromise ? "async " : ""}function (el) {\n${body}\n}).call(this, __perch_el);`;
 }
 
