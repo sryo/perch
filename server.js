@@ -785,6 +785,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // `done(v)`, if given, decides instead and sees every run, a failed one as null.
   // `start` (default now) is when the caller's clock began: the deadline is
   // start + timeout, and the first run happens even if setup already spent it.
+  // `js` may be a function giving each run's script.
   function poll(t, js, timeout, interval, step, done, start) {
     if (start == null) start = Date.now();
     const deadline = start + timeout;
@@ -796,7 +797,8 @@ function jxaRuntime(BROWSERS, HANG) {
       // A step run gets the full cap even near the deadline: cutting it short would
       // turn a pick that answered null in time into "may have run".
       const secs = step ? STEP_EXEC_SECS : Math.max(0.1, Math.min(cap, (deadline - Date.now()) / 1000));
-      try { v = pollValue(step ? stepExec(t, js, secs) : pollExec(t, js, secs)); } catch (e) {
+      const src = typeof js === "function" ? js() : js;
+      try { v = pollValue(step ? stepExec(t, src, secs) : pollExec(t, src, secs)); } catch (e) {
         if (isStale(e) || (step && isNoReply(e))) throw e;
         if (isNoReply(e)) { cap *= 2; silent = true; }
       }
@@ -1240,14 +1242,15 @@ function jxaRuntime(BROWSERS, HANG) {
   }
 
   // wait {quiet}: timed here, where the clock isn't throttled with the page. The
-  // window opens when a poll arms the observer (fresh); a poll that fails or
-  // finds a new document restarts it.
+  // window opens when a run arms the observer (fresh); a run that fails or finds
+  // a new document restarts it. Runs send a.arm until one answers, then a.js.
   function waitQuiet(a, start, interval) {
     const t = pageTarget(a.target, "wait");
-    let last = start, quietFor = 0;
-    const r = poll(t, a.js, a.timeout, interval, false, function (v) {
+    let last = start, quietFor = 0, armed = false;
+    const r = poll(t, function () { return armed ? a.js : a.arm; }, a.timeout, interval, false, function (v) {
       const now = Date.now();
       if (v && v.__perch_error) return true;
+      if (v) armed = true;
       if (!v || v.busy || v.fresh) last = now;
       quietFor = now - last;
       return quietFor >= a.quiet;
@@ -3110,9 +3113,9 @@ async function waitQuiet({ quiet, selector, expression, target }, timeout) {
   if (typeof quiet !== "number" || !(quiet > 0)) throw new Error("wait: `quiet` must be a positive number of ms");
   if (!(quiet < timeout)) throw new Error("wait: `quiet` must be shorter than `timeout`");
   if (selector != null || expression != null) throw new Error("wait: `quiet` takes no selector or expression");
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  const js = buildEvalWrapper(pageScript("wait_quiet", { id, life: timeout }));
-  const r = await rt("wait", { target, js, timeout, quiet }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+  const A = { life: timeout };
+  const arm = buildEvalWrapper(pageScript("wait_quiet_arm", A)), js = buildEvalWrapper(pageScript("wait_quiet", A));
+  const r = await rt("wait", { target, arm, js, timeout, quiet }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
   return { ok: true, waited: r.waited, quietFor: r.quietFor };
 }
 
@@ -6173,14 +6176,19 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
   // What a frame click needs from the page: its URL and viewport.
   viewport: "return { url: location.href, iw: innerWidth, ih: innerHeight };",
 
-  // wait {quiet}: whether the page was busy since the last poll. With no state
-  // for this wait (A.id) it arms one and answers fresh: on the first poll, or on
-  // a new document.
+  // wait {quiet}: the arm drops any earlier wait's state and starts this one's;
+  // each poll after it says whether the page was busy since the last, or, with
+  // no state (a new document), arms again and answers fresh. Neither carries a
+  // per-call value, so both stay in the page's compile cache.
+  wait_quiet_arm: QUIET_LIB + String.raw`
+rbStop(window.__perch_quiet);
+rbWatch({}, "__perch_quiet", A.life);
+return { fresh: true };
+`,
   wait_quiet: QUIET_LIB + String.raw`
 const s = window.__perch_quiet;
-if (s && s.id === A.id) return { busy: rbBusy(s) };
-rbStop(s);
-rbWatch({ id: A.id }, "__perch_quiet", A.life);
+if (s) return { busy: rbBusy(s) };
+rbWatch({}, "__perch_quiet", A.life);
 return { fresh: true };
 `,
 

@@ -592,3 +592,13 @@ test("fill on a typeahead that answers the full text costs a fixed count of Appl
   assert.equal("query" in o, false);
   assert.equal(appleEvents(), 8, breakdown());
 });
+
+// wait {quiet} on a quiet page: one page call per 50ms sample until the window
+// has passed, the first of them arming the observer.
+test("wait {quiet} on a quiet page costs a fixed count of Apple Events", async () => {
+  const dom = page(`<p>Idle</p>`, { url: "https://c0.test/" });
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  const { o } = await call("wait", { quiet: 200, timeout: 3000 });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(appleEvents(), 11, breakdown());
+});
