@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { page, run } from "./helpers/page.mjs";
+import { page, run, runBody } from "./helpers/page.mjs";
 
 const snap = (w, A = {}) => {
   const [head, ...lines] = run(w, "snapshot", { max: 500, ...A }).split("\n");
@@ -73,6 +73,45 @@ test("(b) a same-origin frame's controls follow the page rows with frame=0, and 
   assert.equal(s.ok, true, JSON.stringify(s));
   assert.equal(d.getElementById("wa").value, "Yes");
   assert.deepEqual(snap(w).head.form, { fields: 2, requiredEmpty: 0 });
+});
+
+// A frame that navigates or reloads leaves its old document alive: the refs
+// the top window kept still read isConnected, but no longer name the frame.
+test("(b) a ref into a frame whose document was replaced is stale for fill and click, and nothing is written", () => {
+  const { w, d } = sameOrigin();
+  snap(w);
+  const app = w.document.getElementById("app");
+  const fresh = w.document.implementation.createHTMLDocument("");
+  Object.defineProperty(app, "contentDocument", { get: () => fresh, configurable: true });
+  const old = d.getElementById("fn");
+  assert.equal(old.isConnected, true);
+  let clicks = 0;
+  old.addEventListener("click", () => clicks++);
+  assert.deepEqual(run(w, "fill", { ref: "2", text: "Ada" }), { __perch_ref_miss: true, ref: "2" });
+  assert.deepEqual(run(w, "click", { ref: "2" }), { __perch_ref_miss: true, ref: "2" });
+  assert.equal(old.value, "");
+  assert.equal(clicks, 0);
+});
+
+test("(b) a ref whose frame document lost its window is stale, and a removed frame's too", () => {
+  const { w, d } = sameOrigin();
+  snap(w);
+  Object.defineProperty(d, "defaultView", { get: () => null, configurable: true });
+  assert.deepEqual(run(w, "fill", { ref: "2", text: "Ada" }), { __perch_ref_miss: true, ref: "2" });
+  assert.equal(d.getElementById("fn").value, "");
+  const b = sameOrigin();
+  snap(b.w);
+  b.w.document.getElementById("app").remove();
+  assert.deepEqual(run(b.w, "click", { ref: "2" }), { __perch_ref_miss: true, ref: "2" });
+});
+
+test("(b) viewOf fails closed for a detached frame document instead of using the top window", () => {
+  const { w, d } = sameOrigin();
+  w.__el = d.getElementById("fn");
+  assert.equal(runBody(w, `return viewOf(window.__el) === window.document.getElementById("app").contentWindow`), true);
+  Object.defineProperty(d, "defaultView", { get: () => null, configurable: true });
+  const o = runBody(w, `return viewOf(window.__el) === window`);
+  assert.match(String(o && o.__perch_error), /stale/);
 });
 
 test("(b) a trusted click can't aim at a same-origin frame's row: its box is in the frame's viewport", () => {

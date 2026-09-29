@@ -2887,7 +2887,26 @@ function attr(el, k) { return (el && el.getAttribute && el.getAttribute(k)) || "
 function clip(s, n) { s = String(s == null ? "" : s).replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; }
 function textOf(n) { return n ? (n.innerText || n.textContent || "") : ""; }
 // The window an element lives in: a same-origin frame's own, else this one.
-function viewOf(el) { const d = el && el.ownerDocument; return (d && d !== document && d.defaultView) || window; }
+// A frame document that lost its window throws rather than borrow this one.
+function viewOf(el) {
+  const d = el && el.ownerDocument;
+  if (!d || d === document) return window;
+  if (!d.defaultView) throw new Error("stale ref: its frame's document is gone; call accessibility_snapshot again");
+  return d.defaultView;
+}
+// A same-origin frame that navigates or reloads leaves its old document alive,
+// and the nodes a ref kept there still read isConnected: such a document is
+// live only while a connected iframe of this page still shows it.
+function liveDoc(d) {
+  if (d === document) return true;
+  const v = d && d.defaultView;
+  if (!v) return false;
+  let f = null;
+  try { f = v.frameElement; } catch (e) {}
+  if (f == null) for (const x of document.getElementsByTagName("iframe")) { try { if (x.contentDocument === d) { f = x; break; } } catch (e) {} }
+  if (!f || f.ownerDocument !== document || !f.isConnected) return false;
+  try { return f.contentDocument === d; } catch (e) { return false; }
+}
 function getComputedStyle(el, p) { return (el.ownerDocument === document ? window : viewOf(el)).getComputedStyle(el, p); }
 // querySelectorAll over the document and every open shadow root, in document
 // order: a shadow tree's matches follow its host. Closed roots stay unreachable.
@@ -3082,7 +3101,7 @@ function fire(el, types) { types.forEach(function (t) { el.dispatchEvent(new Eve
 function resolveEl(a, dflt) {
   if (a.ref) {
     const el = (window.__perch_refs || {})[a.ref];
-    return el && el.isConnected ? { el: el } : { out: { __perch_ref_miss: true, ref: String(a.ref) } };
+    return el && el.isConnected && liveDoc(el.ownerDocument) ? { el: el } : { out: { __perch_ref_miss: true, ref: String(a.ref) } };
   }
   const sel = a.selector || dflt;
   if (!sel) return { el: null };
