@@ -902,7 +902,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // Node's screencapture fallback runs after the restore, so it would see the
   // page as it was, not the rect measured after the scroll.
   const SHOT_MOVED = "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it, or scroll it into view and call again";
-  // A capture run with the grant that still gave no usable image (screencapture
+  // A capture with the grant that still gave no usable image (both screencapture runs
   // failed or wrote nothing readable, or the crop or downscale failed).
   const SHOT_NO_CAPTURE = "screenshot: the window capture gave no image; nothing was captured";
   // A window the browser stopped painting (covered, hidden, or too slow) still
@@ -1028,9 +1028,9 @@ function jxaRuntime(BROWSERS, HANG) {
 
   // The window's own pixels, cropped, scaled and encoded here, so a crop happens
   // inside the runtime call that scrolled and restores. CGPreflightScreenCaptureAccess
-  // never prompts; without the grant, or on an empty image, it returns null and
+  // never prompts; without the grant it returns null and
   // Node's screencapture (which asks for the grant itself) takes over. With the
-  // grant, a run that gives no usable image returns NO_IMAGE, which Node's
+  // grant, two runs that give no usable image return NO_IMAGE, which Node's
   // screencapture and sips also take over unless the page had to scroll. With a
   // shot map it keeps only the map's box, cut before any downscale. A capture
   // that gives no image in time is a coded timeout, which the crop's restore
@@ -1049,7 +1049,6 @@ function jxaRuntime(BROWSERS, HANG) {
       if (!src) return NO_IMAGE;
       let img = src.CGImage;
       let w = Number($.CGImageGetWidth(img)), h = Number($.CGImageGetHeight(img));
-      if (!w || !h) return NO_IMAGE;
       if (run.type === "png" && !(maxWidth > 0 && w > maxWidth)) {
         const file = $.NSData.dataWithContentsOfFile(run.path);
         if (!file || file.isNil() || !Number(file.length)) return NO_IMAGE;
@@ -1112,27 +1111,45 @@ function jxaRuntime(BROWSERS, HANG) {
   // server's REPL, or another JXA tool) has captured, every other osascript's
   // capture waits the proxy's 30s and gets no image. screencapture exits after
   // each shot, so it never holds the proxy, and one that hangs is killed at
-  // SHOT_CAPTURE_SECS. -o leaves out the window shadow, -r the dpi metadata.
-  // A shot perch decodes is taken as TIFF, which screencapture writes about 40ms
-  // sooner than a PNG it would compress only for perch to decode again.
+  // SHOT_CAPTURE_SECS. A run that ends without an image (nonzero exit, a file
+  // that won't load or is empty) is run once more inside the same
+  // SHOT_CAPTURE_SECS, so the retry never lengthens the worst case; a run
+  // killed at the deadline, or one that failed to launch, is not retried.
+  // -o leaves out the window shadow, -r the dpi metadata. A shot perch decodes
+  // is taken as TIFF, which screencapture writes about 40ms sooner than a PNG
+  // it would compress only for perch to decode again.
   const SHOT_CAPTURE_SECS = 3;
   const SHOT_POLL_SECS = 0.002;
   const SHOT_NO_IMAGE = "timeout: screenshot: the window capture gave no image within " + SHOT_CAPTURE_SECS + "s; nothing was captured";
   let shotSeq = 0;
   function startShot(wid, type) {
-    const path = $.NSTemporaryDirectory().js + "perch-" + $.NSProcessInfo.processInfo.processIdentifier + "-" + (++shotSeq) + "." + type;
+    return launchShot({ wid: wid, type: type, until: Date.now() + SHOT_CAPTURE_SECS * 1000 });
+  }
+  // Starts a screencapture run into a new temp file on `run`, keeping its
+  // deadline, so a retry shares the first run's.
+  function launchShot(run) {
+    const path = $.NSTemporaryDirectory().js + "perch-" + $.NSProcessInfo.processInfo.processIdentifier + "-" + (++shotSeq) + "." + run.type;
     const task = $.NSTask.alloc.init;
     task.executableURL = $.NSURL.fileURLWithPath("/usr/sbin/screencapture");
-    task.arguments = $(["-l", String(wid), "-x", "-o", "-r", "-t", type, path]);
+    task.arguments = $(["-l", String(run.wid), "-x", "-o", "-r", "-t", run.type, path]);
     task.standardOutput = $.NSFileHandle.fileHandleWithNullDevice;
     task.standardError = $.NSFileHandle.fileHandleWithNullDevice;
     let launched = false;
     try { launched = !!task.launchAndReturnError($()); } catch (e) {}
-    return { task: launched ? task : null, path: path, type: type, until: Date.now() + SHOT_CAPTURE_SECS * 1000 };
+    run.task = launched ? task : null;
+    run.path = path;
+    return run;
   }
-  // The run's image, or null when it failed (its file removed); a run still
-  // going at its deadline is stopped and refused as a coded timeout.
+  // The run's image, from a second run when the first gave none, or null when
+  // neither did (their files removed); a run still going at the deadline is
+  // stopped and refused as a coded timeout. After a retry, `run` names the
+  // second run and its file.
   function awaitShot(run) {
+    const rep = shotImage(run);
+    if (rep || !run.task || Date.now() >= run.until) return rep;
+    return shotImage(launchShot(run));
+  }
+  function shotImage(run) {
     const task = run.task;
     if (!task) return null;
     while (task.isRunning) {
@@ -1140,7 +1157,8 @@ function jxaRuntime(BROWSERS, HANG) {
       delay(SHOT_POLL_SECS);
     }
     const rep = task.terminationStatus === 0 ? $.NSBitmapImageRep.imageRepWithContentsOfFile(run.path) : null;
-    if (!rep || rep.isNil()) { dropFile(run.path); return null; }
+    const img = rep && !rep.isNil() ? rep.CGImage : null;
+    if (!img || !Number($.CGImageGetWidth(img)) || !Number($.CGImageGetHeight(img))) { dropFile(run.path); return null; }
     return rep;
   }
   function dropShot(run) {
