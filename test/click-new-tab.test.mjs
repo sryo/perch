@@ -1,7 +1,8 @@
 // A click that opens a new tab (a target=_blank link or form, window.open) says
-// so: `opened` with the new tab's handle, or `blocked` with the URL, so the
-// caller neither hunts for the tab nor takes a dropped popup for success. perch
-// never selects the new tab.
+// so: `opened` with the new tab's handle, `blocked` with the URL when the page saw
+// window.open return null, or `unconfirmed` with the URL when no tab showed up in
+// time, so the caller neither hunts for the tab nor takes a missing one for a
+// blocked popup. perch never selects the new tab.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall, CLICK_BLANK_GO } from "../server.js";
@@ -86,11 +87,11 @@ test("a window.open the page swapped in during the click is left alone", () => {
 
 // ---- through the runtime ----
 
-function onPage(browser, html, setup, { tabUrl = "https://a.test/", active = 0 } = {}) {
+function onPage(browser, html, setup, { tabUrl = "https://a.test/", active = 0, more = [] } = {}) {
   const dom = page(html);
   if (setup) dom.eval(setup);
   const world = makeWorld({
-    browsers: [{ name: browser.name, kind: browser.kind, windows: [{ id: 7, active, tabs: [{ url: "https://z.test/", id: "z0" }, { url: tabUrl, id: "x", dom }].slice(active ? 0 : 1) }] }],
+    browsers: [{ name: browser.name, kind: browser.kind, windows: [{ id: 7, active, tabs: [{ url: "https://z.test/", id: "z0" }, { url: tabUrl, id: "x", dom }].slice(active ? 0 : 1) }, ...more] }],
     cg: [{ owner: "Terminal" }, { owner: browser.name }],
   });
   world.run(JXA_PRELUDE);
@@ -106,9 +107,11 @@ const call = async (name, args) => {
   return JSON.parse(r.content[0].text);
 };
 // The fake browser's answer to an untrusted click on the link: a new tab, shown or not.
-const opensTab = (world, dom, b, { select = false } = {}) => {
-  dom.document.getElementById("a").addEventListener("click", (e) => world.openTab(b.name, 0, e.currentTarget.href, { select }));
+const opensTab = (world, dom, b, { select = false, win = 0 } = {}) => {
+  dom.document.getElementById("a").addEventListener("click", (e) => world.openTab(b.name, win, e.currentTarget.href, { select }));
 };
+const UNCONFIRMED = "no new tab within 0.5s; it may be blocked or still opening: list_tabs urlContains href";
+const second = () => ({ id: 9, active: 0, tabs: [{ url: "https://y.test/", id: "y0" }] });
 const focusEvents = (world) => Object.keys(world.counts).filter((k) => /select|activeTabIndex=|currentTab=|activate|index=/.test(k));
 
 test("a _blank link that opens a tab reports its handle; the shown tab stays and nothing is selected", async () => {
@@ -127,9 +130,42 @@ test("a _blank link that opens a tab reports its handle; the shown tab stays and
   assert.ok(!world.log.some(([k]) => k === "activate"));
 });
 
-test("a _blank link that opens nothing is blocked, with the absolute URL to open", async () => {
+test("a _blank link that opens nothing in time is unconfirmed, not blocked, with the absolute URL to look for", async () => {
   onPage(CHROME, LINK);
-  assert.deepEqual(await call("click", { selector: "#a" }), { ok: true, el: `link "Apply"`, blocked: true, href: "https://a.test/job/1" });
+  assert.deepEqual(await call("click", { selector: "#a" }), { ok: true, el: `link "Apply"`, unconfirmed: true, href: "https://a.test/job/1", note: UNCONFIRMED });
+});
+
+test("a tab the browser opens in another window is reported with that window's handle", async () => {
+  const { dom, world } = onPage(CHROME, LINK, null, { more: [second()] });
+  opensTab(world, dom, CHROME, { win: 1, select: true });
+  const o = await call("click", { selector: "#a" });
+  assert.equal(o.opened.tabId, "chrome:pop1");
+  assert.equal(o.opened.url, "https://a.test/job/1");
+  assert.equal(o.note, "the browser showed the new tab");
+  assert.equal(o.blocked, undefined);
+  assert.equal(o.unconfirmed, undefined);
+  world.reset();
+  assert.equal(await call("eval_js", { script: "return 1", target: { tabId: o.opened.tabId } }), 1);
+  assert.deepEqual(Object.keys(world.counts).filter((k) => /^windows\[/.test(k)), ["windows[1](Google Chrome)"], "the hint names the tab's own window");
+  assert.deepEqual(focusEvents(world), []);
+});
+
+test("Safari: a tab opened in another window gets that window's handle, and shown is read there", async () => {
+  const { dom, world } = onPage(SAFARI, LINK, null, { active: 1, more: [second()] });
+  opensTab(world, dom, SAFARI, { win: 1 });
+  const o = await call("click", { selector: "#a" });
+  assert.equal(o.blocked, undefined);
+  assert.equal(o.unconfirmed, undefined);
+  assert.equal(o.note, undefined);
+  const listed = (await call("list_tabs", {})).tabs;
+  assert.equal(listed.find((t) => t.url === "https://a.test/job/1")?.tabId, o.opened.tabId);
+  assert.match(o.opened.tabId, /^safari:9\.1\./);
+});
+
+test("Safari: window.open returning null in the page is blocked, with its URL", async () => {
+  onPage(SAFARI, LINK, `window.open = function () { return null; };
+    document.getElementById('a').addEventListener('click', function () { window.open('/job/9'); });`, { active: 1 });
+  assert.deepEqual(await call("click", { selector: "#a" }), { ok: true, el: `link "Apply"`, blocked: true, href: "https://a.test/job/9" });
 });
 
 test("a tab the browser shows by itself gets a note, and perch sends no select", async () => {
@@ -142,9 +178,20 @@ test("a tab the browser shows by itself gets a note, and perch sends no select",
   assert.deepEqual(focusEvents(world), []);
 });
 
-test("a _blank link whose page cancelled the default and opened nothing reports neither", async () => {
+test("a _blank link whose page cancelled the default and opened nothing reports none of opened, blocked, unconfirmed", async () => {
   onPage(CHROME, LINK, `document.getElementById('a').addEventListener('click', function (e) { e.preventDefault(); document.getElementById('s').textContent = 'Routed'; })`);
   assert.deepEqual(await call("click", { selector: "#a" }), { ok: true, el: `link "Apply"` });
+});
+
+test("a tab that appears in the clicked window within the wait is opened, as before", async () => {
+  const { dom, world } = onPage(CHROME, LINK);
+  let later = null;
+  dom.document.getElementById("a").addEventListener("click", (e) => { const href = e.currentTarget.href; later = () => world.openTab(CHROME.name, 0, href); });
+  const delay = world.ctx.delay;
+  world.ctx.delay = (s) => { delay(s); if (later && world.clock.t - start >= 300) { later(); later = null; } };
+  const start = world.clock.t;
+  const o = await call("click", { selector: "#a" });
+  assert.deepEqual(o, { ok: true, el: `link "Apply"`, opened: { tabId: "chrome:pop1", url: "https://a.test/job/1" } });
 });
 
 test("click {readback} on a _blank link reports the new tab and still reads back", async () => {
@@ -209,12 +256,14 @@ test("a background trusted click on a _blank link reports the tab the real click
   assert.deepEqual(focusEvents(world), []);
 });
 
-test("a trusted click on a _blank link that opens nothing is blocked", async () => {
+test("a trusted click on a _blank link that opens nothing is unconfirmed", async () => {
   const { dom, world } = trustedTab(LINK);
   world.state.onPost = (e) => {
     if (e.type === 2 && e.pt.x >= 0) dom.document.getElementById("a").dispatchEvent(new dom.MouseEvent("mousedown", { bubbles: true }));
   };
   const o = await call("click", { trusted: true, selector: "#a" });
-  assert.equal(o.blocked, true, JSON.stringify(o));
+  assert.equal(o.unconfirmed, true, JSON.stringify(o));
+  assert.equal(o.blocked, undefined);
   assert.equal(o.href, "https://a.test/job/1");
+  assert.equal(o.note, UNCONFIRMED);
 });
