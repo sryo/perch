@@ -24,6 +24,13 @@
 <div class="field"><span id="size-label">Size</span>
   <div id="size" role="combobox" tabindex="0" aria-labelledby="size-label" aria-expanded="false" aria-controls="size-list" data-picker="none" data-items="Small|Medium|Large"><span class="placeholder">Pick one</span></div>
   <ul id="size-list" role="listbox" hidden></ul></div>
+<!-- A react-select-like location field: its menu renders only on a trusted input
+     event in its own text box (a real keystroke, or the editing command), filtered
+     by what the box holds. Its options take ordinary presses. -->
+<div class="field"><label id="loc-label" for="loc-input">Location</label>
+  <div id="loc" class="loc__control" data-typed="Córdoba, Argentina|Córdoba, Spain|Rosario, Argentina|Mendoza, Argentina"><span class="loc__value placeholder">Type a city</span>
+    <input id="loc-input" role="combobox" aria-labelledby="loc-label" aria-expanded="false" aria-controls="loc-list" aria-autocomplete="list" autocomplete="off"></div>
+  <ul id="loc-list" role="listbox" hidden></ul></div>
 <script>
 (function () {
   window.pickerLog = [];
@@ -64,6 +71,34 @@
     trigger.addEventListener("pointerdown", down);
     trigger.addEventListener("mousedown", down);
     trigger.addEventListener("click", function () { gesture = false; });
+  });
+  document.querySelectorAll("[data-typed]").forEach(function (box) {
+    const input = box.querySelector("input"), list = document.getElementById(input.getAttribute("aria-controls"));
+    const shown = box.querySelector("span"), items = box.dataset.typed.split("|");
+    const fold = function (s) { return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); };
+    function close() {
+      list.hidden = true;
+      list.innerHTML = "";
+      input.setAttribute("aria-expanded", "false");
+    }
+    input.addEventListener("input", function (e) {
+      if (!e.isTrusted) return;
+      const q = fold(input.value.trim());
+      if (!q) { close(); return; }
+      list.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+      list.innerHTML = items.filter(function (x) { return fold(x).indexOf(q) >= 0; }).map(function (x) { return '<li role="option">' + x + "</li>"; }).join("");
+      list.querySelectorAll("li").forEach(function (li) {
+        li.addEventListener("click", function () {
+          shown.textContent = li.textContent;
+          shown.className = "loc__value";
+          input.value = "";
+          window.pickerLog.push(box.id + ":" + li.textContent);
+          close();
+        });
+      });
+    });
+    input.addEventListener("keydown", function (e) { if (e.key === "Escape") close(); });
   });
 })();
 </script>

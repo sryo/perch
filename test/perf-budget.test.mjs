@@ -4,6 +4,7 @@
 // sends. These tests pin that number with the fake world's accessor counts.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
@@ -292,6 +293,32 @@ test("the trusted click's hit test adds Accessibility reads only, no Apple Event
   // selector click's check goes through the bounded execute, which the fake counts
   // twice (NSAppleScript and tab.execute); live it is still one event.
   assert.deepEqual(cost, [[4, 17], [2, 17], [18, 17]]);
+});
+
+// select {trusted} in a background tab, on a picker that opens only on trusted
+// input: start, the 400ms open poll, the shown-tab check, the typing step, the
+// list polls and pick, and the readback. The fake world answers each poll at
+// once, so the open poll and pick settle in a fixed number of runs.
+test("select {trusted} typing into a background picker costs a fixed number of Apple Events", async () => {
+  const fx = readFileSync(new URL("./fixtures/trusted-select.html", import.meta.url), "utf8");
+  const dom = page(/<body>([\s\S]*?)<script>/.exec(fx)[1], { url: "https://form.test/" });
+  dom.eval(/<script>([\s\S]*?)<\/script>/.exec(fx)[1]);
+  dom.document.execCommand = (_cmd, _ui, text) => {
+    const el = dom.document.activeElement;
+    el.value = text || "";
+    const ev = new dom.Event("input", { bubbles: true });
+    Object.defineProperty(ev, "isTrusted", { value: true });
+    el.dispatchEvent(ev);
+    return true;
+  };
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "about:blank", id: "front" }, { url: "https://form.test/", id: "t", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  const { o } = await call("select", { selector: "#loc", text: "Córdoba, Argentina", trusted: true, target: { tabIndex: 1 } });
+  assert.deepEqual(o.trusted, ["typed"], JSON.stringify(o));
+  // 13 page runs (start 1, open poll 9, type 1, pick 1, readback 1), each counted
+  // twice by the fake (NSAppleScript and tab.execute), plus the resolve's window
+  // walk and the shown-tab read.
+  assert.equal(world.counts["tab.execute"], 13, breakdown());
+  assert.equal(appleEvents(), 30, breakdown());
 });
 
 // Rows past `limit` are never returned, but `total` still counts them. A browser

@@ -1983,9 +1983,20 @@ function jxaRuntime(BROWSERS) {
           used.push(part === X.option ? "option" : "control");
           return null;
         };
+        // A tab its window doesn't show can't take a trusted click; its control's own
+        // text box can take the editing command's trusted input instead (select_type).
+        let typed = false;
         if (X && !poll(t, X.open, 400, 50)) {
-          const c = selectClick(X.control);
-          if (c) return c;
+          if (isActive(t)) {
+            const c = selectClick(X.control);
+            if (c) return c;
+          } else {
+            const r = stepRead(t, X.type);
+            if (r && r.none) throw new Error(notVisible("select {trusted:true}"));
+            if (!r || !r.ok) return r;
+            used.push("typed");
+            typed = true;
+          }
         }
         // a.short: give up early unless a.probe says a list or companion is there.
         // A pick step answering {settled} has found nothing more worth waiting for.
@@ -1996,7 +2007,7 @@ function jxaRuntime(BROWSERS) {
         if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : readExec(t, a.missFinal); }
         if (picked.value.ok === false) return done(picked.value);
         // A pick that doesn't show while the popup stays open gets a trusted click on the option.
-        if (X && !poll(t, X.keep, 500, 50)) {
+        if (X && !typed && !poll(t, X.keep, 500, 50)) {
           const c = selectClick(X.option);
           if (c) return done(c);
         }
@@ -3338,6 +3349,31 @@ function fillOne(a) {
 // entries. A request still in flight shows only once it completes. rbWatch keeps
 // the state on window[key]; one that is never read again stops its observer at
 // the first mutation after `life` ms.
+// Chrome's editing command emits a trusted input event in an inactive tab,
+// including when its window has no on-screen CG entry. It needs no mouse
+// event, tab selection, window geometry, or AppKit focus change. Replaces el's
+// whole value with text ("" deletes it). -> {ok, focused, trusted, value}; ok
+// only when the command ran, a trusted input reached el, and el holds exactly text.
+const EDIT_LIB = String.raw`
+function editType(el, text) {
+  let trusted = false;
+  const onInput = function (e) { if (e.target === el && e.isTrusted) trusted = true; };
+  el.addEventListener("input", onInput, true);
+  try {
+    el.focus({ preventScroll: true });
+    if (document.activeElement !== el) return { ok: false, focused: false, trusted: false, value: String(el.value || "") };
+    if (el.select) el.select();
+    const accepted = document.execCommand(text ? "insertText" : "delete", false, text);
+    const value = String(el.value || "");
+    return { ok: accepted === true && trusted && value === text, focused: true, trusted: trusted, value: value };
+  } finally { el.removeEventListener("input", onInput, true); }
+}
+// Withdraws text typed with editType the same way; a plain value write only if that fails.
+function editClear(el) {
+  if (el.value && !editType(el, "").ok && el.value) { setNativeValue(el, ""); fire(el, ["input"]); }
+}
+`;
+
 const QUIET_LIB = String.raw`
 function rbNet() {
   try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
@@ -3785,12 +3821,13 @@ return null;
 
   // Candidates come from the control's own list, unfiltered when it was seen; the
   // typed filter is cleared and a menu select opened is closed again.
-  select_miss: SELECT_LIB + String.raw`
+  select_miss: TYPEAHEAD_LIB + SELECT_LIB + EDIT_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
 const now = ownOptions(s).filter(function (o) { return !optOff(o); }).slice(0, 30).map(function (o) { return clip(textOf(o), 60); });
 const cands = s.cands || now;
-if (s.typed) { setNativeValue(s.typed, ""); fire(s.typed, ["input"]); }
+if (s.typedTrusted) { editClear(s.typed); taBlur(s.typed); }
+else if (s.typed) { setNativeValue(s.typed, ""); fire(s.typed, ["input"]); }
 if (s.prior != null && s.input.value !== s.prior) { setNativeValue(s.input, s.prior); fire(s.input, ["input", "change"]); }
 if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
 // Escape on a closed Downshift menu clears its selection, so only an open one gets it.
@@ -3804,6 +3841,37 @@ return { ok: false, error: wantN ? "no option of this control matched" : "empty 
   select_open: SELECT_LIB + String.raw`
 const s = window.__perch_select;
 return !!s && stillOpen(s);
+`,
+
+  // select {trusted} in a background tab, where no trusted click can open the menu:
+  // types a filter into the control's own empty text box through the editing
+  // command. The box is the control itself, its inner input, an input in its box,
+  // or a search box in its linked popup; never one elsewhere. {none}: no such box.
+  select_type: TYPEAHEAD_LIB + SELECT_LIB + EDIT_LIB + String.raw`
+const s = window.__perch_select;
+if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
+const lists = linkedLists(s);
+const own = [s.input].concat(Array.from(s.box.querySelectorAll ? s.box.querySelectorAll("input") : []));
+lists.forEach(function (m) { own.push.apply(own, Array.from(m.querySelectorAll("input"))); });
+const el = own.find(function (i) {
+  if (!i || i.tagName !== "INPUT" || !/^(text|search)$/.test((i.type || "text").toLowerCase()) || i.disabled || i.readOnly || i.value) return false;
+  if (/^(tel|numeric|decimal|email)$/.test(attr(i, "inputmode"))) return false;
+  if (lists.some(function (m) { return m.contains(i); })) return true;
+  return !i.closest("[role=search]") && (s.ctl.contains(i) || s.box.contains(i));
+});
+if (!el) return { none: true };
+// The option's text up to its first punctuation, so a strict filter can't empty the list.
+const t = String(A.text).trim(), cut = t.split(/[,;(\/-]/)[0].trim().slice(0, 30);
+const e = editType(el, cut.length >= 2 ? cut : t.slice(0, 30));
+if (!e.ok) {
+  editClear(el);
+  taBlur(el);
+  return { ok: false, error: "the picker ignored background typing", trusted: [] };
+}
+s.typed = el;
+s.typedSig = null;
+s.typedTrusted = true;
+return { ok: true };
 `,
 
   // Until the control shows the choice: null (keep polling); A.final reports anyway.
@@ -4243,10 +4311,8 @@ st.moves = [];
 return A.reset || !moves.length ? null : { moves: moves };
 `,
 
-  // Chrome's editing command emits a trusted input event in an inactive tab,
-  // including when its window has no on-screen CG entry. It needs no mouse
-  // event, tab selection, window geometry, or AppKit focus change.
-  trusted_fill_background: TYPEAHEAD_LIB + String.raw`
+  // Background trusted fill through the editing command (EDIT_LIB).
+  trusted_fill_background: TYPEAHEAD_LIB + EDIT_LIB + String.raw`
 let el;
 if (A.ref || A.selector) {
   const r = resolveEl(A);
@@ -4263,25 +4329,16 @@ if (A.ref || A.selector) {
 }
 if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, error: "fill {trusted:true} supports plain inputs/textareas only" };
 if (el.disabled || el.readOnly) return { ok: false, error: ident(el) + " is disabled or read-only" };
-let trusted = false;
-const onInput = function (e) { if (e.target === el && e.isTrusted) trusted = true; };
-el.addEventListener("input", onInput, true);
-try {
-  // A typeahead keeps only a picked suggestion: Node picks after the lookup.
-  const ta = isTypeahead(el) && taParts(el);
-  if (ta) window.__perch_ta = { el: el, comp: ta.comp, pop: ta.pop, text: A.text, prior: el.value, priorComp: ta.comp && ta.comp.value };
-  el.focus({ preventScroll: true });
-  if (document.activeElement !== el) return { ok: false, error: ident(el) + " did not accept focus" };
-  if (el.select) el.select();
-  const accepted = document.execCommand(A.text ? "insertText" : "delete", false, A.text);
-  const value = String(el.value || "");
-  const ok = accepted === true && trusted && value === A.text;
-  if (ok && ta) {
-    el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: A.text.slice(-1) }));
-    return { pending: true, trusted: true };
-  }
-  return { ok: ok, trusted: trusted, value: value, el: ident(el), ...(ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
-} finally { el.removeEventListener("input", onInput, true); }
+// A typeahead keeps only a picked suggestion: Node picks after the lookup.
+const ta = isTypeahead(el) && taParts(el);
+if (ta) window.__perch_ta = { el: el, comp: ta.comp, pop: ta.pop, text: A.text, prior: el.value, priorComp: ta.comp && ta.comp.value };
+const e = editType(el, A.text);
+if (!e.focused) return { ok: false, error: ident(el) + " did not accept focus" };
+if (e.ok && ta) {
+  el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: A.text.slice(-1) }));
+  return { pending: true, trusted: true };
+}
+return { ok: e.ok, trusted: e.trusted, value: e.value, el: ident(el), ...(e.ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
 `,
 
   // hit: the mousedown landed on the element; null: no mousedown reached the page.
@@ -4792,7 +4849,7 @@ async function select(args = {}) {
     start: step("select_start"), pick: step("select_pick"), miss: step("select_miss"),
     read: step("select_read"), readFinal: step("select_read", { final: true }),
     ...(trusted ? { trusted: {
-      open: step("select_open"), keep: step("select_read", { keep: true }), check: pageFn("trusted_check", {}),
+      open: step("select_open"), type: step("select_type"), keep: step("select_read", { keep: true }), check: pageFn("trusted_check", {}),
       control: pageFn("trusted_probe", { select: "control" }), option: pageFn("trusted_probe", { select: "option" }),
     } } : {}),
   }, { lane: "slow" });
@@ -4910,7 +4967,7 @@ const TOOLS = [
     raise: { type: "boolean" },
     target: TARGET,
   }),
-  tool("select", "Choose an option in a native <select> or custom combobox (react-select, Downshift, cmdk), from that control's own list only, and read back what's shown. Exact text or value, then whole word, then word prefix. A miss returns the control's options as `candidates`; `text:\"\"` just lists them. `trusted`: a control that won't open gets a real click (shown tab; check `trusted`).", {
+  tool("select", "Choose an option in a native <select> or custom combobox (react-select, Downshift, cmdk), from that control's own list only, and read back what's shown. Exact text or value, then whole word, then word prefix. A miss returns the control's options as `candidates`; `text:\"\"` just lists them. `trusted`: a control that won't open gets a real click (shown tab) or trusted typing in its own box (other tabs); check `trusted`.", {
     text: { type: "string" },
     ref: REF,
     selector: SEL,

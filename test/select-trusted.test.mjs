@@ -120,24 +120,109 @@ test("trusted: a list still empty after the trusted click misses, saying it clic
   assert.equal(presses(w).length, 1);
 });
 
-test("trusted: a control that opens synthetically posts nothing, even in a tab its window doesn't show", async () => {
+test("trusted: a control that opens synthetically posts nothing and types nothing, even in a tab its window doesn't show", async () => {
   const w = world({ shown: false });
+  const edits = editing(w.dom);
   const o = await select({ selector: "#size", text: "Large", trusted: true });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.value, "Large");
   assert.equal(o.trusted, undefined);
   assert.deepEqual(w.posted, []);
+  assert.deepEqual(edits, []);
   noFocusTaken(w);
 });
 
-test("trusted: a tab its window doesn't show is tab_not_visible, with nothing posted or activated", async () => {
+test("trusted: a control with no text box of its own, in a tab its window doesn't show, is tab_not_visible, with nothing posted, typed or activated", async () => {
   const w = world({ shown: false });
+  const edits = editing(w.dom);
   const o = await select({ selector: "#fruit", text: "Banana", trusted: true });
   assert.equal(o.isError, true, JSON.stringify(o));
-  assert.match(o.error, /^error: tab_not_visible: select \{trusted:true\} needs the tab its window shows/);
+  assert.match(o.error, /^error: tab_not_visible: select \{trusted:true\} needs the tab its window shows; activate_tab \(takes focus\) or retry later$/);
   assert.deepEqual(w.posted, []);
+  assert.deepEqual(edits, []);
   assert.deepEqual([...w.dom.pickerLog], []);
   noFocusTaken(w);
+});
+
+// The browser's editing command, as Chrome runs it in a background tab: it edits
+// the focused box's selection and fires an input event, trusted unless `trusted`
+// is false. Returns the commands it ran.
+function editing(dom, { trusted = true, after } = {}) {
+  const calls = [];
+  dom.document.execCommand = (cmd, _ui, text) => {
+    calls.push([cmd, text]);
+    const el = dom.document.activeElement;
+    if (!el || el.value == null) return false;
+    const a = el.selectionStart ?? el.value.length, b = el.selectionEnd ?? el.value.length;
+    el.value = cmd === "insertText" ? el.value.slice(0, a) + text + el.value.slice(b) : a < b ? el.value.slice(0, a) + el.value.slice(b) : el.value.slice(0, Math.max(0, a - 1)) + el.value.slice(a);
+    const ev = new dom.Event("input", { bubbles: true });
+    Object.defineProperty(ev, "isTrusted", { value: trusted });
+    el.dispatchEvent(ev);
+    if (after) after(cmd);
+    return true;
+  };
+  return calls;
+}
+const $ = (w, sel) => w.dom.document.querySelector(sel);
+
+test("trusted, background tab: a picker that opens only on trusted input is typed into with the editing command, then picked", async () => {
+  const w = world({ shown: false });
+  w.state.ax = false; // a trusted click would need Accessibility; typing does not
+  const edits = editing(w.dom);
+  const o = await select({ selector: "#loc", text: "Córdoba, Argentina", trusted: true });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Córdoba, Argentina");
+  assert.equal(o.value, "Córdoba, Argentina");
+  assert.deepEqual(o.trusted, ["typed"]);
+  assert.deepEqual(edits, [["insertText", "Córdoba"]]);
+  assert.deepEqual([...w.dom.pickerLog], ["loc:Córdoba, Argentina"]);
+  assert.deepEqual(w.posted, []);
+  noFocusTaken(w);
+});
+
+test("trusted, background tab: no option matching after typing withdraws the typed text and lists the candidates", async () => {
+  const w = world({ shown: false });
+  const edits = editing(w.dom);
+  const o = await select({ selector: "#loc", text: "Córdoba, Mexico", trusted: true });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.error, "no option of this control matched");
+  assert.deepEqual(o.candidates, ["Córdoba, Argentina", "Córdoba, Spain"]);
+  assert.deepEqual(o.trusted, ["typed"]);
+  assert.deepEqual(edits.map((e) => e[0]), ["insertText", "delete"]);
+  assert.equal($(w, "#loc-input").value, "");
+  assert.deepEqual([...w.dom.pickerLog], []);
+  assert.deepEqual(w.posted, []);
+  noFocusTaken(w);
+});
+
+test("trusted, background tab: an editing command that gives no trusted input picks nothing and restores the empty box", async () => {
+  const w = world({ shown: false });
+  const edits = editing(w.dom, { trusted: false });
+  const o = await select({ selector: "#loc", text: "Córdoba, Argentina", trusted: true });
+  assert.deepEqual(o, { ok: false, error: "the picker ignored background typing", trusted: [] });
+  assert.deepEqual(edits.map((e) => e[0]), ["insertText", "delete"]);
+  assert.equal($(w, "#loc-input").value, "");
+  assert.deepEqual([...w.dom.pickerLog], []);
+  noFocusTaken(w);
+});
+
+test("trusted, background tab: a box that already holds text is not typed into", async () => {
+  const w = world({ shown: false });
+  const edits = editing(w.dom);
+  $(w, "#loc-input").value = "Ros";
+  const o = await select({ selector: "#loc", text: "Rosario, Argentina", trusted: true });
+  assert.equal(o.isError, true, JSON.stringify(o));
+  assert.match(o.error, /^error: tab_not_visible: select \{trusted:true\}/);
+  assert.deepEqual(edits, []);
+});
+
+test("trusted, background tab: a reply dropped after typing says the select may have run, never to select again", async () => {
+  const w = world({ shown: false });
+  editing(w.dom, { after: () => { w.state.hung = true; } });
+  const o = await select({ selector: "#loc", text: "Córdoba, Argentina", trusted: true });
+  assert.equal(o.isError, true, JSON.stringify(o));
+  assert.match(o.error, /^error: timeout: .*it may have run/);
+  assert.doesNotMatch(o.error, /retry with select/);
 });
 
 test("trusted: Accessibility's hit test finding a frame over the control refuses, with nothing posted", async () => {
@@ -181,4 +266,33 @@ test("trusted_probe aims at select's control, then its picked option, and report
   assert.equal(run(dom, "trusted_probe", { select: "option" }).el, `option "Apple"`);
   dom.document.getElementById("fruit-list").innerHTML = "";
   assert.deepEqual(run(dom, "trusted_probe", { select: "option" }), { ok: false, gone: true });
+});
+
+test("select_type types only into the control's own box or its linked popup's search box, never the page's", () => {
+  const A = { selector: "#c", text: "Design (Lima)" };
+  const dom = page(`<form role=search><input id=q></form>
+    <div id=c role=combobox aria-label=Team aria-controls=pop aria-expanded=false>Pick</div>
+    <div id=pop><input id=f aria-label=Filter></div>`);
+  const edits = editing(dom);
+  run(dom, "select_start", A);
+  assert.deepEqual(run(dom, "select_type", A), { ok: true });
+  assert.deepEqual(edits, [["insertText", "Design"]]);
+  assert.equal(dom.document.getElementById("f").value, "Design");
+  assert.equal(dom.document.getElementById("q").value, "");
+
+  const bare = page(`<input id=q aria-label=Search><div id=c role=combobox aria-label=Team aria-controls=pop>Pick</div><ul id=pop role=listbox></ul>`);
+  const none = editing(bare);
+  run(bare, "select_start", A);
+  assert.deepEqual(run(bare, "select_type", A), { none: true });
+  assert.deepEqual(none, []);
+});
+
+test("select_type's filter is the option text up to its first punctuation, or the whole text when that is under 2 characters", () => {
+  for (const [text, typed] of [["Córdoba, Argentina", "Córdoba"], ["São Paulo - SP", "São Paulo"], ["A-1 Tower", "A-1 Tower"], ["x".repeat(40), "x".repeat(30)]]) {
+    const dom = page(`<div id=c class=x__control><input id=i role=combobox aria-label=Where></div>`);
+    const edits = editing(dom);
+    run(dom, "select_start", { selector: "#i", text });
+    run(dom, "select_type", { selector: "#i", text });
+    assert.deepEqual(edits[0], ["insertText", typed], text);
+  }
 });

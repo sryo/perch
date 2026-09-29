@@ -6,7 +6,7 @@ allowed-tools: mcp__perch__*
 
 # perch: macOS browser bridge
 
-Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `tabId` from `list_tabs` or `new_tab`: stable as tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loose, e.g. `"canary"`) only filters `list_tabs` or picks `new_tab`'s browser.
+Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `tabId` from `list_tabs` or `new_tab`: stable as tabs open and close. With no target, tools use the active tab of the topmost browser window. `app` (loose: `"canary"`) only filters `list_tabs` or picks `new_tab`'s browser.
 
 ## Tools
 
@@ -15,7 +15,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `list_tabs` | `{tabs:[{app,tabId,url,title,active?}], total}`, 50 rows by default. `active`: the tab its window shows. Filter: `app`, `urlContains`, `titleContains`. |
 | `new_tab` | Unselected tab in a running browser, default the one in use. May focus the browser; defer while the user works. Returns `{app,tabId}`. |
 | `activate_tab` | Raise a tab and its window. |
-| `close_tab` | Close a tab by `tabId` (required). Refuses a window's last tab; never changes focus. |
+| `close_tab` | Close a tab by `tabId`. Refuses a window's last tab; never changes focus. |
 | `navigate` | Load a URL from the page and wait for it; returns the tab's current `tabId`. `waited:false`: not confirmed. Other URLs, or no page JS: `raise:true` (may raise the browser). |
 | `eval_js` | Run JS as a function body; `return` a JSON-able value. `script_path`: a local file, run before `script` if both. `awaitPromise` for real async. |
 | `wait` | Until `selector` exists at `readyState`, `expression` is truthy (as `value`), or `quiet` ms pass with no DOM change or fetch/XHR end. |
@@ -37,7 +37,6 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 1 heading "Apply" level=1
 2 textbox "Email" name="email" type="email" value="a@b.c" required
 3 combobox "Country" options=["Argentina","Brazil"] value="AR"
-4 checkbox "I agree" checked
 ```
 
 Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`. Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`. Refs die on the next snapshot or navigation.
@@ -60,7 +59,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Trusted input
 
-`fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input` event, exact value verified) wherever page JS runs, minimized too, without selecting the tab or taking focus. `click {trusted: true}` reaches an on-screen window without activating it or moving the cursor; its tab must be the one shown (else `tab_not_visible`). So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored.
+`fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input`, value verified) wherever page JS runs, minimized too, selecting no tab, taking no focus. `click {trusted: true}` reaches an on-screen window's shown tab (else `tab_not_visible`) without activating it or moving the cursor. So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked); other tabs: a filter typed into its own empty box by editing command (`["typed"]`). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored.
 
 `accessibility_snapshot {frames:true}` adds iframe controls as `fN` rows, never values. `fN` takes only `click {trusted:true}`; read its `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's.
 
