@@ -121,8 +121,8 @@ test("snapshot: role filter, max cap, header-only, focus", () => {
   assert.equal(capped.split("\n").length, 3);
   assert.equal(run(w, "snapshot", { max: 0 }).split("\n").length, 1);
   w.document.querySelector("[name=email]").focus();
-  const h = JSON.parse(run(w, "snapshot", { max: 500 }).split("\n")[0].slice(2));
-  assert.equal(h.focus, "2");
+  const s = run(w, "snapshot", { max: 500 }).split("\n");
+  assert.equal(JSON.parse(s[0].slice(2)).focus, s[2].split(" ")[0]);
 });
 
 test("snapshot values survive quotes and newlines", () => {
