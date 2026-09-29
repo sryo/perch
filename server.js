@@ -615,7 +615,7 @@ function jxaRuntime(BROWSERS, HANG) {
   function poll(t, js, timeout, interval, step, done, start) {
     if (start == null) start = Date.now();
     const deadline = start + timeout;
-    let cap = POLL_EXEC_SECS, silent = false;
+    let cap = POLL_EXEC_SECS, silent = false, answered = null;
     pollSilent = false;
     for (;;) {
       let v = null;
@@ -627,15 +627,18 @@ function jxaRuntime(BROWSERS, HANG) {
         if (isStale(e) || (step && isNoReply(e))) throw e;
         if (isNoReply(e)) { cap *= 2; silent = true; }
       }
+      if (!silent) answered = Date.now();
       if (done ? done(v) : v !== null && v !== false) return { value: v, waited: Date.now() - start };
       const left = deadline - Date.now();
       if (left > 0) delay(Math.min(interval, left) / 1000);
-      if (Date.now() >= deadline) { pollSilent = silent; return null; }
+      if (Date.now() >= deadline) { pollSilent = silent && (answered == null || Date.now() - answered >= SILENT_MS); return null; }
     }
   }
-  // Whether the last poll ran out with its last run unanswered: the page may be
-  // blocked (a dialog), not merely not there yet. Node probes for a dialog then.
+  // Whether the last poll ran out with the page unanswered since it began, or for
+  // SILENT_MS: the page may be blocked (a dialog), not merely not there yet. Node
+  // probes for a dialog then. One lost reply after answered runs is load, not a hang.
   let pollSilent = false;
+  const SILENT_MS = 1000;
   const UNANSWERED = HANG.unanswered;
   const ranOut = function (msg) { return new Error(msg + (pollSilent ? UNANSWERED : "")); };
 
