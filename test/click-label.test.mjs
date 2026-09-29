@@ -152,7 +152,7 @@ test("a disabled button refuses by selector and by ref, and nothing runs", () =>
   assert.equal(o.ok, false);
   assert.equal(o.el, `button "Save"`);
   assert.match(o.error, DISABLED);
-  w.eval(`window.__perch_refs = { "7": document.getElementById("save") }`);
+  w.eval(`window.__perch_refsId = "m"; window.__perch_refs = { "7": document.getElementById("save") }`);
   const r = run(w, "click", { ref: "7" });
   assert.equal(r.ok, false);
   assert.match(r.error, DISABLED);

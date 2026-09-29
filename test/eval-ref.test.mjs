@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
+import { mapRefs } from "./helpers/refs.mjs";
 
 function install(html) {
   const dom = page(html, { url: "https://a.test/p" });
@@ -74,23 +75,23 @@ function asyncWorld(connected) {
   DAEMONS.slow = w.daemon;
   w.reset();
   const p = w.page("Google Chrome", 0, 0);
-  p.__perch_refs = { e4: { id: "b", tagName: "BUTTON", isConnected: connected, ownerDocument: p.document } };
+  w.ref = mapRefs(p, { e4: { id: "b", tagName: "BUTTON", isConnected: connected, ownerDocument: p.document } }).e4;
   return w;
 }
 
 test("eval_js {ref, awaitPromise} awaits inside the bound body", async () => {
-  asyncWorld(true);
-  const r = await handleCall("eval_js", { ref: "e4", awaitPromise: true, script: "await Promise.resolve(); return el.id" });
+  const { ref } = asyncWorld(true);
+  const r = await handleCall("eval_js", { ref, awaitPromise: true, script: "await Promise.resolve(); return el.id" });
   assert.equal(text(r), "b");
-  const p = await handleCall("eval_js", { ref: "e4", awaitPromise: true, script: "return Promise.resolve(el.tagName)" });
+  const p = await handleCall("eval_js", { ref, awaitPromise: true, script: "return Promise.resolve(el.tagName)" });
   assert.equal(text(p), "BUTTON");
 });
 
 test("eval_js {ref, awaitPromise} on a detached element errors and never runs", async () => {
   const w = asyncWorld(false);
-  const r = await handleCall("eval_js", { ref: "e4", awaitPromise: true, script: "window.__ran = 1; return 1" });
+  const r = await handleCall("eval_js", { ref: w.ref, awaitPromise: true, script: "window.__ran = 1; return 1" });
   assert.equal(r.isError, true, text(r));
-  assert.match(text(r), /ref e4 is stale or unknown/);
+  assert.match(text(r), new RegExp(`ref ${w.ref} is stale or unknown`));
   assert.equal(w.page("Google Chrome", 0, 0).__ran, undefined);
 });
 

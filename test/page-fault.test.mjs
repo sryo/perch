@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
+import { mapRefs } from "./helpers/refs.mjs";
 import { throwAt, noRaw } from "./helpers/fault.mjs";
 
 function install(spec) {
@@ -146,11 +147,12 @@ test("wait {selector}: a page script that throws is a coded error without the pa
 test("a fault named PerchStaleRef is the ref-miss hint with the call's ref, else a re-snapshot hint", async () => {
   const stale = "throw Object.assign(new Error('https://a.test/x secret-internal'), { name: 'PerchStaleRef' });";
   let { dom } = onPage(`<label>Name <input name=n></label>`);
-  dom.eval(`window.__perch_refs = { "7": document.querySelector("input") }`);
-  throwAt(dom, "return fillOne(A);", undefined, stale);
-  const r = await handleCall("fill", { ref: "7", text: "Ada" });
+  const ref = mapRefs(dom, { 7: dom.document.querySelector("input") })[7];
+  const threwRef = throwAt(dom, "return fillOne(A);", undefined, stale);
+  const r = await handleCall("fill", { ref, text: "Ada" });
+  assert.equal(threwRef(), 1);
   assert.equal(r.isError, true);
-  assert.equal(r.content[0].text, "error: ref 7 is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)");
+  assert.equal(r.content[0].text, `error: ref ${ref} is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)`);
   ({ dom } = onPage(`<label>Name <input name=n></label>`));
   const threw = throwAt(dom, "return fillOne(A);", undefined, stale);
   const o = await faulted("fill", { selector: "input", text: "Ada" }, threw);

@@ -50,10 +50,15 @@ test("role table", () => {
 
 test("resolveEl: ref hit, stale ref, detached ref, missing and bad selectors", () => {
   const w = page(`<p id=a>x</p><p id=b>y</p>`);
-  runBody(w, `window.__perch_refs = { '1': document.getElementById('a'), '2': document.getElementById('b') }; document.getElementById('b').remove(); return 1`);
-  assert.equal(runBody(w, `return resolveEl({ ref: '1' }).el.id`), "a");
-  assert.deepEqual(runBody(w, `return resolveEl({ ref: '9' }).out`), { __perch_ref_miss: true, ref: "9" });
-  assert.deepEqual(runBody(w, `return resolveEl({ ref: '2' }).out`), { __perch_ref_miss: true, ref: "2" });
+  runBody(w, `window.__perch_refsId = 'm'; window.__perch_refs = { '1': document.getElementById('a'), '2': document.getElementById('b') }; document.getElementById('b').remove(); return 1`);
+  assert.equal(runBody(w, `return resolveEl({ ref: '1', rid: 'm' }).el.id`), "a");
+  assert.deepEqual(runBody(w, `return resolveEl({ ref: '9', rid: 'm' }).out`), { __perch_ref_miss: true, ref: "9" });
+  assert.deepEqual(runBody(w, `return resolveEl({ ref: '2', rid: 'm' }).out`), { __perch_ref_miss: true, ref: "2" });
+  // Another map's id, or none, misses even where this map has the ref.
+  assert.deepEqual(runBody(w, `return resolveEl({ ref: '1', rid: 'n' }).out`), { __perch_ref_miss: true, ref: "1" });
+  assert.deepEqual(runBody(w, `return resolveEl({ ref: '1' }).out`), { __perch_ref_miss: true, ref: "1" });
+  runBody(w, `delete window.__perch_refsId; return 1`);
+  assert.deepEqual(runBody(w, `return resolveEl({ ref: '1' }).out`), { __perch_ref_miss: true, ref: "1" });
   assert.equal(runBody(w, `return resolveEl({ selector: '#zz' }).out.ok`), false);
   assert.match(runBody(w, `return resolveEl({ selector: '##' }).out.error`), /bad selector/);
 });
@@ -425,7 +430,7 @@ test("fill: short text into a rich editor still verifies", () => {
 
 test("fill: plain input via ref, bypassing an instance value override", () => {
   const w = page(`<input aria-label="Name">`);
-  runBody(w, `const i = document.querySelector('input'); Object.defineProperty(i, 'value', { set() {}, get() { return Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').get.call(this); } }); window.__perch_refs = { '1': i }; return 1`);
+  runBody(w, `const i = document.querySelector('input'); Object.defineProperty(i, 'value', { set() {}, get() { return Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').get.call(this); } }); window.__perch_refsId = 'm'; window.__perch_refs = { '1': i }; return 1`);
   const o = run(w, "fill", { ref: "1", text: "Ada" });
   assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "Name"`, len: 3 });
 });
@@ -493,7 +498,7 @@ test("file_upload assigns a File via DataTransfer, by selector or ref", () => {
   const w = page(`<input type=file id=f style="display:none">`);
   const A = { b64: Buffer.from("hello").toString("base64"), name: "a.txt", mime: "text/plain" };
   assert.deepEqual(run(w, "file_upload", A), { ok: true, name: "a.txt", size: 5, type: "text/plain" });
-  runBody(w, `window.__perch_refs = { '1': document.getElementById('f') }; return 1`);
+  runBody(w, `window.__perch_refsId = 'm'; window.__perch_refs = { '1': document.getElementById('f') }; return 1`);
   assert.equal(run(w, "file_upload", { ...A, ref: "1" }).ok, true);
 });
 

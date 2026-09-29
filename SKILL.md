@@ -33,7 +33,7 @@ Adds to the tool descriptions; nothing to add for `new_tab`, `activate_tab`, `cl
 3 combobox "Country" options=["Argentina","Brazil"] value="Argentina"
 ```
 
-Values are JSON. Keys: `name` (HTML name), `type`, `value` (a pick's text; none on a placeholder), `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Refs die on re-snapshot or navigation. Header `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`; `in`: parent row. `form.step`: wizard step. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
+Values are JSON. Keys: `name` (HTML name), `type`, `value` (a pick's text; none on a placeholder), `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Refs die on re-snapshot or navigation. Use them with the snapshot's `target`. Header `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`; `in`: parent row. `form.step`: wizard step. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
 
 ## Results
 

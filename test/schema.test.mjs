@@ -58,7 +58,7 @@ test("eval_js takes a ref", () => {
   assert.equal(t.inputSchema.properties.ref.type, "string");
 });
 
-test("composeEvalScript: no ref is byte-identical; a ref splices only its JSON literal", async (t) => {
+test("composeEvalScript: no ref is byte-identical; a ref splices only its and its map id's JSON literals", async (t) => {
   const dir = tempDir("perch-", t);
   const f = join(dir, "lib.js");
   await writeFile(f, "window.__x = 41");
@@ -68,16 +68,18 @@ test("composeEvalScript: no ref is byte-identical; a ref splices only its JSON l
     assert.equal(await composeEvalScript({ ...a, ref: null }), plain);
     assert.equal(await composeEvalScript({ ...a, awaitPromise: true }), plain);
   }
-  const shape = (ref, body) => composeEvalScript({ ref, script: body });
+  const shape = (ref, body, rid = "m") => composeEvalScript({ ref, rid, script: body });
   const a = await shape("e1", "return el");
   const b = await shape("e22", "return el");
   assert.equal(b, a.split(JSON.stringify("e1")).join(JSON.stringify("e22")), "the ref's JSON literal is the only varying part");
+  assert.equal(await shape("e1", "return el", "q"), a.split(JSON.stringify("m")).join(JSON.stringify("q")), "and its map id's");
+  await assert.rejects(composeEvalScript({ ref: "e1", script: "return el" }), /ref e1 is stale or unknown/);
   assert.ok(a.includes("\nreturn el\n"));
   const odd = `e"]\\'x`;
   const c = await shape(odd, "return el");
   assert.equal(c, a.split(JSON.stringify("e1")).join(JSON.stringify(odd)));
   assert.doesNotThrow(() => new Function(c));
-  const asy = await composeEvalScript({ ref: "e1", script: "await 0; return el", awaitPromise: true });
+  const asy = await composeEvalScript({ ref: "e1", rid: "m", script: "await 0; return el", awaitPromise: true });
   assert.doesNotThrow(() => new Function("return (async function(){" + asy + "\n})"));
 });
 

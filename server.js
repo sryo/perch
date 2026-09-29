@@ -3846,7 +3846,7 @@ function fire(el, types) { types.forEach(function (t) { el.dispatchEvent(new Eve
 // -> {el} or {out}, where out is the tool's return value (ref miss or no match).
 function resolveEl(a, dflt) {
   if (a.ref) {
-    const el = (window.__perch_refs || {})[a.ref];
+    const el = a.rid && a.rid === window.__perch_refsId ? (window.__perch_refs || {})[a.ref] : null;
     return el && el.isConnected && liveDoc(el.ownerDocument) ? { el: el } : { out: { __perch_ref_miss: true, ref: String(a.ref) } };
   }
   const sel = a.selector || dflt;
@@ -5492,6 +5492,9 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
   snapshot: INVALID_LIB + STEP_LIB + TA_BOX_LIB + CENSUS_LIB + EMBED_LIB + String.raw`
 const refs = {};
 window.__perch_refs = refs;
+// Names this map for the server that asked: its ref calls carry it back as
+// A.rid, so a ref meets only the map it came from.
+const rid = window.__perch_refsId = Math.random().toString(36).slice(2, 10) || "0";
 // Refs continue one counter per document, shared by every perch server, from a
 // base its load time picks, so a ref from any earlier snapshot names no row here.
 if (!Number.isSafeInteger(window.__perch_refN) || window.__perch_refN < 0 || window.__perch_refN > 1e9) window.__perch_refN = Math.floor((window.__perch_refN === undefined ? ((window.performance || {}).timeOrigin || 0) : Date.now() * 7) % 900);
@@ -5642,7 +5645,7 @@ if (forms.length) {
   if (unseen.length) hiddenRows(unseen);
 }
 window.__perch_refN = n;
-const head = { url: location.href, title: document.title, ready: document.readyState, count: n - n0 };
+const head = { rid: rid, url: location.href, title: document.title, ready: document.readyState, count: n - n0 };
 // For the frame walk's page-area match; Node drops them from the header.
 if (A.frames) {
   head.iw = innerWidth; head.ih = innerHeight;
@@ -6856,7 +6859,95 @@ const LEAN_PRELUDE = lean(PAGE_PRELUDE);
 const LEAN_SCRIPTS = new Map(Object.entries(PAGE_SCRIPTS).map(([k, v]) => [k, lean(v)]));
 
 export function pageScript(name, A) {
+  const c = callNotes.getStore();
+  if (c) A = withRid(A, c.refs);
   return LEAN_PRELUDE + "\nconst A = " + JSON.stringify(A) + ";\n" + (name ? LEAN_SCRIPTS.get(name) : "");
+}
+
+// What this server's last snapshot of a tab listed, keyed by the target as
+// tabLockKey keys it: the page-made id of the map it built (rid) and the refs
+// it showed. A ref goes to the page with its rid, so a page whose map has
+// another id (a new document, another server's snapshot) misses. The page's
+// counter keeps refs apart within one document, not across documents or tabs,
+// so a ref this server showed before (issuedRefs, the latest ISSUED_MAX) is
+// shown under a fresh number: a ref names one row of one snapshot.
+const refMaps = new Map(), issuedRefs = new Set();
+const REF_MAPS_MAX = 500, ISSUED_MAX = 50000;
+const tabKey = (target) => (target && target.tabId != null ? "tab:" + target.tabId : "default");
+// The snapshot header's first key, which the agent never sees.
+const RID_HEAD = /^# \{"rid":"([0-9a-z]{1,8})",/;
+export function takeRefsId(page) {
+  const m = typeof page === "string" ? RID_HEAD.exec(page) : null;
+  return m ? { rid: m[1], page: "# {" + page.slice(m[0].length) } : { rid: null, page };
+}
+const REVEAL = / reveal="(\d+)"/;
+function issueRefs(keys, rid, page) {
+  const nl = page.indexOf("\n");
+  const lines = nl < 0 ? [] : page.slice(nl + 1).split("\n");
+  const shown = lines.map((l) => l.slice(0, l.indexOf(" ")));
+  let toPage = null;
+  if (shown.some((r) => issuedRefs.has(r))) {
+    const taken = new Set(shown), as = new Map();
+    let next = 1;
+    for (const r of shown) {
+      if (!issuedRefs.has(r)) continue;
+      while (taken.has(String(next)) || issuedRefs.has(String(next))) next++;
+      as.set(r, String(next++));
+    }
+    const out = (r) => as.get(r) || r;
+    for (let i = 0; i < lines.length; i++) {
+      const r = shown[i];
+      lines[i] = out(r) + lines[i].slice(r.length).replace(REVEAL, (m, b) => ` reveal="${out(b)}"`);
+      shown[i] = out(r);
+    }
+    const h = JSON.parse(page.slice(2, nl));
+    if (as.has(h.focus)) h.focus = as.get(h.focus);
+    page = ["# " + JSON.stringify(h)].concat(lines).join("\n");
+    toPage = new Map([...as].map(([p, a]) => [a, p]));
+  }
+  for (const r of shown) { issuedRefs.delete(r); issuedRefs.add(r); }
+  for (const r of issuedRefs) { if (issuedRefs.size <= ISSUED_MAX) break; issuedRefs.delete(r); }
+  const st = { rid, refs: new Set(shown), toPage };
+  for (const k of keys) {
+    refMaps.delete(k);
+    refMaps.set(k, st);
+  }
+  while (refMaps.size > REF_MAPS_MAX) refMaps.delete(refMaps.keys().next().value);
+  return page;
+}
+// A snapshot page's reply as the agent sees it, its refs remembered for target.
+export function keepSnapshot(target, raw) {
+  const { rid, page } = takeRefsId(raw);
+  if (!rid) return page;
+  const c = callNotes.getStore();
+  return issueRefs([tabKey(target)].concat(c && c.moved ? [tabKey({ tabId: c.moved })] : []), rid, page);
+}
+class RefMiss extends Error {
+  constructor(ref) { super(`ref ${ref} is stale or unknown`); this.ref = String(ref); }
+}
+// A ref the tab's last snapshot showed, as the page knows it, with that map's
+// rid. Any other ref could only miss, so the call ends here, before page JS.
+function pageRef(ref, st) {
+  const r = String(ref);
+  if (!st || !st.refs.has(r)) throw new RefMiss(r);
+  return { ref: st.toPage ? st.toPage.get(r) || r : r, rid: st.rid };
+}
+// Every object in A that carries a ref gets its rid beside it, so the source
+// varies only with the ref. A ref nested in A (one of fill's fields) that the
+// snapshot did not show goes without a rid, so only its own field misses.
+function withRid(v, st, nested = false) {
+  if (Array.isArray(v)) return v.map((x) => withRid(x, st, true));
+  if (!v || typeof v !== "object") return v;
+  let o = v;
+  for (const k in v) {
+    const x = v[k];
+    if (!x || typeof x !== "object") continue;
+    const y = withRid(x, st, true);
+    if (y !== x) { if (o === v) o = { ...v }; o[k] = y; }
+  }
+  if (v.ref == null || v.ref === "") return o;
+  if (nested && !(st && st.refs.has(String(v.ref)))) return o;
+  return { ...o, ...pageRef(v.ref, st) };
 }
 
 export function validateLabelPattern(tool, p, param = "label_pattern") {
@@ -6921,10 +7012,11 @@ async function accessibilitySnapshot(args = {}) {
   const max = args.max == null ? 500 : Math.max(0, Number(args.max) || 0);
   if (query != null) validateLabelPattern("accessibility_snapshot", query, "query");
   if (target && target.tabId != null) frameRefs.delete(String(target.tabId));
-  if (frames !== true) return runPage("accessibility_snapshot", "snapshot", { max, role, query }, target);
+  const keep = (raw) => keepSnapshot(target, raw);
+  if (frames !== true) return keep(await runPage("accessibility_snapshot", "snapshot", { max, role, query }, target));
   const r = await rt("snapshotFrames", { target, js: buildEvalWrapper(pageScript("snapshot", { max, role, query, frames: true })) });
   if (r.tabId) frameRefs.delete(r.tabId);
-  const page = parsePage(r.page);
+  const page = keep(parsePage(r.page));
   if (typeof page !== "string" || !page.startsWith("# ")) return page;
   const nl = page.indexOf("\n");
   const head = JSON.parse(page.slice(2, nl < 0 ? page.length : nl));
@@ -7619,7 +7711,7 @@ export const HANDLERS = {
   activate_tab:  (a) => activateTab(a.target),
   close_tab:     (a) => closeTab(a),
   navigate:      (a) => navigate(a.url, a.target, a.raise),
-  eval_js:       async (a) => evalJs(await composeEvalScript(a), a.target, { awaitPromise: a.awaitPromise }),
+  eval_js:       async (a) => evalJs(await composeEvalScript(a.ref == null || a.ref === "" ? a : { ...a, ...pageRef(a.ref, callNotes.getStore()?.refs) }), a.target, { awaitPromise: a.awaitPromise }),
   wait:          (a) => wait(a),
   screenshot:    (a) => screenshot(a),
   get_text:      (a) => getText(a),
@@ -7640,15 +7732,17 @@ const EVAL_LIVE_DOC = "function __perch_frame(d, root, depth) { for (const x of 
 
 // File first, then `script`, in one function body: one call can inject a library and read it back.
 // With a ref, the body runs as a function of `el`, resolved in the same page
-// call; the ref's JSON literal is the only part that varies between calls.
-export async function composeEvalScript({ script, script_path, ref, awaitPromise } = {}) {
+// call; the ref's and its map id's JSON literals are the only parts that vary
+// between calls.
+export async function composeEvalScript({ script, script_path, ref, rid, awaitPromise } = {}) {
   let file = "";
   if (script_path) ({ data: file } = await readUserFile(script_path, "utf8"));
   if (!file && !script) throw new Error("eval_js requires `script` or `script_path`");
   const body = file && script ? file + "\n;\n" + script : file || script;
   if (ref == null || ref === "") return body;
+  if (!rid) throw new RefMiss(ref);
   const k = JSON.stringify(String(ref));
-  return `var __perch_el = (window.__perch_refs || {})[${k}];\n` + EVAL_LIVE_DOC +
+  return `var __perch_el = window.__perch_refsId === ${JSON.stringify(String(rid))} ? (window.__perch_refs || {})[${k}] : null;\n` + EVAL_LIVE_DOC +
     `if (!__perch_el || !__perch_el.isConnected || !__perch_live(__perch_el.ownerDocument, 1)) return { __perch_ref_miss: true, ref: ${k} };\n` +
     `return (${awaitPromise ? "async " : ""}function (el) {\n${body}\n}).call(this, __perch_el);`;
 }
@@ -7710,7 +7804,7 @@ const tabLockKey = (name, args) =>
   LOCKED_TOOLS.has(name) || (name === "click" && (args.readback || args.trusted)) ||
   (name === "press" && args.trusted) || (name === "wait" && args.quiet != null) ||
   (name === "screenshot" && (args.ref || args.selector))
-    ? (args.target && args.target.tabId != null ? "tab:" + args.target.tabId : "default")
+    ? tabKey(args.target)
     : null;
 
 export async function handleCall(name, args = {}) {
@@ -7720,10 +7814,14 @@ export async function handleCall(name, args = {}) {
     guardFrameRefs(name, args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
-    const note = {};
+    const note = { refs: refMaps.get(tabKey(args.target)) };
     const lockKey = tabLockKey(name, args);
     const call = () => callNotes.run(note, () => handler(args));
     let result = await (lockKey ? withTabLock(lockKey, call) : call());
+    // A miss names the ref as the agent was shown it.
+    if (result && result.__perch_ref_miss && note.refs && note.refs.toPage) {
+      for (const [shown, p] of note.refs.toPage) if (p === String(result.ref)) result = { ...result, ref: shown };
+    }
     if (name !== "eval_js" && result && typeof result === "object" && !Array.isArray(result) && result.__perch_error != null) result = scriptFault(name, result, args);
     const issued = new Set(issuedHandles(name, result));
     if (note.counts) keepCounts(note.counts, (h) => issued.has(h) || (note.stamped && note.stamped.has(h)));
@@ -7734,6 +7832,7 @@ export async function handleCall(name, args = {}) {
     }
     return note.moved ? withMoved(name, result, note.moved) : formatResult(result);
   } catch (e) {
+    if (e instanceof RefMiss) return formatResult({ __perch_ref_miss: true, ref: e.ref });
     return { content: [{ type: "text", text: `error: ${e.message}` }], isError: true };
   }
 }

@@ -47,6 +47,8 @@ function frameWorld() {
 const text = (r) => r.content[0].text;
 const head = (s) => JSON.parse(s.split("\n")[0].slice(2));
 const frameLines = (s) => s.split("\n").slice(1).filter((l) => /^f\d+ /.test(l));
+// A server renumbers a ref it showed before, so rows across fresh pages compare without it.
+const unref = (l) => l.replace(/^\d+ /, "");
 const snap = async (args = {}) => {
   const r = await handleCall("accessibility_snapshot", { frames: true, ...args });
   assert.equal(r.isError, undefined, text(r));
@@ -85,7 +87,7 @@ test("frames:true lists frame controls after the page rows, with the frame host 
   const { world } = frameWorld();
   const s = await snap();
   const lines = s.split("\n").slice(1);
-  assert.deepEqual(lines[0], `1 button "Go"`);
+  assert.deepEqual(unref(lines[0]), `button "Go"`);
   assert.deepEqual(frameLines(s), ALL);
   const h = head(s);
   assert.deepEqual(h.frames, { count: 8 });
@@ -125,7 +127,7 @@ test("when the frame walk can't run, the page rows still come back with frames:{
     const s = await snap(args);
     assert.match(head(s).frames.error, want, name);
     assert.equal(s.split("\n").length, 2, name);
-    assert.match(s.split("\n")[1], /^1 button "(Go|Other)"$/, name);
+    assert.match(s.split("\n")[1], /^\d+ button "(Go|Other)"$/, name);
     assert.deepEqual(world.posted, [], name);
   }
 });
@@ -144,7 +146,7 @@ test("a minimized window (no CGWindowID) gives frames:{error:window_offscreen} b
   DAEMONS.slow = bare.daemon;
   const s = await snap();
   assert.match(head(s).frames.error, /^window_offscreen:/);
-  assert.equal(s.split("\n")[1], `1 button "Go"`);
+  assert.equal(unref(s.split("\n")[1]), `button "Go"`);
 });
 
 test("click on a frame ref posts one routed click at the element's Accessibility center", async () => {
