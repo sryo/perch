@@ -3352,6 +3352,83 @@ function fillOne(a) {
 }
 `;
 
+// Fields the page rejected, for the snapshot and click {readback}. A field is
+// invalid when it (or, for a custom widget, the group or combobox around it)
+// carries aria-invalid=true, or when it holds a value that fails its native
+// constraints; an untouched blank required field is requiredEmpty, not invalid.
+// The message comes from aria-errormessage, then an error-looking describedby
+// target, then error text in the field's own box (never another field's), then
+// the native validationMessage, then any other describedby text that is not the
+// field's own label or placeholder.
+const INVALID_LIB = String.raw`
+const INV_CARRIER = "[role=group], [role=radiogroup], [role=combobox]";
+const INV_OTHER = "input:not([type=hidden]), select, textarea, [role=combobox], [role=textbox], [role=radiogroup], [contenteditable]";
+const invErrish = function (n) { return n.matches("[role=alert], [aria-live]:not([aria-live=off])") || /error|invalid|danger|feedback/i.test(attr(n, "class")); };
+const invStandin = function (x) { return attr(x, "aria-hidden") === "true" && attr(x, "tabindex") === "-1"; };
+function invNative(el) {
+  if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || /^(checkbox|radio|file)$/i.test(el.type || "")) return false;
+  return el.willValidate !== false && !!el.validity && !el.validity.valid && String(el.value || "") !== "";
+}
+// The element carrying aria-invalid for el (el itself, else the group or
+// combobox around it; up only when asked), or el when it fails natively.
+function invCarrier(el, up) {
+  if (attr(el, "aria-invalid") === "true") return el;
+  const w = up && el.parentElement && el.parentElement.closest(INV_CARRIER);
+  if (w && attr(w, "aria-invalid") === "true") return w;
+  return invNative(el) ? el : null;
+}
+// The highest ancestor (below the form, at most 5 up) holding no other field.
+function invBox(el) {
+  let box = el;
+  for (let p = el.parentElement, i = 0; p && i < 5 && !/^(FORM|BODY|HTML)$/.test(p.tagName); p = p.parentElement, i++) {
+    const other = Array.prototype.some.call(p.querySelectorAll(INV_OTHER), function (x) {
+      return !el.contains(x) && !x.contains(el) && !invStandin(x) && !(el.type === "radio" && x.type === "radio" && x.name === el.name);
+    });
+    if (other) break;
+    box = p;
+  }
+  return box;
+}
+function invMsg(el) {
+  const root = el.getRootNode().getElementById ? el.getRootNode() : document;
+  const own = [labelText(el), attr(el, "placeholder")].map(function (s) { return clip(s, 120); });
+  const txt = function (n) { const t = n && vis(n) ? clip(textOf(n), 120) : ""; return t && own.indexOf(t) < 0 ? t : ""; };
+  const byIds = function (k) { return attr(el, k).split(/\s+/).filter(Boolean).map(function (id) { return root.getElementById(id); }).filter(Boolean); };
+  for (const n of byIds("aria-errormessage")) { const t = txt(n); if (t) return t; }
+  const desc = byIds("aria-describedby");
+  for (const n of desc) { if (invErrish(n) || n.querySelector("[role=alert], [class*=error], [class*=invalid]")) { const t = txt(n); if (t) return t; } }
+  for (const n of invBox(el).querySelectorAll("*")) {
+    if (n.contains(el) || desc.indexOf(n) >= 0 || n.matches(INV_OTHER) || !invErrish(n)) continue;
+    const t = txt(n);
+    if (t) return t;
+  }
+  if (invNative(el) && el.validationMessage) return clip(el.validationMessage, 120);
+  for (const n of desc) { const t = txt(n); if (t) return t; }
+  return "";
+}
+// Every rejected field on the page, outermost carrier only: [{el, name, msg}].
+function invalidSet() {
+  const seen = [];
+  const add = function (c) { if (c && seen.indexOf(c) < 0) seen.push(c); };
+  document.querySelectorAll("[aria-invalid=true]").forEach(function (c) {
+    if (invStandin(c) || !(vis(c) || (c.parentElement && vis(c.parentElement) && getComputedStyle(c).display !== "none"))) return;
+    add(c);
+  });
+  document.querySelectorAll("input, textarea, select").forEach(function (el) { if (invNative(el) && vis(el)) add(el); });
+  const outer = seen.filter(function (c) { return !seen.some(function (o) { return o !== c && o.contains(c); }); });
+  outer.sort(function (a, b) { return a.compareDocumentPosition(b) & 2 ? 1 : -1; });
+  return outer.map(function (c) {
+    let name = "";
+    if (/^(checkbox|radio)$/.test(role(c))) {
+      const g = c.closest("[role=radiogroup], [role=group], fieldset");
+      const lg = g && g.tagName === "FIELDSET" && g.querySelector("legend");
+      name = g ? labelText(g) || (lg ? clip(textOf(lg), 120) : "") : "";
+    }
+    return { el: c, name: name || labelText(c) || ident(c), msg: invMsg(c) };
+  });
+}
+`;
+
 // Page activity since the last poll, for click {readback} and wait {quiet}: DOM
 // mutations anywhere (takeRecords too, since the observer's callback may not
 // have run between polls) and completed fetch/XHR requests, as resource timing
@@ -3389,7 +3466,7 @@ function rbWatch(s, key, life) {
 // descendants. Classes count only when they are state names (not hover, focus
 // or animation ones) and still hold on the next poll, so transient effects
 // don't pass for a change.
-const READBACK_LIB = QUIET_LIB + String.raw`
+const READBACK_LIB = QUIET_LIB + INVALID_LIB + String.raw`
 function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
 function rbSig() {
   const n = document.querySelector(A.readback);
@@ -3415,7 +3492,7 @@ function rbCls() {
 }
 function rbArm() {
   let s;
-  try { s = { text: rbText(), sig: rbSig(), cls: rbCls(), url: location.href }; }
+  try { s = { text: rbText(), sig: rbSig(), cls: rbCls(), url: location.href, inv: invalidSet() }; }
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
   rbStop(window.__perch_rb);
   s.quiet = 0;
@@ -3467,7 +3544,7 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
 `,
 
   // Line format: "# {header json}", then "<ref> <role> <json name> key=<json>... flags".
-  snapshot: String.raw`
+  snapshot: INVALID_LIB + String.raw`
 const refs = {};
 window.__perch_refs = refs;
 const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
@@ -3537,6 +3614,7 @@ for (const el of deepAll(SEL)) {
   if (attr(el, "aria-selected") === "true") line += " selected";
   if (el.disabled) line += " disabled";
   if (attr(el, "aria-expanded") === "true") line += " expanded";
+  if (invCarrier(el, false)) { line += " invalid"; const m = invMsg(el); if (m) kv("error", m); }
   if (re && !re.test(line)) continue;
   matched++;
   if (n >= A.max) { truncated = true; continue; }
@@ -3577,6 +3655,8 @@ if (forms.length) {
     return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
   }).length;
   head.form = { fields: fields.length, requiredEmpty: requiredEmpty };
+  const inv = invalidSet().filter(function (c) { return big.contains(c.el); }).length;
+  if (inv) head.form.invalid = inv;
 }
 return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "");
 `,
@@ -3877,7 +3957,13 @@ const moved = location.href !== s.url;
 const cls = rbCls();
 const clsMoved = cls !== s.cls && cls === s.clsSeen;
 s.clsSeen = cls !== s.cls ? cls : null;
-const changed = moved || text !== s.text || rbSig() !== s.sig || clsMoved;
+// Invalid fields added or reworded since arming end the wait, and so do cleared
+// ones; a field matches its earlier self by element or, when re-rendered, by name.
+const inv = invalidSet();
+const same = function (p, c) { return p.el === c.el || p.name === c.name; };
+const invNew = inv.filter(function (c) { return !s.inv.some(function (p) { return same(p, c) && p.msg === c.msg; }); });
+const invGone = s.inv.some(function (p) { return !inv.some(function (c) { return same(p, c); }); });
+const changed = moved || text !== s.text || rbSig() !== s.sig || clsMoved || invNew.length > 0 || invGone;
 // Ten polls in a row with no page activity (about 670ms live) settle it early.
 s.quiet = rbBusy(s) ? 0 : s.quiet + 1;
 if (!changed && !A.final && s.quiet < 10) return null;
@@ -3885,6 +3971,10 @@ rbStop(s);
 delete window.__perch_rb;
 const out = { readback: text, changed: changed };
 if (moved) out.url = location.href;
+if (invNew.length) {
+  out.invalid = inv.slice(0, 5).map(function (c) { return clip(c.name + (c.msg ? ": " + c.msg : ""), 140); });
+  if (inv.length > 5) out.invalidCount = inv.length;
+}
 return out;
 `,
 
