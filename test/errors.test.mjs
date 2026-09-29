@@ -108,9 +108,9 @@ test("bad arguments fail with the tool's own message and send nothing to the bro
   assert.equal(world.counts["tab.execute"] || 0, 0);
 });
 
-test("bad_url: navigate and new_tab take only absolute http(s) URLs and about:blank", async () => {
+test("bad_url: navigate and new_tab take only absolute http(s) and file URLs and about:blank", async () => {
   const world = oneChrome();
-  await fails("navigate", { url: "file:///etc/hosts" }, /^error: bad_url: navigate takes an absolute http\(s\) URL or about:blank; got file$/);
+  await fails("navigate", { url: "javascript:alert(1)" }, /^error: bad_url: navigate takes an absolute http\(s\) or file URL, or about:blank; got javascript$/);
   await fails("new_tab", { url: "example.com" }, /^error: bad_url: new_tab takes .*; got no scheme; pass https:\/\/example\.com$/);
   assert.deepEqual(world.counts, {});
 });

@@ -1,4 +1,4 @@
-// perch loads only absolute http(s) URLs and about:blank. Anything else is
+// perch loads absolute http(s) and file URLs and about:blank. Anything else is
 // refused as bad_url in Node, before any Apple Event, and again in the runtime
 // before it can reach a url-setting call.
 import { test, beforeEach } from "node:test";
@@ -33,10 +33,17 @@ const CASES = [
 const REFUSED = [
   ["not a url", "no scheme"],
   ["example.com", "no scheme; pass https://example.com"],
+  ["localhost:3000", "no scheme; pass http://localhost:3000"],
+  ["localhost:3000/a?b", "no scheme; pass http://localhost:3000"],
+  ["127.0.0.1:8080", "no scheme; pass http://127.0.0.1:8080"],
+  ["[::1]:5173", "no scheme; pass http://[::1]:5173"],
+  ["app.localhost:3000", "no scheme; pass http://app.localhost:3000"],
+  ["shop.test", "no scheme; pass http://shop.test"],
+  ["example.com:8443", "no scheme; pass https://example.com:8443"],
   ["/relative", "no scheme"],
   ["javascript:alert(1)", "javascript"],
   [" JavaScript:alert(1)", "javascript"],
-  ["file:///etc/hosts", "file"],
+  ["file:relative", "file"],
   ["data:text/html,x", "data"],
   ["chrome://settings", "chrome"],
   ["arc://newtab", "arc"],
@@ -58,6 +65,18 @@ const BEFORE = Object.fromEntries(Object.entries({
   "navigate safari": { "https://n.test/": "c1b816dde80d", "HTTP://N.TEST/": "ec4d9f8b6a80", "about:blank": "e7dbcbb6fe31", "ABOUT:BLANK": "4f8f400011d2" },
   "navigate raise:true": { "https://n.test/": "41c7efeb27fa", "HTTP://N.TEST/": "2471e9b7bf4d", "about:blank": "19c3af526886", "ABOUT:BLANK": "acaebef29b5e" },
 }).flatMap(([c, o]) => Object.entries(o).map(([u, h]) => [`${c}|${u}`, h])));
+
+// The same calls with a file: url before the policy existed. navigate from a
+// window behind another app still needs raise:true.
+const FILE_BEFORE = {
+  "new_tab chrome": ["d7f298402483", "91a414df1711"],
+  "new_tab arc": ["e98ca1f37729", "79a4ab6ecfba"],
+  "new_tab safari": ["3e8b546c42dd", "588b3fef6d00"],
+  "navigate chrome front tab": ["61b903d42db8", "af17a158e1e6"],
+  "navigate chrome background tab": ["4b7a84b076b7", "5b1cc67ec094"],
+  "navigate safari": ["d905d0c75e09", "7abd1cab6ead"],
+  "navigate raise:true": ["a68035db1f23", "0c7d2f2b2b36"],
+};
 
 const ACCEPTED = ["https://n.test/", "HTTP://N.TEST/", "about:blank", "ABOUT:BLANK", " https://n.test/ "];
 
@@ -93,7 +112,15 @@ for (const [name, fixture, tool, extra] of CASES) {
     }
   });
 
-  test(`${name}: refuses anything but http(s) and about:blank, before any Apple Event`, async () => {
+  test(`${name}: file: urls behave as before`, async () => {
+    for (const [i, url] of ["file:///tmp/p.html", "FILE:///tmp/p.html"].entries()) {
+      const { seen, hash } = await observe(fixture, tool, { ...extra, url });
+      assert.equal(seen.isError, false, `${url}: ${seen.text}`);
+      assert.equal(hash, FILE_BEFORE[name][i], `${url} changed: ${JSON.stringify(seen)}`);
+    }
+  });
+
+  test(`${name}: refuses anything but http(s), file and about:blank, before any Apple Event`, async () => {
     for (const [url, got] of REFUSED) {
       install(FIXTURES[fixture]());
       const r = await handleCall(tool, { ...extra, url });
@@ -111,12 +138,19 @@ for (const [name, fixture, tool, extra] of CASES) {
   });
 }
 
+test("navigate to a file: url from a window behind another app still needs raise:true, as before", async () => {
+  const { seen, hash } = await observe("chromeAway", "navigate", { url: "file:///tmp/p.html" });
+  assert.match(seen.text, /^error: tab_not_visible: .*raise:true/);
+  assert.equal(seen.counts["tab.url="], undefined);
+  assert.equal(hash, "f9947dd63e6e", JSON.stringify(seen));
+});
+
 test("the runtime refuses a raw call with a url it must not load, before any Apple Event", () => {
   install(FIXTURES.chrome());
   assert.throws(() => world.run(`__perch.navigate(${JSON.stringify({ target: null, url: "javascript:1", timeout: 15000 })})`),
-    (e) => /^bad_url: navigate takes an absolute http\(s\) URL or about:blank; got javascript$/.test(e.message));
-  assert.throws(() => world.run(`__perch.newTab(${JSON.stringify({ app: "Google Chrome", url: "file:///x" })})`),
-    (e) => /^bad_url: new_tab takes an absolute http\(s\) URL or about:blank; got file$/.test(e.message));
+    (e) => /^bad_url: navigate takes an absolute http\(s\) or file URL, or about:blank; got javascript$/.test(e.message));
+  assert.throws(() => world.run(`__perch.newTab(${JSON.stringify({ app: "Google Chrome", url: "data:text/html,x" })})`),
+    (e) => /^bad_url: new_tab takes an absolute http\(s\) or file URL, or about:blank; got data$/.test(e.message));
   assert.equal(world.counts["tab.url="], undefined);
   assert.deepEqual(Object.keys(world.counts), []);
 });

@@ -517,7 +517,7 @@ test("new_tab on Arc refuses a data: url before making any tab", async () => {
   install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }])], cg: [{ owner: "Arc" }] });
   const { r, t } = await call("new_tab", { app: "arc", url: "data:text/html,<p>x</p>" });
   assert.equal(r.isError, true);
-  assert.match(t, /^error: bad_url: new_tab takes an absolute http\(s\) URL or about:blank; got data$/);
+  assert.match(t, /^error: bad_url: new_tab takes an absolute http\(s\) or file URL, or about:blank; got data$/);
   assert.equal(world.tabsOf("Arc", 0).length, 1);
   assert.deepEqual(world.log, []);
 });

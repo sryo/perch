@@ -653,9 +653,9 @@ function jxaRuntime(BROWSERS, HANG) {
   // The only urls the runtime hands a browser, checked before any Apple Event
   // for callers that skip Node's checkUrl.
   const loadable = function (tool, u) {
-    if (typeof u === "string" && /^(https?:\/\/|about:blank$)/i.test(u)) return;
+    if (typeof u === "string" && /^(https?:\/\/|file:\/\/|about:blank$)/i.test(u)) return;
     const m = typeof u === "string" ? /^([a-z][a-z0-9+.-]*):/i.exec(u) : null;
-    throw new Error("bad_url: " + tool + " takes an absolute http(s) URL or about:blank; got " + (typeof u !== "string" ? "a " + typeof u : m ? m[1].toLowerCase() : "no scheme"));
+    throw new Error("bad_url: " + tool + " takes an absolute http(s) or file URL, or about:blank; got " + (typeof u !== "string" ? "a " + typeof u : m ? m[1].toLowerCase() : "no scheme"));
   };
   // How long navigate holds page JS while the tab reports loading.
   const NAV_GATE_MS = 2000;
@@ -3103,20 +3103,28 @@ async function waitQuiet({ quiet, selector, expression, target }, timeout) {
 const NAV_TIMEOUT = 15000;
 
 // The error names only the scheme: a data: url can be megabytes. A bare host
-// gets a hint, never a guess at what was meant.
+// gets a hint, never a guess at what was meant: http for a local host, which
+// rarely serves https.
+const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])$|\.(localhost|test)$/i;
 function checkUrl(tool, url) {
-  const bad = (got) => new Error(`bad_url: ${tool} takes an absolute http(s) URL or about:blank; got ${got}`);
+  const bad = (got) => new Error(`bad_url: ${tool} takes an absolute http(s) or file URL, or about:blank; got ${got}`);
   if (typeof url !== "string") throw bad(`a ${typeof url}`);
   const s = url.trim();
   if (/^about:blank$/i.test(s)) return s;
   if (/^https?:\/\//i.test(s)) {
     try { const u = new URL(s); if (/^https?:$/.test(u.protocol) && u.hostname) return s; } catch {}
   }
+  if (/^file:\/\//i.test(s)) return s;
+  // host:port reads as a scheme, so a bare host is tried first.
+  const host = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(:\d+)?(?=[/?#]|$)/i.exec(s);
+  if (host && (host[2] || host[1].includes(".") || LOCAL_HOST.test(host[1]))) {
+    let hint = "";
+    try { const h = new URL("http://" + host[0]).host; hint = `; pass ${LOCAL_HOST.test(new URL("http://" + h).hostname) ? "http" : "https"}://${h}`; } catch {}
+    throw bad("no scheme" + hint);
+  }
   const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(s);
   if (scheme) throw bad(scheme[0].slice(0, -1).toLowerCase());
-  let hint = "";
-  if (/^[^\s]*\.[^\s]*$/.test(s)) { try { hint = `; pass https://${new URL("https://" + s).host}`; } catch {} }
-  throw bad("no scheme" + hint);
+  throw bad("no scheme");
 }
 
 // Some handles follow the page's URL, so navigate returns the tab's current one.
@@ -6400,7 +6408,7 @@ export const INSTRUCTIONS = `perch drives the user's own macOS browsers over App
 Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab; it works for every browser and survives other tabs opening and closing. With no target, tools use the active tab of the topmost browser window.
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
-Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS alert/confirm/prompt is open: press {dialog}), bad_url (only http(s) or about:blank). Only activate_tab and raise:true take focus.`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS alert/confirm/prompt is open: press {dialog}), bad_url (only http(s), file or about:blank). Only activate_tab and raise:true take focus.`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
 const TARGET = { type: "object", properties: { tabId: { type: ["string", "number"] }, app: { type: "string" } } };
@@ -6418,12 +6426,12 @@ const TOOLS = [
     limit: { type: "number", description: "Default 50." },
   }),
   tool("new_tab", "Create an unselected tab in a running browser's window (default: the browser in use). May focus the browser; defer while the user works. Returns {app,tabId}.", {
-    url: { type: "string", description: "http(s) URL; default about:blank." },
+    url: { type: "string", description: "http(s) or file URL; default about:blank." },
     app: { type: "string" },
   }),
   tool("activate_tab", "Bring the target tab and its window to the front.", { target: TARGET }),
   tool("close_tab", "Close the tab with this handle. Never closes a window's last tab and never changes focus.", { tabId: { type: "string" } }, ["tabId"]),
-  tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading. Where the page can't start the load itself (page JS unavailable), it needs `raise:true`, which may bring the browser forward.", { url: { type: "string" }, raise: { type: "boolean" }, target: TARGET }, ["url"]),
+  tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading. Where the page can't start the load itself (not http(s), page JS unavailable), it needs `raise:true`, which may bring the browser forward.", { url: { type: "string" }, raise: { type: "boolean" }, target: TARGET }, ["url"]),
   tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. Given both, `script_path` runs before `script`.", {
     script: { type: "string" },
     script_path: { type: "string", description: "Local .js file." },
