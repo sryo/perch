@@ -35,15 +35,16 @@ const CASES = [
   [-600, "Application isn't running.", /^error: no_browser: .*\(AppleScript -600\)$/],
   [-609, "Connection is invalid.", /^error: no_browser: .*\(AppleScript -609\)$/],
   [-1712, "AppleEvent timed out.", /^error: timeout: .*\(AppleScript -1712\)$/],
-  [-10000, "AppleEvent handler failed.", /^error: (stale_tab: .*re-run list_tabs|no_browser: .*retry in a moment.*) \(AppleScript -10000\)$/],
-  [-1708, "Message not understood.", /^error: (stale_tab: .*re-run list_tabs|no_browser: .*retry in a moment.*) \(AppleScript -1708\)$/],
+  [-10000, "AppleEvent handler failed.", /^error: (stale_tab: .*re-run list_tabs|timeout: .*retry in a moment.*) \(AppleScript -10000\)$/],
+  [-1708, "Message not understood.", /^error: (stale_tab: .*re-run list_tabs|timeout: .*retry in a moment.*) \(AppleScript -1708\)$/],
   [-1743, "Not authorized to send Apple events to Google Chrome.", null],
 ];
 
 // A browser whose handler failed or didn't understand the event was never
 // listed, so list_tabs answers a transient timeout (never stale_tab, which
 // would send the caller back to list_tabs). A page call's own execute failing
-// stays stale_tab; finding the tab failing is no_browser, since no tab matched.
+// stays stale_tab; finding the tab failing is a transient timeout, since no tab
+// matched to go stale.
 const LISTED_RE = {
   "-10000": /^error: timeout: Google Chrome did not answer the tab listing .*\(AppleScript -10000\)$/,
   "-1708": /^error: timeout: Google Chrome did not answer the tab listing .*\(AppleScript -1708\)$/,
@@ -133,12 +134,12 @@ test("list_tabs never answers stale_tab, alone or as a warning beside another br
   }
 });
 
-test("a default target no readable browser matched is no_browser, naming the one that didn't answer", async () => {
+test("a default target no readable browser matched is a timeout naming the one that didn't answer", async () => {
   for (const errorNumber of [-10000, -1708]) {
     const world = install();
     world.state.aeFail = { errorNumber, message: "AppleEvent handler failed.", key: /^(tab\.id|tabs\.|windows)/ };
     const t = await text("click", { selector: "#go", target: { app: "Google Chrome" } });
-    assert.match(t, new RegExp(`^error: no_browser: .*Google Chrome did not answer .*\\(AppleScript ${errorNumber}\\)$`), t);
+    assert.match(t, new RegExp(`^error: timeout: .*Google Chrome did not answer .*\\(AppleScript ${errorNumber}\\)$`), t);
   }
 });
 

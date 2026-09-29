@@ -331,9 +331,9 @@ function jxaRuntime(BROWSERS, HANG) {
       }
     }
     if (want.app && !KIND[want.app]) throw new Error("no_browser: unknown browser " + want.app);
-    // No tab was ever matched, so a browser that didn't answer is no_browser, not stale_tab.
+    // No tab was ever matched, so a browser that didn't answer is a transient timeout, not stale_tab.
     if (blocked && UNREAD.indexOf(blocked.errorNumber) >= 0) {
-      throw new Error("no_browser: no browser window with an open tab answered; " + blockedApp + " did not answer (busy, starting up or showing a dialog), so retry in a moment or target another app (AppleScript " + blocked.errorNumber + ")");
+      throw new Error("timeout: no browser window with an open tab answered; " + blockedApp + " did not answer (busy, starting up or showing a dialog), so retry in a moment or target another app (AppleScript " + blocked.errorNumber + ")");
     }
     if (blocked) throw blocked;
     throw new Error("no_browser: no browser window with an open tab" + (want.app ? " in " + want.app : ""));
