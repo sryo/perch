@@ -4560,6 +4560,12 @@ function rbHeld(scope) {
   });
 }
 const rbBtn = function (el) { return el && el.closest("button, input[type=submit], input[type=button], [role=button]"); };
+// A control that submits: type=submit, or a typeless <button> in a form. Other
+// buttons ("Same as mailing address") that disable fields have that as their outcome.
+function rbSubmits(b) {
+  if (!b || !/^submit$/i.test(b.type || "")) return false;
+  return b.tagName === "INPUT" || b.hasAttribute("type") || !!b.form;
+}
 function rbArm(el) {
   let s;
   try { s = { text: rbText(), sig: rbSig(), sigOn: rbSig(true), cls: rbCls(), url: location.href, inv: invalidSet() }; }
@@ -4569,9 +4575,8 @@ function rbArm(el) {
     s.form = scope;
     s.step = stepOf(scope);
     s.alerts = rbAlerts(s.inv);
-    s.held = rbHeld(scope);
     const b = rbBtn(el);
-    if (b && (/^submit$/i.test(b.type || "") || scope.contains(b))) { s.btn = b; s.btnText = textOf(b); s.btnOff = !!b.disabled; }
+    if (rbSubmits(b)) { s.held = rbHeld(scope); s.btn = b; s.btnText = textOf(b); s.btnOff = !!b.disabled; }
   }
   rbStop(window.__perch_rb);
   s.quiet = 0;
@@ -5352,7 +5357,7 @@ if (s.form) {
 }
 const changed = moved || text !== s.text || sigMoved || clsMoved || invNew.length > 0 || invGone || !!form;
 // A submit button that only relabels or disables itself ("Submitting..."), or a
-// form that newly shows a busy flag, is mid-flight, not an outcome: keep polling
+// form that newly shows a busy flag after one, is mid-flight, not an outcome: keep polling
 // for one until the page settles. That holds whatever the readback is on, while
 // nothing outside the button and those flags changed.
 const busy = rbBusy(s);

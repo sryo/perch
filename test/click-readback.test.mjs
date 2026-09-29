@@ -562,6 +562,16 @@ test("form: a disable that clears again with nothing else ends changed:false", a
   assert.equal(o.form, undefined);
 });
 
+for (const target of ["#wiz", "fieldset[data-step=\"1\"]"]) {
+  test(`form: with readback on ${target}, a type=button that disables a fieldset reads changed at once`, async () => {
+    const { world } = wizard(`var b = document.createElement('button'); b.type = 'button'; b.id = 'same'; b.textContent = 'Same as mailing address'; document.getElementById('next').before(b); b.addEventListener('click', function () { document.querySelector('fieldset[data-step="1"]').disabled = true; });`);
+    const t0 = world.clock.t;
+    const o = await click({ selector: "#same", readback: target });
+    assert.equal(o.changed, true, JSON.stringify(o));
+    assert.ok(world.clock.t - t0 < 200, `spent ${world.clock.t - t0}ms`);
+  });
+}
+
 test("form: a modal holding the fields in plain divs reads gone once Next removes it", async () => {
   wizard();
   const o = await click({ selector: "#qnext", readback: "#quick" });
