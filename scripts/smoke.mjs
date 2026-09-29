@@ -142,7 +142,8 @@ try {
     const out = text(await call("accessibility_snapshot", { role: "textbox", target: scratch }));
     const lines = out.split("\n");
     expect(lines[0].startsWith("# {"), `header: ${lines[0]}`);
-    expect(lines.includes('1 textbox "Reply"') && lines.includes('2 textbox "Subject" value="Re: hi"'), out);
+    const rows = lines.slice(1).map((l) => l.replace(/^\d+ /, ""));
+    expect(lines.slice(1).every((l) => /^\d+ /.test(l)) && rows.includes('textbox "Reply"') && rows.includes('textbox "Subject" value="Re: hi"'), out);
     return `${lines.length - 1} lines`;
   });
 

@@ -5494,7 +5494,7 @@ const refs = {};
 window.__perch_refs = refs;
 // Refs continue one counter per document, shared by every perch server, from a
 // base its load time picks, so a ref from any earlier snapshot names no row here.
-if (!Number.isSafeInteger(window.__perch_refN) || window.__perch_refN < 0 || window.__perch_refN > 1e9) window.__perch_refN = Math.floor(((window.performance || {}).timeOrigin || Date.now()) % 9000) * 100;
+if (!Number.isSafeInteger(window.__perch_refN) || window.__perch_refN < 0 || window.__perch_refN > 1e9) window.__perch_refN = Math.floor((window.__perch_refN === undefined ? ((window.performance || {}).timeOrigin || 0) : Date.now() * 7) % 900);
 const n0 = window.__perch_refN;
 const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
 const roles = A.role == null ? null : [].concat(A.role);
