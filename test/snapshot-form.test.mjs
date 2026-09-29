@@ -184,3 +184,44 @@ test("snapshot: the form header carries the wizard's step, and only when one sho
   w.document.getElementById("count").remove();
   assert.equal("step" in snap(w).head.form, false);
 });
+
+// Required ticks count as wanted until one is ticked; the header and fill's
+// census agree on the same form state. `fields` still counts text-like fields.
+test("snapshot: required checkboxes, radio groups and ARIA radiogroups count in requiredEmpty, not fields", () => {
+  const w = page(`<form><input name=nm aria-label=nm required><label><input type=checkbox name=tos required> I agree</label>
+    <fieldset><legend>Authorized to work?</legend><label><input type=radio name=auth value=y required> Yes</label><label><input type=radio name=auth value=n> No</label><label><input type=radio name=auth value=s> Soon</label></fieldset>
+    <div role=radiogroup aria-required=true aria-label=Sponsorship><div role=radio aria-checked=false tabindex=0>Yes</div><div role=radio aria-checked=false tabindex=-1>No</div></div>
+    <div role=checkbox aria-required=true aria-checked=false aria-label=Consent tabindex=0></div></form>`);
+  assert.deepEqual(snap(w).head.form, { fields: 1, requiredEmpty: 5 });
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "^nm$", text: "Ada" }] });
+  assert.deepEqual(o.form, { requiredEmpty: 4, left: [{ name: "tos", label: "I agree" }, { name: "auth", label: "Authorized to work?" }, { label: "Sponsorship" }, { label: "Consent" }] });
+  assert.deepEqual(snap(w).head.form, { fields: 1, requiredEmpty: 4 });
+  w.document.querySelector("[name=tos]").checked = true;
+  w.document.querySelector("[name=auth][value=n]").checked = true;
+  w.document.querySelector("[role=radio]").setAttribute("aria-checked", "true");
+  w.document.querySelector("[role=checkbox]").setAttribute("aria-checked", "true");
+  assert.deepEqual(snap(w).head.form, { fields: 1, requiredEmpty: 0 });
+});
+
+test("snapshot: disabled required fields and hidden required ticks leave requiredEmpty; form= fields join it", () => {
+  const w = page(`<form id=f1><input name=a aria-label=a required value=x><input name=o required disabled><fieldset disabled><input name=fd required></fieldset>
+    <div style="display:none"><label><input type=checkbox name=gone required> Gone</label><input type=radio name=g2 required></div></form><input name=ph aria-label=Phone form=f1 required>`);
+  assert.deepEqual(snap(w).head.form, { fields: 3, requiredEmpty: 1 });
+});
+
+test("snapshot: a required tick hidden by visibility still gets a hidden row, named by its question", () => {
+  const w = page(`<form><input name=nm aria-label=nm required value=A><fieldset><legend>Relocate?</legend><input type=radio name=rel required style="visibility:hidden"><input type=radio name=rel style="visibility:hidden"></fieldset></form>`);
+  const { head, lines } = snap(w);
+  assert.deepEqual(head.form, { fields: 1, requiredEmpty: 1 });
+  assert.match(lines[lines.length - 1], /^\d+ radio "Relocate\?" name="rel".* hidden$/);
+});
+
+test("snapshot: a hidden required radio's row carries its group's question, and a nameless field its type", () => {
+  const w = page(`<form><input name=nm aria-label=nm required value=A><div role=radiogroup aria-label="Need a visa?">
+    <label for=v1 style="display:none">Yes</label><input type=radio id=v1 name=visa required style="visibility:hidden"></div>
+    <div style="display:none"><input required></div></form>`);
+  const { head, lines } = snap(w);
+  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 2 });
+  assert.match(lines[lines.length - 2], /^\d+ radio "Need a visa\?" name="visa".* hidden$/);
+  assert.match(lines[lines.length - 1], /^\d+ textbox "text" required hidden$/);
+});

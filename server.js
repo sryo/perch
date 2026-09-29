@@ -4324,13 +4324,85 @@ function reqEmpty(el) {
 // A file input is a field to fill too (through file_upload). An input that is
 // both aria-hidden and out of the tab order is a widget's stand-in for native
 // validation (react-select's required input), not a field of its own.
+function textish(el) {
+  const t = (el.type || "text").toLowerCase();
+  if (el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0) return false;
+  return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
+}
+const TICKS = "[role=checkbox][aria-required=true], [role=radiogroup][aria-required=true]";
+function legendOf(fs) { return Array.from(fs.children).find(function (c) { return c.tagName === "LEGEND"; }); }
+// Disabled itself or by a fieldset (anywhere but that fieldset's first legend).
+function offForm(el) {
+  if (el.disabled) return true;
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (p.tagName !== "FIELDSET" || !p.disabled) continue;
+    const lg = legendOf(p);
+    if (!lg || !lg.contains(el)) return true;
+  }
+  return false;
+}
+function noneShown(el) {
+  for (let p = el; p; p = p.parentElement) if (getComputedStyle(p).display === "none") return true;
+  return false;
+}
+function ticked(el, t, r) {
+  if (t === "checkbox") return el.checked;
+  if (r === "checkbox") return attr(el, "aria-checked") === "true";
+  return !!el.querySelector("[role=radio][aria-checked=true]") || Array.from(el.querySelectorAll("input[type=radio]")).some(function (x) { return x.checked; });
+}
+// The question a radio answers: its radiogroup's name, else its fieldset legend.
+function question(el) {
+  const g = el.closest("[role=radiogroup]"), n = g ? accName(g) : "";
+  if (n) return n;
+  const fs = el.closest("fieldset"), lg = fs && legendOf(fs);
+  return lg ? clip(lg.textContent, 120) : "";
+}
+function isRadio(el) { return el.tagName === "INPUT" && (el.type || "").toLowerCase() === "radio"; }
+function wantName(el) {
+  const o = {}, name = clip(el.name, 120), label = isRadio(el) ? question(el) : accName(el);
+  if (name) o.name = name;
+  if (label && label !== name) o.label = label;
+  if (name || label) return o;
+  const ph = attr(el, "placeholder"), k = ph ? "placeholder" : el.type ? "type" : el.id ? "id" : "role";
+  o[k] = clip(ph || el.type || el.id || role(el), 120);
+  return o;
+}
+// fields: text-like fields, as the header counts them. empty: required ones
+// still blank, plus required checkboxes and radio groups (one per group, as its
+// first member) left unticked; disabled fields and hidden ticks drop out.
 function census(f) {
-  const fields = Array.from(f.querySelectorAll(FIELDS)).filter(function (el) {
-    const t = (el.type || "text").toLowerCase();
-    if (el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0) return false;
-    return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
+  const fields = Array.from(f.querySelectorAll(FIELDS)).filter(textish);
+  let cands = Array.from(f.querySelectorAll(FIELDS + ", " + TICKS));
+  const outside = Array.from(f.elements || []).filter(function (el) { return !f.contains(el) && el.matches(FIELDS); });
+  if (outside.length) cands = cands.concat(outside).sort(function (a, b) { return a.compareDocumentPosition(b) & 4 ? -1 : 1; });
+  const want = [], loose = [], radios = new Map();
+  cands.forEach(function (el) {
+    if (offForm(el)) return;
+    const t = el.tagName === "INPUT" ? (el.type || "").toLowerCase() : "", r = attr(el, "role");
+    const req = el.required || attr(el, "aria-required") === "true";
+    if (t === "radio") {
+      const ag = el.closest("[role=radiogroup][aria-required=true]");
+      if (ag && f.contains(ag)) return;
+      const k = el.name || el;
+      let g = radios.get(k);
+      if (!g) { g = { els: [], req: false, on: false }; radios.set(k, g); want.push(g); }
+      g.els.push(el);
+      g.req = g.req || req;
+      g.on = g.on || el.checked;
+    } else if (t === "checkbox" || (!t && (r === "checkbox" || r === "radiogroup"))) {
+      if (req && !ticked(el, t, r) && !noneShown(el)) want.push({ el: el, req: true });
+    } else if (textish(el)) {
+      const e = { el: el, req: reqEmpty(el), loose: unpicked(el) };
+      if (e.loose) loose.push(el);
+      if (e.req || e.loose) want.push(e);
+    }
   });
-  return { fields: fields, loose: fields.filter(unpicked), empty: fields.filter(reqEmpty) };
+  radios.forEach(function (g) {
+    if (g.req && !g.on) g.el = g.els.find(function (x) { return !noneShown(x); });
+    if (!g.el) g.req = false;
+  });
+  const els = function (keep) { return want.filter(keep).map(function (e) { return e.el; }); };
+  return { fields: fields, loose: loose, empty: els(function (e) { return e.req && !e.on; }), left: els(function (e) { return e.req && !e.on || e.loose; }) };
 }
 `;
 const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
@@ -5295,9 +5367,9 @@ function hiddenRows(cands) {
     const r = role(el);
     if ((roles && roles.indexOf(r) < 0) || decoy(el)) continue;
     const secs = sections(el);
-    let name = clip(labelText(el) || nearText(el) || attr(el, "placeholder"), 120);
+    let name = clip((isRadio(el) && question(el)) || labelText(el) || nearText(el) || attr(el, "placeholder"), 120);
     if (!name) for (const p of secs) { const t = clip(labelWords(p), 121); if (t && t.length <= 120) { name = clip(t, 80); break; } }
-    if (!name) name = accName(el);
+    if (!name) { const w = wantName(el); name = w.label || w.name || w.placeholder || w.type || w.id || w.role; }
     if (twins.has(r + " " + name)) continue;
     const seen = fieldVis(el);
     const line = describe(el, r, name) + (seen ? "" : " hidden") + frameTag(el);
@@ -5663,12 +5735,7 @@ if (Object.keys(recheck).length) out.recheck = recheck;
 if (ff && ff.form && ff.form.isConnected) {
   const c = census(ff.form), form = out.form = { requiredEmpty: c.empty.length };
   if (c.loose.length) form.unpicked = c.loose.length;
-  const left = c.fields.filter(function (el) { return c.empty.indexOf(el) >= 0 || c.loose.indexOf(el) >= 0; }).slice(0, 10).map(function (el) {
-    const o = {}, name = clip(el.name, 120), label = accName(el);
-    if (name) o.name = name;
-    if (label) o.label = label;
-    return o;
-  });
+  const left = c.left.slice(0, 10).map(wantName);
   if (left.length) form.left = left;
 }
 return out;
