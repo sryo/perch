@@ -164,13 +164,23 @@ test("click readback on a tab that closes after the click is stale_tab", async (
 // ---- navigate ----
 
 test("navigate on a tab that closes after the load starts is stale_tab", async () => {
-  for (const url of ["https://y.test/", "data:text/html,x"]) {
-    twoChrome();
-    const h = await listed("https://x.test/");
-    closeAfter("Google Chrome", "x");
-    const t0 = world.clock.t;
-    stale(await call("navigate", { url, target: { tabId: h } }), t0, url);
-  }
+  twoChrome();
+  const h = await listed("https://x.test/");
+  closeAfter("Google Chrome", "x");
+  const t0 = world.clock.t;
+  stale(await call("navigate", { url: "https://y.test/", target: { tabId: h } }), t0, "page load");
+});
+
+test("navigate on a tab that closes after its url is set is stale_tab", async () => {
+  twoChrome({ url: "chrome://newtab/" });
+  const h = await listed("chrome://newtab/");
+  world.winSpec("Google Chrome", 0).active = 1;
+  const tab = world.tabsOf("Google Chrome", 0)[1];
+  const loading = Object.getOwnPropertyDescriptor(tab, "loading");
+  Object.defineProperty(tab, "loading", { configurable: true, get: () => { if (world.counts["tab.url="]) closeTab("Google Chrome", "x"); return loading.get.call(tab); } });
+  const t0 = world.clock.t;
+  stale(await call("navigate", { url: "https://y.test/", target: { tabId: h } }), t0, "url set");
+  assert.equal(world.counts["tab.url="], 1);
 });
 
 test("navigate on a Safari tab that closes after the load starts is stale_tab", async () => {

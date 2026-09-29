@@ -236,16 +236,17 @@ test("navigate on an Arc tab showing arc://newtab sets the url and runs no page 
   assert.ok(world.clock.t - t0 < 1000, `took ${world.clock.t - t0}ms`);
 });
 
-test("navigate on Arc to an arc: url sets it and runs no page JS", () => {
-  install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }])], cg: [{ owner: "Arc" }] });
+test("navigate on Arc from an arc: page to an http url sets it and runs no page JS there", () => {
+  install({ browsers: [arc([{ id: "A", active: 0, tabs: [{ id: "n", url: "arc://newtab/", title: "New Tab" }] }])], cg: [{ owner: "Arc" }] });
   const tab = world.tabsOf("Arc", 0)[0];
   let onArc = 0;
   const execute = tab.execute;
   tab.execute = (...x) => { if (/^arc:/.test(tab.page.url)) onArc++; return execute(...x); };
   const t0 = world.clock.t;
-  const r = JSON.parse(rt("navigate", { target: null, url: "arc://settings/", timeout: 15000 }));
+  const r = JSON.parse(rt("navigate", { target: null, url: "https://n.test/", timeout: 15000 }));
   assert.equal(onArc, 0);
-  assert.equal(r.waited, false);
+  assert.equal(r.waited, true);
+  assert.equal(tab.page.url, "https://n.test/");
   assert.ok(world.clock.t - t0 < 1000, `took ${world.clock.t - t0}ms`);
 });
 

@@ -513,15 +513,24 @@ test("Arc screenshot picks the CG window by title, pairing same-titled windows f
   assert.deepEqual([wid("W1"), wid("W2"), wid("W3")], [11, 10, 12]);
 });
 
-test("new_tab on Arc accepts about: and data: URLs, which Arc refuses at creation", async () => {
+test("new_tab on Arc refuses a data: url before making any tab", async () => {
   install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }])], cg: [{ owner: "Arc" }] });
-  const { r, o } = await call("new_tab", { app: "arc", url: "data:text/html,<p>x</p>" });
+  const { r, t } = await call("new_tab", { app: "arc", url: "data:text/html,<p>x</p>" });
+  assert.equal(r.isError, true);
+  assert.match(t, /^error: bad_url: new_tab takes an absolute http\(s\) URL or about:blank; got data$/);
+  assert.equal(world.tabsOf("Arc", 0).length, 1);
+  assert.deepEqual(world.log, []);
+});
+
+test("new_tab on Arc accepts about:blank, which Arc refuses at creation", async () => {
+  install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }])], cg: [{ owner: "Arc" }] });
+  const { r, o } = await call("new_tab", { app: "arc", url: "about:blank" });
   assert.equal(r.isError, undefined, r.content[0].text);
-  assert.equal(world.tabsOf("Arc", 0)[1].page.url, "data:text/html,<p>x</p>");
+  assert.equal(world.tabsOf("Arc", 0)[1].page.url, "about:blank");
   assert.equal(o.tabId, "arc:new1");
   // Created on Arc's own new-tab page, then pointed at the url, in that order.
   assert.deepEqual(world.log.filter((l) => l[0] === "newTab" || l[0] === "navigate"),
-    [["newTab", "Arc", "arc://newtab"], ["navigate", "Arc", "data:text/html,<p>x</p>"]]);
+    [["newTab", "Arc", "arc://newtab"], ["navigate", "Arc", "about:blank"]]);
   // Still a background tab: nothing selected, Arc not brought forward.
   assert.equal(world.counts["tab.select"], undefined);
   assert.equal(world.counts["activate(Arc)"], undefined);
