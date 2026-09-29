@@ -5,7 +5,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, PAGE_PRELUDE, PAGE_SCRIPTS, pageScript, buildEvalWrapper } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
 
@@ -422,6 +422,57 @@ test("click: a plain click's one script carries the prelude once and no second p
   assert.ok(!sent[0].includes("function rbArm("), "no readback code");
   assert.ok(sent[0].length < 26000, `sent ${sent[0].length} bytes`);
   assert.equal(appleEvents(), 1, breakdown());
+});
+
+// Every page call and every poll carries its script over Apple Events, so
+// internal page scripts ship without comment lines or indentation.
+function evalsOf(dom) {
+  const seen = [], orig = dom.eval.bind(dom);
+  dom.eval = (js) => { seen.push(js); return orig(js); };
+  return seen;
+}
+const commentLines = (js) => js.split("\n").filter((l) => l.trim().startsWith("//")).length;
+
+test("click: a plain click's page script has no comment lines and stays under 16000 bytes", async () => {
+  const dom = page(`<button id=b>Save</button>`, { url: "https://c0.test/" });
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  const seen = evalsOf(dom);
+  assert.equal((await call("click", { selector: "#b" })).o.ok, true);
+  assert.equal(seen.length, 1);
+  assert.equal(commentLines(seen[0]), 0);
+  assert.ok(seen[0].length < 16000, `eval'd ${seen[0].length} bytes`);
+});
+
+test("fill {fields}: a 5-field form's page script has no comment lines and stays under 56000 bytes", async () => {
+  const dom = page(`<form><label>Name <input name=name></label><label>Email <input type=email name=email></label>
+    <label>Message <textarea name=msg></textarea></label>
+    <label>Country <select name=country><option value="">Pick</option><option value=ar>Argentina</option></select></label>
+    <label><input type=checkbox name=agree> I agree</label></form>`, { url: "https://c0.test/" });
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  const seen = evalsOf(dom);
+  const fields = [
+    { label_pattern: "name", text: "Ada" }, { label_pattern: "email", text: "a@b.test" }, { label_pattern: "message", text: "Hi" },
+    { label_pattern: "country", option: "Argentina" }, { label_pattern: "agree", checked: true },
+  ];
+  const { o } = await call("fill", { fields });
+  assert.deepEqual(o.results.map((r) => r.ok), [true, true, true, true, true], JSON.stringify(o));
+  assert.equal(seen.length, 1);
+  assert.equal(commentLines(seen[0]), 0);
+  assert.ok(seen[0].length < 56000, `eval'd ${seen[0].length} bytes`);
+});
+
+// Stripping whole comment lines and indentation is safe only while no string,
+// template or comment spans a line; these scripts are String.raw templates.
+test("page scripts have no backticks, block comments or line continuations, and still compile once lean", () => {
+  for (const [name, src] of Object.entries({ PAGE_PRELUDE, ...PAGE_SCRIPTS })) {
+    assert.ok(!src.includes("`"), `${name} has a backtick`);
+    assert.ok(!src.includes("/*"), `${name} has a block comment`);
+    assert.ok(!src.split("\n").some((l) => l.endsWith("\\")), `${name} has a line continuation`);
+    if (name === "PAGE_PRELUDE") continue;
+    const js = buildEvalWrapper(pageScript(name, {}));
+    assert.equal(commentLines(js), 0, name);
+    assert.doesNotThrow(() => new Function(js), name);
+  }
 });
 
 // A plain click is one page call, as eval_js is. A click on a link or submit
