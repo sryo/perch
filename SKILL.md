@@ -48,7 +48,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change; `option` also answers a radio group by question.
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
 - Page errors: `isError` with `__perch_error`, `__perch_error_name`.
-- Other errors start with a code; branch on it. `tab_not_visible`: not the tab its window shows; `activate_tab` (takes focus) or retry later. `stale_tab`: re-run `list_tabs`. `window_offscreen`: minimized or on another Space. `window_ambiguous`: move or resize a same-frame window. `no_browser`: none running or no window (never launched). `timeout`: re-list, retry once; if it may have run, check first. `tab_not_scriptable`: internal page; `navigate` first (`raise:true`). `dialog_open`: see Dialogs.
+- Other errors start with a code (server instructions list them). Also `window_ambiguous`: move or resize a same-frame window; `timeout`: re-list, retry once; if it may have run, check first.
 
 ## Gotchas
 
@@ -65,8 +65,4 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Permissions
 
-On first failure the error names the toggle; show the user, wait.
-
-- Chromium family and Arc: View > Developer > Allow JavaScript from Apple Events (per profile).
-- Safari: Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.
-- macOS Automation (first call prompts) and, for trusted input and dialogs, Accessibility: System Settings > Privacy & Security, for the host app.
+On first failure the error names the toggle (Allow JavaScript from Apple Events per profile, Automation, Accessibility); show the user, wait.
