@@ -239,6 +239,17 @@ test("fill with a single option field picks it and returns that field's result",
   assert.equal(dom.document.querySelector("select").value, "br");
 });
 
+test("fill {fields}: a native select the page reverts fails that field and the whole fill", async () => {
+  onPage(FORM, `document.querySelector('select').addEventListener('change', (e) => { e.target.selectedIndex = 0; });`);
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }, { selector: "select", option: "Brazil" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results[0].ok, true);
+  assert.equal(o.results[1].ok, false);
+  assert.equal(o.results[1].kept, "Pick");
+  assert.equal(o.results[1].selected, undefined);
+  assert.match(o.results[1].error, /kept "Pick" instead of "Brazil"; the page reverted the pick/);
+});
+
 test("fill with a single custom combobox option goes through select", async () => {
   const { dom } = onPage(CUSTOM, CUSTOM_JS);
   const { o } = await fill({ label_pattern: "level", option: "senior" });

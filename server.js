@@ -3304,9 +3304,18 @@ function pickNative(nat, text) {
     opt = m.hits.find(function (o) { return norm(o.text) === w; }) || m.hits[0];
   }
   if (!opt) return { ok: false, error: "no matching option", candidates: opts.slice(0, 30).map(function (o) { return clip(o.text, 60); }) };
-  setNativeValue(nat, opt.value);
+  const prior = nat.selectedIndex;
+  // Setting .value selects the first option holding it, so a later twin goes by index.
+  if (opts.some(function (o) { return o.index < opt.index && o.value === opt.value; })) {
+    const d = Object.getOwnPropertyDescriptor(viewOf(nat).HTMLSelectElement.prototype, "selectedIndex");
+    if (d && d.set) d.set.call(nat, opt.index); else nat.selectedIndex = opt.index;
+  } else setNativeValue(nat, opt.value);
   fire(nat, ["input", "change"]);
-  return { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
+  const shown = nat.options[nat.selectedIndex];
+  if (shown === opt) return { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
+  const kept = clip(shown ? shown.text : "", 80);
+  return { ok: false, el: ident(nat), kept: kept, error: ident(nat) + " kept " + JSON.stringify(kept) + (nat.selectedIndex === prior
+    ? " instead of " + JSON.stringify(clip(opt.text, 60)) + "; the page reverted the pick" : "; the page changed the pick to another option") };
 }
 function mine(s, el) { return [s.ctl, s.input, s.box].some(function (m) { return m && (m === el || m.contains(el) || el.contains(m)); }); }
 // cmdk writes data-disabled="false" on enabled items; Radix marks disabled ones with a bare data-disabled.

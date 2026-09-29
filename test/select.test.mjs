@@ -62,6 +62,40 @@ test("native select: equally good options are a tie, never settled by length or 
   }
 });
 
+test("native select: a page that reverts the pick is ok:false with what it kept", async () => {
+  onPage(NATIVE, `const s = document.querySelector('select'); s.selectedIndex = 1;
+    s.addEventListener('change', () => { s.selectedIndex = 1; });`);
+  const { o } = await select({ label_pattern: "country", text: "Brazil" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.selected, undefined);
+  assert.equal(o.kept, "Argentina");
+  assert.equal(o.el, `combobox "Country"`);
+  assert.equal(o.error, `combobox "Country" kept "Argentina" instead of "Brazil"; the page reverted the pick`);
+  // A handler that swaps to a third option.
+  const w = onPage(NATIVE, `const s = document.querySelector('select'); s.selectedIndex = 1;
+    s.addEventListener('change', () => { s.selectedIndex = 0; });`);
+  const c = (await select({ label_pattern: "country", text: "Brazil" })).o;
+  assert.equal(c.ok, false, JSON.stringify(c));
+  assert.equal(c.kept, "Pick");
+  assert.match(c.error, /^combobox "Country" kept "Pick"; the page changed the pick to another option$/);
+  assert.equal(w.dom.document.querySelector("select").selectedIndex, 0);
+});
+
+test("native select: options sharing a value pick the one asked for, and a forced other is ok:false", async () => {
+  // Browsers set .value to the first twin, happy-dom to the last: B sits between.
+  const DUP = `<label>Plan <select><option value="">Pick</option><option value=1>A</option><option value=1>B</option><option value=1>C</option></select></label>`;
+  const { dom } = onPage(DUP);
+  const { o } = await select({ label_pattern: "plan", text: "B" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "B");
+  assert.equal(dom.document.querySelector("select").selectedIndex, 2);
+  onPage(DUP, `document.querySelector('select').addEventListener('change', (e) => { e.target.selectedIndex = 1; });`);
+  const f = (await select({ label_pattern: "plan", text: "B" })).o;
+  assert.equal(f.ok, false, JSON.stringify(f));
+  assert.equal(f.selected, undefined);
+  assert.equal(f.kept, "A");
+});
+
 // A react-select-like widget: opens only for a left-button press with a view,
 // renders options on open, and shows the choice in the control.
 const CUSTOM = `<label id=lab>Level</label><div class="select__control"><div role=combobox aria-labelledby=lab aria-expanded=false tabindex=0><span class=v>Choose</span></div></div><div id=menu></div>`;
