@@ -13,6 +13,12 @@ test("prelude has no template holes and every script parses", () => {
   }
 });
 
+test("page helper: a field under a [hidden] or display:none ancestor lays out 0x0 and is not shown", () => {
+  const w = page(`<section hidden><input id=x></section><section style="display:none"><input id=y></section><section><input id=z></section>`);
+  assert.deepEqual(runBody(w, `return ['x','y','z'].map(id => { const e = document.getElementById(id), r = e.getBoundingClientRect(); return [r.width, r.height, fieldVis(e)]; })`),
+    [[0, 0, false], [0, 0, false], [100, 20, true]]);
+});
+
 test("vis: hidden variants are invisible", () => {
   const w = page(`<i id=a style="display:none">x</i><i id=b style="visibility:hidden">x</i><i id=c style="opacity:0">x</i><i id=d hidden>x</i><i id=e data-zero>x</i><i id=f>x</i>`);
   assert.deepEqual(runBody(w, `return ['a','b','c','d','e','f'].map(id => vis(document.getElementById(id)))`), [false, false, false, false, false, true]);

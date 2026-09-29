@@ -1498,6 +1498,111 @@ test("fill {fields}: a pick that re-renders the same form keeps filling it", asy
   assert.equal(dom.document.getElementById("nm").value, "Ada");
 });
 
+// A single-page wizard: both steps are in the document from the start, and the
+// City pick hides step 1 and shows step 2, whose "Friend email" also matches
+// "email". Hidden fields keep their values, so only visibility tells.
+const HIDE_FORM = `<main><form><section id=s1><label>Name <input id=nm></label><label id=lab>City</label><div class="select__control"><div role=combobox aria-labelledby=lab aria-expanded=false tabindex=0><span class=v>Choose</span></div></div><div id=menu></div><label>Email <input id=em></label></section><section id=s2 hidden><label>Friend email <input id=fe></label></section></form></main>`;
+const HIDE_S1 = "document.getElementById('s1').style.display = 'none'; document.getElementById('s2').hidden = false;";
+
+test("fill {fields}: a pick that hides the step (display:none) stops the batch", async () => {
+  const { world, dom } = onPage(HIDE_FORM, STEP_JS(HIDE_S1));
+  const sent = passes(world);
+  const { o } = await fill({ fields: STEP_FIELDS });
+  stoppedAtCity(o);
+  assert.equal(sent.length, 2);
+  assert.equal(dom.document.getElementById("fe").value, "");
+  assert.equal(dom.document.getElementById("em").value, "");
+});
+
+test("fill {fields}: a pick that hides the step ([hidden]) stops the batch", async () => {
+  const { world, dom } = onPage(HIDE_FORM, STEP_JS("document.getElementById('s1').hidden = true; document.getElementById('s2').hidden = false;"));
+  passes(world);
+  const { o } = await fill({ fields: STEP_FIELDS });
+  stoppedAtCity(o);
+  assert.equal(dom.document.getElementById("fe").value, "");
+  assert.equal(dom.document.getElementById("em").value, "");
+});
+
+test("fill {fields}: a first-field pick that hides the step stops the batch, nothing unverified", async () => {
+  const { world, dom } = onPage(HIDE_FORM, STEP_JS(HIDE_S1));
+  passes(world);
+  const { o } = await fill({ fields: [{ label_pattern: "city", option: "rio" }, { label_pattern: "email", text: "a@x.io" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results[0].ok, true);
+  assert.deepEqual(o.results[1], { ok: false, error: "the page changed after fields[0]; not filled" });
+  assert.equal(o.unverified, undefined);
+  assert.ok(o.results.every((x) => !x.unverified));
+  assert.equal(dom.document.getElementById("fe").value, "");
+});
+
+test("fill {fields}: a pick that only reveals more fields keeps filling", async () => {
+  const { world, dom } = onPage(HIDE_FORM, STEP_JS("document.getElementById('s2').hidden = false;"));
+  passes(world);
+  const { o } = await fill({ fields: STEP_FIELDS });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.warning, undefined);
+  assert.equal(dom.document.getElementById("em").value, "a@x.io");
+});
+
+test("fill {fields}: a pick whose control collapses into a chip keeps filling", async () => {
+  const CHIP = HIDE_FORM.replace('<div class="select__control">', '<div id=cw><input aria-label=Search><div class="select__control">').replace("</div></div><div id=menu>", "</div></div></div><span id=chip></span><div id=menu>");
+  const { world, dom } = onPage(CHIP, STEP_JS("document.getElementById('cw').style.display = 'none'; document.getElementById('chip').textContent = o.textContent;"));
+  passes(world);
+  const { o } = await fill({ fields: [{ label_pattern: "city", option: "rio" }, { label_pattern: "^email", text: "a@x.io" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.warning, undefined);
+  assert.equal(dom.document.getElementById("em").value, "a@x.io");
+});
+
+test("fill {fields}: a batch that ends on a pick advancing the step is ok", async () => {
+  const { world, dom } = onPage(HIDE_FORM, STEP_JS(HIDE_S1));
+  passes(world);
+  const { o } = await fill({ fields: STEP_FIELDS.slice(0, 2) });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.warning, undefined);
+  assert.equal(o.unverified, undefined);
+  assert.equal(dom.document.getElementById("nm").value, "Ada");
+});
+
+const NATIVE_STEP = `<form><section id=s1><label>Name <input id=nm></label><label>Kind <select id=kind onchange="document.getElementById('s1').hidden = true; document.getElementById('s2').hidden = false;"><option value="">Pick</option><option>Person</option><option>Company</option></select></label></section><section id=s2 hidden><label>Email <input id=em></label></section></form>`;
+
+test("fill {fields}: a native select that hides the step stops the pass after it", async () => {
+  const { dom } = onPage(NATIVE_STEP);
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }, { label_pattern: "kind", option: "Company" }, { label_pattern: "email", text: "a@x.io" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results[1].ok, true);
+  assert.equal(o.results[0].unverified, true);
+  assert.equal(o.results[2].error, "the page changed after fields[1]; not filled");
+  assert.equal(o.warning, "the page changed after fields[1]; earlier fields may have been cleared, check them");
+  assert.equal(dom.document.getElementById("em").value, "");
+});
+
+test("fill {fields}: a radio that only reveals a step keeps filling", async () => {
+  const { dom } = onPage(`<form><section id=s1><label>Name <input id=nm></label><fieldset><legend>Kind</legend><label><input type=radio name=k value=p onchange="document.getElementById('s2').hidden = false;"> Person</label><label><input type=radio name=k value=c onchange="document.getElementById('s2').hidden = false;"> Company</label></fieldset></section><section id=s2 hidden><label>Email <input id=em></label></section></form>`);
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }, { label_pattern: "kind", option: "Company" }, { label_pattern: "email", text: "a@x.io" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(dom.document.getElementById("em").value, "a@x.io");
+});
+
+test("fill {fields}: a checkbox that hides one lone optional field keeps filling", async () => {
+  const { dom } = onPage(`<form><label>Name <input id=nm></label><label><input type=checkbox id=same onchange="document.getElementById('opt').hidden = this.checked;"> Same billing address</label><div id=opt><label>Billing <input id=bi></label></div><label>Email <input id=em></label></form>`);
+  const { o } = await fill({ fields: [{ label_pattern: "billing", text: "Main St" }, { label_pattern: "same", checked: true }, { label_pattern: "email", text: "a@x.io" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(dom.document.getElementById("em").value, "a@x.io");
+});
+
+test("fill {fields}: every pass of a repeated hide-step batch is the same page script", async () => {
+  const calls = [];
+  for (let k = 0; k < 2; k++) {
+    const { world } = onPage(HIDE_FORM, STEP_JS(HIDE_S1));
+    const sent = passes(world);
+    await fill({ fields: STEP_FIELDS });
+    calls.push(sent);
+  }
+  assert.equal(calls[0].length, 2);
+  assert.deepEqual(calls[1], calls[0]);
+});
+
 const failSecondPass = (world, fail) => {
   let n = 0;
   const d = { run: (s) => (s.includes("PLACEHOLDERISH") && ++n === 2 ? fail(s) : world.daemon.run(s)) };

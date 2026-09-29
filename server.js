@@ -5311,6 +5311,10 @@ const href = location.href.split("#")[0];
 let ff = window.__perch_ff;
 if (!A.from) ff = window.__perch_ff = { fp: fp, items: {}, href: href };
 else if (!ff || ff.fp !== fp || ff.href !== href || (ff.form && !ff.form.isConnected && !Object.keys(ff.items).some(function (k) { return ff.items[k].el.isConnected || twin(ff.items[k]); }))) return { gone: true, results: [] };
+// A write pass after a deferred pick, which may have moved a single-page wizard
+// to its next step. Not the re-read-only last pass: a batch ending on a step's
+// last pick expects exactly that.
+else if (A.from < A.fields.length && stepMoved((A.fields[A.from - 1].text != null ? window.__perch_ta : window.__perch_select) || {})) return { gone: true, results: [] };
 const AFTER = " after a later field changed; fill it again";
 // A framework re-render replaces a node but keeps its value: a disconnected
 // field is looked up again by id, then by name in its form, then by the call's
@@ -5340,6 +5344,22 @@ function twin(it) {
   const hits = all.filter(function (e) { return re.test(labelText(e)); }).concat(all.filter(function (e) { return !re.test(labelText(e)) && re.test(hintText(e)); }));
   x = hits.filter(fieldVis)[0] || hits[0];
   return ok(x) ? { el: x } : null;
+}
+// The form moved to another step: every shown field this batch landed, and
+// the control just picked, is now hidden, and one of them sits under a hidden
+// ancestor holding other fields too. That ancestor is what tells a whole step
+// from a control that collapsed into a chip or a lone conditional field. A
+// field that left the document with no twin is drift's to report.
+function stepMoved(x) {
+  const S = [{ el: x.el || x.ctl }];
+  for (const k in ff.items) if (ff.items[k].shown) S.push(ff.items[k]);
+  let d = false;
+  for (const it of S) {
+    const e = it.el, t = twin(it), el = e && e.isConnected ? e : t && t.el;
+    if ((t && fieldVis(t.el)) || (el && fieldVis(el))) return false;
+    for (let p = el && el.parentElement; p && !d; p = p.parentElement) d = (p.hidden || getComputedStyle(p).display === "none") && p.querySelectorAll("input:not([type=hidden]),select,textarea").length > 1;
+  }
+  return d;
 }
 function drift(it, again) {
   let el = it.el;
@@ -5416,7 +5436,9 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     if (!("form" in ff)) ff.form = got.el.form || got.el.closest("form") || null;
     if (got.group) got.pick = chosen({ group: got.group });
     if (got.group || "checked" in got) got.key.value = got.el.value;
+    got.shown = fieldVis(got.el);
     ff.items[i] = got;
+    if (kind !== "text" && i < A.fields.length - 1 && stepMoved(got)) return { results: results.concat(o), gone: true, at: i };
   }
   results.push(o);
 }
@@ -6569,8 +6591,10 @@ async function fillFields(fields, target, only) {
       return halted;
     }
     if (r.gone) {
-      changedAfter(from - 1);
-      for (let i = from; i < A.length; i++) results.push({ ok: false, error: `the page changed after fields[${from - 1}]; not filled` });
+      const at = r.at != null ? r.at : from - 1;
+      results.push(...r.results);
+      changedAfter(at);
+      for (let i = at + 1; i < A.length; i++) results.push({ ok: false, error: `the page changed after fields[${at}]; not filled` });
       return { ok: false, results, ...counts(), warning };
     }
     results.push(...r.results);
