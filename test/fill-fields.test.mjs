@@ -1698,6 +1698,14 @@ test("fill {fields}: a typeahead left typed but unpicked counts as unpicked and 
   assert.deepEqual(o.form, { requiredEmpty: 1, unpicked: 1, left: [{ name: "loc", label: "Location" }] });
 });
 
+test("fill {fields}: a required select left on its placeholder is named in left", async () => {
+  onPage(`<form><label>Name <input name=nm required></label>
+    <label>Gender <select name=g required><option value="0">Select...</option><option value="f">Female</option></select></label></form>`);
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(o.form, { requiredEmpty: 1, left: [{ name: "g", label: "Gender" }] });
+});
+
 test("fill {fields}: a batch the page changed under carries no form census", async () => {
   const { world } = onPage(HIDE_FORM.replace("<input id=fe>", "<input id=fe required>"), STEP_JS(HIDE_S1));
   passes(world);

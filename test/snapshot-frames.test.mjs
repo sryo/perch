@@ -64,7 +64,7 @@ test("(b) a same-origin frame's controls follow the page rows with frame=0, and 
     `3 combobox "Work authorization" name="auth" options=["Select...","Yes","No"] required frame=0`,
   ]);
   assert.equal(head.count, 3);
-  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 1 });
+  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 2 });
 
   const f = run(w, "fill", { ref: "2", text: "Ada" });
   assert.equal(f.ok, true, JSON.stringify(f));
@@ -166,7 +166,7 @@ test("(b) a same-origin frame's rows count toward max and query like any other",
 
 test("(b) the header's form is the biggest one across the page and its same-origin frames", () => {
   const { w } = sameOrigin(`<form><input name=q placeholder=Search></form>`);
-  assert.deepEqual(snap(w).head.form, { fields: 2, requiredEmpty: 1 });
+  assert.deepEqual(snap(w).head.form, { fields: 2, requiredEmpty: 2 });
 });
 
 test("(b) a frame form's unseen required field gets a hidden row with its frame, and focus inside the frame names its ref", () => {

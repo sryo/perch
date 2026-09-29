@@ -102,7 +102,7 @@ test("snapshot: header + one line per visible element", () => {
   assert.deepEqual(lines, [
     `1 heading "Apply" level=1`,
     `2 textbox "Email" name="email" type="email" value="a@b.c" required`,
-    `3 combobox "Country" name="country" options=["Argentina","Brazil"] value="AR"`,
+    `3 combobox "Country" name="country" options=["Argentina","Brazil"] value="Argentina"`,
     `4 checkbox "I agree" checked`,
     `5 textbox "Cover" name="cover" type="textarea" required`,
     `6 link "Jobs" href="/jobs?x=1"`,

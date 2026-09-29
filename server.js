@@ -4470,9 +4470,23 @@ function unpicked(el) {
   return !!c && !c.value;
 }
 const FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
+const PLACEHOLDERISH = /^[\s\-–—]*((please )?(select|choose|pick)\b.*)?$/i;
+function pickBox(el) { return el.closest('.select__control, [class*="-control"], [class*="__control"]') || el; }
+// A native select on no option, a valueless or disabled one, or a first
+// "Select..."; a custom (non-input) combobox box showing a placeholder or nothing.
+function nothingChosen(el) {
+  if (el.tagName === "SELECT") {
+    const o = el.options[el.selectedIndex];
+    return !o || o.value === "" || o.disabled || (el.selectedIndex === 0 && PLACEHOLDERISH.test(o.text));
+  }
+  const box = pickBox(el);
+  return !!box.querySelector("[class*=placeholder], [data-placeholder]") || PLACEHOLDERISH.test(textOf(box).trim());
+}
+function customBox(el) { return !/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName) && attr(el, "role") === "combobox"; }
 // loose: unpicked(el), when the caller already has it.
 function reqEmpty(el, loose) {
   if (!el.required && attr(el, "aria-required") !== "true") return false;
+  if (el.tagName === "SELECT" || customBox(el)) return nothingChosen(el);
   if (String(el.value || el.textContent || "").trim()) return loose == null ? unpicked(el) : loose;
   return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
 }
@@ -4485,6 +4499,7 @@ function textish(el) {
   return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
 }
 const TICKS = "[role=checkbox][aria-required=true], [role=radiogroup][aria-required=true]";
+const BOXES = "[role=combobox][aria-required=true]:not(input)";
 function legendOf(fs) { return Array.from(fs.children).find(function (c) { return c.tagName === "LEGEND"; }); }
 // Disabled itself or by a fieldset (anywhere but that fieldset's first legend).
 function offForm(el) {
@@ -4527,7 +4542,7 @@ function wantName(el) {
 // first member) left unticked; disabled fields and hidden ticks drop out.
 function census(f) {
   const fields = Array.from(f.querySelectorAll(FIELDS)).filter(textish);
-  let cands = Array.from(f.querySelectorAll(FIELDS + ", " + TICKS));
+  let cands = Array.from(f.querySelectorAll(FIELDS + ", " + TICKS + ", " + BOXES));
   const outside = Array.from(f.elements || []).filter(function (el) { return !f.contains(el) && el.matches(FIELDS); });
   if (outside.length) cands = cands.concat(outside).sort(function (a, b) { return a.compareDocumentPosition(b) & 4 ? -1 : 1; });
   const want = [], loose = [], radios = new Map();
@@ -4535,7 +4550,9 @@ function census(f) {
     if (offForm(el)) return;
     const t = el.tagName === "INPUT" ? (el.type || "").toLowerCase() : "", r = attr(el, "role");
     const req = el.required || attr(el, "aria-required") === "true";
-    if (t === "radio") {
+    if (customBox(el)) {
+      if (vis(el) && !Array.from(el.querySelectorAll("input")).some(textish) && reqEmpty(el)) want.push({ el: el, req: true });
+    } else if (t === "radio") {
       const ag = el.closest("[role=radiogroup][aria-required=true]");
       if (ag && f.contains(ag)) return;
       const k = el.name || el;
@@ -5449,9 +5466,10 @@ function describe(el, r, name) {
     const o = [];
     for (const opt of el.options) { if (o.length >= 30) break; const t = clip(opt.text, 60); if (t && t !== "--") o.push(t); }
     if (o.length) kv("options", o);
-    if (el.value) kv("value", el.value);
+    if (!nothingChosen(el)) kv("value", clip(el.options[el.selectedIndex].text, 200));
   } else if (r === "textbox" && el.value) kv("value", clip(el.value, 200));
   else if (r === "combobox" && tag === "INPUT") { const v = el.value ? clip(el.value, 200) : shownValue(el); if (v) kv("value", v); }
+  else if (customBox(el) && !nothingChosen(el)) { const v = clip(textOf(pickBox(el)), 200); if (v !== name) kv("value", v); }
   if (r === "link") {
     let h = el.href || "";
     if (h.indexOf(origin + "/") === 0) h = h.slice(origin.length);
@@ -5750,26 +5768,20 @@ return { pending: true };
   // resumes after it.
   fill_fields: FILL_LIB + SELECT_LIB + CHECK_LIB + CENSUS_LIB + String.raw`
 // What a select, combobox or radio group already shows as chosen, or "" for
-// nothing or a placeholder ("Select...", a disabled or valueless option).
-const PLACEHOLDERISH = /^[\s\-\u2013\u2014]*((please )?(select|choose|pick)\b.*)?$/i;
+// nothing or a placeholder.
 function chosen(c) {
   if (c.group) {
     const on = c.group.opts.filter(isOn)[0];
     return on ? c.group.names[c.group.opts.indexOf(on)] : "";
   }
   const nat = nativeOf(c.el);
-  if (nat) {
-    const o = nat.options[nat.selectedIndex];
-    return !o || o.value === "" || o.disabled || (nat.selectedIndex === 0 && PLACEHOLDERISH.test(o.text)) ? "" : o.text.trim();
-  }
+  if (nat) return nothingChosen(nat) ? "" : nat.options[nat.selectedIndex].text.trim();
   const ctl = c.el;
   if (ctl.tagName === "INPUT") {
     const comp = taParts(ctl).comp;
     return shownValue(ctl) || (comp && comp.value.trim() ? ctl.value.trim() || comp.value.trim() : "") || (ctl.readOnly ? ctl.value.trim() : "");
   }
-  const box = ctl.closest('.select__control, [class*="-control"], [class*="__control"]') || ctl;
-  const t = shownWhole(box) ? textOf(box).trim() : "";
-  return PLACEHOLDERISH.test(t) ? "" : t;
+  return nothingChosen(ctl) ? "" : textOf(pickBox(ctl)).trim();
 }
 // This batch's landed fields by index. A pass from 0 starts it over, keyed by a
 // hash of the fields alone, so every pass of a batch is the same source every
