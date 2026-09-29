@@ -1940,16 +1940,24 @@ function jxaRuntime(BROWSERS, HANG) {
         delay(0.05);
       }
       // The last check that answered still found the stamped document. A url and a
-      // loading read, only here, tell a tab that settled from a load still pending
-      // (Chromium shows the old url while a page-started load waits on its server)
-      // and from a document that committed after the last answer. Safari has no
-      // loading read, and may show a pending url, so it gets neither.
+      // loading read, only here, tell a tab that settled on its old url from a load
+      // still pending. Chromium's url shows a page-started load's pending url while
+      // the old document answers, so a moved url counts as committed only once the
+      // page, asked once more, no longer answers as the stamped document (no reply,
+      // or a new one). Safari has no loading read and may show a pending url, so it
+      // gets neither.
       if (lastC && lastC.old) {
         const u = read(function () { return String(t.tab.url()); });
         const busy = t.kind === "safari" ? null : read(function () { return t.tab.loading(); });
         if (u === lastC.href) return busy === true ? notCommitted(u) : result(false, null, lastC.href);
         const asked = function (x) { return x === a.url || x.replace(/\/$/, "") === a.url.replace(/\/$/, ""); };
-        if (u != null && (busy === false || (busy === true && viaPage && asked(u)))) return result(false, u);
+        if (u != null && (busy === false || (busy === true && viaPage && asked(u)))) {
+          let c = null;
+          try { c = JSON.parse(String(execWithin(t, check, NAV_EXEC_SECS))); } catch (e) { if (isStale(e)) throw e; }
+          if (c && c.old) return notCommitted(u);
+          if (c && c.err) return Object.assign(result(true), { loadFailed: true });
+          return result(!!(c && c.done), c ? String(c.href) : u);
+        }
         if (u != null) return notCommitted(u);
       }
       return result(false);
