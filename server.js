@@ -5265,7 +5265,7 @@ const TOOLS = [
     label_pattern: { type: "string", description: "Regex over a file input's label or a drop zone's text." },
     target: TARGET,
   }, ["path"]),
-  tool("click", "Click by ref/selector/label_pattern (el.click(); ties refuse); `hover` fires hover events instead. `trusted`: real click without focus (needs Accessibility), `raise:true` in the foreground; check `hit`. Only trusted takes screen `x`/`y`.", {
+  tool("click", "Click by ref/selector/label_pattern (el.click(); ties refuse); `hover`: hover events instead. `trusted`: real click without focus (needs Accessibility), `raise:true` in the foreground; check `hit`. Screen `x`/`y`: trusted only.", {
     ref: REF,
     selector: SEL,
     label_pattern: LABEL,
@@ -5273,7 +5273,7 @@ const TOOLS = [
     y: { type: "number" },
     trusted: { type: "boolean" },
     raise: { type: "boolean" },
-    readback: { type: "string", description: "CSS; its text once changed (2s cap; ~0.7s if the page goes quiet): {readback,changed,url?}." },
+    readback: { type: "string", description: "CSS; its text once changed (2s cap; ~0.7s once quiet, 1.2s in a hidden tab): {readback,changed,url?}." },
     hover: { type: "boolean" },
     target: TARGET,
   }),
