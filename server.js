@@ -242,7 +242,7 @@ function jxaRuntime(BROWSERS, HANG) {
     throw new Error("stale_tab: tab " + want.tabId + " is gone; re-run list_tabs");
   }
 
-  // strict (close_tab): only the recorded window, and only a tab it can single out.
+  // strict (close_tab): only the recorded window, and only the tab at the recorded index.
   function resolveSafari(want, raw, P, strict) {
     const parts = raw.split("."), winId = parts[0], idx = Number(parts[1]), hash = parts.slice(2).join(".");
     if (!alive("Safari", P)) throw new Error("stale_tab: tab " + want.tabId + " is gone (its browser quit); re-run list_tabs");
@@ -263,11 +263,9 @@ function jxaRuntime(BROWSERS, HANG) {
         const win = a.windows.byId(Number(winId)), m = matches(win.tabs.url());
         searched = true;
         if (m.length) {
-          const best = nearest(m), ambiguous = best !== idx && m.length > 1;
-          if (ambiguous && strict) throw new Error("stale_tab: can't tell which tab " + want.tabId + " is; several tabs in its window show its URL; re-run list_tabs");
-          const t = record(win, best, null);
-          if (ambiguous) t.ambiguous = true;
-          return t;
+          // A tab at another index with the URL may be the user's, once the agent's is gone.
+          if (strict && m.indexOf(idx) < 0) throw new Error("stale_tab: can't tell which tab " + want.tabId + " is; re-run list_tabs");
+          return record(win, strict ? idx : nearest(m), null);
         }
       } catch (e) { if (isStale(e)) throw e; }
     }

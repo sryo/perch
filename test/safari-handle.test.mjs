@@ -1,7 +1,7 @@
 // A Safari handle names its tab by window, index and URL hash, so a tab that is
 // gone can look like another tab at the same URL. Across windows a handle
 // resolves only to a URL no other tab shows; close_tab never leaves the
-// recorded window and refuses any tab it can't single out.
+// recorded window and closes only the tab at the recorded index.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
@@ -83,15 +83,22 @@ test("a tab dragged out to another window, the only one at its URL, still resolv
   assert.equal(f.o.ok, true, f.t);
 });
 
-test("close_tab still closes the right tab when its index moved but its URL is unique in the window", async () => {
+test("close_tab refuses when its index moved, even with its URL unique in the window", async () => {
   install([{ id: 3, active: 0, tabs: [other("a0"), other("a1"), at("agent")] }, { id: 4, active: 0, tabs: [other("b0")] }]);
   const h = await handleIn(3, U);
   world.tabsOf("Safari", 0).splice(0, 1);
-  const { r, o } = await call("close_tab", { tabId: h });
-  assert.notEqual(r.isError, true, JSON.stringify(o));
-  assert.equal(o.ok, true);
-  assert.deepEqual(ids(0), ["a1"]);
-  assert.deepEqual(closes(), [["close", "Safari", "agent"]]);
+  stale(await call("close_tab", { tabId: h }), "close_tab", /can't tell which tab/);
+  assert.deepEqual(ids(0), ["a1", "agent"]);
+  assert.deepEqual(closes(), []);
+});
+
+test("close_tab on a gone tab's handle refuses the user's tab at the same URL at another index in its window", async () => {
+  install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), other("a2"), at("user")] }]);
+  const h = await handleIn(3, U);
+  world.tabsOf("Safari", 0).splice(1, 1);
+  stale(await call("close_tab", { tabId: h }), "close_tab", /can't tell which tab/);
+  assert.deepEqual(ids(0), ["a0", "a2", "user"]);
+  assert.deepEqual(closes(), []);
 });
 
 test("close_tab refuses a tab that now lives only in another window", async () => {
