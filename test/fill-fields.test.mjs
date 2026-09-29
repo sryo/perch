@@ -594,10 +594,18 @@ test("fill: text-like inputs keep the tolerant check", () => {
 const revert = (w, sel) => runBody(w, `const e = document.querySelector(${JSON.stringify(sel)}); const was = e.value;
   e.addEventListener('input', () => { e.value = was; }); return 1`);
 
-test("fill: a field that restores its previous value is not ok", () => {
+test("fill: a masked refill of the same number is ok", () => {
   const w = page(`<label>Phone <input id=p value=5493516116242></label>`);
   revert(w, "#p");
   const o = run(w, "fill", { label_pattern: "phone", text: "9 351 611 6242" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(val(w, "#p").value, "5493516116242");
+});
+
+test("fill: a field that restores a different number is not ok", () => {
+  const w = page(`<label>Phone <input id=p value=5493516116242></label>`);
+  revert(w, "#p");
+  const o = run(w, "fill", { label_pattern: "phone", text: "9 351 555 1234" });
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.kept, "5493516116242");
   assert.match(o.error, /kept its previous value "5493516116242"/);
@@ -640,7 +648,7 @@ test("fill: refilling a field with the value it holds is ok", () => {
 test("fill_fields: only the reverting entry fails", () => {
   const w = page(`<label>Name <input id=n></label><label>Phone <input id=p value=5493516116242></label><label>City <textarea id=c></textarea></label>`);
   revert(w, "#p");
-  const o = run(w, "fill_fields", { fields: [{ selector: "#n", text: "Ada" }, { selector: "#p", text: "9 351 611 6242" }, { selector: "#c", text: "Rosario" }] });
+  const o = run(w, "fill_fields", { fields: [{ selector: "#n", text: "Ada" }, { selector: "#p", text: "9 351 555 1234" }, { selector: "#c", text: "Rosario" }] });
   assert.deepEqual(o.results.map((r) => r.ok), [true, false, true]);
   assert.equal(o.results[1].kept, "5493516116242");
   assert.match(o.results[1].error, /previous value/);

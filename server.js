@@ -3754,10 +3754,13 @@ function fillOne(a, only) {
   const want = Math.floor(text.replace(/\s/g, "").length * 0.9);
   // Masks reformat or drop a country code, so digits also count when one ends the other.
   const digits = function (s) { return String(s || "").replace(/\D/g, ""); };
+  const sameNumber = function (s) {
+    const d = digits(s), t = digits(text);
+    return d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t);
+  };
   const landed = function (s) {
     if (text === "") return String(s || "").trim() === "";
-    const d = digits(s), t = digits(text);
-    return String(s || "").replace(/\s/g, "").length >= want || (d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t));
+    return String(s || "").replace(/\s/g, "").length >= want || sameNumber(s);
   };
   const isField = function (el) { return el.tagName === "TEXTAREA" || el.tagName === "INPUT"; };
   function isRich(el) {
@@ -3797,6 +3800,8 @@ function fillOne(a, only) {
       if (norm(v).indexOf(norm(text)) >= 0) return true;
       // Length and digit-suffix checks can't tell a revert from a landed value.
       if (v !== prior) return landed(v);
+      // A mask that puts back the number it held, in its own format, holds the text.
+      if (sameNumber(v)) return true;
       return { ok: false, el: ident(el), kept: clip(v, 60), error: ident(el) + " kept its previous value " + JSON.stringify(clip(v, 60)) + " instead of the text; the page reverted the write" };
     }
     if (exact(t, el.value)) return true;
