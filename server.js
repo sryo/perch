@@ -3298,8 +3298,9 @@ function fillOne(a) {
   // Input types whose value the browser sanitizes on set: only the exact value
   // counts, and a miss names the format the type accepts.
   const FORMATS = { date: "YYYY-MM-DD", time: "HH:MM", "datetime-local": "YYYY-MM-DDTHH:MM", month: "YYYY-MM", week: "YYYY-Www", color: "#rrggbb", number: "", range: "" };
-  const noSeconds = function (s) { return s.replace(/:00(\.0+)?$/, ""); };
+  const noSeconds = function (s) { return s.replace(/^(.*\d\d:\d\d):00(\.0+)?$/, "$1"); };
   function exact(t, v) {
+    if (t === "number" && text === "" && v === "") return true;
     if (t === "number" || t === "range") return v.trim() !== "" && Number(v) === Number(text);
     if (t === "time" || t === "datetime-local") return noSeconds(v) === noSeconds(text);
     if (t === "color") return v.toLowerCase() === text.toLowerCase();

@@ -497,6 +497,30 @@ test("fill: a time passes with or without the seconds the browser adds", () => {
   assert.equal(w.document.querySelectorAll("input")[1].value, "09:30:00");
 });
 
+test("fill: a whole-hour time or datetime passes when the browser adds seconds", () => {
+  const w = page(`<label>From <input type=time id=from></label><label>At <input type=datetime-local id=at></label>`);
+  sanitize(w, "#from", secondsRule);
+  sanitize(w, "#at", (v) => (/T\d\d:\d\d$/.test(v) ? v + ":00" : v));
+  const t = run(w, "fill", { label_pattern: "from", text: "09:00" });
+  assert.equal(t.ok, true, JSON.stringify(t));
+  assert.equal(w.document.querySelector("#from").value, "09:00:00");
+  const d = run(w, "fill", { label_pattern: "^at", text: "2026-03-15T09:00" });
+  assert.equal(d.ok, true, JSON.stringify(d));
+  assert.equal(w.document.querySelector("#at").value, "2026-03-15T09:00:00");
+  const miss = run(w, "fill", { label_pattern: "from", text: "10:00" });
+  assert.equal(miss.ok, true, JSON.stringify(miss));
+  sanitize(w, "#from", () => "10:30:00");
+  assert.equal(run(w, "fill", { label_pattern: "from", text: "10:00" }).ok, false);
+});
+
+test("fill: clearing a number field with empty text passes", () => {
+  const w = page(`<label>Salary <input type=number value=3000></label>`);
+  sanitize(w, "[type=number]", numberRule);
+  const o = run(w, "fill", { label_pattern: "salary", text: "" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(w.document.querySelector("[type=number]").value, "");
+});
+
 test("fill: text-like inputs keep the tolerant check", () => {
   const w = page(`<label>Phone <input type=tel></label><label>City <input id=city></label>`);
   // A phone mask that drops the country code and reformats.
