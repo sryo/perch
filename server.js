@@ -2421,14 +2421,18 @@ function jxaRuntime(BROWSERS, HANG) {
         if (picked && picked.value.settled) picked = null;
         if (!picked && !a.missFinal) return done(readExec(t, a.miss));
         if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : readExec(t, a.missFinal); }
-        if (picked.value.ok === false) return done(picked.value);
+        // A thrown pick never reaches the option click or the read: Node codes it.
+        if (picked.value.ok === false || picked.value.__perch_error != null) return done(picked.value);
+        const pressed = picked.value.picked;
         // A pick that doesn't show while the popup stays open gets a trusted click on the option.
         if (X && !typed && !poll(t, X.keep, 500, 50)) {
           const c = selectClick(X.option);
           if (c) return done(c);
         }
         const read = poll(t, a.read, 500, 50);
-        return done(read ? read.value : readExec(t, a.readFinal));
+        const out = read ? read.value : readExec(t, a.readFinal);
+        if (out && out.ok === false && typeof pressed === "string" && /^the page changed/.test(out.error)) out.pressed = pressed;
+        return done(out);
       });
     },
     // Plain click: evalJs's one page call, which clicks unless the element opens
@@ -5191,7 +5195,7 @@ s.pickedN = taNorm(opt.textContent);
 s.before = taNorm(taShown(s.el));
 s.compBefore = s.comp ? s.comp.value : null;
 press(opt);
-return { picked: true };
+return { picked: s.picked };
 `,
 
   // No pick. A widget that expects one (a hidden companion, its own suggestions
@@ -5201,6 +5205,7 @@ return { picked: true };
   // polls; null = keep polling, and A.final keeps text that survived.
   fill_ta_miss: TA_PICK_LIB + String.raw`
 const s = window.__perch_ta;
+if (!s) return { ok: false, kind: "typeahead", error: "the page changed while the suggestions were read; not verified" };
 const el = s.el;
 if (!s.missed) {
   s.missed = true;
@@ -5229,6 +5234,7 @@ return out;
   // re-check, since these widgets clear unpicked text on blur. A.final reports.
   fill_ta_read: TYPEAHEAD_LIB + String.raw`
 const s = window.__perch_ta;
+if (!s) return { ok: false, kind: "typeahead", error: "the page changed after the pick was pressed; not verified" };
 const el = s.el;
 const shown = taShown(el);
 const v = taNorm(shown);
@@ -5471,7 +5477,7 @@ if (opt) {
   s.multi = isMulti(s, opt);
   if (chosenAlready(s, opt, s.pickedN)) s.already = true;
   else press(opt);
-  return { picked: true };
+  return { picked: s.picked };
 }
 const box = s.input || s.filter;
 // A disabled match short of exact settles only once no search box could still turn up an enabled one.
@@ -5577,6 +5583,7 @@ return { ok: true };
   // A.keep leaves an open popup alone, so a pick that didn't show can still be clicked.
   select_read: SELECT_LIB + String.raw`
 const s = window.__perch_select;
+if (!s) return { ok: false, error: "the page changed after the pick was pressed; not verified" };
 // A popup select opened and a pick left open (a multi-select) closes again.
 if (s.opened && !s.closed && !A.keep) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
 // An input's own value first: its wrapper may hold only its label.
@@ -6563,7 +6570,7 @@ async function fillFields(fields, target, only) {
     if (halted) return halted;
     results.push(s && s.__perch_ref_miss
       ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
-      : { kind: "select", ...s });
+      : { kind: "select", ...pageFault(s, "select") });
     from = r.defer + 1;
     // The combobox ended the batch, so no page pass has re-read the fields
     // before it. A navigated page has nothing to re-read; a re-read that failed
@@ -6653,14 +6660,22 @@ async function fill(args = {}) {
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
 }
 
+// A picker phase that threw ran on a page that lost what the earlier phases
+// set up (a pick that reloaded it): coded as a miss, never passed on raw.
+function pageFault(r, kind) {
+  if (!r || typeof r !== "object" || r.__perch_error == null) return r;
+  const why = `the page changed while picking; not verified (${r.__perch_error_name || "Error"}: ${String(r.__perch_error).replace(/\s+/g, " ")})`;
+  return { ok: false, kind, error: why.length > 160 ? why.slice(0, 160) + "…" : why };
+}
+
 // The page has typed into a typeahead; its suggestions arrive asynchronously,
 // so they are polled JXA-side through select's phases rather than page timers.
-const pickSuggestion = (target) => rt("select", {
+const pickSuggestion = async (target) => pageFault(await rt("select", {
   target, tool: "fill", wait: 3000,
   pick: pageFn("fill_ta_pick", {}), miss: pageFn("fill_ta_miss", {}), missFinal: pageFn("fill_ta_miss", { final: true }), settle: 300,
   read: pageFn("fill_ta_read", {}), readFinal: pageFn("fill_ta_read", { final: true }),
   short: 1000, probe: pageFn("fill_ta_pick", { probe: true }),
-}, { lane: "slow" });
+}, { lane: "slow" }), "typeahead");
 
 // A shorter lookup query for text a lookup found nothing for: its first comma
 // part, accents folded, cut to two words when long. null when it would type
@@ -6692,7 +6707,7 @@ async function select(args = {}, prefs = null) {
   if (label_pattern) validateLabelPattern("select", label_pattern);
   const A = { ref, selector, label_pattern, text: prefs || String(text), ...(trusted ? { trusted: true } : {}) };
   const step = (name, extra = {}) => pageFn(name, { ...A, ...extra });
-  return rt("select", {
+  return pageFault(await rt("select", {
     target,
     start: step("select_start"), pick: step("select_pick"), miss: step("select_miss"),
     read: step("select_read"), readFinal: step("select_read", { final: true }),
@@ -6700,7 +6715,7 @@ async function select(args = {}, prefs = null) {
       open: step("select_open"), type: step("select_type"), keep: step("select_read", { keep: true }), check: pageFn("trusted_check", {}),
       control: pageFn("trusted_probe", { select: "control" }), option: pageFn("trusted_probe", { select: "option" }),
     } } : {}),
-  }, { lane: "slow" });
+  }, { lane: "slow" }), "select");
 }
 
 // Shared guidance lives here once instead of in every tool description.
