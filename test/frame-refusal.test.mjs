@@ -307,9 +307,11 @@ test("a trusted click by point fails closed when the page can't be checked for f
   const r = await pointClick(56 + 50, 157 + 10);
   assert.equal(r.isError, true);
   w.state.jsOff = false;
-  w.dom.document.querySelectorAll = () => { throw new Error("page broke"); };
+  w.dom.document.querySelectorAll = () => { throw new TypeError("secret-internal detail"); };
   const o = JSON.parse(text(await pointClick(56 + 50, 157 + 10)));
   assert.equal(o.ok, false);
-  assert.match(o.error, /could not check the page for embedded frames.*page broke/);
+  assert.match(o.error, /could not check the page for embedded frames.*\(TypeError\)/);
+  const s = JSON.stringify(o);
+  for (const k of ["secret-internal", "__perch_error", "stack"]) assert.ok(!s.includes(k), s);
   assert.deepEqual(w.posted, []);
 });

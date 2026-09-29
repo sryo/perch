@@ -1232,6 +1232,13 @@ function jxaRuntime(BROWSERS, HANG) {
     return noteOpened(r, W, before, href);
   }
 
+  // A perch page script's thrown error, by name only: its message and stack are
+  // page internals. A name that isn't an identifier is the page's text too.
+  function faultName(v) {
+    const n = v && v.__perch_error_name;
+    return typeof n === "string" && /^[A-Za-z_$][\w$]{0,39}$/.test(n) ? n : "Error";
+  }
+
   // wait {quiet}: timed here, where the clock isn't throttled with the page. The
   // window opens when a poll arms the observer (fresh); a poll that fails or
   // finds a new document restarts it.
@@ -1246,7 +1253,7 @@ function jxaRuntime(BROWSERS, HANG) {
       return quietFor >= a.quiet;
     }, start);
     if (!r) throw ranOut("timeout: wait timed out after " + a.timeout + "ms; the page never stayed quiet for " + a.quiet + "ms");
-    if (r.value.__perch_error) throw new Error("wait: " + r.value.__perch_error);
+    if (r.value.__perch_error) throw new Error("wait: the page script failed on this page (" + faultName(r.value) + "); nothing verified");
     return { waited: Date.now() - start, quietFor: quietFor };
   }
 
@@ -1254,7 +1261,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // placed through Accessibility when it finds the page area, else by the page's
   // estimate. A page that can't answer fails closed.
   function pointOnFrame(T, a, f) {
-    if (!f || !f.rects) return { ok: false, error: "could not check the page for embedded frames at that point, so nothing was clicked" + (f && f.__perch_error ? ": " + f.__perch_error : "") };
+    if (!f || !f.rects) return { ok: false, error: "could not check the page for embedded frames at that point, so nothing was clicked" + (f && f.__perch_error != null ? " (" + faultName(f) + ")" : "") };
     if (!f.rects.length) return null;
     let w = null;
     try { w = axPageArea(T.I, f); } catch (e) {}
@@ -6564,8 +6571,8 @@ async function fillFields(fields, target, only) {
     const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target));
     if (halted) return halted;
     if (!r || !Array.isArray(r.results)) {
-      if (!results.length) return r;
-      halt(r && r.__perch_error != null ? r.__perch_error : "fill: the page pass returned no results");
+      if (!results.length) return scriptFault("fill", r);
+      halt(r && r.__perch_error != null ? scriptFault("fill", r).error : "fill: the page pass returned no results");
       return halted;
     }
     if (r.gone) {
@@ -6672,12 +6679,21 @@ async function fill(args = {}) {
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
 }
 
-// A picker phase that threw ran on a page that lost what the earlier phases
-// set up (a pick that reloaded it): coded as a miss, never passed on raw.
+// A perch page script that threw, by error name only: its message and stack
+// are page internals the agent can't act on. eval_js's own errors never come here.
+function scriptFault(tool, r) {
+  if (!r || typeof r !== "object" || r.__perch_error == null) return r;
+  const n = r.__perch_error_name;
+  const name = typeof n === "string" && /^[A-Za-z_$][\w$]{0,39}$/.test(n) ? n : "Error";
+  return { ok: false, error: `${tool}: the page script failed on this page (${name}); nothing verified` };
+}
+
+// A picker phase that threw: a page change only when the phase saw its
+// document go, else the neutral script fault.
 function pageFault(r, kind) {
   if (!r || typeof r !== "object" || r.__perch_error == null) return r;
-  const why = `the page changed while picking; not verified (${r.__perch_error_name || "Error"}: ${String(r.__perch_error).replace(/\s+/g, " ")})`;
-  return { ok: false, kind, error: why.length > 160 ? why.slice(0, 160) + "…" : why };
+  if (r.gone) return { ok: false, kind, error: "the page changed while picking; not verified" };
+  return { ok: false, kind, error: scriptFault(kind === "typeahead" ? "fill" : kind, r).error };
 }
 
 // The page has typed into a typeahead; its suggestions arrive asynchronously,
@@ -6707,7 +6723,7 @@ async function pickTypeahead(text, target) {
   const query = r && r.ok === false && !r.candidates && !r.ambiguous && /^no suggestion matched/.test(r.error) ? taQuery(text) : null;
   if (!query) return r;
   const t = await runPage("fill", "fill_ta_retype", { query }, target);
-  return { ...(t && t.pending ? await pickSuggestion(target) : t), query };
+  return { ...(t && t.pending ? await pickSuggestion(target) : pageFault(t, "typeahead")), query };
 }
 
 // prefs: fill's ordered option list, which the tool itself never takes.

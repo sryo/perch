@@ -124,6 +124,7 @@ test("sync and async eval errors have the same shape", async () => {
   assert.equal(b.r.isError, true);
   assert.deepEqual(Object.keys(a.o).sort(), Object.keys(b.o).sort());
   assert.equal(b.o.__perch_error_name, "TypeError");
+  assert.equal(a.o.__perch_error, "x");
 });
 
 test("a trailing line comment in user script does not break the wrapper", async () => {
