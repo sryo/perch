@@ -3782,20 +3782,59 @@ function popSearch(root, lists, opts) {
 const CHECK_LIB = String.raw`
 const CHECKABLE = "input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [role=switch], [role=menuitemcheckbox]";
 function isOn(el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; }
-function checkOne(a, only) {
-  let el;
-  if (a.ref || a.selector) {
-    const r = resolveEl(a);
-    if (r.out) return r.out;
-    el = r.el;
-    if (!el.matches(CHECKABLE)) return { ok: false, error: ident(el) + " is not a checkbox or radio" };
-  } else {
-    const re = new RegExp(a.label_pattern, "i");
-    const cands = Array.from(document.querySelectorAll(CHECKABLE));
-    const hit = function (x) { return re.test(accName(x)) || re.test(hintText(x)); };
-    el = cands.filter(vis).find(hit) || cands.find(hit);
-    if (!el) return only ? { ok: true, skipped: "absent" } : { ok: false, error: "no checkbox/radio matched /" + a.label_pattern + "/i" };
+// A box wholly above or left of the document that no visible, on-page label
+// names (an sr-only input sits off-page under a label people see), or one
+// trapLike flags. honeypot() leaves checkboxes and radios to this.
+function offDoc(el) {
+  const r = el.getBoundingClientRect(), v = viewOf(el);
+  return !!(r.width || r.height) && (r.right + (v.scrollX || 0) <= 0 || r.bottom + (v.scrollY || 0) <= 0);
+}
+function checkTrap(el) {
+  if (trapLike(el)) return true;
+  if (!offDoc(el)) return false;
+  const ls = Array.from(el.labels || []).concat(el.closest("label") || []);
+  return !ls.some(function (l) { return vis(l) && !offDoc(l); });
+}
+// Best-named boxes for a.label_pattern: nameTier over accName, then over the
+// hint one tier group lower; a box wrapping another hit is that same hit.
+function checkByLabel(a, only) {
+  const pat = "/" + a.label_pattern + "/i";
+  const whole = new RegExp("^(?:" + a.label_pattern + ")$", "i"), re = new RegExp(a.label_pattern, "gi");
+  const tierOf = function (x) {
+    const t = nameTier(whole, re, accName(x));
+    if (t < 3) return t;
+    const h = hintText(x);
+    return h ? 3 + nameTier(whole, re, h) : 6;
+  };
+  const rank = function (pool) {
+    let tier = 6, hits = [];
+    pool.forEach(function (x) { const t = tierOf(x); if (t < tier) { tier = t; hits = [x]; } else if (t === tier && t < 6) hits.push(x); });
+    return hits.filter(function (x) { return !hits.some(function (o) { return o !== x && x.contains(o); }); });
+  };
+  const all = Array.from(document.querySelectorAll(CHECKABLE));
+  const real = all.filter(function (x) { return !checkTrap(x); });
+  const shown = rank(real.filter(fieldVis));
+  if (shown.length === 1) return { el: shown[0] };
+  if (shown.length > 1) {
+    const candidates = shown.slice(0, 8).map(ident);
+    return { out: only ? { ok: true, skipped: "ambiguous", candidates: candidates } : { ok: false, ambiguous: true, error: "several checkboxes/radios matched " + pat + " equally; narrow it, or use a selector or ref", candidates: candidates } };
   }
+  if (only) {
+    const trap = rank(all.filter(checkTrap))[0];
+    return { out: !rank(real).length && trap ? { ok: true, skipped: "trap", el: ident(trap) } : { ok: true, skipped: "absent" } };
+  }
+  const hidden = rank(real)[0];
+  if (hidden) { const id = ident(hidden); return { out: { ok: false, el: id, error: id + " matched " + pat + " but is hidden; use ref or selector if it is the one" } }; }
+  const trap = rank(all.filter(checkTrap))[0];
+  if (trap) { const id = ident(trap); return { out: { ok: false, el: id, error: id + " matched " + pat + " but it looks like a bot trap; leave it unchecked" } }; }
+  return { out: { ok: false, error: "no checkbox/radio matched " + pat } };
+}
+function checkOne(a, only) {
+  const r = a.ref || a.selector ? resolveEl(a) : checkByLabel(a, only);
+  if (r.out) return r.out;
+  const el = r.el;
+  if (!el.matches(CHECKABLE)) return { ok: false, error: ident(el) + " is not a checkbox or radio" };
+  if (isDisabled(el) || el.closest("fieldset[disabled]")) return { ok: false, kind: "check", el: ident(el), error: ident(el) + " is disabled; the form will not submit it" };
   const want = !!a.checked;
   const out = { ok: true, kind: "check", el: ident(el), checked: want };
   if (isOn(el) === want) return out;
