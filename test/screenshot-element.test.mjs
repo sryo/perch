@@ -466,6 +466,52 @@ for (const [name, set] of [
   });
 }
 
+// A run that gives no image is run once more within the same 3s; only a
+// second miss is refused.
+for (const [name, set] of [
+  ["exits nonzero", () => { world.state.captureExit = [1, 0]; }],
+  ["writes a file that won't load", () => { world.state.unreadable = [true, false]; }],
+  ["gives an empty image", () => { world.state.shotEmpty = [true, false]; }],
+]) {
+  test(`a moved crop whose first capture ${name} is captured by a second run, both files removed`, async () => {
+    const p = scrolled();
+    install(p);
+    const calls = spawns(2000);
+    set();
+    const { meta } = await shoot({ selector: "#t" });
+    assert.deepEqual(meta.image, { w: 632, h: 132 });
+    const [a, b] = world.state.shots;
+    assert.equal(world.state.shots.length, 2);
+    assert.notEqual(a.args.at(-1), b.args.at(-1), "each run its own file");
+    assert.deepEqual(b.crop, { x: 584, y: 544, w: 632, h: 132 });
+    assert.deepEqual(where(p), [0, 40, 37]);
+    assert.deepEqual([calls, world.state.files], [[], {}]);
+  });
+}
+
+test("a crop whose two captures both give no image is refused after exactly two runs", async () => {
+  const p = scrolled();
+  install(p);
+  const calls = spawns(2000);
+  world.state.captureExit = 1;
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: NO_CAPTURE });
+  assert.equal(world.state.shots.length, 2);
+  assert.deepEqual(where(p), [0, 40, 37]);
+  assert.deepEqual([calls, world.state.files], [[], {}]);
+});
+
+test("a capture that times out is not run again", async () => {
+  const p = scrolled();
+  install(p);
+  spawns(2000);
+  world.state.captureMs = [Infinity, 0];
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.equal(r.content[0].text, "error: timeout: screenshot: the window capture gave no image within 3s; nothing was captured");
+  assert.equal(world.state.shots.length, 1);
+  assert.deepEqual(world.state.files, {});
+});
+
 test("an unmoved crop whose capture exits nonzero is cropped by Node's screencapture and sips", async () => {
   const p = still();
   install(p);

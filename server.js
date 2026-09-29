@@ -902,7 +902,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // Node's screencapture fallback runs after the restore, so it would see the
   // page as it was, not the rect measured after the scroll.
   const SHOT_MOVED = "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it, or scroll it into view and call again";
-  // A capture run with the grant that still gave no usable image (screencapture
+  // A capture with the grant that still gave no usable image (both screencapture runs
   // failed or wrote nothing readable, or the crop or downscale failed).
   const SHOT_NO_CAPTURE = "screenshot: the window capture gave no image; nothing was captured";
   // A window the browser stopped painting (covered, hidden, or too slow) still
@@ -1023,9 +1023,9 @@ function jxaRuntime(BROWSERS, HANG) {
 
   // The window's own pixels, cropped, scaled and encoded here, so a crop happens
   // inside the runtime call that scrolled and restores. CGPreflightScreenCaptureAccess
-  // never prompts; without the grant, or on an empty image, it returns null and
+  // never prompts; without the grant it returns null and
   // Node's screencapture (which asks for the grant itself) takes over. With the
-  // grant, a run that gives no usable image returns NO_IMAGE, which Node's
+  // grant, two runs that give no usable image return NO_IMAGE, which Node's
   // screencapture and sips also take over unless the page had to scroll. With a
   // shot map it keeps only the map's box, cut before any downscale. A capture
   // that gives no image in time is a coded timeout, which the crop's restore
@@ -1043,7 +1043,6 @@ function jxaRuntime(BROWSERS, HANG) {
       if (!shot) return NO_IMAGE;
       let img = shot.img;
       let w = Number($.CGImageGetWidth(img)), h = Number($.CGImageGetHeight(img));
-      if (!w || !h) return NO_IMAGE;
       let clip = null;
       if (map) {
         clip = clipPixels(map, w, h);
@@ -1083,11 +1082,18 @@ function jxaRuntime(BROWSERS, HANG) {
   // server's REPL, or another JXA tool) has captured, every other osascript's
   // capture waits the proxy's 30s and gets no image. screencapture exits after
   // each shot, so it never holds the proxy, and one that hangs is killed at
-  // SHOT_CAPTURE_SECS. -o leaves out the window shadow.
+  // SHOT_CAPTURE_SECS. A run that ends without an image (nonzero exit, a file
+  // that won't load or is empty) is run once more inside the same
+  // SHOT_CAPTURE_SECS, so the retry never lengthens the worst case; a run
+  // killed at the deadline is not retried. -o leaves out the window shadow.
   const SHOT_CAPTURE_SECS = 3;
   const SHOT_NO_IMAGE = "timeout: screenshot: the window capture gave no image within " + SHOT_CAPTURE_SECS + "s; nothing was captured";
   let shotSeq = 0;
   function windowShot(wid) {
+    const until = Date.now() + SHOT_CAPTURE_SECS * 1000;
+    return shotRun(wid, until) || (Date.now() < until ? shotRun(wid, until) : null);
+  }
+  function shotRun(wid, until) {
     const path = $.NSTemporaryDirectory().js + "perch-" + $.NSProcessInfo.processInfo.processIdentifier + "-" + (++shotSeq) + ".png";
     const task = $.NSTask.alloc.init;
     task.executableURL = $.NSURL.fileURLWithPath("/usr/sbin/screencapture");
@@ -1095,14 +1101,14 @@ function jxaRuntime(BROWSERS, HANG) {
     task.standardOutput = $.NSFileHandle.fileHandleWithNullDevice;
     task.standardError = $.NSFileHandle.fileHandleWithNullDevice;
     if (!task.launchAndReturnError($())) return null;
-    const until = Date.now() + SHOT_CAPTURE_SECS * 1000;
     while (task.isRunning) {
       if (Date.now() >= until) { stopTask(task); dropFile(path); throw new Error(SHOT_NO_IMAGE); }
       delay(0.01);
     }
     const rep = task.terminationStatus === 0 ? $.NSBitmapImageRep.imageRepWithContentsOfFile(path) : null;
-    if (!rep || rep.isNil()) { dropFile(path); return null; }
-    return { img: rep.CGImage, path: path };
+    const img = rep && !rep.isNil() ? rep.CGImage : null;
+    if (!img || !Number($.CGImageGetWidth(img)) || !Number($.CGImageGetHeight(img))) { dropFile(path); return null; }
+    return { img: img, path: path };
   }
   // SIGTERM, then SIGKILL if it is still running after SHOT_TERM_MS, so no run
   // outlives the call to write its file after dropFile.

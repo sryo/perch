@@ -573,6 +573,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   // screencapture as an NSTask: it runs on the fake clock and writes its image
   // when done; a terminated one writes nothing.
   const tasks = {};
+  const perRun = (v, i) => (Array.isArray(v) ? v[Math.min(i, v.length - 1)] : v);
   const fakeTask = () => {
     let shot = null, doneAt = null;
     const task = {
@@ -581,9 +582,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         bump("screencapture");
         if (state.captureThrows) throw new Error("launch failed");
         const args = task.arguments, wid = Number(args[args.indexOf("-l") + 1]);
-        shot = { args: [task.executableURL.path, ...args], wid };
+        shot = { args: [task.executableURL.path, ...args], wid, run: state.shots.length };
         state.shots.push(shot);
-        doneAt = clock.t + (state.captureMs ?? 0);
+        doneAt = clock.t + (perRun(state.captureMs, shot.run) ?? 0);
         return true;
       },
       processIdentifier: 3131,
@@ -591,10 +592,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         if (shot.killed || clock.t < doneAt) return !shot.killed;
         if (!shot.written) {
           shot.written = true;
-          task.terminationStatus = state.captureExit ?? 0;
+          task.terminationStatus = perRun(state.captureExit, shot.run) ?? 0;
           const c = cgEntries.find((e) => (e.wid ?? 1) === shot.wid);
           const s = state.shotScale ?? 2;
-          state.files[shot.args[shot.args.length - 1]] = c && !state.shotEmpty ? { w: (c.w ?? 800) * s, h: (c.h ?? 600) * s, shot } : { w: 0, h: 0, shot };
+          const file = c && !perRun(state.shotEmpty, shot.run) ? { w: (c.w ?? 800) * s, h: (c.h ?? 600) * s, shot } : { w: 0, h: 0, shot };
+          if (perRun(state.unreadable, shot.run)) file.unreadable = true;
+          state.files[shot.args[shot.args.length - 1]] = file;
         }
         return false;
       },
@@ -739,7 +742,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // state.captureThrows: the launch throws. state.captureMs: each capture
       // takes that long; Infinity never finishes. state.captureExit: the run
       // exits with that status, its file still written. state.unreadable: the
-      // file is written but won't load. state.ignoreTerm: SIGTERM is ignored,
+      // file is written but won't load. Each of captureMs, captureExit,
+      // shotEmpty and unreadable may be an array, one entry per run in order,
+      // the last repeating; state.shots[i].run is that index. state.ignoreTerm: SIGTERM is ignored,
       // only SIGKILL (recorded in state.sigkills) stops it. state.files holds
       // what is written and not yet removed.
       CGPreflightScreenCaptureAccess: () => { bump("CGPreflight"); return state.capture !== false; },
@@ -768,7 +773,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       CGBitmapContextCreateImage: (ctx) => (ctx.img && !state.scaleFail ? { w: ctx.w, h: ctx.h, shot: ctx.img.shot } : { w: 0, h: 0 }),
       NSBitmapImageFileTypeJPEG: 3,
       NSBitmapImageFileTypePNG: 4,
-      NSBitmapImageRep: { imageRepWithContentsOfFile: (path) => (state.files[path] ? (state.unreadable ? { isNil: () => true } : { isNil: () => false, CGImage: state.files[path] }) : null), alloc: { initWithCGImage: (img) => ({
+      NSBitmapImageRep: { imageRepWithContentsOfFile: (path) => (state.files[path] ? (state.files[path].unreadable ? { isNil: () => true } : { isNil: () => false, CGImage: state.files[path] }) : null), alloc: { initWithCGImage: (img) => ({
         representationUsingTypeProperties: (type, props) => {
           img.shot.encoded = { type, props: props ? JSON.parse(JSON.stringify(props.js)) : null, w: img.w, h: img.h };
           const bytes = Buffer.alloc(33);

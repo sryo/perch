@@ -128,6 +128,30 @@ test("a runtime capture that gives no image in 3s is killed and refused as a cod
   assert.deepEqual([calls, world.state.files], [[], {}], "no Node fallback, no file left");
 });
 
+test("a runtime capture retried after a miss shares the first run's 3s: a late miss then a slow run is one 3s timeout", async () => {
+  canary();
+  world.state.captureExit = [1, 0];
+  world.state.captureMs = [2800, 2800];
+  const calls = spawns();
+  const t0 = world.clock.t;
+  const r = await handleCall("screenshot", {});
+  assert.equal(r.content[0].text, "error: timeout: screenshot: the window capture gave no image within 3s; nothing was captured");
+  assert.ok(world.clock.t - t0 < 3100, `took ${world.clock.t - t0}ms`);
+  const [a, b] = world.state.shots;
+  assert.deepEqual([world.state.shots.length, a.killed, b.killed], [2, undefined, true]);
+  assert.deepEqual([calls, world.state.files], [[], {}]);
+});
+
+test("a runtime capture that misses once is run again and kept, nothing spawned from Node", async () => {
+  canary();
+  world.state.captureExit = [1, 0];
+  const calls = spawns();
+  const { meta } = await shoot({ maxWidth: 0 });
+  assert.deepEqual(meta.image, { w: 1600, h: 1240 });
+  assert.equal(world.state.shots.length, 2);
+  assert.deepEqual([calls, world.state.files], [[], {}]);
+});
+
 test("a runtime capture that finishes within 3s is kept", async () => {
   canary();
   world.state.captureMs = 2500;
@@ -136,7 +160,7 @@ test("a runtime capture that finishes within 3s is kept", async () => {
   assert.deepEqual(meta.image, { w: 1600, h: 1240 });
 });
 
-test("a runtime capture that exits nonzero or won't load falls back to screencapture, its file removed", async () => {
+test("a runtime capture that exits nonzero or won't load twice falls back to screencapture, both files removed", async () => {
   for (const set of [() => { world.state.captureExit = 1; }, () => { world.state.unreadable = true; }]) {
     canary();
     set();
@@ -144,17 +168,17 @@ test("a runtime capture that exits nonzero or won't load falls back to screencap
     const { meta } = await shoot({});
     assert.deepEqual(calls.map((c) => c[0]), ["screencapture"]);
     assert.deepEqual(meta.image, { w: 1000, h: 1000 });
-    assert.equal(world.state.shots.length, 1);
-    assert.deepEqual(world.state.files, {}, "the failed run's file is removed");
+    assert.equal(world.state.shots.length, 2);
+    assert.deepEqual(world.state.files, {}, "the failed runs' files are removed");
   }
 });
 
-test("an empty capture falls back to screencapture", async () => {
+test("two empty captures fall back to screencapture", async () => {
   canary();
   world.state.shotEmpty = true;
   const calls = spawns(1000);
   const { r, meta } = await shoot({ format: "jpeg" });
-  assert.equal(world.counts.screencapture, 1);
+  assert.equal(world.counts.screencapture, 2);
   assert.deepEqual(calls.map((c) => c[0]), ["screencapture"]);
   assert.ok(calls[0].includes("jpg"), calls[0].join(" "));
   assert.equal(r.content[0].mimeType, "image/jpeg");
