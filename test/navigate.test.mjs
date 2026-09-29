@@ -208,6 +208,67 @@ for (const [name, setup, url, code] of [
   });
 }
 
+// avis reviews local prototypes as file:// pages. A file: page loads another
+// file: URL itself, so moving between them (or reloading one) stays in the
+// background; a file: target from any other page still needs the fallback.
+const fileFixture = () => ({
+  browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "file:///tmp/proto/a.html", id: 7 }] }])],
+  cg: [{ owner: "Google Chrome" }],
+});
+
+test("navigate on Chrome: a file: page loads another file: url from page JS, behind another app, without raise", async () => {
+  install(away(fileFixture()));
+  world.state.commitMs = 60;
+  const o = JSON.parse((await handleCall("navigate", { url: "file:///tmp/proto/b.html" })).content[0].text);
+  assert.deepEqual(o, { ok: true, url: "file:///tmp/proto/b.html", waited: true, tabId: "chrome:7" });
+  assert.deepEqual(paths(), [["assign", "Google Chrome", "file:///tmp/proto/b.html"]]);
+  assert.equal(world.counts["tab.url="], undefined);
+  assert.deepEqual(world.log.filter((l) => l[0] === "activate"), []);
+  assert.deepEqual(world.cg.map((c) => c.owner), ["Finder", "Google Chrome"]);
+});
+
+test("navigate on Chrome: a file: page reloads itself from page JS, behind another app", () => {
+  install(away(fileFixture()));
+  const r = navWith({ url: "file:///tmp/proto/a.html" });
+  assert.equal(r.waited, true);
+  assert.equal(r.warning, undefined);
+  assert.deepEqual(paths(), [["assign", "Google Chrome", "file:///tmp/proto/a.html"]]);
+});
+
+test("navigate on Chrome: a file: page whose assign throws is refused naming raise:true, nothing set", () => {
+  install(away(fileFixture()));
+  world.page("Google Chrome", 0, 0).location.assign = () => { throw new Error("SecurityError"); };
+  assert.throws(() => navWith({ url: "file:///tmp/proto/b.html" }), (e) => /^tab_not_visible: /.test(e.message) && OPT_IN.test(e.message));
+  assert.equal(world.counts["tab.url="], undefined);
+  assert.deepEqual(world.cg.map((c) => c.owner), ["Finder", "Google Chrome"]);
+});
+
+test("navigate on Chrome: a file: load the page silently drops is not ok, and sets nothing", async () => {
+  install(away(fileFixture()));
+  world.page("Google Chrome", 0, 0).location.assign = () => {};
+  const res = await handleCall("navigate", { url: "file:///tmp/proto/b.html" });
+  const o = JSON.parse(res.content[0].text);
+  assert.equal(o.ok, false, res.content[0].text);
+  assert.match(o.error, /^load_failed: the tab stayed on file:\/\/\/tmp\/proto\/a\.html.*raise:true/);
+  assert.equal(world.counts["tab.url="], undefined);
+  assert.deepEqual(world.cg.map((c) => c.owner), ["Finder", "Google Chrome"]);
+});
+
+test("navigate on Chrome: a file: page with raise:true still loads a file: url", () => {
+  install(away(fileFixture()));
+  const r = navWith({ url: "file:///tmp/proto/b.html", raise: true });
+  assert.equal(r.waited, true);
+  assert.equal(world.page("Google Chrome", 0, 0).location.href, "file:///tmp/proto/b.html");
+  assert.equal(world.counts["tab.url="], undefined);
+});
+
+test("navigate on Chrome: a file: url from an http page behind another app still needs raise:true", () => {
+  install(away(fixture()));
+  assert.throws(() => navWith({ url: "file:///tmp/proto/b.html" }), (e) => /^tab_not_visible: .*about:blank itself/.test(e.message) && OPT_IN.test(e.message));
+  assert.equal(world.counts["tab.url="], undefined);
+  assert.equal(world.counts["tab.execute"] || 0, 0);
+});
+
 test("navigate on Arc: a background tab with its window already in front has its url set without raise:true", () => {
   install({ ...arcFixture(), cg: [{ owner: "Arc" }] });
   const r = arcNavigate(1);

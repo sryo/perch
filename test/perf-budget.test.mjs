@@ -519,6 +519,17 @@ test("navigate on Chrome costs a fixed count of Apple Events for a load the firs
   assert.equal(appleEvents(), 2 + 2 + 2 + 1 + 2, breakdown());
 });
 
+// A file: page loading another file: url takes the same page path, at the same cost.
+test("navigate from a file: page to a file: url costs the same Apple Events as an http navigate", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "file:///tmp/p/a.html", title: "a", id: 7 }] }])], cg: [{ owner: "Finder", pid: 50 }, { owner: "Google Chrome" }] });
+  const h = (await listed("Google Chrome"))[0].tabId;
+  world.reset();
+  const { o } = await call("navigate", { url: "file:///tmp/p/b.html", target: { tabId: h } });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.waited, true);
+  assert.equal(appleEvents(), 2 + 2 + 2 + 1 + 2, breakdown());
+});
+
 // fill {fields} on native fields is one page call, whatever the order-dependent
 // recheck finds. A batch ending on a custom combobox pays select's own polls,
 // plus one recheck pass for the fields an earlier pass landed.
