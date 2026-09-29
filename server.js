@@ -4346,16 +4346,18 @@ function snapVis(el) {
   return ls.some(vis);
 }
 // Typed text a typeahead has not taken: the hidden input in its own box, where
-// a pick lands, is still empty.
+// a pick lands, is still empty. An empty field is ruled out before the typeahead
+// checks, which query its ancestors.
 function unpicked(el) {
-  if (el.readOnly || !isTypeahead(el) || !el.value.trim() || !snapVis(el)) return false;
+  if (el.readOnly || typeof el.value !== "string" || !el.value.trim() || !isTypeahead(el) || !snapVis(el)) return false;
   const c = taParts(el).comp;
   return !!c && !c.value;
 }
 const FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
-function reqEmpty(el) {
+// loose: unpicked(el), when the caller already has it.
+function reqEmpty(el, loose) {
   if (!el.required && attr(el, "aria-required") !== "true") return false;
-  if (String(el.value || el.textContent || "").trim()) return unpicked(el);
+  if (String(el.value || el.textContent || "").trim()) return loose == null ? unpicked(el) : loose;
   return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
 }
 // A file input is a field to fill too (through file_upload). An input that is
@@ -4367,7 +4369,8 @@ function census(f) {
     if (el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0) return false;
     return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
   });
-  return { fields: fields, loose: fields.filter(unpicked), empty: fields.filter(reqEmpty) };
+  const loose = fields.filter(unpicked);
+  return { fields: fields, loose: loose, empty: fields.filter(function (el) { return reqEmpty(el, loose.indexOf(el) >= 0); }) };
 }
 `;
 const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
