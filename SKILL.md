@@ -33,13 +33,13 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 ## Snapshot format
 
 ```
-# {"url":"https://x/apply","title":"Apply","ready":"complete","count":37,"focus":"4","dialogs":["Cookies"],"form":{"fields":14,"requiredEmpty":3}}
+# {"url":"https://x/apply","title":"Apply","ready":"complete","count":37,"focus":"4","dialogs":["Cookies"],"form":{"fields":14,"requiredEmpty":3,"unpicked":1}}
 1 heading "Apply" level=1
 2 textbox "Email" name="email" type="email" value="a@b.c" required
 3 combobox "Country" options=["Argentina","Brazil"] value="AR"
 ```
 
-Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`. Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick). Refs die on re-snapshot or navigation.
+Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`. Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick). Refs die on re-snapshot or navigation. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
 
 ## Results
 
@@ -48,7 +48,7 @@ Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`. 
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change; `option` also answers a radio group by question.
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
 - Page errors: `isError` with `__perch_error`, `__perch_error_name`.
-- Other errors start with a code (server instructions list them). Also `window_ambiguous`: move or resize a same-frame window; `timeout`: re-list, retry once; if it may have run, check first.
+- Other errors start with a code (server instructions list them). Also `window_offscreen`: window minimized or on another Space; `no_browser`: none running, or no window; `window_ambiguous`: move or resize a same-frame window; `timeout`: re-list, retry once; if it may have run, check first.
 
 ## Gotchas
 
