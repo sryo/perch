@@ -5469,6 +5469,27 @@ s.picked = clip(textOf(opt), 80);
 s.pickedN = fold(taNorm(textOf(opt)));
 s.before = taNorm(taShown(s.el));
 s.ownBefore = taOwn(s.el);
+// The labels the option renders as its own leading unit, which a control may
+// show alone: the text up to a child on its own line (block, or before a <br>),
+// or up to a separate element that opens with a separator (", Texas"). A
+// leading block child's own units count too.
+s.cuts = [];
+(function lead(n, d) {
+  let t = "";
+  // A row flex or grid container blockifies its children without putting them on lines.
+  const cs = getComputedStyle(n), row = /grid/.test(cs.display) || (/flex/.test(cs.display) && !/column/.test(cs.flexDirection));
+  const add = function (x) { x = fold(taNorm(x)); if (x && x !== s.pickedN && s.cuts.indexOf(x) < 0 && s.cuts.length < 3) s.cuts.push(x); };
+  for (let k = n.firstChild; k; k = k.nextSibling) {
+    if (k.nodeType !== 1) { t += k.textContent; continue; }
+    if (k.tagName === "BR") return add(t);
+    const own = !row && /^(block|flex|grid|list-item|table)/.test(getComputedStyle(k).display);
+    if (own && !taNorm(k.textContent)) continue;
+    if (own && taNorm(t)) return add(t);
+    if (own) { add(textOf(k)); if (d < 3) lead(k, d + 1); return; }
+    if (taNorm(t) && /^\s*[,;:|(\u00b7\u2013\u2014-]/.test(k.textContent)) return add(t);
+    t += k.textContent;
+  }
+})(opt, 0);
 s.compBefore = s.comp ? s.comp.value : null;
 s.openBefore = attr(s.el, "aria-expanded") === "true";
 press(opt);
@@ -5516,14 +5537,13 @@ const el = s.el;
 const shown = taShown(el);
 const v = taNorm(shown);
 // Text the box holds may carry the pick among more. An emptied control's value,
-// or one of its chips, must be the pick, or a new value that is the pick cut at
-// a word end (its label without a region line), never the pick plus more; a
-// chip it held before the press never counts.
+// or one of its chips, must be the pick, or a leading unit the option itself
+// renders (s.cuts: its label without a region line), never a shorter sibling
+// option or the pick plus more; a chip it held before the press never counts.
 const pk = s.pickedN;
 const own = el.value ? [] : taOwn(el);
 const shows = el.value ? fold(v).indexOf(pk) >= 0 : own.some(function (t) {
-  const cut = !!t && pk.indexOf(t) === 0 && !/[\p{L}\p{N}]/u.test(pk.charAt(t.length));
-  return (t === pk && !own.chips) || (cut && s.ownBefore.indexOf(t) < 0);
+  return (t === pk && !own.chips) || ((t === pk || s.cuts.indexOf(t) >= 0) && s.ownBefore.indexOf(t) < 0);
 });
 const seen = !!v && (shows || (!!el.value && v.indexOf(taNorm(s.text)) >= 0));
 // The typed text still showing proves nothing unless the press moved something:
