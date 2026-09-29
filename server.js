@@ -3473,11 +3473,21 @@ function fillOne(a) {
     if (!crowd.has(p)) crowd.set(p, Array.prototype.filter.call(p.querySelectorAll(EDITABLES), fillable).length);
     return crowd.get(p);
   };
+  // A placeholder names another field when it is a short name ("Name",
+  // "Company name") sharing no word with the pattern, not a prompt for an
+  // answer ("Type your response", "Start typing...").
+  const PROMPT = /\b(your|type|typing|enter|write|add|answer|response|here|something|optional)\b/i;
+  const src = a.label_pattern.toLowerCase();
+  const namesOther = function (ph) {
+    const words = ph.trim().split(/\s+/).filter(Boolean);
+    if (!words.length || words.length > 4 || PROMPT.test(ph) || re.test(ph)) return false;
+    return !words.some(function (w) { w = w.toLowerCase().replace(/[^a-z0-9]/g, ""); return w.length > 2 && src.indexOf(w) >= 0; });
+  };
   // Surrounding text (an ancestor's, never the page body's) claims a field only
-  // as its section label: never over the field's own label or placeholder, and
-  // in a container holding other fields only when it is the text laid out just
-  // before the field (nearText). Fields passed over in a small section are
-  // offered back as candidates.
+  // as its section label: never over the field's own label or a placeholder
+  // naming another field, and in a container holding other fields only when it
+  // is the text laid out just before the field (nearText). Fields passed over in
+  // a small section are offered back as candidates.
   const passed = [];
   deepAll(EDITABLES).forEach(function (el) {
     if (!fillable(el)) return;
@@ -3491,7 +3501,7 @@ function fillOne(a) {
       let p = el, hit = false;
       for (let i = 0; i < 6 && p && !/^(BODY|HTML)$/.test(p.tagName); i++, p = p.parentElement) if (nearHit(p)) { hit = true; break; }
       if (!hit) return;
-      if (p !== el && (own || attr(el, "placeholder") || (fieldsIn(p) > 1 && !re.test(nearText(el))))) {
+      if (p !== el && (own || namesOther(attr(el, "placeholder")) || (fieldsIn(p) > 1 && !re.test(nearText(el))))) {
         if (fieldsIn(p) <= 5) passed.push(el);
         return;
       }

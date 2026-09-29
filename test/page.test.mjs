@@ -196,6 +196,31 @@ test("fill by label still fills a lone unlabelled textarea under its heading", (
   }
 });
 
+test("fill by label fills a lone field under its question whose placeholder only asks for an answer", () => {
+  for (const ph of ["Type your response", "Your answer", "Type here", "Enter your answer", "Add a cover letter or anything else you want to share", "Start typing...", "Write something"]) {
+    for (const tag of ["textarea", "input"]) {
+      const w = page(`<form><label>Name <input></label><div><h3>Cover letter</h3><${tag} placeholder="${ph}"${tag === "textarea" ? "></textarea>" : ">"}</div></form>`);
+      const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+      assert.equal(o.ok, true, ph + " " + tag + " " + JSON.stringify(o));
+      const [name, field] = w.document.querySelectorAll("input, textarea");
+      assert.equal(name.value, "");
+      assert.equal(field.value, "Dear team");
+    }
+  }
+});
+
+test("fill by label never claims a lone field whose placeholder names something else", () => {
+  for (const html of [
+    `<form><h3>Cover letter</h3><input placeholder="Name"></form>`,
+    `<div><h3>Cover letter</h3><input placeholder="Company name"></div>`,
+  ]) {
+    const w = page(html);
+    const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+    assert.equal(o.ok, false, html + " " + JSON.stringify(o));
+    assert.equal(w.document.querySelector("input").value, "");
+  }
+});
+
 test("fill by label fails closed on a hidden field and offers the reveal hint", () => {
   const w = page(`<form><label>Name <input></label><div><label for=cl>Cover letter</label><textarea id=cl style="display:none"></textarea><button type=button>Enter manually</button></div></form>`);
   const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
