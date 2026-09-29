@@ -595,6 +595,140 @@ test("trusted_fill_background: a typeahead is left pending with its state record
   assert.equal(dom.__perch_ta.comp, $(dom, "#selected-location"));
 });
 
+
+// ---- trusted entries in fill {fields} ----
+
+const LOC_FORM = LOCATION.replace("</form>", "<label>Email <input name=email></label></form>");
+const TRUSTED_ENTRIES = [{ label_pattern: "name", text: "Ada" }, { label_pattern: "location", text: "Rosario", trusted: true }, { label_pattern: "email", text: "a@b.test" }];
+const evalCount = (dom) => { const ev = dom.eval.bind(dom), n = { calls: 0 }; dom.eval = (js) => { n.calls++; return ev(js); }; return n; };
+
+test("fill {fields}: a trusted entry types through the editing command and picks its suggestion, in order", async () => {
+  const { dom, world } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
+  const o = await fill({ fields: TRUSTED_ENTRIES });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(o.results.map((r) => r.kind), ["plain", "typeahead", "plain"]);
+  assert.equal(o.results[1].trusted, true);
+  assert.equal(o.results[0].trusted, undefined);
+  assert.equal(o.results[1].selected, "Rosario, Santa Fe, Argentina");
+  assert.equal($(dom, "#selected-location").value, "loc-0");
+  assert.equal($(dom, "[name=name]").value, "Ada");
+  assert.equal($(dom, "[name=email]").value, "a@b.test");
+  assert.equal(dom.lookups, 1);
+  assert.equal(world.counts["win.activeTabIndex="], undefined);
+  assert.equal(world.posted.length, 0);
+});
+
+test("fill {fields}: the same entry without trusted misses a trusted-only lookup, and the rest land", async () => {
+  const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
+  const o = await fill({ fields: TRUSTED_ENTRIES.map(({ trusted, ...f }) => f) });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.results.map((r) => r.ok), [true, false, true]);
+  assert.equal(dom.lookups, 0);
+});
+
+test("fill {fields}: raise, top-level trusted/raise, and trusted without text refuse before any page call", async () => {
+  const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
+  const n = evalCount(dom);
+  const at = (i, x) => TRUSTED_ENTRIES.map((e, k) => (k === i ? { ...e, ...x } : e));
+  assert.match(await fill({ fields: at(2, { raise: true }) }), /^error: fill: fields\[2\]: raise is not taken inside fields; fill that field alone with raise:true/);
+  assert.match(await fill({ fields: at(1, { raise: true }) }), /fields\[1\]: raise/);
+  assert.match(await fill({ fields: TRUSTED_ENTRIES, trusted: true }), /fill: `fields` takes trusted per entry, and no raise/);
+  assert.match(await fill({ fields: TRUSTED_ENTRIES, raise: true }), /fill: `fields` takes trusted per entry, and no raise/);
+  assert.match(await fill({ fields: at(0, { text: "", trusted: true }) }), /fields\[0\]: clearing \(text:""\) does not take trusted/);
+  assert.match(await fill({ fields: [{ label_pattern: "agree", checked: true, trusted: true }] }), /fields\[0\]: trusted takes `text`/);
+  assert.match(await fill({ fields: [{ label_pattern: "c", option: "x", trusted: true }] }), /fields\[0\]: trusted takes `text`/);
+  assert.match(await fill({ fields: [{ label_pattern: "c", text: "x", trusted: "yes" }] }), /fields\[0\]: `trusted` must be a boolean/);
+  assert.equal(n.calls, 0);
+  assert.equal($(dom, "[name=name]").value, "");
+});
+
+test("fill {fields}: a trusted entry on a rich editor fails its slot and later entries land", async () => {
+  const { dom } = onPage(LOC_FORM.replace("<form>", "<form><div id=bio contenteditable=true></div>"), TRUSTED_ONLY_JS());
+  const o = await fill({ fields: [{ selector: "#bio", text: "Hi", trusted: true }, { label_pattern: "email", text: "a@b.test" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results[0].ok, false);
+  assert.match(o.results[0].error, /fill \{trusted:true\} supports plain inputs\/textareas only/);
+  assert.equal(o.results[1].ok, true);
+  assert.equal($(dom, "#bio").textContent, "");
+  assert.equal($(dom, "[name=email]").value, "a@b.test");
+});
+
+test("fill {fields}: a trusted entry naming a bot trap is refused or skipped exactly as an untrusted one", async () => {
+  const TRAP = LOC_FORM.replace("<form>", `<form><label for=hp>Website</label><input id=hp name=website tabindex=-1 autocomplete=off style="opacity:0">`);
+  for (const only_empty of [false, true]) {
+    const out = [];
+    for (const trusted of [false, true]) {
+      const { dom } = onPage(TRAP, TRUSTED_ONLY_JS());
+      const o = await fill({ fields: [{ label_pattern: "website", text: "x.test", ...(trusted ? { trusted } : {}) }, { label_pattern: "email", text: "a@b.test" }], only_empty });
+      assert.equal($(dom, "#hp").value, "", JSON.stringify(o));
+      assert.equal($(dom, "[name=email]").value, "a@b.test");
+      out.push(o);
+    }
+    assert.deepEqual(out[1], out[0]);
+    if (only_empty) assert.equal(out[0].results[0].skipped, "trap");
+    else assert.match(out[0].results[0].error, /bot trap/);
+  }
+});
+
+test("fill {fields, only_empty}: a prefilled trusted entry is skipped with no trusted write", async () => {
+  const { dom } = onPage(LOC_FORM.replace("<label>Email <input name=email>", "<label>Email <input name=email value=old@b.test>"), TRUSTED_ONLY_JS());
+  let edits = 0;
+  const ex = dom.document.execCommand;
+  dom.document.execCommand = (...a) => { edits++; return ex(...a); };
+  const o = await fill({ fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }, { label_pattern: "name", text: "Ada" }], only_empty: true });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual([o.results[0].skipped, o.results[0].value], ["has value", "old@b.test"]);
+  assert.equal(edits, 0);
+  assert.equal($(dom, "[name=email]").value, "old@b.test");
+  assert.equal($(dom, "[name=name]").value, "Ada");
+});
+
+test("fill {fields}: a trusted entry last still gets the final re-read of the fields before it", async () => {
+  const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS() + `
+    document.querySelector('.dropdown-container').addEventListener('mousedown', () => { document.querySelector('[name=name]').value = ''; }, true);`);
+  const o = await fill({ fields: [{ label_pattern: "name", text: "Ada" }, { label_pattern: "location", text: "Rosario", trusted: true }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results[0].ok, false);
+  assert.match(o.results[0].error, /was cleared after a later field changed; fill it again$/);
+  assert.equal(o.results[1].ok, true);
+  assert.equal(o.results[1].trusted, true);
+  assert.equal($(dom, "#selected-location").value, "loc-0");
+});
+
+test("fill {fields}: a plain trusted entry lands through the editing command", async () => {
+  const { dom, world } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
+  const o = await fill({ fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }, { label_pattern: "name", text: "Ada" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual([o.results[0].kind, o.results[0].trusted, o.results[0].el], ["plain", true, 'textbox "Email"']);
+  assert.equal($(dom, "[name=email]").value, "a@b.test");
+  assert.equal($(dom, "[name=name]").value, "Ada");
+  assert.equal(world.counts["win.activeTabIndex="], undefined);
+});
+
+test("fill {fields}: a trusted entry whose editing command gives untrusted input is not claimed trusted", async () => {
+  const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS().replace("Object.defineProperty(ev, 'isTrusted', { value: true });", ""));
+  const o = await fill({ fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }, { label_pattern: "name", text: "Ada" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual([o.results[0].ok, o.results[0].trusted], [false, false]);
+  assert.match(o.results[0].error, /did not produce the requested trusted input/);
+  assert.equal($(dom, "[name=name]").value, "Ada");
+});
+
+test("trusted_fill_background {held}: the field fill_fields held is used once; a changed page is not filled", () => {
+  const dom = page(LOC_FORM);
+  dom.eval(TRUSTED_ONLY_JS().replace(/later\(/g, "(fn => fn)("));
+  const o = run(dom, "fill_fields", { fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }] });
+  assert.equal(o.defer, 0);
+  assert.equal($(dom, "[name=email]").value, "");
+  const s = run(dom, "trusted_fill_background", { held: true, text: "a@b.test" });
+  assert.equal(s.ok, true, JSON.stringify(s));
+  assert.equal($(dom, "[name=email]").value, "a@b.test");
+  const gone = { ok: false, error: "the page changed before the trusted entry; not filled" };
+  assert.deepEqual(run(dom, "trusted_fill_background", { held: true, text: "x" }), gone);
+  run(dom, "fill_fields", { fields: [{ label_pattern: "name", text: "Ada", trusted: true }] });
+  $(dom, "[name=name]").remove();
+  assert.deepEqual(run(dom, "trusted_fill_background", { held: true, text: "Ada" }), gone);
+});
 // A combobox whose own listbox offers suggestions but whose pick handler runs
 // only `onPick` (nothing by default); it keeps whatever text is typed on blur.
 const INERT = `<form><label for=c>City</label><input id=c role=combobox aria-autocomplete=list aria-controls=c-list><ul id=c-list role=listbox></ul>

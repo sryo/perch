@@ -3445,6 +3445,12 @@ function isField(el) {
   if (el.tagName === "INPUT") return !/^(submit|button|image|reset|hidden)$/i.test(el.type);
   return /^(SELECT|TEXTAREA)$/.test(el.tagName) || /^(combobox|textbox)$/.test(attr(el, "role"));
 }
+// Text nodes joined by spaces, so "Question?<span>*</span>" reads "Question? *".
+function sibText(sib) {
+  const parts = [], tw = sib.ownerDocument.createTreeWalker(sib, 4);
+  while (parts.length < 40 && tw.nextNode()) parts.push(tw.currentNode.nodeValue);
+  return clip(parts.join(" "), 120);
+}
 // Question text laid out before an unlabeled field: the nearest earlier sibling
 // of the field or of one of its 3 nearest ancestors, not crossing a list item,
 // fieldset or form, and stopping at a sibling that holds a control (that text
@@ -3456,11 +3462,7 @@ function nearText(el) {
     for (let k = 0; sib && k < 3; k++, sib = sib.previousElementSibling) {
       if (sib.matches(FIELD_CTL) || sib.querySelector(FIELD_CTL)) return "";
       if (!vis(sib)) continue;
-      // Text nodes joined by spaces, so "Question?<span>*</span>" reads "Question? *".
-      const parts = [];
-      const tw = sib.ownerDocument.createTreeWalker(sib, 4);
-      while (parts.length < 40 && tw.nextNode()) parts.push(tw.currentNode.nodeValue);
-      const t = clip(parts.join(" "), 120);
+      const t = sibText(sib);
       if (t) return t;
     }
   }
@@ -4056,10 +4058,7 @@ function groupQuestion(box, opts) {
       k++;
       if (sib.matches(FIELD_CTL) || sib.querySelector(FIELD_CTL)) return "";
       if (!vis(sib)) continue;
-      const parts = [];
-      const tw = sib.ownerDocument.createTreeWalker(sib, 4);
-      while (parts.length < 40 && tw.nextNode()) parts.push(tw.currentNode.nodeValue);
-      const t = clip(parts.join(" "), 120);
+      const t = sibText(sib);
       if (t) return t;
     }
   }
@@ -4371,6 +4370,7 @@ function fillOne(a, only, onLand) {
     return landed(textOf(root));
   }
   function tryFill(el, host) {
+    if (a.trusted) { window.__perch_ta = { el: el, held: true }; return { pending: true }; }
     if (isField(el) && text !== "" && isTypeahead(el)) return startTypeahead(el);
     if (isField(el)) {
       const r = setPlain(el);
@@ -6088,9 +6088,16 @@ return A.reset || !moves.length ? null : { moves: moves };
 `,
 
   // Background trusted fill through the editing command (EDIT_LIB).
+  // A.held: the field a fill_fields pass resolved for a trusted entry and
+  // held on __perch_ta, taken once.
   trusted_fill_background: TYPEAHEAD_LIB + EDIT_LIB + String.raw`
 let el;
-if (A.ref || A.selector) {
+if (A.held) {
+  const h = window.__perch_ta;
+  el = h && h.held && h.el;
+  if (!el || !el.isConnected) return { ok: false, error: "the page changed before the trusted entry; not filled" };
+  h.held = false;
+} else if (A.ref || A.selector) {
   const r = resolveEl(A);
   if (r.out) return r.out;
   el = r.el;
@@ -6103,7 +6110,7 @@ if (A.ref || A.selector) {
   el = fields.filter(vis).find(hit) || fields.find(hit);
   if (!el) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
 }
-if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, error: "fill {trusted:true} supports plain inputs/textareas only" };
+if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, el: ident(el), error: "fill {trusted:true} supports plain inputs/textareas only" };
 if (el.disabled || el.readOnly) return { ok: false, error: ident(el) + " is disabled or read-only" };
 // A typeahead keeps only a picked suggestion: Node picks after the lookup.
 const ta = isTypeahead(el) && taParts(el);
@@ -6594,6 +6601,10 @@ function validateFields(fields) {
     if (!f || (!f.ref && !f.selector && !f.label_pattern)) throw new Error(`${at} requires \`ref\`, \`selector\`, or \`label_pattern\``);
     if (VALUE_KEYS.filter((k) => f[k] != null).length !== 1) throw new Error(`${at} takes exactly one of \`text\`, \`checked\`, \`option\``);
     if (f.checked != null && typeof f.checked !== "boolean") throw new Error(`${at}: \`checked\` must be a boolean`);
+    if (f.raise) throw new Error(`${at}: raise is not taken inside fields; fill that field alone with raise:true`);
+    if (f.trusted != null && typeof f.trusted !== "boolean") throw new Error(`${at}: \`trusted\` must be a boolean`);
+    if (f.trusted && f.text == null) throw new Error(`${at}: trusted takes \`text\`, not checked/option`);
+    if (f.trusted && f.text === "") throw new Error(`${at}: clearing (text:"") does not take trusted`);
     if (Array.isArray(f.option)) {
       if (!f.option.length) throw new Error(`${at}: \`option\` list is empty`);
       if (f.option.some((o) => typeof o !== "string")) throw new Error(`${at}: \`option\` list takes only strings`);
@@ -6607,8 +6618,8 @@ function validateFields(fields) {
 // through `select`, so the whole form is one tool call and stays in order.
 async function fillFields(fields, target, only) {
   validateFields(fields);
-  const A = fields.map(({ ref, selector, label_pattern, text, checked, option }) =>
-    ({ ref, selector, label_pattern, text: text == null ? text : String(text), checked, option: option == null ? option : Array.isArray(option) ? option.map(String) : String(option) }));
+  const A = fields.map(({ ref, selector, label_pattern, text, checked, option, trusted }) =>
+    ({ ref, selector, label_pattern, text: text == null ? text : String(text), checked, option: option == null ? option : Array.isArray(option) ? option.map(String) : String(option), ...(trusted ? { trusted } : {}) }));
   const results = [];
   const counts = () => {
     const skipped = results.filter((x) => x.skipped).length, unverified = results.filter((x) => x.unverified).length;
@@ -6656,10 +6667,16 @@ async function fillFields(fields, target, only) {
     watch = !!r.watch;
     if (r.defer == null) break;
     const f = A[r.defer];
-    const s = await step(() => f.text != null ? pickTypeahead(f.text, target) : selectPrefs(f, target));
+    // A trusted entry types into the field this pass resolved and held, never
+    // one trusted_fill_background finds by its own looser label match.
+    const s = await step(async () => {
+      if (!f.trusted) return f.text != null ? pickTypeahead(f.text, target) : selectPrefs(f, target);
+      const t = await runPage("fill", "trusted_fill_background", { held: true, text: f.text }, target);
+      return t && t.pending ? { ...await pickSuggestion(target), trusted: true } : t;
+    });
     if (halted) return halted;
-    results.push(s && s.__perch_ref_miss
-      ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
+    results.push(f.trusted ? { kind: "plain", ...pageFault(s, "fill") }
+      : s && s.__perch_ref_miss ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
       : { kind: "select", ...pageFault(s, "select") });
     from = r.defer + 1;
     // The combobox ended the batch, so no page pass has re-read the fields
@@ -6719,7 +6736,7 @@ async function fill(args = {}) {
   if (only_empty && fields == null && fields_path == null) throw new Error("fill: only_empty takes `fields` or `fields_path`");
   if (fields != null || fields_path != null) {
     if (text != null || text_path != null || ref || selector || label_pattern) throw new Error("fill: pass `fields` OR a single field, not both");
-    if (trusted || raise) throw new Error("fill: `fields` does not take trusted/raise; fill trusted fields one at a time");
+    if (trusted || raise) throw new Error("fill: `fields` takes trusted per entry, and no raise");
     if (fields_path != null) fields = await readFieldsFile(fields_path);
     return fillFields(fields, target, !!only_empty);
   }
@@ -6936,8 +6953,8 @@ const TOOLS = [
     dialog: { type: ["boolean", "string"] },
     target: TARGET,
   }, ["key"]),
-  tool("fill", "Fill inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies it landed: {ok,kind,el,len}; empty `text` clears. `fields`: many at once. `trusted`: trusted input, no key focus; `raise:true`: foreground keys.", {
-    fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]; option may be a list, in order" },
+  tool("fill", "Fill inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies it landed: {ok,kind,el,len}; empty `text` clears. `trusted`: trusted input, no key focus; `raise:true`: foreground keys.", {
+    fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option, trusted?}]; option may be a list, in order" },
     fields_path: { type: "string", description: "JSON file of fields." },
     only_empty: { type: "boolean", description: "skip absent/set fields" },
     text: { type: "string" },
