@@ -4246,15 +4246,19 @@ function taRoot(el) {
 }
 // A styled select's wrapper box (react-select and kin: "x__control", "x-control").
 const ctlOf = function (el) { return el.parentElement && el.parentElement.closest('[class*="__control"], [class*="-control"]'); };
-// What such a box shows as picked: its single value, else its chips' labels.
-function shownValue(el) {
+// What such a box shows as picked, unclipped: its single value (marked single), else its chips' labels.
+function ctlParts(el) {
   const c = ctlOf(el);
-  if (!c) return "";
+  if (!c) return [];
   const sv = c.querySelector('[class*="single-value"], [class*="singleValue"]');
-  if (sv) return clip(textOf(sv), 200);
+  if (sv) { const one = [textOf(sv)]; one.single = true; return one; }
   let chips = c.querySelectorAll('[class*="multi-value__label"], [class*="multiValue__label"]');
   if (!chips.length) chips = c.querySelectorAll('[class*="multi-value"]:not([class*="__"]), [class*="multiValue"]:not([class*="__"])');
-  return clip(Array.prototype.map.call(chips, function (x) { return clip(textOf(x), 60); }).filter(Boolean).join(", "), 200);
+  return Array.prototype.map.call(chips, textOf);
+}
+function shownValue(el) {
+  const p = ctlParts(el);
+  return p.single ? clip(p[0], 200) : clip(p.map(function (x) { return clip(x, 60); }).filter(Boolean).join(", "), 200);
 }
 const TA_POP = "[class*=dropdown], [class*=autocomplete], [class*=suggest], [class*=typeahead], [class*=menu], [role=listbox]";
 function taParts(el) {
@@ -4340,6 +4344,15 @@ function taMatch(opts, text) {
     if (hits.length) return { hits: hits, exact: i === 0 };
   }
   return { hits: [], exact: false };
+}
+// What an emptied control box shows, folded as pickedN is: its value or each
+// chip, else its whole text. chips: a multi-value box.
+function taOwn(el) {
+  const p = ctlParts(el);
+  const ctl = el.closest('.select__control, [class*="-control"], [class*="__control"]');
+  const out = (p.length ? p : [ctl ? textOf(ctl) : ""]).map(function (t) { return fold(taNorm(t)); });
+  out.chips = p.length > 0 && !p.single;
+  return out;
 }
 `;
 
@@ -5359,9 +5372,10 @@ if (!opt) {
   s.sig = sig;
   return sig && s.same >= 8 && (s.tied || s.answered) ? { settled: true } : null;
 }
-s.picked = clip(opt.textContent, 80);
-s.pickedN = taNorm(opt.textContent);
+s.picked = clip(textOf(opt), 80);
+s.pickedN = fold(taNorm(textOf(opt)));
 s.before = taNorm(taShown(s.el));
+s.ownBefore = taOwn(s.el);
 s.compBefore = s.comp ? s.comp.value : null;
 s.openBefore = attr(s.el, "aria-expanded") === "true";
 press(opt);
@@ -5408,14 +5422,23 @@ if (!s) return { ok: false, kind: "typeahead", error: "the page changed after th
 const el = s.el;
 const shown = taShown(el);
 const v = taNorm(shown);
-// Text the box holds may carry the pick among more; a control's own value must be it.
-const seen = !!v && (el.value ? v.indexOf(s.pickedN) >= 0 || v.indexOf(taNorm(s.text)) >= 0 : v === s.pickedN);
+// Text the box holds may carry the pick among more. An emptied control's value,
+// or one of its chips, must be the pick, or a new value that is the pick cut at
+// a word end (its label without a region line), never the pick plus more; a
+// chip it held before the press never counts.
+const pk = s.pickedN;
+const own = el.value ? [] : taOwn(el);
+const shows = el.value ? fold(v).indexOf(pk) >= 0 : own.some(function (t) {
+  const cut = !!t && pk.indexOf(t) === 0 && !/[\p{L}\p{N}]/u.test(pk.charAt(t.length));
+  return (t === pk && !own.chips) || (cut && s.ownBefore.indexOf(t) < 0);
+});
+const seen = !!v && (shows || (!!el.value && v.indexOf(taNorm(s.text)) >= 0));
 // The typed text still showing proves nothing unless the press moved something:
 // the field, the hidden companion, or the widget's own list closing, which
 // counts only once the field shows the picked option.
 const compChanged = !!s.comp && s.comp.value !== s.compBefore;
 const listGone = !taOptions(s).length || (s.openBefore && attr(el, "aria-expanded") === "false");
-const moved = v !== s.before || compChanged || (listGone && v.indexOf(s.pickedN) >= 0);
+const moved = v !== s.before || compChanged || (listGone && shows);
 // A companion that held this same value before (re-picking on an edit form)
 // can't change, so the widget closing its list is the proof there.
 const filled = !s.comp || (!!s.comp.value && (compChanged || listGone));

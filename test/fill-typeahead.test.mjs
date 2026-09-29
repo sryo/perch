@@ -836,6 +836,72 @@ test("fill {trusted}: a control that shows something other than the pick fails c
   assert.equal($(dom, "#loc-input").value, "");
 });
 
+// The location field with other suggestions, and a pick that shows `show` (an
+// expression over li) in place of the option's text.
+const locVariant = (items, show = "li.textContent") => [LOC_CTL.replace(/data-typed="[^"]*"/, `data-typed="${items.join("|")}"`),
+  LOC_CTL_JS.replace("shown.textContent = li.textContent;", `shown.textContent = ${show};`)];
+
+test("fill {trusted}: a two-line option whose value span shows only its main label is verified", async () => {
+  const [html, js] = locVariant(["Córdoba, Argentina", "Rosario, Argentina"], "li.firstChild.textContent");
+  for (const fields of [false, true]) {
+    const { dom } = onPage(html, js.replace(`'<li role="option">' + x + "</li>"`, `'<li role="option">' + x.replace(', ', '<small style="display:block">') + "</small></li>"`));
+    const one = { label_pattern: "location", text: "Córdoba", trusted: true };
+    const o = fields ? await fill({ fields: [one, { label_pattern: "name", text: "Ada" }] }) : await fill(one);
+    const r = fields ? o.results[0] : o;
+    assert.equal(r.ok, true, JSON.stringify(o));
+    assert.equal($(dom, ".loc__value").textContent, "Córdoba");
+  }
+});
+
+test("fill {trusted}: a multi-value control already holding a chip verifies the chip it gains", async () => {
+  const [html, js] = locVariant(["Córdoba, Argentina", "Rosario, Argentina"]);
+  const chips = html.replace('<span class="loc__value placeholder">Type a city</span>', '<span class="loc__multi-value__label">Rosario, Argentina</span>');
+  const add = "box.insertBefore(Object.assign(document.createElement('span'), { className: 'loc__multi-value__label', textContent: li.textContent }), input);";
+  const { dom } = onPage(chips, js.replace("shown.textContent = li.textContent;", add).replace('shown.className = "loc__value";', ""));
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina", trusted: true });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(dom.document.querySelectorAll(".loc__multi-value__label").length, 2);
+});
+
+test("fill {trusted}: a multi-value control that shows only its earlier chip fails closed", async () => {
+  const [html, js] = locVariant(["Córdoba", "Córdoba, Argentina"]);
+  const chips = html.replace('<span class="loc__value placeholder">Type a city</span>', '<span class="loc__multi-value__label">Córdoba</span><span class="loc__multi-value__label">Mendoza</span>');
+  const { dom } = onPage(chips, js.replace("shown.textContent = li.textContent;", "").replace('shown.className = "loc__value";', ""));
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina", trusted: true });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /the field doesn't show it/);
+});
+
+test("fill {trusted}: a single value that already showed the pick's main label before the press fails closed", async () => {
+  const [html, js] = locVariant(["Córdoba, Argentina", "Rosario, Argentina"]);
+  const prior = html.replace('<span class="loc__value placeholder">Type a city</span>', '<span class="loc__single-value">Córdoba</span>');
+  const { dom } = onPage(prior, js.replace("shown.textContent = li.textContent;", "").replace('shown.className = "loc__value";', ""));
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina", trusted: true });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /the field doesn't show it/);
+  assert.equal($(dom, ".loc__single-value").textContent, "Córdoba");
+});
+
+test("fill {trusted}: an option over 200 characters in a single-value span is verified", async () => {
+  const long = "Córdoba, " + Array(30).fill("Barrio Alto").join(" ");
+  const [html, js] = locVariant([long, "Rosario, Argentina"]);
+  const { dom } = onPage(html.replace("loc__value placeholder", "loc__single-value placeholder"), js.replace('shown.className = "loc__value";', 'shown.className = "loc__single-value";'));
+  const o = await fill({ label_pattern: "location", text: "Córdoba, Barrio", trusted: true });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal($(dom, ".loc__single-value").textContent, long);
+});
+
+test("fill {trusted}: a value span showing another option, a cut word or extra text fails closed", async () => {
+  for (const show of ["'Córdoba, Spain'", "'Córd'", "'Córdoba, Argentina, Spain'", "li.textContent + ' (closed)'"]) {
+    const [html, js] = locVariant(["Córdoba, Argentina", "Rosario, Argentina"], show);
+    const { dom } = onPage(html, js);
+    const o = await fill({ label_pattern: "location", text: "Córdoba, Argentina", trusted: true });
+    assert.equal(o.ok, false, show + " " + JSON.stringify(o));
+    assert.match(o.error, /^picked "Córdoba, Argentina" but the field doesn't show it/);
+    assert.equal($(dom, "#loc-input").value, "");
+  }
+});
+
 // A combobox whose own listbox offers suggestions but whose pick handler runs
 // only `onPick` (nothing by default); it keeps whatever text is typed on blur.
 const INERT = `<form><label for=c>City</label><input id=c role=combobox aria-autocomplete=list aria-controls=c-list><ul id=c-list role=listbox></ul>
