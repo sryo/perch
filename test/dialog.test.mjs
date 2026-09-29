@@ -474,6 +474,16 @@ test("without the daemon, a timeout is checked once and rewritten to dialog_open
   assert.match((await call("eval_js", { script: "return 1" })).t, /^error: timeout:/);
 });
 
+test("a short wait whose polls a dialog left unanswered still reports dialog_open", async () => {
+  install([confirmBox()]);
+  deps.dialogs = async (target) => dialogsOf(target);
+  const { t } = await call("wait", { expression: "false", timeout: 1000, target: A });
+  assert.match(t, /^error: dialog_open: a confirm \("Delete the draft\?"\)/);
+  install([confirmBox()]);
+  deps.dialogs = async () => [];
+  assert.equal((await call("wait", { expression: "false", timeout: 1000, target: A })).t, "error: timeout: wait timed out after 1000ms; the page stopped answering");
+});
+
 // The world's daemon, but a call answers after as long as it took on the world's
 // clock, and abort() fails it early as the real daemon's does.
 const onClock = (w) => {

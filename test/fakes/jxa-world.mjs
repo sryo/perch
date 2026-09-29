@@ -709,6 +709,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       }) } },
       CGWindowListCopyWindowInfo: () => {
         bump("CGWindowList");
+        // state.onCgList(): a test's hook as the window list is read (time spent resolving).
+        if (state.onCgList) state.onCgList();
         // A dialog's child window sits directly above its parent window.
         const rows = [];
         for (const e of cgEntries) {

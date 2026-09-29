@@ -328,3 +328,16 @@ test("window geometry is one Apple Event, none on Arc", () => {
     assert.deepEqual({ ...world.geom }, reads, owner);
   }
 });
+
+// A wait that times out spends one bounded execute per poll that fits in its
+// timeout (every 50ms from the first, none at the deadline), and nothing else.
+// The fake counts each bounded execute twice (NSAppleScript and tab.execute).
+test("a timed-out wait costs the polls that fit in its timeout, no more", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(2, "c") }])], cg: [{ owner: "Google Chrome" }] });
+  const h = (await listed("Google Chrome")).find((t) => t.url === "https://c1.test/").tabId;
+  world.reset();
+  const { t } = await call("wait", { expression: "false", timeout: 300, target: { tabId: h } });
+  assert.equal(t, "error: timeout: wait timed out after 300ms");
+  assert.equal(world.counts.NSAppleScript, 6, breakdown());
+  assert.equal(appleEvents(), 2 * 6, breakdown());
+});

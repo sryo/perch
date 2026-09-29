@@ -610,23 +610,34 @@ function jxaRuntime(BROWSERS) {
   // the next run's cap, so a slow read still answers while a navigation costs
   // one POLL_EXEC_SECS. `step`: `js` has side effects, so a dropped reply ends it.
   // `done(v)`, if given, decides instead and sees every run, a failed one as null.
-  function poll(t, js, timeout, interval, step, done) {
-    const start = Date.now();
-    let cap = POLL_EXEC_SECS;
+  // `start` (default now) is when the caller's clock began: the deadline is
+  // start + timeout, and the first run happens even if setup already spent it.
+  function poll(t, js, timeout, interval, step, done, start) {
+    if (start == null) start = Date.now();
+    const deadline = start + timeout;
+    let cap = POLL_EXEC_SECS, silent = false;
+    pollSilent = false;
     for (;;) {
       let v = null;
+      silent = false;
       // A step run gets the full cap even near the deadline: cutting it short would
       // turn a pick that answered null in time into "may have run".
-      const secs = step ? STEP_EXEC_SECS : Math.max(0.1, Math.min(cap, (timeout - (Date.now() - start)) / 1000));
+      const secs = step ? STEP_EXEC_SECS : Math.max(0.1, Math.min(cap, (deadline - Date.now()) / 1000));
       try { v = pollValue(step ? stepExec(t, js, secs) : pollExec(t, js, secs)); } catch (e) {
         if (isStale(e) || (step && isNoReply(e))) throw e;
-        if (isNoReply(e)) cap *= 2;
+        if (isNoReply(e)) { cap *= 2; silent = true; }
       }
       if (done ? done(v) : v !== null && v !== false) return { value: v, waited: Date.now() - start };
-      if (Date.now() - start >= timeout) return null;
-      delay(interval / 1000);
+      const left = deadline - Date.now();
+      if (left > 0) delay(Math.min(interval, left) / 1000);
+      if (Date.now() >= deadline) { pollSilent = silent; return null; }
     }
   }
+  // Whether the last poll ran out with its last run unanswered: the page may be
+  // blocked (a dialog), not merely not there yet. Node probes for a dialog then.
+  let pollSilent = false;
+  const UNANSWERED = "; the page stopped answering";
+  const ranOut = function (msg) { return new Error(msg + (pollSilent ? UNANSWERED : "")); };
 
 
   // Window geometry plus the pid and CGWindowID that screencapture -l and CGEvent
@@ -912,8 +923,8 @@ function jxaRuntime(BROWSERS) {
       if (!v || v.busy || v.fresh) last = now;
       quietFor = now - last;
       return quietFor >= a.quiet;
-    });
-    if (!r) throw new Error("timeout: wait timed out after " + a.timeout + "ms; the page never stayed quiet for " + a.quiet + "ms");
+    }, start);
+    if (!r) throw ranOut("timeout: wait timed out after " + a.timeout + "ms; the page never stayed quiet for " + a.quiet + "ms");
     if (r.value.__perch_error) throw new Error("wait: " + r.value.__perch_error);
     return { waited: Date.now() - start, quietFor: quietFor };
   }
@@ -1665,8 +1676,8 @@ function jxaRuntime(BROWSERS) {
       let ran = true;
       try { pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000))); }
       catch (e) { if (!isNoReply(e)) throw e; ran = false; }
-      const r = poll(t, a.poll, Math.max(0, a.timeout - (Date.now() - start)), 50);
-      if (!r) throw new Error("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again; background tabs throttle timers, so avoid page sleeps or activate the tab");
+      const r = poll(t, a.poll, a.timeout, 50, false, null, start);
+      if (!r) throw ranOut("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again; background tabs throttle timers, so avoid page sleeps or activate the tab");
       if (r.value.__perch_gone) throw new Error("timeout: eval_js (awaitPromise) lost its result before the promise settled" + MAY_HAVE_RUN);
       return r.value;
     },
@@ -1684,10 +1695,10 @@ function jxaRuntime(BROWSERS) {
       else {
         const t = pageTarget(a.target, "wait");
         if (q) delay(interval / 1000);
-        r = poll(t, a.js, Math.max(0, a.timeout - (Date.now() - start)), interval);
+        r = poll(t, a.js, a.timeout, interval, false, null, start);
         if (r) r.waited = Date.now() - start;
       }
-      if (!r) throw new Error("timeout: wait timed out after " + a.timeout + "ms");
+      if (!r) throw ranOut("timeout: wait timed out after " + a.timeout + "ms");
       if (r.value && r.value.__perch_error) throw new Error("wait: " + r.value.__perch_error);
       return r;
     },
@@ -2372,6 +2383,11 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
 // Without the daemon it looks once, when the call times out. Entries that never
 // run page JS, and the dialog entries themselves, are not watched.
 const DIALOG_PROBE_MS = 1500, DIALOG_REPROBE_MS = 2000;
+// Timeouts that may mean page JS was blocked: the REPL killed, or an execute
+// whose reply never came. A wait, wait {quiet} or awaitPromise that ran out
+// while the page answered its polls can't be a dialog and is not probed; one
+// whose last poll went unanswered says so (the runtime's UNANSWERED) and is.
+const HUNG = /^timeout: (osascript gave up after|page JS got no reply within|page JS failed without a reply|the \w+ ran but its result got no reply|the page didn't answer|.*; the page stopped answering)/;
 const DIALOG_BLIND = new Set(["listTabs", "newTab", "closeTab", "activate", "shotGeom", "shot", "dialogs", "answerDialog"]);
 
 const probeDialogs = async (target) => JSON.parse(await jxaOneShot(`JSON.stringify(__perch.dialogs(${JSON.stringify({ target })}))`, { timeout: 5000 }));
@@ -2397,7 +2413,7 @@ async function watchDialogs(target, lane, run) {
   try { return await run(token); }
   catch (e) { err = e; }
   finally { done = true; clearTimeout(timer); }
-  const hit = /^timeout:/.test(err.message) && await findDialog(target);
+  const hit = HUNG.test(err.message) && await findDialog(target);
   throw hit ? dialogOpen(hit) : err;
 }
 
