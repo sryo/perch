@@ -3847,6 +3847,14 @@ function checkTrap(el) {
   const ls = Array.from(el.labels || []).concat(el.closest("label") || []);
   return !ls.some(function (l) { return vis(l) && !offDoc(l); });
 }
+// A checkbox or radio hidden under a visible, on-page <label> it names: a styled
+// box (display:none input, the label draws it), clicked like a shown one.
+// Never an untabbable or aria-hidden input, nor one whose label is hidden.
+function labelShown(el) {
+  if (el.tagName !== "INPUT" || !/^(checkbox|radio)$/i.test(el.type || "")) return false;
+  if (attr(el, "tabindex") === "-1" || el.closest("[aria-hidden=true]")) return false;
+  return Array.prototype.some.call(el.labels || [], function (l) { return vis(l) && !offDoc(l) && !l.closest("[aria-hidden=true]"); });
+}
 // Best-named boxes for a.label_pattern: nameTier over accName, then over the
 // hint one tier group lower; a box wrapping another hit is that same hit.
 function checkByLabel(a, only) {
@@ -3865,7 +3873,7 @@ function checkByLabel(a, only) {
   };
   const all = Array.from(document.querySelectorAll(CHECKABLE));
   const real = all.filter(function (x) { return !checkTrap(x); });
-  const shown = rank(real.filter(fieldVis));
+  const shown = rank(real.filter(function (x) { return fieldVis(x) || labelShown(x); }));
   if (shown.length === 1) return { el: shown[0] };
   if (shown.length > 1) {
     const candidates = shown.slice(0, 8).map(ident);
@@ -3886,7 +3894,7 @@ function checkOne(a, only) {
   if (r.out) return r.out;
   const el = r.el;
   if (!el.matches(CHECKABLE)) return { ok: false, error: ident(el) + " is not a checkbox or radio" };
-  if (isDisabled(el) || el.closest("fieldset[disabled]")) return { ok: false, kind: "check", el: ident(el), error: ident(el) + " is disabled; the form will not submit it" };
+  if (isDisabled(el) || el.closest("fieldset[disabled]")) return only ? { ok: true, kind: "check", el: ident(el), skipped: "disabled" } : { ok: false, kind: "check", el: ident(el), error: ident(el) + " is disabled; the form will not submit it" };
   const want = !!a.checked;
   const out = { ok: true, kind: "check", el: ident(el), checked: want };
   if (isOn(el) === want) return out;

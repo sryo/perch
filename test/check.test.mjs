@@ -112,3 +112,60 @@ test("check: a disabled box refuses by selector, by label and inside a disabled 
   assert.match(already.error, /disabled/);
   assert.equal(on(w, "#dc"), true);
 });
+
+// The common styled box: the input is display:none and a visible <label for>
+// draws the box people click.
+const STYLED = `<style>.sr{display:none}</style>
+<input type=checkbox class=sr id=c><label for=c>I accept the terms</label>`;
+
+test("check: a display:none box under a visible label is checked", () => {
+  const w = page(STYLED);
+  const r = check(w, { label_pattern: "accept the terms", checked: true });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.checked, true);
+  assert.equal(on(w, "#c"), true);
+});
+
+test("check: only_empty checks a display:none box under a visible label", () => {
+  const w = page(STYLED);
+  const r = check(w, { label_pattern: "accept the terms", checked: true }, true);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.skipped, undefined);
+  assert.equal(on(w, "#c"), true);
+});
+
+test("check: a display:none radio under a visible label is checked", () => {
+  const w = page(`<input type=radio name=p id=a style="display:none"><label for=a>Monthly plan</label>
+<input type=radio name=p id=b style="display:none"><label for=b>Yearly plan</label>`);
+  const r = check(w, { label_pattern: "yearly", checked: true });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(on(w, "#b"), true);
+});
+
+test("check: a hidden honeypot box under a visible label is still refused", () => {
+  for (const [html, only] of [
+    [`<input type=checkbox id=c style="display:none" tabindex=-1><label for=c>Subscribe</label>`, "absent"],
+    [`<div aria-hidden=true><input type=checkbox id=c style="display:none"></div><label for=c>Subscribe</label>`, "absent"],
+    [`<input type=checkbox id=c style="display:none"><label for=c>Leave this blank: subscribe</label>`, "trap"],
+    [`<input type=checkbox id=c style="display:none"><label for=c style="display:none">Subscribe</label>`, "absent"],
+    [`<input type=checkbox id=c style="display:none"><label for=c data-rect="-5000,0,100,20">Subscribe</label>`, "absent"],
+  ]) {
+    const w = page(html);
+    const r = check(w, { label_pattern: "subscribe", checked: true });
+    assert.equal(r.ok, false, html);
+    assert.equal(on(w, "#c"), false, html);
+    const s = check(w, { label_pattern: "subscribe", checked: true }, true);
+    assert.equal(s.ok, true, html);
+    assert.equal(s.skipped, only, html);
+    assert.equal(on(w, "#c"), false, html);
+  }
+});
+
+test("check: only_empty skips a disabled box", () => {
+  const w = page(`<label><input type=checkbox id=d disabled> Remember me</label>`);
+  for (const f of [{ selector: "#d" }, { label_pattern: "remember" }]) {
+    const r = check(w, { ...f, checked: true }, true);
+    assert.deepEqual(r, { ok: true, kind: "check", el: `checkbox "Remember me"`, skipped: "disabled" }, JSON.stringify(f));
+  }
+  assert.equal(on(w, "#d"), false);
+});
