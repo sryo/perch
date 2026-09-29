@@ -13,23 +13,36 @@ const saved = { fast: DAEMONS.fast, slow: DAEMONS.slow, exec: deps.exec };
 afterEach(() => Object.assign(DAEMONS, { fast: saved.fast, slow: saved.slow }) && Object.assign(deps, { exec: saved.exec }));
 
 // A page whose #t sits at `from` (client CSS px, below the viewport by default)
-// and at `rect` once scrolled into view, inside #box, a scroller at 37; the
+// and at `rect` once scrolled into view, inside #box, scrolled to 37; the
 // window is scrolled to (0, 40). scrollIntoView scrolls both, as a browser
-// would, and records how it was asked.
-function scrolled({ rect = "100,200,300,50", from = "100,1200,300,50", iw = 800, ih = 620 } = {}) {
-  const dom = page(`<div id=box><p id=t data-rect="${from}">x</p></div><p id=u>u</p>`);
+// would, unless #t already sits at `rect` (fully visible: a no-op), and
+// records how it was asked. `boxRect` makes #box an overflow:auto scroller
+// with that rect as its client area.
+function scrolled({ rect = "100,200,300,50", from = "100,1200,300,50", iw = 800, ih = 620, boxRect = null } = {}) {
+  const dom = page(`<div id=box${boxRect ? ` style="overflow:auto" data-rect="${boxRect}"` : ""}><p id=t data-rect="${from}">x</p></div><p id=u>u</p>`);
   for (const [k, v] of Object.entries({ innerWidth: iw, innerHeight: ih })) {
     Object.defineProperty(dom, k, { value: v, configurable: true });
   }
   const box = dom.document.getElementById("box"), t = dom.document.getElementById("t");
+  if (boxRect) {
+    const [, , w, h] = boxRect.split(",").map(Number);
+    Object.defineProperty(box, "clientWidth", { value: w });
+    Object.defineProperty(box, "clientHeight", { value: h });
+  }
   dom.scrollTo({ left: 0, top: 40, behavior: "instant" });
   box.scrollTop = 37;
   dom.intoView = [];
-  t.scrollIntoView = function (o) { dom.intoView.push(o); t.setAttribute("data-rect", rect); dom.scrollTo({ left: 0, top: 900, behavior: "instant" }); box.scrollTop = 0; };
+  t.scrollIntoView = function (o) {
+    dom.intoView.push(o);
+    if (t.getAttribute("data-rect") === rect) return;
+    t.setAttribute("data-rect", rect);
+    dom.scrollTo({ left: 0, top: 900, behavior: "instant" });
+    box.scrollTop = 0;
+  };
   return { dom, box, t };
 }
 const where = ({ dom, box }) => [dom.scrollX, dom.scrollY, box.scrollTop];
-// An element already wholly inside the viewport, which shot_clip leaves in place.
+// An element already fully visible, which scrollIntoView leaves in place.
 const still = (opts = {}) => scrolled({ ...opts, from: opts.rect || "100,200,300,50" });
 
 
@@ -42,19 +55,31 @@ test("shot_clip scrolls an element outside the viewport the least way in and rep
   assert.deepEqual(c, { ok: true, x: 100, y: 200, w: 300, h: 50, iw: 800, ih: 620, moved: true });
 });
 
-test("shot_clip leaves an element wholly inside the viewport where it is, even on a scrolled page", () => {
+test("shot_clip: a fully visible element is not moved, even on a scrolled page", () => {
   for (const rect of ["100,200,300,50", "0,0,800,620"]) {
     const p = still({ rect });
     const c = run(p.dom, "shot_clip", { selector: "#t" });
-    assert.deepEqual(p.dom.intoView, [], rect);
+    assert.equal(p.dom.intoView.length, 1, rect);
     assert.equal(c.moved, false);
     assert.deepEqual(where(p), [0, 40, 37]);
     assert.deepEqual(run(p.dom, "shot_restore", {}), { ok: true });
   }
-  for (const from of ["100,-10,300,50", "700,200,300,50", "100,600,300,50"]) {
+});
+
+test("shot_clip: an element still clipped by a scrolling container after the scroll is refused, the scroll restored", () => {
+  // #box shows 50..450 x 100..400; the element ends at 430 even after scrolling.
+  const p = scrolled({ boxRect: "50,100,400,300", rect: "100,380,300,50" });
+  const c = run(p.dom, "shot_clip", { selector: "#t" });
+  assert.deepEqual(c, { ok: false, error: "screenshot: the element is clipped by a scrolling container; nothing was captured", restore: true });
+});
+
+test("shot_clip: an element larger than the viewport is refused before anything scrolls", () => {
+  for (const from of ["0,100,900,50", "0,100,300,700"]) {
     const p = scrolled({ from });
-    run(p.dom, "shot_clip", { selector: "#t" });
-    assert.equal(p.dom.intoView.length, 1, from);
+    const c = run(p.dom, "shot_clip", { selector: "#t" });
+    assert.equal(c.ok, false);
+    assert.match(c.error, /^screenshot: the element is larger than the viewport \(\d+x\d+ CSS px in 800x620\); nothing was captured; screenshot without ref or selector$/);
+    assert.deepEqual([p.dom.intoView, where(p)], [[], [0, 40, 37]]);
   }
 });
 
@@ -172,6 +197,26 @@ test("when Accessibility finds no page area the crop is refused, with the scroll
   const calls = spawns(2000);
   const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
   assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: "screenshot: Accessibility shows no page area matching this tab's viewport; nothing was captured; screenshot without ref or selector" });
+  assert.deepEqual([calls, world.state.shots], [[], []]);
+  assert.deepEqual(where(p), [0, 40, 37]);
+});
+
+test("an element scrolled out of view inside an overflow box is scrolled in, cropped there, and the box put back", async () => {
+  const p = scrolled({ boxRect: "50,100,400,300", from: "100,20,300,50", rect: "100,200,300,50" });
+  install(p);
+  spawns(2000);
+  const { meta } = await shoot({ selector: "#t" });
+  assert.equal(p.dom.intoView.length, 1);
+  assert.deepEqual(meta.clip, { x: 584, y: 544, w: 632, h: 132 });
+  assert.deepEqual(where(p), [0, 40, 37]);
+});
+
+test("an element a scrolling container still clips is refused, with every scroll position restored", async () => {
+  const p = scrolled({ boxRect: "50,100,400,300", rect: "100,380,300,50" });
+  install(p);
+  const calls = spawns(2000);
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: "screenshot: the element is clipped by a scrolling container; nothing was captured" });
   assert.deepEqual([calls, world.state.shots], [[], []]);
   assert.deepEqual(where(p), [0, 40, 37]);
 });

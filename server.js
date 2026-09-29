@@ -910,6 +910,10 @@ function jxaRuntime(BROWSERS, HANG) {
     if (!trusted) return { ok: false, error: SHOT_NO_AX };
     const c = parseExec(t, a.clip);
     if (!c || c.ok !== true) {
+      if (c && c.restore) {
+        try { exec(t, a.restore); } catch (e) {}
+        return { ok: false, error: c.error };
+      }
       if (!threw(c)) return c;
       try { exec(t, a.restore); } catch (e) {}
       // PerchStaleRef stays raw for handleCall, which maps it to the call's ref miss.
@@ -6341,8 +6345,10 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
   // What a frame click needs from the page: its URL and viewport.
   viewport: "return { url: location.href, iw: innerWidth, ih: innerHeight };",
 
-  // screenshot {ref|selector}: the element's client rect in view. One wholly
-  // inside the viewport stays put; any other is scrolled the least way in.
+  // screenshot {ref|selector}: the element's client rect in view, scrolled the
+  // least way in (a no-op when it is fully visible). One larger than the
+  // viewport, or still clipped by a scrolling ancestor, is refused; the second
+  // with restore:true, since the scroll already happened.
   // Every scroll position that can move (each ancestor's, across shadow roots,
   // and the window's) is kept on window.__perch_shot for shot_restore, and only
   // once the element is known to have a box.
@@ -6353,13 +6359,25 @@ const el = r.el;
 if (el.ownerDocument !== document) return { ok: false, error: ident(el) + " lies in an embedded frame; screenshot without ref or selector" };
 const b = el.getBoundingClientRect();
 if (!b.width || !b.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
+const iw = innerWidth, ih = innerHeight;
+if (b.width > iw || b.height > ih) return { ok: false, error: "screenshot: the element is larger than the viewport (" + Math.round(b.width) + "x" + Math.round(b.height) + " CSS px in " + iw + "x" + ih + "); nothing was captured; screenshot without ref or selector" };
 const els = [];
 for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
 const st = window.__perch_shot = { els: els, x: window.scrollX, y: window.scrollY };
-const iw = innerWidth, ih = innerHeight;
-if (!(b.left >= 0 && b.top >= 0 && b.right <= iw && b.bottom <= ih)) try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); } catch (e) {}
+try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); } catch (e) {}
 const c = el.getBoundingClientRect();
 const moved = window.scrollX !== st.x || window.scrollY !== st.y || els.some(function (e) { return e[0].scrollLeft !== e[1] || e[0].scrollTop !== e[2]; });
+// An ancestor that clips its overflow and still hides part of the element: the
+// viewport would show that ancestor's other content where the element sits.
+const cut = els.some(function (e) {
+  const n = e[0];
+  if (n === document.documentElement || n === document.body) return false;
+  const cs = getComputedStyle(n);
+  if (!/auto|scroll|hidden|clip/.test(cs.overflow + " " + cs.overflowX + " " + cs.overflowY)) return false;
+  const a = n.getBoundingClientRect(), x0 = a.left + (n.clientLeft || 0), y0 = a.top + (n.clientTop || 0);
+  return c.left < x0 - 1 || c.top < y0 - 1 || c.right > x0 + n.clientWidth + 1 || c.bottom > y0 + n.clientHeight + 1;
+});
+if (cut) return { ok: false, error: "screenshot: the element is clipped by a scrolling container; nothing was captured", restore: true };
 return { ok: true, x: c.left, y: c.top, w: c.width, h: c.height, iw: iw, ih: ih, moved: moved };
 `,
   // Puts back what shot_clip kept, instantly even under scroll-behavior: smooth.
