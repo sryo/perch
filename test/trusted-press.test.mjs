@@ -276,3 +276,39 @@ test("the press schema offers trusted and says to check hit", () => {
   assert.ok(press.description.includes("`trusted`: real key events in the shown tab; check `hit`."), press.description);
   assert.deepEqual(press.inputSchema.properties.trusted, { type: "boolean" });
 });
+
+// Makes every page script containing `marker` throw just before it.
+function throwAt(dom, marker) {
+  const ev = dom.eval.bind(dom);
+  let threw = 0;
+  dom.eval = (js) => js.includes(marker) ? (threw++, ev(js.replace(marker, "throw new TypeError('secret-internal detail');" + marker))) : ev(js);
+  return () => threw;
+}
+const noRaw = (x) => {
+  const s = JSON.stringify(x);
+  for (const k of ["secret-internal", "__perch", "stack"]) assert.ok(!s.includes(k), s);
+};
+
+test("trusted press posts no key when its arm step throws", async () => {
+  const { world, dom } = background();
+  const threw = throwAt(dom, "const framed = function (e)");
+  const r = await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target });
+  assert.ok(threw() > 0);
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.deepEqual(o, { ok: false, error: "press: the page script failed on this page (TypeError); nothing was pressed" });
+  noRaw(o);
+  assert.equal(keys(world).length, 0);
+  assert.deepEqual(world.state.warps, []);
+});
+
+test("trusted press whose check throws after the key is ok:false and unverified", async () => {
+  const { world, dom } = background();
+  throwAt(dom, "const d = st && st.down;");
+  const r = await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.deepEqual(o, { ok: false, el: 'textbox "City"', key: "Enter", delivery: "skylight", error: "press: the key was sent; the page script failed checking it (TypeError); outcome unverified" });
+  noRaw(o);
+  assert.equal(keys(world).length, 2);
+});

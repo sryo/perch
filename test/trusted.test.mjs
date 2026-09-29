@@ -682,3 +682,73 @@ test("clicks by point send the same page script source every time", async () => 
   assert.equal(first.filter(isCheck).length, 1);
   assert.deepEqual(seen, first);
 });
+
+// ---- a page script that throws fails the click closed ----
+
+// Makes every page script containing `marker` throw just before it.
+function throwAt(dom, marker) {
+  const ev = dom.eval.bind(dom);
+  let threw = 0;
+  dom.eval = (js) => js.includes(marker) ? (threw++, ev(js.replace(marker, "throw new TypeError('secret-internal detail');" + marker))) : ev(js);
+  return () => threw;
+}
+const noRaw = (x) => {
+  const s = JSON.stringify(x);
+  for (const k of ["secret-internal", "__perch", "stack"]) assert.ok(!s.includes(k), s);
+};
+const RB_ARM = "return rbArm(A.probed";
+const RB_READ = "const text = rbText();";
+const CHECK = "const out = { hit: st.down };";
+const clickReply = async (args) => {
+  const r = await handleCall("click", { ...args, trusted: true, target: { tabIndex: 1 } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  return JSON.parse(r.content[0].text);
+};
+
+test("a readback arm that throws posts no click and moves no cursor, by point or by element", async () => {
+  for (const aim of [{ x: 106, y: 167 }, { selector: "#b" }]) {
+    const { dom, world } = backgroundTab(`<button id=b>Go</button><p id=s>Idle</p>`, 1);
+    reachesPage(dom, world);
+    const threw = throwAt(dom, RB_ARM);
+    const o = await clickReply({ ...aim, readback: "#s" });
+    assert.ok(threw() > 0);
+    assert.equal(o.ok, false, JSON.stringify(o));
+    assert.equal(o.error, "click: the page script failed on this page (TypeError); nothing was clicked");
+    noRaw(o);
+    assert.deepEqual(presses(world), []);
+    assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
+    assert.deepEqual(world.state.warps, []);
+  }
+});
+
+test("a click check that throws after the post is ok:false and unverified, never a navigation note", async () => {
+  for (const aim of [{ x: 106, y: 167 }, { selector: "#b" }]) {
+    const { dom, world } = backgroundTab(`<button id=b>Go</button>`, 1);
+    reachesPage(dom, world);
+    throwAt(dom, CHECK);
+    const o = await clickReply(aim);
+    assert.equal(o.ok, false, JSON.stringify(o));
+    assert.equal(o.error, "click: the click was sent; the page script failed checking it (TypeError); outcome unverified");
+    assert.equal(o.note, undefined);
+    assert.deepEqual(o.point, { x: 106, y: 167 });
+    assert.equal(o.delivery, "skylight");
+    if (aim.selector) assert.equal(o.el, `button "Go"`);
+    noRaw(o);
+    assert.equal(presses(world).length, 1);
+  }
+});
+
+test("a trusted click's readback that throws is ok:false and keeps the point", async () => {
+  for (const aim of [{ x: 106, y: 167 }, { selector: "#b" }]) {
+    const { dom, world } = backgroundTab(`<button id=b>Go</button><p id=s>Idle</p>`, 1);
+    reachesPage(dom, world);
+    throwAt(dom, RB_READ);
+    const o = await clickReply({ ...aim, readback: "#s" });
+    assert.equal(o.ok, false, JSON.stringify(o));
+    assert.equal(o.error, "click: the click was sent; the page script failed reading it back (TypeError); outcome unverified");
+    assert.deepEqual(o.point, { x: 106, y: 167 });
+    assert.equal(o.delivery, "skylight");
+    noRaw(o);
+    assert.equal(presses(world).length, 1);
+  }
+});

@@ -81,11 +81,11 @@ test("click {trusted, raise}: a check that throws after the press keeps the poin
   const { dom } = raisedTab(`<button id=b>Go</button>`);
   const o = await faulted("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } }, throwAt(dom, "if (st.off) st.off();"));
   assert.equal(o.ok, false);
-  assert.equal(o.error, "click: the page script failed on this page (TypeError); the click was sent, outcome unverified");
+  assert.equal(o.error, "click: the click was sent; the page script failed checking it (TypeError); outcome unverified");
   assert.equal(o.delivery, "hid");
   assert.equal(o.el, `button "Go"`);
   assert.equal(typeof o.point.x, "number");
-  assert.deepEqual(Object.keys(o).sort(), ["delivery", "el", "error", "ok", "point"]);
+  assert.deepEqual(Object.keys(o).sort(), ["aim", "calibrated", "calibration", "delivery", "el", "error", "ok", "point"]);
 });
 
 test("click plain and click {hover}: a page script that throws is the neutral fault", async () => {
