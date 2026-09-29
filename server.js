@@ -931,8 +931,8 @@ function jxaRuntime(BROWSERS, HANG) {
   }
 
   // Resolves the target for trusted input: permission, optional foreground, ids.
-  function trustedTarget(a, what) {
-    const t = resolve(a.target);
+  function trustedTarget(a, what, resolved) {
+    const t = resolved || resolve(a.target);
     arcPageGuard(t, what || "trusted input");
     requireAccessibility();
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
@@ -2541,12 +2541,14 @@ function jxaRuntime(BROWSERS, HANG) {
     // Never trusts stored coordinates: walks the frames again, finds the row by
     // (frame URL, role, name, ordinal) and clicks its fresh center.
     frameClick(a) {
-      const T = trustedTarget(a);
-      const tabId = handleOf(T.t), want = a.rows[tabId];
+      const t = resolve(a.target);
+      const tabId = handleOf(t), want = a.rows[tabId];
       const miss = { __perch_ref_miss: true, ref: a.ref };
       if (!want) return miss;
       const w = want.row, refuse = { ok: false, tabId: tabId, error: w.role + " " + JSON.stringify(w.name) + " is sign-in, challenge or password UI; hand it to the user" };
+      // Before trustedTarget: raise:true takes the foreground there, and a refused click must not have taken it.
       if (w.handoff) return refuse;
+      const T = trustedTarget(a, undefined, t);
       visibleGuard(T.t, "click");
       const vp = parseExec(T.t, a.probe);
       if (!vp || String(vp.url).split("#")[0] !== String(want.url).split("#")[0]) return miss;
