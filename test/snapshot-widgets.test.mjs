@@ -214,6 +214,14 @@ test("snapshot: typed text in a typeahead whose hidden companion is empty is unp
   assert.deepEqual(head.form, { fields: 2, requiredEmpty: 0 });
 });
 
+test("snapshot: a plain input whose box holds an empty hidden input but no popup is not unpicked", () => {
+  const w = page(`<form><div class=f><label for=c>Code</label><input id=c required><input type=hidden name=token></div><label for=o>Other</label><input id=o></form>`);
+  type(w, "c", "AB12");
+  const { head, lines } = snap(w);
+  assert.equal(lineOf(lines, "Code"), `1 textbox "Code" value="AB12" required`);
+  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 0 });
+});
+
 test("snapshot: an optional typeahead is flagged unpicked without counting as required", () => {
   const w = page(LOC({ required: false }));
   type(w, "li", "Buenos");

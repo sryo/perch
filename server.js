@@ -3357,6 +3357,13 @@ function taParts(el) {
   const root = taRoot(el);
   return { comp: root === el ? null : root.querySelector("input[type=hidden]"), pop: root === el ? null : root.querySelector(TA_POP) };
 }
+function isTypeahead(el) {
+  if (el.tagName !== "INPUT" || (el.type || "text").toLowerCase() !== "text" || /^(tel|numeric|decimal|email)$/.test(attr(el, "inputmode"))) return false;
+  if (el.closest("[role=search]") || el.name === "q" || /search|query/i.test(el.name + " " + el.id + " " + attr(el, "placeholder"))) return false;
+  if (role(el) === "combobox" || /^(list|both)$/.test(attr(el, "aria-autocomplete"))) return true;
+  const t = taParts(el);
+  return !!(t.comp && t.pop);
+}
 `;
 const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
 const taNorm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
@@ -3365,13 +3372,6 @@ function taBlur(el) {
   const had = document.activeElement === el;
   if (had) el.blur();
   if (!had || !document.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
-}
-function isTypeahead(el) {
-  if (el.tagName !== "INPUT" || (el.type || "text").toLowerCase() !== "text" || /^(tel|numeric|decimal|email)$/.test(attr(el, "inputmode"))) return false;
-  if (el.closest("[role=search]") || el.name === "q" || /search|query/i.test(el.name + " " + el.id + " " + attr(el, "placeholder"))) return false;
-  if (role(el) === "combobox" || /^(list|both)$/.test(attr(el, "aria-autocomplete"))) return true;
-  const t = taParts(el);
-  return !!(t.comp && t.pop);
 }
 `;
 
@@ -3904,7 +3904,7 @@ function snapVis(el) {
 // Typed text a typeahead has not taken: the hidden input in its own box, where
 // a pick lands, is still empty.
 function unpicked(el) {
-  if (el.tagName !== "INPUT" || el.readOnly || !/^(text|search)$/.test(el.type) || !el.value.trim() || !snapVis(el)) return false;
+  if (el.readOnly || !isTypeahead(el) || !el.value.trim() || !snapVis(el)) return false;
   const c = taParts(el).comp;
   return !!c && !c.value;
 }
