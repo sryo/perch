@@ -26,10 +26,11 @@ test("snapshot: a clip-hidden or faded required input under a visible label is l
   ]);
   assert.deepEqual(head.form, { fields: 3, requiredEmpty: 3 });
   assert.equal(head.count, 3);
-  for (const [ref, id] of [["1", "a"], ["3", "b"]]) {
+  // Fill takes the labelled sr-only input for a real field; the faded one stays hidden.
+  for (const [ref, id, hidden] of [["1", "a", undefined], ["3", "b", true]]) {
     const o = run(w, "fill", { ref, text: "Ada" });
     assert.equal(o.ok, true, JSON.stringify(o));
-    assert.equal(o.hidden, true, JSON.stringify(o));
+    assert.equal(o.hidden, hidden, JSON.stringify(o));
     assert.equal(w.document.getElementById(id).value, "Ada");
   }
   assert.deepEqual(snap(w).head.form, { fields: 3, requiredEmpty: 1 });

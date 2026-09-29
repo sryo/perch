@@ -316,6 +316,34 @@ test("fill by label refuses a lone bot trap without offering to fill it anyway",
   }
 });
 
+// A required field named by a visible label is one the form wants filled, even
+// styled sr-only; a trap's own markup still gives it away.
+test("fill by label fills a required, visibly labelled sr-only input instead of calling it a trap", () => {
+  const sr = `style="position:absolute;width:1px;height:1px;overflow:hidden" data-rect="0,0,1,1"`;
+  for (const html of [
+    `<form><label for=r>Referral code</label><input id=r required ${sr}></form>`,
+    `<form><label for=r>Referral code</label><input id=r aria-required=true ${sr}></form>`,
+    `<form><span id=l>Referral code</span><input id=r aria-labelledby=l required ${sr}></form>`,
+  ]) {
+    const w = page(html);
+    const o = run(w, "fill", { label_pattern: "referral code", text: "AB12" });
+    assert.equal(o.ok, true, html + " " + JSON.stringify(o));
+    assert.equal(w.document.getElementById("r").value, "AB12", html);
+  }
+  for (const html of [
+    `<form><label for=r>Referral code</label><input id=r required tabindex=-1 ${sr}></form>`,
+    `<form><label for=r>Referral code</label><input id=r required aria-hidden=true ${sr}></form>`,
+    `<form><label for=r>Referral code, leave this blank</label><input id=r required ${sr}></form>`,
+    `<form><label for=r>Referral code</label><input id=r ${sr}></form>`,
+  ]) {
+    const w = page(html);
+    const o = run(w, "fill", { label_pattern: "referral code", text: "AB12" });
+    assert.equal(o.ok, false, html + " " + JSON.stringify(o));
+    assert.match(o.error, /bot trap/, html);
+    assert.equal(w.document.getElementById("r").value, "", html);
+  }
+});
+
 test("fill by label checks an sr-only checkbox inside its label", () => {
   const w = page(`<label><input id=c type=checkbox style="position:absolute;opacity:0" data-rect="0,0,1,1"><span>Agree</span></label>`);
   assert.equal(runBody(w, `return fieldVis(document.getElementById('c'))`), true);

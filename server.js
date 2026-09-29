@@ -2813,9 +2813,19 @@ function honeypot(el, labelled) {
 }
 // A honeypot, an untabbable field with autofill off, or one whose name says to
 // leave it empty.
+const LEAVE_BLANK = /\bleave (this |it )?(field )?(blank|empty)\b|\bdo not fill\b/i;
 function trapLike(el, labelled) {
   return honeypot(el, labelled) || (attr(el, "tabindex") === "-1" && attr(el, "autocomplete") === "off")
-    || /\bleave (this |it )?(field )?(blank|empty)\b|\bdo not fill\b/i.test(labelText(el) + " " + attr(el, "name"));
+    || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"));
+}
+// A required field named by visible text (a <label>, or aria-labelledby) is one
+// the form wants filled, so fill takes a pixel or clip on it for sr-only styling,
+// unless it is untabbable or its label says to leave it blank.
+function wanted(el) {
+  if (!el || (!el.required && attr(el, "aria-required") !== "true")) return false;
+  if (attr(el, "tabindex") === "-1" || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"))) return false;
+  return (!!el.labels && Array.prototype.some.call(el.labels, vis))
+    || attr(el, "aria-labelledby").split(/\s+/).some(function (id) { const t = id && document.getElementById(id); return !!t && vis(t) && !!t.textContent.trim(); });
 }
 // vis(), plus a styled control's own input faded (opacity 0) or shrunk to a
 // pixel inside a visible, sized box at most 3 levels up that contains it: a
@@ -2825,7 +2835,7 @@ function trapLike(el, labelled) {
 // so is anything untabbable (tabindex=-1) or aria-hidden. display:none,
 // visibility:hidden and a box that is itself hidden still hide it.
 function fieldVis(el) {
-  if (honeypot(el)) return false;
+  if (honeypot(el, wanted(el))) return false;
   if (vis(el)) return true;
   if (!el || el.hidden || el.tagName !== "INPUT") return false;
   const t = (el.type || "").toLowerCase();
