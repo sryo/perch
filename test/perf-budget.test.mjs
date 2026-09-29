@@ -4,7 +4,9 @@
 // sends. These tests pin that number with the fake world's accessor counts.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
@@ -464,4 +466,21 @@ test("navigate on Chrome costs a fixed count of Apple Events for a load the firs
   assert.equal(o.ok, true);
   assert.equal(o.waited, true);
   assert.equal(appleEvents(), 2 + 2 + 2 + 1 + 2, breakdown());
+});
+
+// A native form is one page pass whether its fields come inline or from a file.
+test("fill {fields} costs the same Apple Events inline and from fields_path", async () => {
+  const html = `<label>Name <input name=n></label><label>Country <select name=c><option value="">Pick</option><option value=ar>Argentina</option></select></label>`;
+  const fields = [{ label_pattern: "name", text: "Ada" }, { label_pattern: "country", option: ["Nope", "Argentina"] }];
+  const p = join(mkdtempSync(join(tmpdir(), "perch-perf-")), "f.json");
+  writeFileSync(p, JSON.stringify(fields));
+  const cost = {};
+  for (const [form, args] of [["inline", { fields }], ["path", { fields_path: p }]]) {
+    const dom = page(html, { url: "https://c0.test/" });
+    install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Google Chrome" }] });
+    const { o } = await call("fill", args);
+    assert.equal(o.ok, true, JSON.stringify(o));
+    cost[form] = appleEvents();
+  }
+  assert.deepEqual(cost, { inline: 1, path: 1 }, breakdown());
 });

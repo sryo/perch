@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>perch profile fixture</title>
+<!-- fill {fields_path, only_empty:true} with a profile map: the prefilled email is
+     skipped as set, #website (a trap inside the City row) stays empty, and Country
+     takes the first preference it lists. data-rect gives the happy-dom test the
+     offscreen box the CSS gives a browser. -->
+<style>
+  body { font: 14px system-ui; margin: 2rem; }
+  .row { margin: 0.5rem 0; }
+  .trap { position: absolute; left: -9999px; top: 0; }
+</style>
+<form>
+  <div class="row"><label for="fn">First name</label><input id="fn" name="first_name"></div>
+  <div class="row"><label for="ln">Last name</label><input id="ln" name="last_name"></div>
+  <div class="row"><label for="em">Email</label><input id="em" type="email" name="email" value="ada@parsed.test"></div>
+  <div class="row"><label for="city">City</label><input id="city" name="city"><input id="website" class="trap" name="website" aria-label="Website" tabindex="-1" autocomplete="off" data-rect="-9999,0,100,20"></div>
+  <div class="row"><label for="country">Country</label><select id="country" name="country">
+    <option value="">Select...</option>
+    <option value="051">Armenia</option>
+    <option value="032">Argentina</option>
+    <option value="076">Brazil</option>
+  </select></div>
+  <fieldset class="row"><legend>Are you authorized to work here?</legend>
+    <label><input type="radio" name="auth" value="y"> Yes</label>
+    <label><input type="radio" name="auth" value="n"> No</label>
+  </fieldset>
+  <button type="submit">Apply</button>
+</form>
