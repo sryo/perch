@@ -6298,21 +6298,28 @@ async function fillFields(fields, target, only) {
     const skipped = results.filter((x) => x.skipped).length, unverified = results.filter((x) => x.unverified).length;
     return { ...(skipped ? { skipped } : {}), ...(unverified ? { unverified } : {}) };
   };
-  // A coded failure after some fields landed ends the batch with them; before
-  // any landed, it throws as a single call would.
+  // A failure after some fields landed ends the batch with them; before any
+  // landed, it throws (or returns the page's error) as a single call would.
   let halted = null;
+  const halt = (msg) => {
+    const error = codeOsaError(String(msg));
+    results.push({ ok: false, error });
+    halted = { ok: false, results, error, ...counts() };
+  };
   const step = async (fn) => {
     try { return await fn(); } catch (e) {
-      const error = e && e.message;
-      if (!results.length || !CODED.test(String(error))) throw e;
-      results.push({ ok: false, error });
-      halted = { ok: false, results, error, ...counts() };
+      if (!results.length) throw e;
+      halt(e && e.message);
     }
   };
   for (let from = 0; from < A.length;) {
     const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target));
     if (halted) return halted;
-    if (!r || !Array.isArray(r.results)) return r;
+    if (!r || !Array.isArray(r.results)) {
+      if (!results.length) return r;
+      halt(r && r.__perch_error != null ? r.__perch_error : "fill: the page pass returned no results");
+      return halted;
+    }
     results.push(...r.results);
     if (r.defer == null) break;
     const f = A[r.defer];

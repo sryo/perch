@@ -147,7 +147,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (!present()) throw gone();
       // state.onExecute(tabSpec) runs as each page script is sent: a world change
       // (another window raised) that lands while page JS goes unanswered.
-      if (state.onExecute) state.onExecute(spec);
+      if (state.onExecute) state.onExecute(spec, javascript);
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
       if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
       // Chromium runs no page JS on its own pages (chrome://newtab, settings).

@@ -3,7 +3,7 @@
 // handed to the select runtime, in order) runs through the fake JXA world.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS, deps } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS, deps, codeOsaError } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { readFileSync } from "node:fs";
 import { page, run, runBody } from "./helpers/page.mjs";
@@ -931,6 +931,69 @@ test("fill {fields}: an error on the first field still ends the call as before",
   const { r, o } = await fill({ fields: TWO, target: { tabId } });
   assert.equal(r.isError, true);
   assert.match(o, /^error: stale_tab: /);
+});
+
+// Page scripts after the first one fail at the AppleScript level, not with a coded message.
+const failAfterFirst = (world) => { let n = 0; world.state.onExecute = () => { if (++n > 1) throw new Error("page JS failed"); }; };
+// The page pass resuming at `from` throws inside the page, so it replies with __perch_error.
+const breakPassFrom = (world, dom, from) => {
+  world.state.onExecute = (spec, js) => {
+    if (js.includes(`"from":${from}`)) dom.eval("document.querySelector = document.querySelectorAll = () => { throw new Error('x'); };");
+  };
+};
+const halted = (o, n) => {
+  assert.equal(o.ok, false);
+  assert.equal(o.results.length, n);
+  assert.equal(o.results[0].ok, true);
+  assert.equal(o.results[n - 1].ok, false);
+  assert.equal(o.error, o.results[n - 1].error);
+};
+
+test("fill {fields}: an uncoded failure in a later select keeps the fields that landed", async () => {
+  const { world } = onPage(CUSTOM, CUSTOM_JS);
+  failAfterFirst(world);
+  const { r, o } = await fill({ fields: TWO });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  halted(o, 2);
+  assert.deepEqual(o.results[1], { ok: false, error: codeOsaError("page JS failed") });
+  assert.deepEqual(Object.keys(o), ["ok", "results", "error"]);
+});
+
+test("fill {fields}: a later page pass that errors keeps the fields that landed", async () => {
+  const { world, dom } = onPage(CUSTOM, CUSTOM_JS);
+  breakPassFrom(world, dom, 2);
+  const { r, o } = await fill({ fields: [...TWO, { label_pattern: "last", text: "B" }] });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  halted(o, 3);
+  assert.equal(o.results[1].selected, "Senior");
+  assert.deepEqual(o.results[2], { ok: false, error: codeOsaError("x") });
+});
+
+test("fill {fields}: an uncoded failure on the first field still throws", async () => {
+  const { world } = onPage(CUSTOM, CUSTOM_JS);
+  world.state.onExecute = () => { throw new Error("page JS failed"); };
+  const { r, o } = await fill({ fields: TWO });
+  assert.equal(r.isError, true);
+  assert.equal(o, "error: page JS failed");
+});
+
+test("fill {fields}: the first page pass erroring is returned as it was", async () => {
+  const { world, dom } = onPage(CUSTOM, CUSTOM_JS);
+  breakPassFrom(world, dom, 0);
+  const { r } = await fill({ fields: TWO });
+  assert.equal(r.isError, true);
+  assert.equal(JSON.parse(r.content[0].text).__perch_error, "x");
+});
+
+test("fill {fields}: a halted batch keeps its skipped and unverified counts", async () => {
+  const { world, dom } = onPage(CUSTOM, NO_SHOW_JS);
+  breakPassFrom(world, dom, 3);
+  const { o } = await fill({ only_empty: true, fields: [{ label_pattern: "zzz", text: "Z" }, ...TWO, { label_pattern: "last", text: "B" }] });
+  halted(o, 4);
+  assert.equal(o.results[0].skipped, "absent");
+  assert.equal(o.results[2].unverified, true);
+  assert.equal(o.skipped, 1);
+  assert.equal(o.unverified, 1);
 });
 
 test("fill {fields}: an all-green batch carries no new keys", async () => {
