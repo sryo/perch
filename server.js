@@ -1251,7 +1251,7 @@ function jxaRuntime(BROWSERS, HANG) {
       for (let f = q.fr.up; f; f = f.up) up.push(f.url);
       rows.push({ role: role, name: name, url: q.fr.url, up: up, ord: ords[key], flags: flags, el: q.el, box: box, fr: q.fr });
     }
-    return { rows: rows, truncated: truncated };
+    return { rows: rows, truncated: truncated, page: bounds[1] };
   }
 
   // What a frame click can check afterwards, since no page recorder sees inside:
@@ -2168,7 +2168,17 @@ function jxaRuntime(BROWSERS, HANG) {
       try { const s = JSON.parse(String(page)), nl = s.indexOf("\n"); vp = JSON.parse(s.slice(2, nl < 0 ? s.length : nl)); } catch (e) { return out; }
       try {
         const W = frameWalk(frameTarget(t), vp);
-        out.frames = W.rows.map(function (r) { return { role: r.role, name: r.name, url: r.url, up: r.up, ord: r.ord, flags: r.flags }; });
+        // The page rows already hold a same-origin frame's controls: drop the rows
+        // whose outermost frame sits where one of those frames is (vp.fr, CSS px).
+        const P = W.page, z = P ? P.w / (vp.iw || P.w) : 1;
+        const walked = (P ? vp.fr || [] : []).map(function (r) { return { x: P.x + r[0] * z, y: P.y + r[1] * z, w: r[2] * z, h: r[3] * z }; });
+        const near = function (a, b) { return !!a && Math.abs(a.x - b.x) <= 2 && Math.abs(a.y - b.y) <= 2 && Math.abs(a.w - b.w) <= 2 && Math.abs(a.h - b.h) <= 2; };
+        const rows = W.rows.filter(function (r) {
+          let f = r.fr;
+          while (f.up) f = f.up;
+          return !walked.some(function (b) { return near(f.box, b); });
+        });
+        out.frames = rows.map(function (r) { return { role: r.role, name: r.name, url: r.url, up: r.up, ord: r.ord, flags: r.flags }; });
         if (W.truncated) out.truncated = true;
       } catch (e) { out.error = String(e.message || e); }
       return out;
@@ -2770,6 +2780,9 @@ const INPUT_SKIP = ["hidden", "checkbox", "radio", "file", "submit", "button", "
 function attr(el, k) { return (el && el.getAttribute && el.getAttribute(k)) || ""; }
 function clip(s, n) { s = String(s == null ? "" : s).replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; }
 function textOf(n) { return n ? (n.innerText || n.textContent || "") : ""; }
+// The window an element lives in: a same-origin frame's own, else this one.
+function viewOf(el) { const d = el && el.ownerDocument; return (d && d !== document && d.defaultView) || window; }
+function getComputedStyle(el, p) { return (el.ownerDocument === document ? window : viewOf(el)).getComputedStyle(el, p); }
 // querySelectorAll over the document and every open shadow root, in document
 // order: a shadow tree's matches follow its host. Closed roots stay unreachable.
 function deepAll(sel, root) {
@@ -2815,7 +2828,8 @@ function honeypot(el, labelled) {
   if (el.closest("[aria-hidden=true]")) return true;
   const r = el.getBoundingClientRect();
   if (!r.width && !r.height) return false;
-  if (r.right + (window.scrollX || 0) <= 0 || r.bottom + (window.scrollY || 0) <= 0) return true;
+  const v = viewOf(el);
+  if (r.right + (v.scrollX || 0) <= 0 || r.bottom + (v.scrollY || 0) <= 0) return true;
   if (labelled || attr(el, "role") === "combobox" || el.hasAttribute("aria-autocomplete")) return false;
   if (r.width <= 1 || r.height <= 1) return true;
   const m = /rect\(([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px/.exec(getComputedStyle(el).clip || "");
@@ -2835,7 +2849,7 @@ function wanted(el) {
   if (!el || (!el.required && attr(el, "aria-required") !== "true")) return false;
   if (attr(el, "tabindex") === "-1" || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"))) return false;
   return (!!el.labels && Array.prototype.some.call(el.labels, vis))
-    || attr(el, "aria-labelledby").split(/\s+/).some(function (id) { const t = id && document.getElementById(id); return !!t && vis(t) && !!t.textContent.trim(); });
+    || attr(el, "aria-labelledby").split(/\s+/).some(function (id) { const t = id && el.ownerDocument.getElementById(id); return !!t && vis(t) && !!t.textContent.trim(); });
 }
 // vis(), plus a styled control's own input faded (opacity 0) or shrunk to a
 // pixel inside a visible, sized box at most 3 levels up that contains it: a
@@ -2864,7 +2878,7 @@ function fieldVis(el) {
 }
 // Box p shows visible text or a visible element that doesn't wrap el.
 function paints(p, el) {
-  const tw = document.createTreeWalker(p, 5);
+  const tw = p.ownerDocument.createTreeWalker(p, 5);
   for (let k = 0; k < 60 && tw.nextNode(); k++) {
     const n = tw.currentNode;
     if (n.nodeType === 3) { if (n.nodeValue.trim() && vis(n.parentElement)) return true; }
@@ -2914,7 +2928,7 @@ function nearText(el) {
       if (!vis(sib)) continue;
       // Text nodes joined by spaces, so "Question?<span>*</span>" reads "Question? *".
       const parts = [];
-      const tw = document.createTreeWalker(sib, 4);
+      const tw = sib.ownerDocument.createTreeWalker(sib, 4);
       while (parts.length < 40 && tw.nextNode()) parts.push(tw.currentNode.nodeValue);
       const t = clip(parts.join(" "), 120);
       if (t) return t;
@@ -2952,7 +2966,8 @@ function role(el) {
 function ident(el) { return role(el) + " " + JSON.stringify(accName(el)) + (fieldVis(el) ? "" : " hidden"); }
 // The prototype setter reaches React-controlled fields whose instance setter is patched.
 function setNativeValue(el, v) {
-  const P = el.tagName === "TEXTAREA" ? HTMLTextAreaElement : el.tagName === "SELECT" ? HTMLSelectElement : HTMLInputElement;
+  const V = viewOf(el);
+  const P = el.tagName === "TEXTAREA" ? V.HTMLTextAreaElement : el.tagName === "SELECT" ? V.HTMLSelectElement : V.HTMLInputElement;
   const d = Object.getOwnPropertyDescriptor(P.prototype, "value");
   if (d && d.set) d.set.call(el, v); else el.value = v;
 }
@@ -3389,7 +3404,7 @@ function groupQuestion(box, opts) {
       if (sib.matches(FIELD_CTL) || sib.querySelector(FIELD_CTL)) return "";
       if (!vis(sib)) continue;
       const parts = [];
-      const tw = document.createTreeWalker(sib, 4);
+      const tw = sib.ownerDocument.createTreeWalker(sib, 4);
       while (parts.length < 40 && tw.nextNode()) parts.push(tw.currentNode.nodeValue);
       const t = clip(parts.join(" "), 120);
       if (t) return t;
@@ -3428,7 +3443,7 @@ const TA_BOX_LIB = String.raw`
 // The widget's own box: the highest ancestor (below the form) holding no other control.
 function taRoot(el) {
   let root = el;
-  for (let p = el.parentElement, i = 0; p && i < 4 && p.tagName !== "FORM" && p !== document.body; p = p.parentElement, i++) {
+  for (let p = el.parentElement, i = 0; p && i < 4 && p.tagName !== "FORM" && p !== el.ownerDocument.body; p = p.parentElement, i++) {
     const others = Array.from(p.querySelectorAll("input:not([type=hidden]), select, textarea, button, [role=combobox]")).filter(function (x) { return x !== el; });
     if (others.length) break;
     root = p;
@@ -3464,9 +3479,9 @@ const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
 const taNorm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
 // A background tab's blur() fires no events, so send them when the page lacks focus.
 function taBlur(el) {
-  const had = document.activeElement === el;
+  const had = el.ownerDocument.activeElement === el;
   if (had) el.blur();
-  if (!had || !document.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
+  if (!had || !el.ownerDocument.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
 }
 `;
 
@@ -3514,7 +3529,35 @@ function taMatch(opts, text) {
 }
 `;
 
-const FILL_LIB = TYPEAHEAD_LIB + String.raw`
+// Embedded frames big enough to hold a form: visible iframes of at least
+// 200x150 CSS px, largest first, at most 5, as {f, src, w, h, same}. src keeps
+// only an http(s) URL's origin and path; same says page JS can read the frame's
+// document (a cross-origin frame's reads null or throws).
+const EMBED_LIB = String.raw`
+function embeds() {
+  const out = [];
+  for (const f of document.getElementsByTagName("iframe")) {
+    if (!vis(f)) continue;
+    const r = f.getBoundingClientRect();
+    if (r.width < 200 || r.height < 150) continue;
+    let same = false;
+    try { same = !!f.contentDocument; } catch (e) {}
+    let src = f.hasAttribute("srcdoc") ? "about:srcdoc" : String(f.src || "about:blank");
+    try { const u = new URL(src); if (/^https?:$/.test(u.protocol)) src = u.origin + u.pathname; } catch (e) {}
+    out.push({ f: f, src: clip(src, 150), w: Math.round(r.width), h: Math.round(r.height), same: same });
+  }
+  return out.sort(function (a, b) { return b.w * b.h - a.w * a.h; }).slice(0, 5);
+}
+// For fill's label miss: where the field may live instead, from the largest frame.
+function frameHint() {
+  const e = embeds()[0];
+  if (!e) return "";
+  return e.same ? "; the page embeds a same-origin form frame: accessibility_snapshot lists its fields (frame=0); fill them by ref"
+    : "; the page embeds a form frame at " + e.src + ": navigate or new_tab there";
+}
+`;
+
+const FILL_LIB = TYPEAHEAD_LIB + EMBED_LIB + String.raw`
 // Up to 2 visible, enabled buttons that may reveal a field fill found no match
 // for, as ident-style lines under the name click {label_pattern} matches: named
 // by re themselves, else sitting in a section whose question text matches
@@ -3607,16 +3650,17 @@ function fillOne(a, only) {
   }
   function setRich(root) {
     root.focus();
+    const doc = root.ownerDocument;
     // Build nodes rather than assigning innerHTML: an HTML-string sink trips
     // Trusted Types (require-trusted-types-for 'script') on Gmail-class pages.
     while (root.firstChild) root.removeChild(root.firstChild);
     text.split(/\n\n+/).forEach(function (para) {
-      const block = document.createElement("div");
+      const block = doc.createElement("div");
       para.split("\n").forEach(function (line, i) {
-        if (i) block.appendChild(document.createElement("br"));
-        block.appendChild(document.createTextNode(line));
+        if (i) block.appendChild(doc.createElement("br"));
+        block.appendChild(doc.createTextNode(line));
       });
-      if (!block.childNodes.length) block.appendChild(document.createElement("br"));
+      if (!block.childNodes.length) block.appendChild(doc.createElement("br"));
       root.appendChild(block);
     });
     ["input", "change", "blur"].forEach(function (t) { root.dispatchEvent(new InputEvent(t, { bubbles: true, inputType: "insertText", data: text })); });
@@ -3723,7 +3767,9 @@ function fillOne(a, only) {
   if (!scored.length) {
     const miss = "no fillable field matched /" + a.label_pattern + "/i; it may appear ";
     const reveal = revealers(re, nearHit);
-    const out = !reveal.length ? { ok: false, error: miss + "only after clicking a button" }
+    const framed = !reveal.length && frameHint();
+    const out = framed ? { ok: false, error: "no fillable field matched /" + a.label_pattern + "/i" + framed }
+      : !reveal.length ? { ok: false, error: miss + "only after clicking a button" }
       : { ok: false, error: miss + "after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
     if (passed.length) {
       out.error += "; candidates sit near matching text but carry other labels";
@@ -3740,6 +3786,8 @@ function fillOne(a, only) {
     if (scored.every(function (c) { return trapLike(c.el); })) return only ? { ok: true, skipped: "trap", el: el } : { ok: false, el: el, error: el + " matched /" + a.label_pattern + "/i but it looks like a bot trap; leave it empty" };
     const reveal = revealers(re, nearHit);
     const why = el + " matched /" + a.label_pattern + "/i but the field is hidden; ";
+    const framed = !reveal.length && frameHint();
+    if (framed) return { ok: false, el: el, error: why + framed.slice(2) + ", or pass its ref or selector to fill it anyway" };
     return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button, or pass its ref or selector to fill it anyway" }
       : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
   }
@@ -3815,15 +3863,17 @@ function invMsg(el) {
   for (const n of desc) { const t = txt(n); if (t) return t; }
   return "";
 }
-// Every rejected field on the page, outermost carrier only: [{el, name, msg}].
-function invalidSet() {
+// Every rejected field in doc (the page's by default), outermost carrier only:
+// [{el, name, msg}].
+function invalidSet(doc) {
+  doc = doc || document;
   const seen = [];
   const add = function (c) { if (c && seen.indexOf(c) < 0) seen.push(c); };
-  document.querySelectorAll("[aria-invalid=true]").forEach(function (c) {
+  doc.querySelectorAll("[aria-invalid=true]").forEach(function (c) {
     if (invStandin(c) || !(vis(c) || (c.parentElement && vis(c.parentElement) && getComputedStyle(c).display !== "none"))) return;
     add(c);
   });
-  document.querySelectorAll("input, textarea, select").forEach(function (el) { if (invNative(el) && vis(el)) add(el); });
+  doc.querySelectorAll("input, textarea, select").forEach(function (el) { if (invNative(el) && vis(el)) add(el); });
   const outer = seen.filter(function (c) { return !seen.some(function (o) { return o !== c && o.contains(c); }); });
   outer.sort(function (a, b) { return a.compareDocumentPosition(b) & 2 ? 1 : -1; });
   return outer.map(function (c) {
@@ -3850,9 +3900,10 @@ function editType(el, text) {
   el.addEventListener("input", onInput, true);
   try {
     el.focus({ preventScroll: true });
-    if (document.activeElement !== el) return { ok: false, focused: false, trusted: false, value: String(el.value || "") };
+    const doc = el.ownerDocument;
+    if (doc.activeElement !== el) return { ok: false, focused: false, trusted: false, value: String(el.value || "") };
     if (el.select) el.select();
-    const accepted = document.execCommand(text ? "insertText" : "delete", false, text);
+    const accepted = doc.execCommand(text ? "insertText" : "delete", false, text);
     const value = String(el.value || "");
     return { ok: accepted === true && trusted && value === text, focused: true, trusted: trusted, value: value };
   } finally { el.removeEventListener("input", onInput, true); }
@@ -4001,6 +4052,8 @@ if (A.forFill && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { o
 const FRAMED = " is or lies under an embedded frame; reach frame controls through accessibility_snapshot {frames:true} and click an fN ref with trusted:true";
 const inFrame = function (e) { return !!(e && e.closest && e.closest("iframe, frame, object, embed")); };
 if (inFrame(el)) return { ok: false, error: ident(el) + FRAMED };
+// A same-origin frame's row: its box is in the frame's viewport, not the page's.
+if (el.ownerDocument !== document) return { ok: false, error: ident(el) + " lies in an embedded frame, where trusted input can't aim; use it without trusted" };
 try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
 const r = el.getBoundingClientRect();
 if (!r.width || !r.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
@@ -4037,7 +4090,7 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
 `,
 
   // Line format: "# {header json}", then "<ref> <role> <json name> key=<json>... flags".
-  snapshot: INVALID_LIB + TA_BOX_LIB + String.raw`
+  snapshot: INVALID_LIB + TA_BOX_LIB + EMBED_LIB + String.raw`
 const refs = {};
 window.__perch_refs = refs;
 const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
@@ -4110,20 +4163,30 @@ function describe(el, r, name) {
   if (invCarrier(el, false)) { line += " invalid"; const m = invMsg(el); if (m) kv("error", m); }
   return line;
 }
+// Same-origin frames' documents are walked after the page's own, their rows
+// marked with the frame's index in the header's iframes.
+const embedded = embeds();
+const frameDocs = new Map();
+embedded.forEach(function (e, i) { if (e.same && e.f.contentDocument) frameDocs.set(e.f.contentDocument, i); });
+function frameTag(el) { return el.ownerDocument === document ? "" : " frame=" + frameDocs.get(el.ownerDocument); }
 let n = 0, matched = 0, truncated = false;
-for (const el of deepAll(SEL)) {
-  const r = role(el);
-  if (roles && roles.indexOf(r) < 0) continue;
-  if (!snapVis(el)) continue;
-  if (!re && n >= A.max) { truncated = true; break; }
-  const line = describe(el, r, accName(el));
-  if (re && !re.test(line)) continue;
-  matched++;
-  if (n >= A.max) { truncated = true; continue; }
-  const ref = String(++n);
-  refs[ref] = el;
-  lines.push(ref + " " + line);
+function walk(root) {
+  for (const el of deepAll(SEL, root)) {
+    const r = role(el);
+    if (roles && roles.indexOf(r) < 0) continue;
+    if (!snapVis(el)) continue;
+    if (!re && n >= A.max) { truncated = true; return; }
+    const line = describe(el, r, accName(el)) + frameTag(el);
+    if (re && !re.test(line)) continue;
+    matched++;
+    if (n >= A.max) { truncated = true; continue; }
+    const ref = String(++n);
+    refs[ref] = el;
+    lines.push(ref + " " + line);
+  }
 }
+walk(null);
+frameDocs.forEach(function (i, d) { if (re || !truncated) walk(d); });
 // The shown boxes around a hidden field, nearest first, up to one holding more
 // than 5 fields: their label text names the field when nothing else does, and
 // they hold the button that reveals it.
@@ -4145,7 +4208,7 @@ function revealer(el, secs) {
       if (!vis(b) || isDisabled(b) || attr(b, "type").toLowerCase() === "submit") continue;
       const name = accName(b);
       if (!name || REVEAL_SKIP.test(name)) continue;
-      const ctl = attr(b, "aria-controls").split(/\s+/).some(function (id) { const t = id && document.getElementById(id); return !!t && t.contains(el); });
+      const ctl = attr(b, "aria-controls").split(/\s+/).some(function (id) { const t = id && el.ownerDocument.getElementById(id); return !!t && t.contains(el); });
       const k = ctl ? 0 : REVEAL_TYPING.test(name) ? 1 : attr(b, "aria-expanded") === "false" ? 2 : 3;
       if (k < rank) { best = b; rank = k; }
     }
@@ -4171,7 +4234,7 @@ function hiddenRows(cands) {
     if (!name) name = accName(el);
     if (twins.has(r + " " + name)) continue;
     const seen = fieldVis(el);
-    const line = describe(el, r, name) + (seen ? "" : " hidden");
+    const line = describe(el, r, name) + (seen ? "" : " hidden") + frameTag(el);
     if (re && !re.test(line)) continue;
     matched++;
     if (n >= A.max) { truncated = true; continue; }
@@ -4180,13 +4243,15 @@ function hiddenRows(cands) {
     refs[ref] = el;
     const b = seen ? null : revealer(el, secs);
     let bref = b && listed.get(b), bline = null;
-    if (b && !bref && n < A.max) { bref = String(++n); refs[bref] = b; listed.set(b, bref); bline = bref + " " + describe(b, role(b), accName(b)); }
+    if (b && !bref && n < A.max) { bref = String(++n); refs[bref] = b; listed.set(b, bref); bline = bref + " " + describe(b, role(b), accName(b)) + frameTag(b); }
     lines.push(ref + " " + line + (bref ? " reveal=" + q(bref) : ""));
     if (bline) lines.push(bline);
   }
 }
 let form = null;
-const forms = Array.from(document.querySelectorAll("form")).filter(vis);
+let forms = Array.from(document.querySelectorAll("form"));
+frameDocs.forEach(function (i, d) { forms = forms.concat(Array.from(d.querySelectorAll("form"))); });
+forms = forms.filter(vis);
 if (forms.length) {
   let big = forms[0];
   forms.forEach(function (f) { if (f.querySelectorAll(FIELDS).length > big.querySelectorAll(FIELDS).length) big = f; });
@@ -4202,18 +4267,31 @@ if (forms.length) {
   const empty = fields.filter(reqEmpty);
   form = { fields: fields.length, requiredEmpty: empty.length };
   if (loose.length) form.unpicked = loose.length;
-  const inv = invalidSet().filter(function (c) { return big.contains(c.el); }).length;
+  const inv = invalidSet(big.ownerDocument).filter(function (c) { return big.contains(c.el); }).length;
   if (inv) form.invalid = inv;
   const unseen = empty.filter(function (el) { return !snapVis(el); });
   if (unseen.length) hiddenRows(unseen);
 }
 const head = { url: location.href, title: document.title, ready: document.readyState, count: n };
 // For the frame walk's page-area match; Node drops them from the header.
-if (A.frames) { head.iw = innerWidth; head.ih = innerHeight; }
+if (A.frames) {
+  head.iw = innerWidth; head.ih = innerHeight;
+  // Content boxes of the frames walked here, so the frame walk skips them.
+  const fr = embedded.filter(function (e) { return e.same; }).map(function (e) {
+    const b = e.f.getBoundingClientRect();
+    return [b.left + (e.f.clientLeft || 0), b.top + (e.f.clientTop || 0), e.f.clientWidth || b.width, e.f.clientHeight || b.height];
+  });
+  if (fr.length) head.fr = fr;
+}
 if (re) head.matched = matched;
 if (truncated) head.truncated = true;
 let act = document.activeElement;
 while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+const inner = embedded.some(function (e) { return e.same && e.f === act; }) ? act.contentDocument : null;
+if (inner && inner.activeElement && inner.activeElement !== inner.body) {
+  act = inner.activeElement;
+  while (act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+}
 if (act && act !== document.body && act !== document.documentElement) {
   let fr = null;
   for (const k in refs) if (refs[k] === act) { fr = k; break; }
@@ -4222,6 +4300,7 @@ if (act && act !== document.body && act !== document.documentElement) {
 const dialogs = Array.from(document.querySelectorAll("[role=dialog], [aria-modal=true], dialog[open]")).filter(vis).slice(0, 5).map(accName);
 if (dialogs.length) head.dialogs = dialogs;
 if (form) head.form = form;
+if (embedded.length) head.iframes = embedded.map(function (e) { return { src: e.src, w: e.w, h: e.h, same: e.same }; });
 return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "");
 `,
 
@@ -5115,6 +5194,7 @@ async function accessibilitySnapshot(args = {}) {
   const head = JSON.parse(page.slice(2, nl < 0 ? page.length : nl));
   delete head.iw;
   delete head.ih;
+  delete head.fr;
   const lines = [];
   if (r.error) head.frames = { error: r.error };
   else {
