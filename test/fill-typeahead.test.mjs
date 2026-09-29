@@ -780,3 +780,36 @@ test("taQuery: the first comma part, accents folded, at most two words when long
   assert.equal(taQuery(", Argentina"), null);
   assert.equal(taQuery(""), null);
 });
+
+// Two typeaheads with hidden companions on one page, each with its own lookup.
+const TWO_TA = `<form>
+  <div><label for=org>Origin</label><input id=org name=origin autocomplete=off><input type=hidden id=org-id name=originId><div class=dropdown-container id=org-dd></div></div>
+  <div><label for=dst>Destination</label><input id=dst name=destination autocomplete=off><input type=hidden id=dst-id name=destinationId><div class=dropdown-container id=dst-dd></div></div>
+</form>`;
+const TWO_TA_JS = `
+  const cities = ['Rome, Italy', 'Paris, France', 'Porto, Portugal'];
+  for (const k of ['org', 'dst']) {
+    const inp = document.getElementById(k), hid = document.getElementById(k + '-id'), dd = document.getElementById(k + '-dd');
+    inp.addEventListener('input', () => {
+      hid.value = '';
+      const q = inp.value.toLowerCase();
+      later(() => {
+        dd.innerHTML = cities.filter((c) => q && c.toLowerCase().startsWith(q)).map((c) => '<div class=dropdown-item data-id=' + cities.indexOf(c) + '>' + c + '</div>').join('');
+        dd.querySelectorAll('.dropdown-item').forEach((o) => o.addEventListener('mousedown', () => { inp.value = o.textContent; hid.value = k + '-' + o.dataset.id; dd.innerHTML = ''; }));
+      }, 3);
+    });
+    inp.addEventListener('blur', () => { dd.innerHTML = ''; if (!hid.value) inp.value = ''; });
+  }`;
+
+test("typeahead: two concurrent fills on one tab each pick and report their own field", async () => {
+  const { dom } = onPage(TWO_TA, TWO_TA_JS);
+  const [a, b] = await Promise.all([fill({ label_pattern: "origin", text: "Rome" }), fill({ label_pattern: "destination", text: "Paris" })]);
+  assert.equal(a.ok, true, JSON.stringify(a));
+  assert.equal(b.ok, true, JSON.stringify(b));
+  assert.equal(a.selected, "Rome, Italy");
+  assert.equal(b.selected, "Paris, France");
+  assert.equal($(dom, "#org").value, "Rome, Italy");
+  assert.equal($(dom, "#org-id").value, "org-0");
+  assert.equal($(dom, "#dst").value, "Paris, France");
+  assert.equal($(dom, "#dst-id").value, "dst-1");
+});

@@ -6933,6 +6933,26 @@ function withMoved(name, result, tabId) {
   return out;
 }
 
+// Multi-step tools keep state on window globals between page calls (a typeahead
+// pick, fill {fields}' record, select, click readback, upload), so two such calls
+// on one tab run one at a time. Keyed by the target as given: untargeted calls
+// share "default", and a targeted and an untargeted call on the same tab are
+// not serialized (resolving the default tab first would cost Apple Events).
+export const tabLocks = new Map();
+export function withTabLock(key, fn) {
+  const prev = tabLocks.get(key) || Promise.resolve();
+  const run = prev.then(fn);
+  const tail = run.catch(() => {});
+  tabLocks.set(key, tail);
+  tail.then(() => { if (tabLocks.get(key) === tail) tabLocks.delete(key); });
+  return run;
+}
+const LOCKED_TOOLS = new Set(["fill", "select", "file_upload"]);
+const tabLockKey = (name, args) =>
+  LOCKED_TOOLS.has(name) || (name === "click" && args.readback)
+    ? (args.target && args.target.tabId != null ? "tab:" + args.target.tabId : "default")
+    : null;
+
 export async function handleCall(name, args = {}) {
   const handler = Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : null;
   try {
@@ -6941,7 +6961,9 @@ export async function handleCall(name, args = {}) {
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
     const note = {};
-    const result = await callNotes.run(note, () => handler(args));
+    const lockKey = tabLockKey(name, args);
+    const call = () => callNotes.run(note, () => handler(args));
+    const result = await (lockKey ? withTabLock(lockKey, call) : call());
     const issued = new Set(issuedHandles(name, result));
     if (note.counts) keepCounts(note.counts, (h) => issued.has(h) || (note.stamped && note.stamped.has(h)));
     for (const t of issued) {
