@@ -3850,7 +3850,7 @@ function checkTrap(el) {
   if (trapLike(el)) return true;
   if (!offDoc(el)) return false;
   const ls = Array.from(el.labels || []).concat(el.closest("label") || []);
-  return !ls.some(function (l) { return vis(l) && !offDoc(l); });
+  return !ls.some(labelSeen);
 }
 // A checkbox or radio hidden under a visible, on-page <label> it names: a styled
 // box (display:none input, the label draws it), clicked like a shown one.

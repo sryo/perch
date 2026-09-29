@@ -59,6 +59,18 @@ test("check: an off-page honeypot box is never clicked", () => {
   assert.equal(on(w, "[name=subscribe_hp]"), false);
 });
 
+test("check: an off-page box is a trap when its label is a pixel or faded out", () => {
+  for (const html of [
+    `<input type=checkbox id=c data-rect="-5000,0,20,20"><label for=c data-rect="0,0,1,1">Subscribe</label>`,
+    `<div style="opacity:0"><input type=checkbox id=c data-rect="-5000,0,20,20"><label for=c>Subscribe</label></div>`,
+  ]) {
+    const w = page(html);
+    const r = check(w, { label_pattern: "subscribe", checked: true });
+    assert.equal(r.ok, false, html);
+    assert.equal(on(w, "#c"), false, html);
+  }
+});
+
 test("check: an off-page input under a visible label is an sr-only custom box, not a trap", () => {
   const w = page(`<label><input type=checkbox id=c data-rect="-10000,0,1,1"> Subscribe</label>`);
   const r = check(w, { label_pattern: "subscribe", checked: true });
