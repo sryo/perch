@@ -62,9 +62,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     page.ctx = vm.createContext(win, { microtaskMode: "afterEvaluate" });
     vm.runInContext("window = globalThis; document = { get readyState() { return __ready(); } };", page.ctx);
     page.ctx.__ready = () => (page.ticks-- > 0 ? "loading" : "complete");
-    // state.errorPage (a RegExp): a matching URL commits Chrome's net error page,
-    // whose document is chrome-error://chromewebdata/ while the tab shows the URL.
-    const href = state.errorPage && state.errorPage.test(url) ? "chrome-error://chromewebdata/" : url;
+    // state.errorPage (a RegExp): a matching URL commits the browser's error page,
+    // whose document is state.errorHref (Chrome's chrome-error://chromewebdata/ by
+    // default) while the tab shows the URL.
+    const href = state.errorPage && state.errorPage.test(url) ? state.errorHref || "chrome-error://chromewebdata/" : url;
     page.ctx.location = {
       href,
       get protocol() { return this.href.slice(0, this.href.indexOf(":") + 1); },
@@ -125,6 +126,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     // ["assign", browser, url] for one the page started.
     function go(u, via) {
       log.push([via === "page" ? "assign" : "navigate", b.name, u]);
+      // state.redirects ({asked: final}): the server sends the load elsewhere.
+      if (state.redirects && state.redirects[u]) u = state.redirects[u];
       // A fragment-only change keeps the document, as browsers do.
       const cur = new URL(tab.page.url), next = new URL(u, tab.page.url);
       if (next.hash && next.href.split("#")[0] === cur.href.split("#")[0]) { tab.page.url = next.href; tab.page.ctx.location.href = next.href; return; }

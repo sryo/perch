@@ -194,6 +194,31 @@ test("navigate's load check polls every 50ms", () => {
   assert.ok(world.clock.t - t0 <= 4 * 50, `took ${world.clock.t - t0}ms`);
 });
 
+test("navigate that loads is 7 events on Chrome and Safari, 6 on Arc's shown tab", async () => {
+  for (const [spec, app, n] of [
+    [chrome([{ id: 1, active: 0, tabs: tabs(1) }]), "Google Chrome", 7],
+    [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }]), "Arc", 6],
+    [safari([{ id: 3, active: 0, tabs: tabs(1, "s") }]), "Safari", 7],
+  ]) {
+    install({ browsers: [spec], cg: [{ owner: app }] });
+    const { o } = await call("navigate", { url: "https://next.test/" });
+    assert.equal(o.waited, true);
+    assert.equal(world.aeBy(app).length, n, `${app}: ${world.aeBy(app)}`);
+  }
+});
+
+// A raised background Arc tab runs no page JS, so its load is followed by
+// reading `loading` every 50ms and its url once loading settles.
+test("navigate with raise:true on a background Arc tab: the url before, the set, loading polls, the url after", async () => {
+  install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(2, "a") }])], cg: [{ owner: "Arc" }] });
+  const { o } = await call("navigate", { url: "https://next.test/", raise: true, target: { tabId: "arc:a1" } });
+  assert.equal(o.waited, true);
+  const ae = world.aeBy("Arc");
+  assert.deepEqual(ae.filter((e) => e !== "tab.loading"), ["windows.length(Arc)", "tabs.id()", "tab.id", "tab.id", "tab.url", "tab.url=", "tab.url"]);
+  assert.ok(ae.filter((e) => e === "tab.loading").length <= 9, String(ae));
+  assert.equal(world.counts["tab.execute"] || 0, 0);
+});
+
 test("navigate on an Arc tab showing arc://newtab sets the url and runs no page JS until it leaves", () => {
   install({ browsers: [arc([{ id: "A", active: 0, tabs: [{ id: "n", url: "arc://newtab/", title: "New Tab" }] }])], cg: [{ owner: "Arc" }] });
   const tab = world.tabsOf("Arc", 0)[0];

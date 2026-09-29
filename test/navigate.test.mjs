@@ -500,19 +500,137 @@ test("navigate on Arc: a background tab, where page JS hangs, is refused without
   assert.equal(world.counts["tab.url="], undefined);
   assert.equal(world.counts["tab.execute"] || 0, 0);
   const r = arcNavigate(1, { raise: true });
-  assert.equal(r.waited, false);
+  assert.equal(r.waited, true);
   assert.equal(r.warning, RAISE);
   assert.deepEqual(paths(), [["navigate", "Arc", "https://next.test/"]]);
   assert.equal(world.counts["tab.execute"] || 0, 0);
 });
 
-test("navigate tool on Arc: a background tab, which can't be checked, reports the url asked for, unwaited", async () => {
+// A raised background Arc tab runs no page JS (execute hangs there), so its load
+// is followed through the tab's own url and loading reads.
+const arcBg = (extra) => handleCall("navigate", { url: "https://next.test/", raise: true, target: { tabId: "arc:a1" }, ...extra }).then((res) => JSON.parse(res.content[0].text));
+
+test("navigate tool on Arc: a raised background tab reports the url it settled on, and the one requested", async () => {
   install(arcFixture());
-  const o = JSON.parse((await handleCall("navigate", { url: "https://next.test/", raise: true, target: { tabId: "arc:a1" } })).content[0].text);
+  world.state.redirects = { "https://next.test/": "https://final.test/" };
+  const o = await arcBg();
+  assert.equal(o.ok, true);
+  assert.equal(o.url, "https://final.test/");
+  assert.equal(o.requested, "https://next.test/");
+  assert.equal(o.waited, true);
+  assert.equal(world.counts["tab.execute"] || 0, 0);
+  assert.equal(world.winSpec("Arc", 0).active, 0);
+});
+
+test("navigate tool on Arc: a raised background tab whose url never moves is load_failed", async () => {
+  install(arcFixture());
+  world.state.noContent = /next\.test/;
+  const o = await arcBg();
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: the tab stayed on https:\/\/a1\.test\//);
+  assert.equal(o.tabId, "arc:a1");
+  assert.equal(world.counts["tab.execute"] || 0, 0);
+});
+
+test("navigate tool on Arc: a raised background tab whose url can't be read is ok, unwaited", async () => {
+  install(arcFixture());
+  world.tabsOf("Arc", 0)[1].slow = { throws: Infinity, reads: Infinity, target: null };
+  const o = await arcBg();
   assert.equal(o.ok, true);
   assert.equal(o.url, "https://next.test/");
-  assert.equal(o.requested, undefined);
   assert.equal(o.waited, false);
+  assert.equal(world.counts["tab.execute"] || 0, 0);
+});
+
+test("navigate tool on Arc: a raised background tab still loading its old url at the deadline is a coded timeout", async () => {
+  install(arcFixture());
+  world.state.commitMs = 1e9;
+  world.tabsOf("Arc", 0)[1].shownUrl = () => "https://a1.test/";
+  const o = await arcBg();
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^timeout: https:\/\/next\.test\/ had not committed after 15000ms; the tab shows https:\/\/a1\.test\//);
+});
+
+test("navigate tool on Arc: a raised background tab that moved but is still loading at the deadline is ok, unwaited", async () => {
+  install(arcFixture());
+  world.state.commitMs = 1e9;
+  const o = await arcBg();
+  assert.equal(o.ok, true);
+  assert.equal(o.url, "https://next.test/");
+  assert.equal(o.waited, false);
+});
+
+test("navigate tool on Arc: a tab still on its new-tab page at the deadline is load_failed, not ok", async () => {
+  install({ ...arcFixture(), cg: [{ owner: "Arc" }] });
+  world.winSpec("Arc", 0).active = 2;
+  world.tabsOf("Arc", 0)[2].slow = { throws: 0, reads: Infinity, target: null };
+  const o = JSON.parse((await handleCall("navigate", { url: "https://next.test/", target: { tabId: "arc:a2" } })).content[0].text);
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: the tab stayed on arc:\/\/newtab/);
+  assert.equal(world.counts["tab.execute"] || 0, 0);
+});
+
+// Safari has no idle rule (its `loading` is unreliable), so a load that never
+// commits is told apart at the deadline by the stamped document still answering.
+const safariNav = async (args) => {
+  const tabId = JSON.parse((await handleCall("list_tabs", {})).content[0].text).tabs[1].tabId;
+  world.reset();
+  return JSON.parse((await handleCall("navigate", { target: { tabId }, ...args })).content[0].text);
+};
+
+test("navigate tool on Safari: its error page is load_failed naming the url, loaded once", async () => {
+  install(away(safariFixture()));
+  world.state.errorPage = /perch-nx\.invalid/;
+  world.state.errorHref = "safari-resource:/ErrorPage.html";
+  const o = await safariNav({ url: "http://perch-nx.invalid/" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: http:\/\/perch-nx\.invalid\/ did not load/);
+  assert.equal(paths().length, 1);
+});
+
+test("navigate tool on Safari: a load that never leaves the old page is load_failed at the deadline", async () => {
+  install(away(safariFixture()));
+  world.state.noContent = /\.zip$/;
+  const t0 = world.clock.t;
+  const o = await safariNav({ url: "https://next.test/file.zip" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: the tab stayed on https:\/\/bg\.test\//);
+  assert.ok(world.clock.t - t0 <= NAV_TIMEOUT + 200, `took ${world.clock.t - t0}ms`);
+  assert.equal(paths().length, 1);
+});
+
+test("navigate tool on Safari: a url shown while the old document still answers is a coded timeout", async () => {
+  install(away(safariFixture()));
+  world.state.commitMs = 1e9;
+  const o = await safariNav({ url: "https://next.test/" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^timeout: https:\/\/next\.test\/ had not committed after 15000ms; the tab shows https:\/\/next\.test\//);
+  assert.ok(o.tabId);
+});
+
+test("navigate tool on Safari: a new document still loading at the deadline stays ok, unwaited", async () => {
+  install(away({ ...safariFixture(), loadTicks: 1e9 }));
+  const o = await safariNav({ url: "https://next.test/" });
+  assert.equal(o.ok, true);
+  assert.equal(o.url, "https://next.test/");
+  assert.equal(o.waited, false);
+});
+
+test("navigate tool on Chrome: a new document still loading at the deadline stays ok, unwaited", async () => {
+  install({ ...fixture(), loadTicks: 1e9 });
+  const { o } = await navTool({ url: "https://next.test/" });
+  assert.deepEqual(o, { ok: true, url: "https://next.test/", waited: false, tabId: "chrome:7" });
+});
+
+test("navigate tool on Chrome: a redirect read once loading settles, with no check answered, reports the committed url", async () => {
+  install(fixture());
+  world.state.redirects = { "https://a.test/apply": "https://a.test/login" };
+  let n = 0;
+  world.state.onExecute = () => { if (++n === 2) world.state.hung = true; };
+  const { o } = await navTool({ url: "https://a.test/apply" });
+  assert.equal(o.ok, true);
+  assert.equal(o.url, "https://a.test/login");
+  assert.equal(o.requested, "https://a.test/apply");
 });
 
 test("navigate on Arc: its own new-tab page is refused without raise:true", () => {
