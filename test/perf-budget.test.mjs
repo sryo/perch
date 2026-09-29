@@ -380,6 +380,22 @@ test("navigate on a raised background Arc tab costs a fixed count of Apple Event
   assert.equal(appleEvents(), 16, breakdown());
 });
 
+// A plain click sends one script: the page prelude once, the new-tab probe, and
+// no second pass or readback code, which a _blank target fetches only when found.
+test("click: a plain click's one script carries the prelude once and no second pass or readback code", async () => {
+  const dom = page(`<button id=b>Save</button>`, { url: "https://c0.test/" });
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  const sent = [], d = { run: (s) => { sent.push(s); return world.daemon.run(s); } };
+  DAEMONS.fast = d; DAEMONS.slow = d;
+  const { o } = await call("click", { selector: "#b" });
+  assert.equal(o.ok, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].split("function deepAll(").length - 1, 1);
+  assert.ok(!sent[0].includes("function rbArm("), "no readback code");
+  assert.ok(sent[0].length < 26000, `sent ${sent[0].length} bytes`);
+  assert.equal(appleEvents(), 1, breakdown());
+});
+
 // A plain click is one page call, as eval_js is. A click on a link or submit
 // aimed at a new tab adds the window's tab list in one bulk read before and
 // after the second page call that clicks, plus one read of the shown tab once a

@@ -4,11 +4,13 @@
 // never selects the new tab.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, CLICK_BLANK_GO } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
 
 const LINK = `<a id=a href="/job/1" target=_blank>Apply</a><a id=same href="/job/2">Details</a><button id=b>Save</button><p id=s>Idle</p>`;
+// The second pass: a short script that runs what the first pass kept.
+const go = (w) => JSON.parse(w.eval(CLICK_BLANK_GO));
 const count = (w, sel) => w.eval(`(function(){var n=0;document.querySelector(${JSON.stringify(sel)}).addEventListener('click',function(){n++});return function(){return n}})()`);
 
 // ---- page script ----
@@ -41,9 +43,9 @@ test("the second pass clicks the element the first pass found, and refuses when 
   const w = page(LINK);
   const n = count(w, "#a");
   run(w, "click", { selector: "#a", probe: true });
-  assert.deepEqual(run(w, "click", { blank: true }), { ok: true, el: `link "Apply"` });
+  assert.deepEqual(go(w), { ok: true, el: `link "Apply"` });
   assert.equal(n(), 1);
-  const again = run(w, "click", { blank: true });
+  const again = go(w);
   assert.equal(again.ok, false);
   assert.match(again.error, /nothing was clicked/);
   assert.equal(n(), 1);
@@ -53,7 +55,7 @@ test("the second pass says when the page cancelled the link's default", () => {
   const w = page(LINK);
   w.eval(`document.getElementById('a').addEventListener('click', function (e) { e.preventDefault(); })`);
   run(w, "click", { selector: "#a", probe: true });
-  assert.deepEqual(run(w, "click", { blank: true }), { ok: true, el: `link "Apply"`, cancelled: true });
+  assert.deepEqual(go(w), { ok: true, el: `link "Apply"`, cancelled: true });
 });
 
 test("window.open during the click: a null return is blocked, a window is opened; the original is restored", () => {

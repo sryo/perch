@@ -4186,6 +4186,25 @@ function watchOpen() {
 }
 `;
 
+const CLICK_BODY = String.raw`
+const clickNow = function (el, blank) {
+  if (A.readback) { const bad = rbArm(); if (bad) return bad; }
+  const w = watchOpen();
+  try { el.click(); } finally { w.off(); }
+  const out = { ok: true, el: ident(el) };
+  if (blank && w.cancelled) out.cancelled = true;
+  if (w.url != null && w.got) { out.opened = { url: w.url }; out.note = "list_tabs to find it"; }
+  else if (w.url != null) { out.blocked = true; out.href = w.url; }
+  return out;
+};
+const r = resolveClick(A);
+if (r.out) return r.out;
+const el = r.el, href = A.probe && blankHref(el);
+if (!href) return clickNow(el, false);
+window.__perch_blank = { run: function () { return el.isConnected ? clickNow(el, true) : null; } };
+return { ok: true, blank: { href: href } };
+`;
+
 // Trusted input: find the element, scroll it into view, estimate its screen
 // point, and arm listeners: mousemove for calibration, mousedown for `hit`.
 // Estimate: screen origin + browser chrome (outer - inner, assumed left and top)
@@ -4800,32 +4819,12 @@ if (s.already) out.note = "already chosen; not pressed again, since a press woul
 return out;
 `,
 
-  // A.probe: a click that opens a new tab stops before clicking, keeping its
-  // element for A.blank, the second pass, which the runtime brackets with reads
-  // of the window's tabs.
-  click: READBACK_LIB + BLANK_LIB + String.raw`
-let el;
-if (A.blank) {
-  const kept = window.__perch_blank;
-  window.__perch_blank = null;
-  if (!kept || !kept.isConnected) return { ok: false, error: "the page changed before the click; nothing was clicked" };
-  el = kept;
-} else {
-  const r = resolveClick(A);
-  if (r.out) return r.out;
-  el = r.el;
-  const href = A.probe && blankHref(el);
-  if (href) { window.__perch_blank = el; return { ok: true, blank: { href: href } }; }
-}
-if (A.readback) { const bad = rbArm(); if (bad) return bad; }
-const w = watchOpen();
-try { el.click(); } finally { w.off(); }
-const out = { ok: true, el: ident(el) };
-if (A.blank && w.cancelled) out.cancelled = true;
-if (w.url != null && w.got) { out.opened = { url: w.url }; out.note = "list_tabs to find it"; }
-else if (w.url != null) { out.blocked = true; out.href = w.url; }
-return out;
-`,
+  // A.probe: a click that opens a new tab stops before clicking, keeping a
+  // closure over its element that CLICK_BLANK_GO, the second pass, runs; the
+  // runtime brackets that with reads of the window's tabs. Only a readback
+  // click carries READBACK_LIB (click_readback).
+  click: BLANK_LIB + CLICK_BODY,
+  click_readback: READBACK_LIB + BLANK_LIB + CLICK_BODY,
 
   readback_arm: READBACK_LIB + String.raw`
 return rbArm() || { ok: true };
@@ -5487,6 +5486,9 @@ export function chunkUtf16(text, max = 20) {
 }
 
 const pageFn = (name, A) => buildEvalWrapper(pageScript(name, A));
+// A new-tab click's second pass: runs what the first pass kept, once.
+export const CLICK_BLANK_GO = buildEvalWrapper(`const k = window.__perch_blank; window.__perch_blank = null;
+return (k && k.run && k.run()) || { ok: false, error: "the page changed before the click; nothing was clicked" };`);
 
 // How long click {readback} waits for the element's text or the url to change.
 const READBACK_SETTLE = 2000;
@@ -5591,9 +5593,9 @@ async function click(args = {}) {
   if (!ref && !selector && !label_pattern) throw new Error("click requires `ref`, `selector`, or `label_pattern` (x/y is screen coords, trusted:true only)");
   const A = { ref, selector, label_pattern };
   if (hover) return runPage("click", "hover", A, target);
-  const go = pageFn("click", { blank: true, readback });
+  const go = CLICK_BLANK_GO;
   if (!readback) return parsePage(await rt("clickPage", { target, click: pageFn("click", { ...A, probe: true }), go }, { raw: true }));
-  return rt("click", { target, click: pageFn("click", { ...A, probe: true, readback }), go, ...readbackSteps(readback) }, { lane: "slow" });
+  return rt("click", { target, click: pageFn("click_readback", { ...A, probe: true, readback }), go, ...readbackSteps(readback) }, { lane: "slow" });
 }
 
 const KEY_CODES = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, Delete: 46, Space: 32, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34 };
