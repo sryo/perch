@@ -5,6 +5,7 @@ import { writeFile } from "node:fs/promises";
 import { tempDir } from "../../scripts/temp.mjs";
 
 export const SHOT_NO_IMAGE = "timeout: screenshot: the window capture gave no image within 3s; nothing was captured";
+export const NO_GRANT = "screenshot: needs the Screen Recording grant for the app running perch (System Settings > Privacy & Security > Screen Recording); nothing was captured";
 export const BOUND = { timeout: 3000, killSignal: "SIGKILL" };
 export const RAW = "Command failed: screencapture -l 77 -x -o -t png /var/folders/xy/T/perch-1-abc.png";
 

@@ -243,7 +243,7 @@ test("tab lock: a screenshot {selector} whose screencapture fallback hangs relea
     cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 100, y: 50, w: 1000, h: 700, ax: { web: [{ x: 300, y: 130, w: 800, h: 620 }] } }],
   });
   world.run(JXA_PRELUDE);
-  world.state.capture = false;
+  world.state.captureExit = 1;
   const saved = { fast: DAEMONS.fast, slow: DAEMONS.slow, exec: deps.exec };
   t.after(() => { Object.assign(DAEMONS, { fast: saved.fast, slow: saved.slow }); deps.exec = saved.exec; });
   DAEMONS.fast = DAEMONS.slow = world.daemon;

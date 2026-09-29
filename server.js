@@ -918,9 +918,10 @@ function jxaRuntime(BROWSERS, HANG) {
   const SHOT_NO_AX = "screenshot: cropping to an element needs the Accessibility grant to place the page in the window; grant it, or screenshot without ref or selector";
   const SHOT_NO_AREA = "screenshot: Accessibility shows no page area matching this tab's viewport; nothing was captured; screenshot without ref or selector";
   const SHOT_OUTSIDE = "screenshot: the element is outside the visible page even after scrolling it into view; nothing was captured";
-  // Node's screencapture fallback runs after the restore, so it would see the
-  // page as it was, not the rect measured after the scroll.
-  const SHOT_MOVED = "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it, or scroll it into view and call again";
+  // Without the grant Node's screencapture has the same responsible process and
+  // no grant either: its prompt would take the user's key focus mid-call, and a
+  // capture could come back as wallpaper or a bare frame.
+  const SHOT_NO_GRANT = "screenshot: needs the Screen Recording grant for the app running perch (System Settings > Privacy & Security > Screen Recording); nothing was captured";
   // A capture with the grant that still gave no usable image (both screencapture runs
   // failed or wrote nothing readable, or the crop or downscale failed).
   const SHOT_NO_CAPTURE = "screenshot: the window capture gave no image; nothing was captured";
@@ -1003,11 +1004,14 @@ function jxaRuntime(BROWSERS, HANG) {
           const run = early;
           early = null;
           const cap = capture(I.windowNumber, a.format, a.maxWidth, m, run);
-          if (cap && cap.data) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
-          else if (c.moved) refused = cap ? SHOT_NO_CAPTURE : SHOT_MOVED;
+          if (cap.data) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
+          else if (cap.noGrant) refused = SHOT_NO_GRANT;
+          // Node's screencapture fallback runs after the restore, so it would
+          // see the page as it was, not the rect measured after the scroll.
+          else if (c.moved) refused = SHOT_NO_CAPTURE;
           else I.map = m;
           I.aim = "ax";
-          if (m.clipped || (cap && cap.cut)) I.clipped = true;
+          if (m.clipped || cap.cut) I.clipped = true;
         }
       }
     } catch (e) { err = e; }
@@ -1047,20 +1051,20 @@ function jxaRuntime(BROWSERS, HANG) {
 
   // The window's own pixels, cropped, scaled and encoded here, so a crop happens
   // inside the runtime call that scrolled and restores. CGPreflightScreenCaptureAccess
-  // never prompts; without the grant it returns null and
-  // Node's screencapture (which asks for the grant itself) takes over. With the
+  // never prompts; without the grant it returns NO_GRANT, which the call refuses
+  // (see SHOT_NO_GRANT). With the
   // grant, two runs that give no usable image return NO_IMAGE, which Node's
   // screencapture and sips also take over unless the page had to scroll. With a
   // shot map it keeps only the map's box, cut before any downscale. A capture
   // that gives no image in time is a coded timeout, which the crop's restore
   // still follows. `run` is a capture startShot already began, which this call
   // then owns; `points` is the window's width, for a shot with no map.
-  const NO_IMAGE = { noImage: true };
+  const NO_IMAGE = { noImage: true }, NO_GRANT = { noGrant: true };
   function capture(wid, format, maxWidth, map, run, points) {
     let granted = !!run;
     try {
       if (!run) {
-        if (!shotGranted()) return null;
+        if (!shotGranted()) return NO_GRANT;
         granted = true;
         run = startShot(wid, !map && format !== "jpeg" && fitsAsIs(points, maxWidth) ? "png" : "tiff");
       }
@@ -1103,7 +1107,7 @@ function jxaRuntime(BROWSERS, HANG) {
       return out;
     } catch (e) {
       if (e && e.message === SHOT_NO_IMAGE) throw e;
-      return granted ? NO_IMAGE : null;
+      return granted ? NO_IMAGE : NO_GRANT;
     } finally { if (run) dropFile(run.path); }
   }
   function shotGranted() {
@@ -2675,7 +2679,8 @@ function jxaRuntime(BROWSERS, HANG) {
     shot(a) {
       if (a.clip) return shotClip(a);
       const I = shotGeom(a), c = capture(I.windowNumber, a.format, a.maxWidth, null, null, (I.cgBounds || I.geom).w);
-      if (c && c.data) { I.data = c.data; I.image = c.image; }
+      if (c.noGrant) return { ok: false, error: SHOT_NO_GRANT };
+      if (c.data) { I.data = c.data; I.image = c.image; }
       return I;
     },
     select(a) {
@@ -3550,14 +3555,15 @@ async function shotChild(cmd, argv) {
   return dims ? { buf, dims } : null;
 }
 
+let nodeShotSeq = 0;
 async function screenshot(args = {}) {
   const { raise = false, target, format = "png", maxWidth = 1568, ref, selector } = args;
   const aimed = (ref != null && ref !== "") || (selector != null && selector !== "");
   const g = await rt("shot", aimed
     ? { target, raise, format, maxWidth, clip: pageFn("shot_clip", { ref, selector }), painted: pageFn("shot_painted", {}), restore: pageFn("shot_restore", {}) }
     : { target, raise, format, maxWidth });
-  // The element's own outcome: a ref miss, no match, a page fault, nothing visible.
-  if (aimed && (!g || g.windowNumber == null || g.ok === false)) return g;
+  // A refusal, or the element's own outcome: a ref miss, no match, a page fault, nothing visible.
+  if (!g || g.ok === false || (aimed && g.windowNumber == null)) return g;
   const ext = format === "jpeg" ? "jpg" : "png";
   // Both captures cover the CG bounds (titlebar included), not AppleScript's inner geom.
   const rect = g.cgBounds || g.geom;
@@ -3568,7 +3574,7 @@ async function screenshot(args = {}) {
     ...(g.warning && { warning: g.warning }),
   });
   if (g.data) return { __image: true, data: g.data, mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: meta(g.image) };
-  const base = join(tmpdir(), `perch-${process.pid}-${Date.now().toString(36)}`);
+  const base = join(tmpdir(), `perch-${process.pid}-${++nodeShotSeq}-${Date.now().toString(36)}`);
   const files = [`${base}.${ext}`];
   const quality = ext === "jpg" ? ["-s", "formatOptions", "80"] : [];
   try {
