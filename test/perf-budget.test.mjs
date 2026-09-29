@@ -574,3 +574,21 @@ test("fill {fields} costs the same Apple Events inline and from fields_path", as
   }
   assert.deepEqual(cost, { inline: 1, path: 1 }, breakdown());
 });
+
+// A typeahead whose lookup answers the full text: the typing, the probe, the
+// polls up to the pick and the reads up to the verified pick; nothing retyped.
+test("fill on a typeahead that answers the full text costs a fixed count of Apple Events", async () => {
+  const dom = page(`<div class=loc><label for=loc>Location</label><input id=loc type=text>
+    <input type=hidden id=hid><div class=dropdown-container></div></div>`, { url: "https://c0.test/" });
+  dom.eval(`const inp = document.getElementById('loc'), hid = document.getElementById('hid'), dd = document.querySelector('.dropdown-container');
+    inp.addEventListener('input', () => {
+      hid.value = '';
+      dd.innerHTML = ['Rosario, Santa Fe, Argentina'].filter((c) => c.toLowerCase().startsWith(inp.value.toLowerCase())).map((c) => '<div class=dropdown-item>' + c + '</div>').join('');
+      dd.querySelectorAll('.dropdown-item').forEach((o) => o.addEventListener('mousedown', () => { inp.value = o.textContent; hid.value = 'loc-0'; dd.innerHTML = ''; }));
+    });`);
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  const { o } = await call("fill", { selector: "#loc", text: "Rosario" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal("query" in o, false);
+  assert.equal(appleEvents(), 8, breakdown());
+});
