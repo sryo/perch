@@ -39,7 +39,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 3 combobox "Country" options=["Argentina","Brazil"] value="AR"
 ```
 
-Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`. Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick). Refs die on re-snapshot or navigation. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
+Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Refs die on re-snapshot or navigation. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
 
 ## Results
 
