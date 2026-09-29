@@ -1356,13 +1356,26 @@ function jxaRuntime(BROWSERS, HANG) {
 
   // After a click armed with readback: the first changed text/url within a.settle ms,
   // else what the element shows now. Polled here because page timers are throttled.
-  function readback(t, a) {
+  // `tok` is the owner token the arm returned: a read that answers from a record
+  // with another token (another perch call on the tab armed over this one), or a
+  // record some other call's read finished with no outcome it can vouch for,
+  // ends the call unverified with no more polling.
+  function readback(t, a, tok) {
+    let lost = false;
+    const mine = function (v) { if (v && ((v.tok != null && v.tok !== tok) || v.done)) lost = true; return !lost; };
     const v = afterStep("click", function () {
-      const r = poll(t, a.read, a.settle, 50);
-      return r ? r.value : readExec(t, a.readFinal);
+      const r = poll(t, a.read, a.settle, 50, false, function (v) { return !mine(v) || (!!v && !v.pending); });
+      if (lost) return null;
+      const f = r ? r.value : readExec(t, a.readFinal);
+      mine(f);
+      return f;
     });
-    return threw(v) ? { ok: false, error: "click: the click was sent; the page script failed reading it back (" + faultName(v) + "); outcome unverified" } : v;
+    if (lost) return { ok: false, error: RB_REPLACED };
+    if (threw(v)) return { ok: false, error: "click: the click was sent; the page script failed reading it back (" + faultName(v) + "); outcome unverified" };
+    if (v) delete v.tok;
+    return v;
   }
+  const RB_REPLACED = "timeout: click sent, but another perch call on this tab took over its readback state; the outcome is not verified";
 
   // A click that opens a new tab is found by the app's tab lists, one bulk read
   // of every window before and after: ids, or Safari's urls (its tabs have no id),
@@ -1522,16 +1535,18 @@ function jxaRuntime(BROWSERS, HANG) {
   const checkFault = function (tool, v) { return tool + ": the " + (tool === "press" ? "key" : "click") + " was sent; the page script failed checking it (" + faultName(v) + "); outcome unverified"; };
 
   // wait {quiet}: timed here, where the clock isn't throttled with the page. The
-  // window opens when a run arms the observer (fresh); a run that fails or finds
-  // a new document restarts it. Runs send a.arm until one answers, then a.js.
+  // window opens when a run arms the observer (fresh); a run that fails, finds a
+  // new document, sees activity since the last run it read, or finds another
+  // token (another perch call armed over this one) restarts it. Runs send a.arm
+  // until one answers, then a.js.
   function waitQuiet(a, start, interval) {
     const t = pageTarget(a.target, "wait");
-    let last = start, quietFor = 0, armed = false;
+    let last = start, quietFor = 0, armed = false, tok = null, act = null;
     const r = poll(t, function () { return armed ? a.js : a.arm; }, a.timeout, interval, false, function (v) {
       const now = Date.now();
       if (v && v.__perch_error) return true;
-      if (v) armed = true;
-      if (!v || v.busy || v.fresh) last = now;
+      if (!v || v.fresh || v.tok !== tok || v.act !== act) last = now;
+      if (v) { armed = true; tok = v.tok; act = v.act; }
       quietFor = now - last;
       return quietFor >= a.quiet;
     }, start);
@@ -2756,14 +2771,18 @@ function jxaRuntime(BROWSERS, HANG) {
       let r = stepRead(t, a.click);
       if (r && r.blank) r = clickBlank(winOf(t), r.blank.href, function () { return stepRead(t, a.go); });
       if (!r || r.ok !== true) return r;
-      return Object.assign(r, readback(t, a));
+      const tok = r.rbTok;
+      delete r.rbTok;
+      return Object.assign(r, readback(t, a, tok));
     },
     trustedClick(a) {
       const T = trustedTarget(a);
-      let W = null, before = null, href = null;
+      let W = null, before = null, href = null, tok = null;
       const arm = function (A) {
         if (A && A.blank) { W = winOf(T.t); before = tabSet(W); href = A.blank.href; }
-        return a.arm ? parseExec(T.t, a.arm) : null;
+        const r = a.arm ? parseExec(T.t, a.arm) : null;
+        if (r && r.tok) tok = r.tok;
+        return r;
       };
       let out;
       if (a.x != null) {
@@ -2795,7 +2814,7 @@ function jxaRuntime(BROWSERS, HANG) {
         delete out.cancelled;
       }
       // The cursor is already home, so the settle wait doesn't hold it.
-      return a.arm ? Object.assign(out, readback(T.t, a)) : out;
+      return a.arm ? Object.assign(out, readback(T.t, a, tok)) : out;
     },
     // The page snapshot and, in the same call, the frame walk. A walk that can't
     // run leaves the page rows and says why.
@@ -5134,8 +5153,10 @@ function editClear(el) {
 // mutations anywhere (takeRecords too, since the observer's callback may not
 // have run between polls) and completed fetch/XHR requests, as resource timing
 // entries. A request still in flight shows only once it completes. rbWatch keeps
-// the state on window[key]; one that is never read again stops its observer at
-// the first mutation after `life` ms.
+// the state on window[key] under a fresh owner token (a per-document counter
+// plus a random suffix), so a caller can tell its own state from one another
+// perch server's call put there; one that is never read again stops its
+// observer at the first mutation after `life` ms and marks itself dead.
 const QUIET_LIB = String.raw`
 function rbNet() {
   try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
@@ -5155,18 +5176,26 @@ function rbSeen(s, r) {
     if (!s.btn.contains(m.target)) { s.away = true; return; }
   }
 }
-function rbBusy(s) {
+// Only counts what happened, so any number of readers can call it.
+function rbAct(s) {
   if (s.obs) rbSeen(s, s.obs.takeRecords());
-  const act = s.mut + ":" + rbNet(), busy = act !== s.act;
+  return s.mut + ":" + rbNet();
+}
+function rbBusy(s) {
+  const act = rbAct(s), busy = act !== s.act;
   s.act = act;
   return busy;
 }
+function rbTok() {
+  window.__perch_tok_n = (window.__perch_tok_n | 0) + 1;
+  return window.__perch_tok_n + "." + Math.random().toString(36).slice(2, 10);
+}
 function rbStop(s) { if (s && s.obs) s.obs.disconnect(); }
 function rbWatch(s, key, life) {
-  s.mut = 0; s.at = Date.now(); s.act = "0:" + rbNet();
+  s.mut = 0; s.at = Date.now(); s.act = "0:" + rbNet(); s.tok = rbTok();
   try {
     s.obs = new MutationObserver(function (r) {
-      if (window[key] !== s || Date.now() - s.at > life) return s.obs.disconnect();
+      if (window[key] !== s || Date.now() - s.at > life) { s.dead = true; return s.obs.disconnect(); }
       rbSeen(s, r);
     });
     s.obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
@@ -5300,7 +5329,7 @@ function rbArm(el) {
   s.quiet = 0;
   s.calm = Date.now();
   rbWatch(s, "__perch_rb", 10000);
-  return null;
+  return { ok: true, tok: s.tok };
 }
 `;
 
@@ -5380,10 +5409,12 @@ function watchOpen() {
 
 const CLICK_BODY = CLICK_LIB + String.raw`
 const clickNow = function (el, blank) {
-  if (A.readback) { const bad = rbArm(el); if (bad) return bad; }
+  const rb = A.readback ? rbArm(el) : null;
+  if (rb && !rb.ok) return rb;
   const w = watchOpen();
   try { el.click(); } finally { w.off(); }
   const out = { ok: true, el: ident(el) };
+  if (rb) out.rbTok = rb.tok;
   if (blank && w.cancelled) out.cancelled = true;
   if (w.url != null && w.got) { out.opened = { url: w.url }; out.note = "list_tabs to find it"; }
   else if (w.url != null) { out.blocked = true; out.href = w.url; }
@@ -6194,14 +6225,17 @@ return out;
   click_readback: READBACK_LIB + BLANK_LIB + CLICK_BODY,
 
   readback_arm: READBACK_LIB + String.raw`
-return rbArm(A.probed && window.__perch_trusted ? window.__perch_trusted.el : null) || { ok: true };
+return rbArm(A.probed && window.__perch_trusted ? window.__perch_trusted.el : null);
 `,
 
-  // null (keep polling) until the text or url moved, or the page stayed quiet for
-  // 10 polls; A.final settles for what's there.
+  // {pending} (keep polling) until the text or url moved, or the page stayed quiet
+  // for 10 polls; A.final settles for what's there. Every answer from a record
+  // carries its token, which the runtime checks is its own. A finished record
+  // stays, marked done, until the next arm replaces it.
   // No state means a new document: wait for it to show the element, or give up at final.
   readback_read: READBACK_LIB + String.raw`
 const s = window.__perch_rb;
+if (s && s.done) return s.out || { done: true, tok: s.tok };
 const text = rbText();
 if (!s) {
   if (!A.final && (text == null || document.readyState === "loading")) return null;
@@ -6256,16 +6290,19 @@ const inFlight = !!s.btn && s.btn.isConnected && (onBtn || !s.away) && (textOf(s
 if (busy) { s.quiet = 0; s.calm = Date.now(); }
 else s.quiet++;
 const settled = s.quiet >= 10 && (document.visibilityState !== "hidden" || Date.now() - s.calm >= 1200);
-if ((!changed || inFlight) && !A.final && !settled) return null;
+if ((!changed || inFlight) && !A.final && !settled) return { pending: true, tok: s.tok };
 rbStop(s);
-delete window.__perch_rb;
-const out = { readback: text, changed: changed };
+const out = { readback: text, changed: changed, tok: s.tok };
 if (moved) out.url = location.href;
 if (invNew.length) {
   out.invalid = inv.slice(0, 5).map(function (c) { return clip(c.name + (c.msg ? ": " + c.msg : ""), 140); });
   if (inv.length > 5) out.invalidCount = inv.length;
 }
 if (form) out.form = form;
+// Another perch call's poll may be the one that read this record (it armed over
+// it, then polled). A change it saw holds against this record's own arm, so its
+// owner can still have it; a settle or a final read may have come early for it.
+window.__perch_rb = { done: true, tok: s.tok, out: changed && !inFlight ? out : null };
 return out;
 `,
 
@@ -6820,19 +6857,24 @@ return { ok: true, token: s.token };
 `,
 
   // wait {quiet}: the arm drops any earlier wait's state and starts this one's;
-  // each poll after it says whether the page was busy since the last, or, with
-  // no state (a new document), arms again and answers fresh. Neither carries a
-  // per-call value, so both stay in the page's compile cache.
+  // each poll after it answers the activity count and the state's token and
+  // writes nothing, so any number of waits can read one state. With no live
+  // state (a new document, or an observer past its life) it arms again and
+  // answers fresh. Neither carries a per-call value, so both stay in the
+  // page's compile cache.
   wait_quiet_arm: QUIET_LIB + String.raw`
 rbStop(window.__perch_quiet);
-rbWatch({}, "__perch_quiet", A.life);
-return { fresh: true };
+const s = {};
+rbWatch(s, "__perch_quiet", A.life);
+return { fresh: true, act: s.act, tok: s.tok };
 `,
   wait_quiet: QUIET_LIB + String.raw`
 const s = window.__perch_quiet;
-if (s) return { busy: rbBusy(s) };
-rbWatch({}, "__perch_quiet", A.life);
-return { fresh: true };
+if (s && !s.dead) return { act: rbAct(s), tok: s.tok };
+rbStop(s);
+const n = {};
+rbWatch(n, "__perch_quiet", A.life);
+return { fresh: true, act: n.act, tok: n.tok };
 `,
 
   wait_check: String.raw`
