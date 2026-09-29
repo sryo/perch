@@ -178,6 +178,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (state.dropWhilePending && tab.pending) { const e = unanswered(); tab.page = mk(tab.pending.url); tab.pending = null; throw e; }
       // state.hung: the page never answers at all (a busy loop, a modal dialog).
       if (state.hung) throw unanswered();
+      // state.hangIf(js): only the scripts it picks go unanswered: true before they
+      // run, "ran" after.
+      const hang = state.hangIf ? state.hangIf(javascript) : false;
+      if (hang === true) throw unanswered();
       // state.jsOff: the browser's "Allow JavaScript from Apple Events" is off.
       if (state.jsOff) throw new Error("Executing JavaScript through AppleScript is turned off.");
       // A JS dialog pauses its own tab's page: a dialog's `blocks` is that tab's id.
@@ -189,7 +193,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       ran.busy = 0;
       const r = spec.dom ? spec.dom.eval(javascript) : vm.runInContext(javascript, tab.page.ctx);
       // A dialog the script itself opened (alert() in a click handler) stops it before it replies.
-      if (paused()) throw unanswered();
+      if (paused() || hang === "ran") throw unanswered();
       // A script busy past the caller's timeout ran, but its reply never arrives.
       if (ran.busy) {
         tab.busyUntil = clock.t + ran.busy;
@@ -640,6 +644,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       },
       AXUIElementCopyAttributeValue: (el, name, out) => {
         bump("AX");
+        // state.axMs: each attribute read takes that long (a browser slow to answer Accessibility).
+        if (state.axMs) clock.t += state.axMs;
         // A closed dialog's elements are gone: kAXErrorInvalidUIElement.
         if (el.d && !state.dialogs.includes(el.d)) return -25202;
         // A kid removed from its frame is gone, like a closed dialog's elements.

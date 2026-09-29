@@ -905,17 +905,46 @@ function jxaRuntime(BROWSERS, HANG) {
   // A window the browser stopped painting (covered, hidden, or too slow) still
   // holds the frame from before the scroll.
   const SHOT_UNPAINTED = "screenshot: the window isn't painting (covered or hidden); show the window or scroll the element into view and call again; nothing was captured";
+  // Every page call of a crop is bounded where the tab is pinned (pollExec): the
+  // clip and the restore get SHOT_STEP_SECS each, and the clip, the page area and
+  // the paint poll together SHOT_BUDGET_MS, past which the crop is refused with
+  // a coded timeout, so a page or browser that stops answering costs seconds, not
+  // the lane's timeout, and the restore still runs.
+  const SHOT_BUDGET_MS = 3000, SHOT_STEP_SECS = 1, SHOT_READ_SECS = 0.5;
+  const SHOT_LEFT = "; the scroll may be left moved (its restore got no answer)";
+  const shotTimeout = function (secs, note) { return new Error("timeout: screenshot: " + HANG.noReply + secs + "s; nothing was captured" + note); };
   // After a scroll, a.painted is polled until the page has run two animation
-  // frames, the second after the scroll's frame was painted.
+  // frames, the second after the scroll's frame was painted, on this call's own
+  // record (its token). Frames still missing when the page's timer fired (the
+  // record reads late), another call's record, or none: unproven. A page that
+  // stops answering: null, for the coded timeout.
   const SHOT_POLLS = 6;
-  function shotPainted(t, fn) {
+  function shotPainted(t, fn, token, deadline) {
+    let answered = false;
     for (let i = 0; i < SHOT_POLLS; i++) {
       delay(0.05);
+      const left = deadline - Date.now();
+      if (left <= 0) break;
       let p = null;
-      try { p = parseExec(t, fn); } catch (e) {}
-      if (p && p.painted === true) return true;
+      try { p = JSON.parse(String(pollExec(t, fn, Math.max(0.1, Math.min(SHOT_READ_SECS, left / 1000))))); }
+      catch (e) { if (isStale(e)) throw e; }
+      if (!p) continue;
+      answered = true;
+      if (p.token !== token) return false;
+      if (p.painted === true) return true;
+      if (p.late === true) return false;
     }
-    return false;
+    return answered ? false : null;
+  }
+  // Runs a.restore, bounded, and says what the caller must add: nothing when
+  // this call's record (or, with no token, whatever was recorded) was put back
+  // or there was none to put back, else SHOT_LEFT.
+  function shotRestore(t, fn, token) {
+    let back = null;
+    try { back = JSON.parse(String(pollExec(t, fn, SHOT_STEP_SECS))); } catch (e) {}
+    if (!back) return SHOT_LEFT;
+    if (back.ok !== true) return token == null ? "" : SHOT_LEFT;
+    return token == null || back.token === token ? "" : SHOT_LEFT;
   }
   function shotClip(a) {
     const s = shotTarget(a), t = s.t, I = s.I;
@@ -923,23 +952,29 @@ function jxaRuntime(BROWSERS, HANG) {
     let trusted = false;
     try { ObjC.import("ApplicationServices"); trusted = !!$.AXIsProcessTrusted(); } catch (e) {}
     if (!trusted) return { ok: false, error: SHOT_NO_AX };
-    const c = parseExec(t, a.clip);
+    const deadline = Date.now() + SHOT_BUDGET_MS;
+    let c;
+    // The clip scrolls, so a dropped reply may mean it did: restore, then refuse.
+    try { c = JSON.parse(String(pollExec(t, a.clip, SHOT_STEP_SECS))); }
+    catch (e) {
+      if (!isNoReply(e)) throw e;
+      throw shotTimeout(SHOT_STEP_SECS, shotRestore(t, a.restore, null));
+    }
+    // Every exit short of ok:true put its own scroll back in the page.
     if (!c || c.ok !== true) {
-      if (c && c.restore) {
-        try { exec(t, a.restore); } catch (e) {}
-        return { ok: false, error: c.unpainted ? SHOT_UNPAINTED : c.error };
-      }
+      if (c && c.unpainted) return { ok: false, error: SHOT_UNPAINTED };
       if (!threw(c)) return c;
-      try { exec(t, a.restore); } catch (e) {}
       // PerchStaleRef stays raw for handleCall, which maps it to the call's ref miss.
       return faultName(c) === "PerchStaleRef" ? c : { ok: false, error: "screenshot: the page script failed on this page (" + faultName(c) + "); nothing was captured" };
     }
-    let err = null, refused = null;
+    let err = null, refused = null, silent = false;
     try {
-      const m = shotMap(I, c);
+      const m = shotMap(I, c, deadline);
       if (typeof m === "string") refused = m;
       else {
-        if (c.moved && !shotPainted(t, a.painted)) refused = SHOT_UNPAINTED;
+        const painted = c.moved ? shotPainted(t, a.painted, c.token, deadline) : true;
+        if (painted === null) silent = true;
+        else if (!painted) refused = SHOT_UNPAINTED;
         else {
           const cap = capture(I.windowNumber, a.format, a.maxWidth, m);
           if (cap) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
@@ -950,11 +985,11 @@ function jxaRuntime(BROWSERS, HANG) {
         }
       }
     } catch (e) { err = e; }
-    let back = null;
-    try { back = parseExec(t, a.restore); } catch (e) {}
+    const left = shotRestore(t, a.restore, c.token);
     if (err) throw err;
-    if (refused) return { ok: false, error: refused };
-    if (!back || back.ok !== true) I.warning = "the page's scroll positions may not have been restored";
+    if (silent) throw shotTimeout(Math.round(SHOT_BUDGET_MS / 1000), left);
+    if (refused) return { ok: false, error: refused + left };
+    if (left) I.warning = left.slice(2);
     return I;
   }
 
@@ -964,11 +999,11 @@ function jxaRuntime(BROWSERS, HANG) {
   // px (zoom included). The box is the element plus SHOT_MARGIN CSS px, cut at
   // the viewport. A string is the refusal when there is no box or no area.
   const SHOT_MARGIN = 8;
-  function shotMap(I, c) {
+  function shotMap(I, c, until) {
     const r = I.cgBounds || I.geom, g = SHOT_MARGIN;
     const box = { x0: Math.max(0, c.x - g), y0: Math.max(0, c.y - g), x1: Math.min(c.iw, c.x + c.w + g), y1: Math.min(c.ih, c.y + c.h + g) };
     if (!(box.x1 > box.x0 && box.y1 > box.y0)) return SHOT_OUTSIDE;
-    const w = axPageArea(I, { iw: c.iw, ih: c.ih });
+    const w = axPageArea(I, { iw: c.iw, ih: c.ih }, until);
     if (!w) return SHOT_NO_AREA;
     return { ox: w.x - r.x, oy: w.y - r.y, s: w.scale, box: box, cw: r.w, clipped: c.x < 0 || c.y < 0 || c.x + c.w > c.iw || c.y + c.h > c.ih };
   }
@@ -1516,7 +1551,8 @@ function jxaRuntime(BROWSERS, HANG) {
   // is the one whose shape matches the viewport the probe measured, and its width
   // over innerWidth is the page zoom. Web areas are not descended into. Null when
   // nothing matches, so the caller falls back.
-  function axPageArea(I, probe) {
+  // `until`, if given, is a Date.now() past which the walk stops, unplaced.
+  function axPageArea(I, probe, until) {
     if (I.pid == null || !probe.iw || !probe.ih) return null;
     const ax = axInit(), attr = ax.attr, list = ax.list;
     // AXValue has no JS bridge; its description reads "{value = x:917.000000 y:57.000000 ...}".
@@ -1539,6 +1575,7 @@ function jxaRuntime(BROWSERS, HANG) {
     let best = null, miss = Infinity, seen = 0;
     const queue = [win];
     while (queue.length && seen < 600) {
+      if (until != null && Date.now() > until) return null;
       const el = queue.shift();
       seen++;
       if (String(ObjC.unwrap(attr(el, "AXRole"))) !== "AXWebArea") { queue.push.apply(queue, list(attr(el, "AXChildren"))); continue; }
@@ -5174,6 +5211,19 @@ return {
   ih: window.innerHeight,
 };`;
 
+// Puts back the scroll positions a shot_clip record kept, instantly even under
+// scroll-behavior: smooth.
+const SHOT_LIB = String.raw`
+function shotBack(s) {
+  const to = function (n, x, y) {
+    if (n.scrollLeft === x && n.scrollTop === y) return;
+    try { n.scrollTo({ left: x, top: y, behavior: "instant" }); } catch (e) { n.scrollLeft = x; n.scrollTop = y; }
+  };
+  s.els.forEach(function (e) { to(e[0], e[1], e[2]); });
+  if (window.scrollX !== s.x || window.scrollY !== s.y) window.scrollTo({ left: s.x, top: s.y, behavior: "instant" });
+}
+`;
+
 export const PAGE_SCRIPTS = {
   get_text: String.raw`
 const r = resolveEl(A, A.html ? "html" : "body");
@@ -6431,14 +6481,17 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
 
   // screenshot {ref|selector}: the element's client rect in view, scrolled the
   // least way in (a no-op when it is fully visible). One larger than the
-  // viewport, or still clipped by a scrolling ancestor, is refused; the second
-  // with restore:true, since the scroll already happened.
+  // viewport is refused before anything scrolls.
   // Every scroll position that can move (each ancestor's, across shadow roots,
-  // and the window's) is kept on window.__perch_shot for shot_restore, and only
-  // once the element is known to have a box. After a scroll, a hidden document
-  // (a covered or minimized window) paints nothing, so the crop is refused for
-  // the restore; a visible one counts two animation frames for shot_painted.
-  shot_clip: String.raw`
+  // and the window's) is kept on window.__perch_shot for shot_restore, once the
+  // element is known to have a box, under a token made here and returned, so a
+  // record another call left (another perch server's, cut off before its
+  // restore) is never read as this one's. Every exit that captures nothing puts
+  // the scroll back here: one still clipped by a scrolling ancestor, a hidden
+  // document after a scroll (a covered or minimized window paints nothing), a
+  // throw. A visible one counts two animation frames for shot_painted, and a
+  // timer marks the record late if they have not come by then.
+  shot_clip: SHOT_LIB + String.raw`
 const r = resolveEl(A);
 if (r.out) return r.out;
 const el = r.el;
@@ -6449,44 +6502,45 @@ const iw = innerWidth, ih = innerHeight;
 if (b.width > iw || b.height > ih) return { ok: false, error: "screenshot: the element is larger than the viewport (" + Math.round(b.width) + "x" + Math.round(b.height) + " CSS px in " + iw + "x" + ih + "); nothing was captured; screenshot without ref or selector" };
 const els = [];
 for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
-const st = window.__perch_shot = { els: els, x: window.scrollX, y: window.scrollY };
-try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); } catch (e) {}
-const c = el.getBoundingClientRect();
-const moved = window.scrollX !== st.x || window.scrollY !== st.y || els.some(function (e) { return e[0].scrollLeft !== e[1] || e[0].scrollTop !== e[2]; });
-// An ancestor that clips its overflow and still hides part of the element: the
-// viewport would show that ancestor's other content where the element sits.
-const cut = els.some(function (e) {
-  const n = e[0];
-  if (n === document.documentElement || n === document.body) return false;
-  const cs = getComputedStyle(n);
-  if (!/auto|scroll|hidden|clip/.test(cs.overflow + " " + cs.overflowX + " " + cs.overflowY)) return false;
-  const a = n.getBoundingClientRect(), x0 = a.left + (n.clientLeft || 0), y0 = a.top + (n.clientTop || 0);
-  return c.left < x0 - 1 || c.top < y0 - 1 || c.right > x0 + n.clientWidth + 1 || c.bottom > y0 + n.clientHeight + 1;
-});
-if (cut) return { ok: false, error: "screenshot: the element is clipped by a scrolling container; nothing was captured", restore: true };
-if (moved) {
-  if (document.visibilityState === "hidden") return { ok: false, unpainted: true, restore: true };
-  st.painted = false;
-  requestAnimationFrame(function () { requestAnimationFrame(function () { st.painted = true; }); });
-}
-return { ok: true, x: c.left, y: c.top, w: c.width, h: c.height, iw: iw, ih: ih, moved: moved };
+window.__perch_shot_n = (window.__perch_shot_n || 0) + 1;
+const st = window.__perch_shot = { els: els, x: window.scrollX, y: window.scrollY, token: window.__perch_shot_n + "." + Math.random().toString(36).slice(2, 10) };
+const undo = function () { shotBack(st); if (window.__perch_shot === st) window.__perch_shot = null; };
+try {
+  try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); } catch (e) {}
+  const c = el.getBoundingClientRect();
+  const moved = window.scrollX !== st.x || window.scrollY !== st.y || els.some(function (e) { return e[0].scrollLeft !== e[1] || e[0].scrollTop !== e[2]; });
+  // An ancestor that clips its overflow and still hides part of the element: the
+  // viewport would show that ancestor's other content where the element sits.
+  const cut = els.some(function (e) {
+    const n = e[0];
+    if (n === document.documentElement || n === document.body) return false;
+    const cs = getComputedStyle(n);
+    if (!/auto|scroll|hidden|clip/.test(cs.overflow + " " + cs.overflowX + " " + cs.overflowY)) return false;
+    const a = n.getBoundingClientRect(), x0 = a.left + (n.clientLeft || 0), y0 = a.top + (n.clientTop || 0);
+    return c.left < x0 - 1 || c.top < y0 - 1 || c.right > x0 + n.clientWidth + 1 || c.bottom > y0 + n.clientHeight + 1;
+  });
+  if (cut) { undo(); return { ok: false, error: "screenshot: the element is clipped by a scrolling container; nothing was captured" }; }
+  if (moved) {
+    if (document.visibilityState === "hidden") { undo(); return { ok: false, unpainted: true }; }
+    st.painted = false;
+    requestAnimationFrame(function () { requestAnimationFrame(function () { st.painted = true; }); });
+    setTimeout(function () { if (!st.painted) st.late = true; }, 100);
+  }
+  return { ok: true, x: c.left, y: c.top, w: c.width, h: c.height, iw: iw, ih: ih, moved: moved, token: st.token };
+} catch (e) { undo(); throw e; }
 `,
+  // The current record's paint state and token; the runtime compares the token.
   shot_painted: String.raw`
 const s = window.__perch_shot;
-return { painted: !!(s && s.painted) };
+return s ? { painted: s.painted === true, late: s.late === true, token: s.token } : { painted: false, gone: true };
 `,
-  // Puts back what shot_clip kept, instantly even under scroll-behavior: smooth.
-  shot_restore: String.raw`
+  // Puts back what shot_clip kept and says whose record it was.
+  shot_restore: SHOT_LIB + String.raw`
 const s = window.__perch_shot;
 window.__perch_shot = null;
 if (!s) return { ok: false };
-const to = function (n, x, y) {
-  if (n.scrollLeft === x && n.scrollTop === y) return;
-  try { n.scrollTo({ left: x, top: y, behavior: "instant" }); } catch (e) { n.scrollLeft = x; n.scrollTop = y; }
-};
-s.els.forEach(function (e) { to(e[0], e[1], e[2]); });
-if (window.scrollX !== s.x || window.scrollY !== s.y) window.scrollTo({ left: s.x, top: s.y, behavior: "instant" });
-return { ok: true };
+shotBack(s);
+return { ok: true, token: s.token };
 `,
 
   // wait {quiet}: the arm drops any earlier wait's state and starts this one's;
