@@ -2341,17 +2341,20 @@ function jxaRuntime(BROWSERS, HANG) {
     wait(a) {
       const start = Date.now(), interval = a.interval || 50;
       if (a.quiet) return waitQuiet(a, start, interval);
+      // With a.tok the page answers {tok} while pending: only a seen, lost or
+      // foreign-token answer ends the wait.
+      const done = a.tok ? function (v) { return !!v && (!!v.seen || !!v.lost || v.tok !== a.tok); } : null;
       let q = null, r = null;
       // A hinted Chromium handle's first poll is quickExec's one event, bounded.
       const w = a.target || {};
       const hinted = w.tabId != null && w.windowId == null && w.tabIndex == null && hints[w.tabId];
       if (!hinted) { try { q = quickExec(a.target, a.js); } catch (e) {} }
       const v = q && pollValue(q.v);
-      if (v != null && v !== false) r = { value: v, waited: 0 };
+      if (done ? done(v) : v != null && v !== false) r = { value: v, waited: 0 };
       else {
         const t = pageTarget(a.target, "wait");
         if (q) delay(interval / 1000);
-        r = poll(t, a.js, a.timeout, interval, false, null, start);
+        r = poll(t, a.js, a.timeout, interval, false, done, start);
         if (r) r.waited = Date.now() - start;
       }
       if (!r) throw ranOut("timeout: wait timed out after " + a.timeout + "ms");
@@ -5400,6 +5403,9 @@ function rbArm(el) {
 // between calls: the DataTransfer, the zone, the input under watch and its
 // MutationObserver, how often the file name was on the page before, and how
 // many fetch/XHR requests had completed (resource timing) before the file was set.
+// It also holds its call's key and owner token (rbTok), since another perch
+// server's file_upload on the tab replaces it; pending while an unwired input
+// waits for Node's drop fallback, done once a drop ran on it.
 const UPLOAD_LIB = String.raw`
 const has = function (el) { return !!el.files && el.files.length === 1 && el.files[0].name === A.name; };
 function nameCount(name) { return textOf(document.body).split(name).length - 1; }
@@ -5423,10 +5429,18 @@ function dropOn(U) {
     U.zone.dispatchEvent(ev);
   });
   const seen = uploadSeen(A.name, U);
-  const r = { ok: seen, dropped: true, el: ident(U.zone), shown: seen };
+  const r = { ok: seen, dropped: true, el: ident(U.zone), shown: seen, tok: U.tok };
   if (!seen) r.error = "nothing took the file dropped on " + r.el + ": no file name shown and no file input holds it";
   return r;
 }
+`;
+
+// Whether window.__perch_up is this call's: a later phase must not drop, empty
+// or read another call's upload state.
+const UPLOAD_OWN_LIB = String.raw`
+const upKey = JSON.stringify([A.ref, A.selector, A.label_pattern, A.name]);
+const upNow = window.__perch_up;
+const upLost = upNow && upNow.key !== upKey ? { lost: true, tok: upNow.tok } : null;
 `;
 
 // Clicks that open a new tab. blankHref: the absolute http(s) URL a link (not a
@@ -6442,7 +6456,10 @@ const P = typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
 return { ok: true, el: ident(r.el) };
 `,
 
-  file_upload: UPLOAD_LIB + String.raw`
+  file_upload: TOK_LIB + UPLOAD_LIB + UPLOAD_OWN_LIB + String.raw`
+// Another call's upload still waiting for its drop is left alone; after 10s it
+// counts as abandoned.
+if (upLost && upNow.pending && Date.now() - upNow.at < 10000) return { ok: false, error: "file_upload: another perch call on this tab is mid-upload; nothing was set, retry" };
 const isFile = function (el) { return el.tagName === "INPUT" && (el.type || "").toLowerCase() === "file"; };
 const ext = "." + A.name.split(".").pop().toLowerCase(), mime = A.mime.toLowerCase();
 function fits(el) {
@@ -6503,8 +6520,8 @@ const file = new File([arr], A.name, { type: A.mime });
 const dt = new DataTransfer();
 dt.items.add(file);
 const out = { ok: true, name: file.name, size: file.size, type: file.type };
-const U = { dt: dt, zone: zone, input: null, obs: null, moved: false, names: 0 };
-if (!input) { U.names = nameCount(A.name); window.__perch_up = U; return Object.assign(out, dropOn(U)); }
+const U = { dt: dt, zone: zone, input: null, obs: null, moved: false, names: 0, key: upKey, tok: rbTok(), at: Date.now() };
+if (!input) { U.names = nameCount(A.name); U.done = true; window.__perch_up = U; return Object.assign(out, dropOn(U)); }
 const who = ident(input) + (input.id ? " #" + input.id : "");
 // A hidden input that no form submits may have no handler reading it; a change
 // handler we can see, or any page change or completed fetch/XHR after change,
@@ -6542,7 +6559,7 @@ if (many) { out.ambiguous = true; out.el = who; }
 if (input.isConnected && has(input)) {
   if (watch) {
     if (!U.zone) for (let p = input.parentElement, k = 0; p && k < 3 && p !== document.body; p = p.parentElement, k++) if (vis(p)) { U.zone = p; break; }
-    if (U.zone && !heard(input) && !uploadSeen(A.name, U)) { window.__perch_up = U; out.unwired = true; return out; }
+    if (U.zone && !heard(input) && !uploadSeen(A.name, U)) { U.pending = true; window.__perch_up = U; return Object.assign(out, { unwired: true, tok: U.tok, who: who }); }
     U.obs.disconnect();
   }
   return out;
@@ -6557,17 +6574,32 @@ return out;
 
   // Polled from Node after a cleared/detached upload read shown:false: many sites
   // render the file name on a later tick. null keeps polling. A.up reads the
-  // drop state file_upload left instead.
-  file_upload_shown: UPLOAD_LIB + String.raw`
-const U = window.__perch_up;
-if (A.up) return (!!U && uploadSeen(A.name, U)) || null;
+  // drop state file_upload left instead, answering {tok} while not seen; a
+  // missing state on a document that made tokens was cleared by another call.
+  file_upload_shown: UPLOAD_LIB + UPLOAD_OWN_LIB + String.raw`
+if (A.up) {
+  if (upLost) return upLost;
+  const U = upNow;
+  if (!U) return window.__perch_tok_n ? { lost: true } : null;
+  if (!uploadSeen(A.name, U)) return { tok: U.tok };
+  U.pending = false;
+  return { seen: true, tok: U.tok };
+}
 return deepAll("input[type=file]").some(has) || textOf(document.body).indexOf(A.name) >= 0 || null;
 `,
 
   // The fallback for a hidden input nothing reacted to: empty it, drop on its zone.
-  file_upload_drop: UPLOAD_LIB + String.raw`
-const U = window.__perch_up;
-if (!U || !U.zone || !U.zone.isConnected) return { ok: false, error: "the drop zone left the page" };
+  // The drop leaves its state in place, marked done, since the verifying poll
+  // still reads it; a second drop on a done state can only be another call's
+  // with the same key.
+  file_upload_drop: UPLOAD_LIB + UPLOAD_OWN_LIB + String.raw`
+if (upLost) return upLost;
+const U = upNow;
+if (!U) return window.__perch_tok_n ? { lost: true } : { ok: false, error: "the drop zone left the page" };
+if (U.done) return { lost: true, tok: U.tok };
+U.pending = false;
+U.done = true;
+if (!U.zone || !U.zone.isConnected) return { ok: false, error: "the drop zone left the page", tok: U.tok };
 if (U.obs) { U.obs.disconnect(); U.obs = null; }
 if (U.input && U.input.isConnected) U.input.files = new DataTransfer().files;
 U.input = null;
@@ -7333,11 +7365,14 @@ function uploadCap(abs, size) {
     : `file_upload: ${abs} is ${Math.ceil(size / 1024)}KB, over the 700KB cap without the osascript daemon (PERCH_DAEMON=0 or it failed to start)`;
   throw Object.assign(new Error(msg), { cap: true });
 }
-async function uploadShown(target, name, up) {
+export const UPLOAD_TAKEN = "file_upload: another perch call on this tab replaced this upload's state";
+// key: the args both page phases compare with the state's. With up, the answer
+// counts only when it is the state this call's tok names.
+async function uploadShown(target, key, up, tok) {
   try {
-    await rt("wait", { target, js: pageFn("file_upload_shown", { name, up }), timeout: UPLOAD_SHOWN_WAIT, interval: 50 }, { lane: "slow" });
-    return true;
-  } catch { return false; }
+    const r = await rt("wait", { target, js: pageFn("file_upload_shown", { ...key, up }), timeout: UPLOAD_SHOWN_WAIT, interval: 50, tok: up ? tok : undefined }, { lane: "slow" });
+    return up ? { own: !!r.value.seen && r.value.tok === tok, lost: !r.value.seen || r.value.tok !== tok } : { own: true };
+  } catch { return { own: false }; }
 }
 async function fileUpload(args = {}) {
   const { selector, ref, label_pattern, path, target } = args;
@@ -7349,19 +7384,30 @@ async function fileUpload(args = {}) {
   const { abs, data } = await readUserFile(path, undefined, uploadCap);
   const name = abs.split("/").pop();
   const mime = MIME_BY_EXT[name.split(".").pop().toLowerCase()] || "application/octet-stream";
+  const key = { ref, selector, label_pattern, name };
   let r = await runPage("file_upload", "file_upload", { selector, ref, label_pattern, b64: data.toString("base64"), name, mime }, target);
+  const tok = r && r.tok;
+  if (r) delete r.tok;
   // A hidden input nothing reacted to within the wait gets a drop on its zone instead.
   if (r && r.unwired) {
+    const who = r.who;
     delete r.unwired;
-    if (await uploadShown(target, name, true)) return r;
-    const drop = await runPage("file_upload", "file_upload_drop", { name }, target);
+    delete r.who;
+    const seen = await uploadShown(target, key, true, tok);
+    if (seen.own) return r;
+    const taken = (tail) => ({ ...r, ok: false, error: `${UPLOAD_TAKEN}; the file was set on ${who} but ${tail}; not verified` });
+    if (seen.lost) return taken("no drop was made");
+    const drop = await runPage("file_upload", "file_upload_drop", key, target);
     if (drop && drop.__perch_error != null) return drop;
+    if (drop && drop.lost) return taken("no drop was made");
+    if (drop && drop.tok !== tok) return taken("the drop ran on the other call's state");
+    if (drop) delete drop.tok;
     r = { ...r, ...drop };
   }
   if (!r || r.shown !== false || !(r.ok === true || r.dropped)) return r;
   // Best effort: an input already holds the file, so a failed poll leaves shown:false.
   // A drop nothing showed stays {ok:false}.
-  if (await uploadShown(target, name, !!r.dropped)) {
+  if ((await uploadShown(target, key, !!r.dropped, tok)).own) {
     r.shown = true;
     if (r.dropped) { r.ok = true; delete r.error; }
   }

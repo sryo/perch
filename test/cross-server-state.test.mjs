@@ -7,8 +7,10 @@
 // A's page evaluations: the page state is all two servers share.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { JXA_PRELUDE, DAEMONS, handleCall, buildEvalWrapper, pageScript, CLICK_BLANK_GO } from "../server.js";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tempDir } from "../scripts/temp.mjs";
+import { JXA_PRELUDE, DAEMONS, handleCall, buildEvalWrapper, pageScript, CLICK_BLANK_GO, UPLOAD_TAKEN } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
 
@@ -306,8 +308,8 @@ test("new-tab click: B's element run by another call's second pass is B's refusa
 });
 
 test("every script that makes owner tokens defines rbTok once", () => {
-  for (const name of ["click", "click_readback", "wait_quiet", "readback_read"]) {
-    const src = pageScript(name, { selector: "#x", probe: true, readback: "#x", life: 1 });
+  for (const name of ["click", "click_readback", "wait_quiet", "readback_read", "file_upload"]) {
+    const src = pageScript(name, { selector: "#x", probe: true, readback: "#x", life: 1, name: "a.pdf", mime: "application/pdf", b64: "" });
     assert.equal(src.split("function rbTok(").length - 1, 1, name);
   }
 });
@@ -489,6 +491,160 @@ test("select {trusted}: a probe that finds another call's select state posts no 
   assert.deepEqual(world.posted, [], "no event posted at B's control");
   assert.deepEqual({ ...dom.optClicks }, {});
   assert.equal(dom.document.getElementById("region").getAttribute("aria-expanded"), "true", "B's open list is left alone");
+});
+
+// ---- file_upload ----
+// Two zones, each with a hidden input no handler reads, so an upload falls back
+// to a drop. A zone lists the files dropped on it.
+
+const ZONES = `<div id=za><input type=file id=fa style='display:none'><p>Drop A here</p><ul id=la></ul></div>
+<div id=zb><input type=file id=fb style='display:none'><p>Drop B here</p><ul id=lb></ul></div>`;
+const ZONES_JS = `window.dropped = [];
+["a", "b"].forEach(function (k) {
+  const z = document.getElementById("z" + k);
+  z.addEventListener("dragover", function (e) { e.preventDefault(); });
+  z.addEventListener("drop", function (e) {
+    e.preventDefault();
+    const names = Array.from(e.dataTransfer.files).map(function (f) { return f.name; }).join(",");
+    window.dropped.push("z" + k + ":" + names);
+    document.getElementById("l" + k).innerHTML += "<li>" + names + "</li>";
+  });
+});`;
+const SHOWN = "if (A.up) {";
+const DROP = "U.input = null;";
+const UP_MID = "file_upload: another perch call on this tab is mid-upload; nothing was set, retry";
+function upFile(t, name = "a.pdf") {
+  const f = join(tempDir("perch-", t), name);
+  writeFileSync(f, "%PDF-1.4");
+  return f;
+}
+// B's file_upload phase, as its server sends it.
+const upB = (dom, selector = "#zb", name = "b.pdf") => run(dom, "file_upload", { selector, b64: Buffer.from("%PDF-1.7 B").toString("base64"), name, mime: "application/pdf" });
+const files = (dom, id) => Array.from(dom.document.getElementById(id).files).map((f) => f.name);
+
+// A's state gone stale (a slow bridge) lets B's upload replace it.
+const staleUpB = (dom) => { dom.__perch_up.at -= 20000; return upB(dom); };
+
+test("file_upload: another server's upload before A's shown poll: A refuses and drops nothing", async (t) => {
+  const path = upFile(t);
+  const { dom } = onPage(ZONES, ZONES_JS);
+  let b = null;
+  beforeEvals(dom, (n, js) => { if (!b && js.includes(SHOWN)) b = staleUpB(dom); });
+  const { r, o } = await call("file_upload", { path, selector: "#za" });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.ok(b && b.ok, JSON.stringify(b));
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.ok(o.error.startsWith(UPLOAD_TAKEN), o.error);
+  assert.match(o.error, /no drop was made/);
+  assert.equal("tok" in o, false);
+  assert.deepEqual([...dom.dropped], []);
+  assert.deepEqual(files(dom, "fb"), ["b.pdf"], "B's input keeps B's file");
+});
+
+test("file_upload: another server's upload while A's is pending is refused; A drops on its own zone", async (t) => {
+  const path = upFile(t);
+  const { dom } = onPage(ZONES, ZONES_JS);
+  let b = null;
+  beforeEvals(dom, (n, js) => { if (!b && js.includes(DROP) && !js.includes(SHOWN)) b = upB(dom); });
+  const { o } = await call("file_upload", { path, selector: "#za" });
+  assert.deepEqual(b, { ok: false, error: UP_MID });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.dropped, true);
+  assert.deepEqual([...dom.dropped], ["za:a.pdf"]);
+  assert.deepEqual(files(dom, "fb"), []);
+});
+
+test("file_upload: another server's upload right before A's drop: A refuses; B's file is never dropped", async (t) => {
+  const path = upFile(t);
+  const { dom } = onPage(ZONES, ZONES_JS);
+  let b = null;
+  beforeEvals(dom, (n, js) => { if (!b && js.includes(DROP) && !js.includes(SHOWN)) b = staleUpB(dom); });
+  const { o } = await call("file_upload", { path, selector: "#za" });
+  assert.ok(b && b.ok, JSON.stringify(b));
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.ok(o.error.startsWith(UPLOAD_TAKEN), o.error);
+  assert.deepEqual([...dom.dropped], []);
+  assert.deepEqual(files(dom, "fb"), ["b.pdf"]);
+  assert.equal(dom.__perch_up.tok, b.tok, "B's state is left in place");
+});
+
+test("file_upload: another server with identical args is caught by its token before any drop", async (t) => {
+  const path = upFile(t);
+  const { dom } = onPage(ZONES, ZONES_JS);
+  let b = null;
+  beforeEvals(dom, (n, js) => { if (!b && js.includes(SHOWN)) b = upB(dom, "#za", "a.pdf"); });
+  const { o } = await call("file_upload", { path, selector: "#za" });
+  assert.ok(b && b.ok, JSON.stringify(b));
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.ok(o.error.startsWith(UPLOAD_TAKEN), o.error);
+  assert.deepEqual([...dom.dropped], []);
+});
+
+test("file_upload: a fresh upload of another server's still pending refuses before setting anything", async (t) => {
+  const path = upFile(t);
+  const { dom } = onPage(ZONES, ZONES_JS);
+  const b = upB(dom);
+  assert.ok(b.ok && b.unwired && b.tok, JSON.stringify(b));
+  const { o } = await call("file_upload", { path, selector: "#za" });
+  assert.deepEqual(o, { ok: false, error: UP_MID });
+  assert.deepEqual(files(dom, "fa"), []);
+  assert.equal(dom.__perch_up.tok, b.tok);
+  assert.deepEqual([...dom.dropped], []);
+});
+
+test("file_upload: another server's stale pending upload is replaced and A proceeds", async (t) => {
+  const path = upFile(t);
+  const { dom } = onPage(ZONES, ZONES_JS);
+  upB(dom);
+  dom.__perch_up.at -= 20000;
+  const { o } = await call("file_upload", { path, selector: "#za" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.dropped, true);
+  assert.equal("tok" in o, false);
+  assert.deepEqual([...dom.dropped], ["za:a.pdf"]);
+  assert.deepEqual(files(dom, "fb"), ["b.pdf"]);
+});
+
+test("file_upload: an upload alone drops on its own zone, with no token in its result", async (t) => {
+  const path = upFile(t);
+  const { dom } = onPage(ZONES, ZONES_JS);
+  const { o } = await call("file_upload", { path, selector: "#za" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.dropped, true);
+  assert.equal("tok" in o, false);
+  assert.deepEqual([...dom.dropped], ["za:a.pdf"]);
+  // The finished upload holds up no later one on the tab.
+  const again = await call("file_upload", { path, selector: "#zb" });
+  assert.equal(again.o.ok, true, JSON.stringify(again.o));
+  assert.deepEqual([...dom.dropped], ["za:a.pdf", "zb:a.pdf"]);
+});
+
+test("file_upload: shown and drop scripts are byte-identical across tabs and carry no token", async (t) => {
+  const path = upFile(t);
+  const mk = () => { const dom = page(ZONES); dom.eval(ZONES_JS); return dom; };
+  const d1 = mk(), d2 = mk();
+  const world = makeWorld({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: [{ url: "https://a.test/", id: "x", dom: d1 }, { url: "https://b.test/", id: "y", dom: d2 }] }] }],
+    cg: [{ owner: "Google Chrome" }],
+  });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  const sent = [];
+  world.state.onExecute = (spec, js) => sent.push(js);
+  for (const tabId of ["chrome:x", "chrome:y"]) {
+    const { o } = await call("file_upload", { path, selector: "#za", target: { tabId } });
+    assert.equal(o.ok, true, JSON.stringify(o));
+  }
+  assert.deepEqual([...d1.dropped], ["za:a.pdf"]);
+  assert.deepEqual([...d2.dropped], ["za:a.pdf"]);
+  const toks = [d1.__perch_up.tok, d2.__perch_up.tok];
+  assert.ok(toks[0] && toks[1], JSON.stringify(toks));
+  const shown = new Set(sent.filter((js) => js.includes(SHOWN)));
+  const drop = new Set(sent.filter((js) => js.includes(DROP) && !js.includes(SHOWN)));
+  assert.equal(shown.size, 1);
+  assert.equal(drop.size, 1);
+  for (const js of sent) for (const tok of toks) assert.ok(!js.includes(tok), "no token in any script");
 });
 
 // ---- console_capture ----
