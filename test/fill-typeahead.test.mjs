@@ -574,3 +574,41 @@ test("trusted_fill_background: a typeahead is left pending with its state record
   assert.equal(dom.__perch_ta.prior, "");
   assert.equal(dom.__perch_ta.comp, $(dom, "#selected-location"));
 });
+
+// A combobox whose own listbox offers suggestions but whose pick handler runs
+// only `onPick` (nothing by default); it keeps whatever text is typed on blur.
+const INERT = `<form><label for=c>City</label><input id=c role=combobox aria-autocomplete=list aria-controls=c-list><ul id=c-list role=listbox></ul>
+  <label>Name <input name=name></label></form>`;
+const INERT_JS = (options, onPick = "") => `
+  const inp = document.getElementById('c'), ul = document.getElementById('c-list');
+  inp.addEventListener('input', () => { window.__q = []; later(() => {
+    ul.innerHTML = ${JSON.stringify(options)}.map((c) => '<li role=option>' + c + '</li>').join('');
+    ul.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => { ${onPick} }));
+  }, 2); });`;
+
+test("typeahead: a pick that leaves only the typed text in the field is not claimed", async () => {
+  const { dom } = onPage(INERT, INERT_JS(["Buenos Aires"]));
+  const o = await fill({ label_pattern: "^city", text: "Buenos" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kind, "typeahead");
+  assert.equal(o.error, 'picked "Buenos Aires" but the field still shows only the typed text');
+  assert.equal($(dom, "#c").value, "Buenos");
+});
+
+test("fill {fields}: a pick that leaves only the typed text fails its entry", async () => {
+  const { dom } = onPage(INERT, INERT_JS(["Buenos Aires"]));
+  const o = await fill({ fields: [{ label_pattern: "^city", text: "Buenos" }, { label_pattern: "name", text: "Ada" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results[0].ok, false);
+  assert.match(o.results[0].error, /still shows only the typed text/);
+  assert.equal(o.results[1].ok, true);
+  assert.equal($(dom, "[name=name]").value, "Ada");
+});
+
+test("typeahead: a pick that shortens the value to more than the typed text is proof", async () => {
+  const { dom } = onPage(INERT, INERT_JS(["New York, NY, USA"], "inp.value = 'New York'; ul.innerHTML = '';"));
+  const o = await fill({ label_pattern: "^city", text: "New Yo" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "New York, NY, USA");
+  assert.equal($(dom, "#c").value, "New York");
+});
