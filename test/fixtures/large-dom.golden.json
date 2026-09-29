@@ -143,14 +143,13 @@
   {
    "p": "group 20",
    "r": {
-    "ok": true,
-    "kind": "plain",
-    "el": "textbox \"Shipping city 20\"",
-    "len": 7
+    "ok": false,
+    "error": "no fillable field matched /group 20/i; it may appear only after clicking a button; candidates sit near matching text but carry other labels",
+    "candidates": [
+     "textbox \"Shipping city 20\""
+    ]
    },
-   "changed": [
-    "420=Ab 12 x"
-   ]
+   "changed": []
   },
   {
    "p": "customer",

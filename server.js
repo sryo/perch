@@ -3392,6 +3392,7 @@ function fillOne(a) {
     const out = tryFill(r.el);
     if (!out) return { ok: false, error: ident(r.el) + " is not fillable or rejected the text" };
     if (out.ok === false) return out;
+    if (!vis(r.el)) out.hidden = true;
     if (a.selector) {
       const hits = Array.from(document.querySelectorAll(a.selector)).filter(vis);
       if (hits.length > 1) out.ambiguous = hits.slice(0, 3).map(ident);
@@ -3418,9 +3419,11 @@ function fillOne(a) {
     if (!crowd.has(p)) crowd.set(p, Array.prototype.filter.call(p.querySelectorAll(EDITABLES), fillable).length);
     return crowd.get(p);
   };
-  // Named by its own label or hint, a field is claimed by surrounding text only
-  // when that text's container holds no other field; the page body never counts.
-  // Fields passed over in a small section are offered back as candidates.
+  // Surrounding text (an ancestor's, never the page body's) claims a field only
+  // as its section label: never over the field's own label or placeholder, and
+  // in a container holding other fields only when it is the text laid out just
+  // before the field (nearText). Fields passed over in a small section are
+  // offered back as candidates.
   const passed = [];
   deepAll(EDITABLES).forEach(function (el) {
     if (!fillable(el)) return;
@@ -3434,7 +3437,7 @@ function fillOne(a) {
       let p = el, hit = false;
       for (let i = 0; i < 6 && p && !/^(BODY|HTML)$/.test(p.tagName); i++, p = p.parentElement) if (nearHit(p)) { hit = true; break; }
       if (!hit) return;
-      if (p !== el && (own || hint) && fieldsIn(p) > 1) {
+      if (p !== el && (own || attr(el, "placeholder") || (fieldsIn(p) > 1 && !re.test(nearText(el))))) {
         if (fieldsIn(p) <= 5) passed.push(el);
         return;
       }
@@ -3456,11 +3459,18 @@ function fillOne(a) {
     }
     return out;
   }
-  const best = scored[0];
+  const shown = scored.filter(function (c) { return vis(c.el); });
+  if (!shown.length) {
+    const reveal = revealers(re, nearHit), el = ident(scored[0].el);
+    const why = el + " matched /" + a.label_pattern + "/i but the field is hidden; ";
+    return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button, or pass its ref or selector to fill it anyway" }
+      : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
+  }
+  const best = shown[0];
   const out = tryFill(isField(best.el) ? best.el : best.root, best.el);
   if (!out) return { ok: false, error: ident(best.el) + " did not accept the text" };
   if (out.ok === false) return out;
-  const rivals = scored.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
+  const rivals = shown.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
   if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
   return out;
 }

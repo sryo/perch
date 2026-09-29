@@ -165,6 +165,62 @@ test("fill by label still takes the one field its section text names", () => {
   assert.deepEqual([...w.document.querySelectorAll("input")].map((i) => i.value), ["Rosario", ""]);
 });
 
+test("fill by label never claims a labelled field through a heading its own section lacks", () => {
+  for (const html of [
+    `<form><h2>Cover letter</h2><div class=slot></div><label>Name <input></label><button type=button>Attach</button></form>`,
+    `<form><h2>Cover letter</h2><div class=slot></div><input placeholder="Name"></form>`,
+    `<form><h2>Cover letter</h2><div><span id=n>Name</span><input aria-labelledby=n></div></form>`,
+    `<form><h2>Cover letter</h2><div class=slot></div><div><span>Name</span><input></div><div><span>Email</span><input></div></form>`,
+  ]) {
+    const w = page(html);
+    const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+    assert.equal(o.ok, false, html + " " + JSON.stringify(o));
+    assert.match(o.error, /^no fillable field matched \/cover letter\/i/);
+    assert.ok([...w.document.querySelectorAll("input")].every((i) => i.value === ""));
+  }
+});
+
+test("fill by label still fills a lone unlabelled textarea under its heading", () => {
+  for (const html of [
+    `<form><label>Name <input></label><section><h3>Cover letter</h3><p>Tell us why you want this role.</p><textarea></textarea></section></form>`,
+    `<form><h3>Cover letter</h3><textarea name="q7"></textarea></form>`,
+    `<div><h3>Cover letter</h3><textarea></textarea></div><div><h3>Notes</h3><textarea></textarea></div>`,
+  ]) {
+    const w = page(html);
+    const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+    assert.equal(o.ok, true, html + " " + JSON.stringify(o));
+    const [first, ...rest] = w.document.querySelectorAll("textarea, input");
+    const want = first.tagName === "TEXTAREA" ? first : w.document.querySelector("textarea");
+    assert.equal(want.value, "Dear team");
+    for (const f of [first, ...rest]) if (f !== want) assert.equal(f.value, "");
+  }
+});
+
+test("fill by label fails closed on a hidden field and offers the reveal hint", () => {
+  const w = page(`<form><label>Name <input></label><div><label for=cl>Cover letter</label><textarea id=cl style="display:none"></textarea><button type=button>Enter manually</button></div></form>`);
+  const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /the field is hidden/);
+  assert.equal(o.el, `textbox "Cover letter" hidden`);
+  assert.deepEqual(o.reveal, [`button "Enter manually"`]);
+  assert.deepEqual([...w.document.querySelectorAll("input, textarea")].map((f) => f.value), ["", ""]);
+  const bare = page(`<textarea aria-label="Cover letter" hidden></textarea>`);
+  const b = run(bare, "fill", { label_pattern: "cover letter", text: "Dear team" });
+  assert.equal(b.ok, false, JSON.stringify(b));
+  assert.match(b.error, /the field is hidden/);
+  assert.equal(b.reveal, undefined);
+  assert.equal(bare.document.querySelector("textarea").value, "");
+});
+
+test("fill by selector into a hidden field still writes and says hidden", () => {
+  const w = page(`<textarea id=t aria-label="Cover letter" style="display:none"></textarea><input id=v aria-label="Name">`);
+  const o = run(w, "fill", { selector: "#t", text: "Dear team" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.hidden, true);
+  assert.equal(w.document.querySelector("#t").value, "Dear team");
+  assert.equal(run(w, "fill", { selector: "#v", text: "Ada" }).hidden, undefined);
+});
+
 test("fill by label skips a field whose container is hidden", () => {
   const w = page(`<div style="display:none"><textarea aria-label="Message"></textarea></div><textarea aria-label="Message body"></textarea>`);
   const o = run(w, "fill", { label_pattern: "message", text: "hi" });

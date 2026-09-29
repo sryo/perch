@@ -129,7 +129,7 @@ test("taMatch reads each option's text once, not once per tier", () => {
 });
 
 test("fill's label fallback reads each shared ancestor's text once", () => {
-  const w = page(`<section>Order<div id=d><p>Shipping</p>${"<input>".repeat(10)}</div></section>`);
+  const w = page(`<section>Order<div id=d><p>Shipping</p>${"<input>".repeat(10)}<small>All required</small></div></section>`);
   const r = runBody(w, FILL_BODY + `
     const t = document.getElementById("d").textContent;
     let n = 0;

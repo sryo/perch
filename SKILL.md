@@ -44,7 +44,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 ## Results
 
 - `{ok: false, error}` is an outcome, not a crash; read it.
-- `fill` returns `{ok, kind: "plain"|"rich"|"typeahead", el, len, ambiguous?, kept?, reveal?}`. Typeaheads pick (`selected`) or fail; free text stays (`note`). `ok: true` is proof.
+- `fill` returns `{ok, kind: "plain"|"rich"|"typeahead", el, len, ambiguous?, kept?, reveal?, hidden?}`. Typeaheads pick (`selected`) or fail; free text stays (`note`). `ok: true` is proof.
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change; `option` also answers a radio group by question.
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
 - Page errors: `isError` with `__perch_error`, `__perch_error_name`.
