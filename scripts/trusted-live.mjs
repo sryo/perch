@@ -6,14 +6,16 @@
 //   node scripts/trusted-live.mjs --yes --background [--app "Google Chrome Canary"]
 //   node scripts/trusted-live.mjs --yes --background-fill [--app "Google Chrome Canary"]
 //   node scripts/trusted-live.mjs --yes --background-press [--app "Google Chrome Canary"]
+//   node scripts/trusted-live.mjs --yes --background-select [--app "Google Chrome Canary"]
 // Uses a scratch about:blank tab in a Chrome-family browser (reused like smoke's).
-// --background and --background-press require an existing scratch tab active in
-// its Chrome window;
+// --background, --background-press and --background-select require an existing
+// scratch tab active in its Chrome window;
 // --background-fill requires an inactive scratch tab and also works minimized.
 // Both require another app foreground. Never create/select tabs or switch apps
 // to satisfy these preconditions.
 
 import { execFileSync, spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { writeFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,7 +30,8 @@ if (!argv.includes("--yes")) {
 const appArg = argv.includes("--app") ? argv[argv.indexOf("--app") + 1] : null;
 const fillOnly = argv.includes("--background-fill");
 const pressOnly = argv.includes("--background-press");
-const background = argv.includes("--background") || fillOnly || pressOnly;
+const selectOnly = argv.includes("--background-select");
+const background = argv.includes("--background") || fillOnly || pressOnly || selectOnly;
 if (background && argv.includes("--delivery")) {
   console.error("--background and --delivery are separate probes; run one at a time.");
   process.exit(2);
@@ -93,6 +96,10 @@ const PAGE = `
   document.onkeydown = e => window.__rec.keys.push({ id: e.target.id, key: e.key, trusted: e.isTrusted });
   return { b: c('b'), i: c('i') };`;
 
+// The custom selects of test/fixtures/trusted-select.html, which open only on a trusted press.
+const SELECT_FIXTURE = readFileSync(new URL("../test/fixtures/trusted-select.html", import.meta.url), "utf8");
+const SELECT_PAGE = `document.body.innerHTML = ${JSON.stringify(/<body>([\s\S]*?)<script>/.exec(SELECT_FIXTURE)[1])};\n` +
+  /<script>([\s\S]*?)<\/script>/.exec(SELECT_FIXTURE)[1] + "\nreturn 1;";
 const TEXT = "Ada Lovelace 😀 élan ok";
 
 // --delivery: which event-posting path reaches the page at all? One button per method.
@@ -165,7 +172,7 @@ try {
     await client.call("eval_js", { target, script: "document.body.innerHTML=''; delete window.__rec; return 1" });
     throw Object.assign(new Error("delivery probe done"), { done: true });
   }
-  const centers = JSON.parse(text(await client.call("eval_js", { target, script: PAGE })));
+  const centers = JSON.parse(text(await client.call("eval_js", { target, script: selectOnly ? SELECT_PAGE : PAGE })));
 
   if (background && !before) {
     throw new Error("could not identify the front app before the background probe");
@@ -195,9 +202,14 @@ try {
     }, 75);
   }
 
-  let clickRes, fillRes, tabRes, backRes, enterRes, inputError;
+  let clickRes, fillRes, tabRes, backRes, enterRes, fruitRes, cityRes, inputError;
   try {
-    if (pressOnly) {
+    if (selectOnly) {
+      fruitRes = await client.call("select", { trusted: true, selector: "#fruit", text: "Banana", target });
+      foregroundSamples.push(frontApp());
+      cityRes = await client.call("select", { trusted: true, selector: "#city", text: "Quito", target });
+      foregroundSamples.push(frontApp());
+    } else if (pressOnly) {
       // Tab and Enter-on-a-button have native defaults the page cannot fake. Tab
       // starts on the button so focus stays in the page: a Tab past the last field
       // moves into the browser's toolbar, where the next Enter would reload the tab.
@@ -211,7 +223,7 @@ try {
       clickRes = await client.call("click", { trusted: true, raise: !background, selector: "#b", target });
       if (background) foregroundSamples.push(frontApp());
     }
-    if (!pressOnly) {
+    if (!pressOnly && !selectOnly) {
       fillRes = await client.call("fill", { trusted: true, raise: !background, selector: "#i", text: TEXT, target });
       if (background) foregroundSamples.push(frontApp());
     }
@@ -236,6 +248,16 @@ try {
     }
   }
   if (inputError) throw inputError;
+  if (selectOnly) {
+    const parse = (res) => JSON.parse(text(res).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
+    const fruit = parse(fruitRes), city = parse(cityRes);
+    const log = JSON.parse(text(await client.call("eval_js", { target, script: "return window.pickerLog || null" })));
+    report(fruit.ok === true && fruit.value === "Banana" && (fruit.trusted || []).includes("control"), "trusted click opens a select that ignores synthetic presses", JSON.stringify({ result: fruit, log }));
+    report(city.ok === true && city.value === "Quito" && (city.trusted || []).join() === "control,option", "trusted click picks an option that ignores synthetic presses", JSON.stringify({ result: city, log }));
+    report(JSON.stringify(log) === JSON.stringify(["fruit:Banana", "city:Quito"]), "each select picked once, on its own control", JSON.stringify(log));
+    await client.call("eval_js", { target, script: "document.body.innerHTML=''; delete window.pickerLog; return 1" });
+    throw Object.assign(new Error("select probe done"), { done: true });
+  }
   if (pressOnly) {
     const parse = (res) => JSON.parse(text(res).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
     const tabR = parse(tabRes), backR = parse(backRes), enterR = parse(enterRes);

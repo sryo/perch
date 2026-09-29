@@ -288,8 +288,10 @@ test("the trusted click's hit test adds Accessibility reads only, no Apple Event
   }
   // [Apple Events, AX reads] for background selector, background point, raised
   // selector. The Apple Events are what they were before the hit test; the AX
-  // reads are the window match and page area (13) plus the hit test (4).
-  assert.deepEqual(cost, [[3, 17], [2, 17], [17, 17]]);
+  // reads are the window match and page area (13) plus the hit test (4). A
+  // selector click's check goes through the bounded execute, which the fake counts
+  // twice (NSAppleScript and tab.execute); live it is still one event.
+  assert.deepEqual(cost, [[4, 17], [2, 17], [18, 17]]);
 });
 
 // Rows past `limit` are never returned, but `total` still counts them. A browser

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>perch trusted select fixture</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  .field { margin: 0 0 16px; }
+  [role=combobox] { min-width: 240px; border: 1px solid #ccc; padding: 4px; cursor: default; }
+  [role=listbox] { list-style: none; margin: 0; padding: 0; border: 1px solid #ccc; max-width: 240px; }
+  [role=option] { padding: 4px; }
+</style>
+</head>
+<body>
+<!-- Custom selects that ignore synthetic events. data-picker says what needs a
+     real (isTrusted) press: "open" only the control, "options" the control and
+     its options, "none" nothing (an ordinary widget, for contrast). -->
+<div class="field"><span id="fruit-label">Fruit</span>
+  <div id="fruit" role="combobox" tabindex="0" aria-labelledby="fruit-label" aria-expanded="false" aria-controls="fruit-list" data-picker="open" data-items="Apple|Banana|Cherry"><span class="placeholder">Pick one</span></div>
+  <ul id="fruit-list" role="listbox" hidden></ul></div>
+<div class="field"><span id="city-label">City</span>
+  <div id="city" role="combobox" tabindex="0" aria-labelledby="city-label" aria-expanded="false" aria-controls="city-list" data-picker="options" data-items="Lima|Quito|Bogota"><span class="placeholder">Pick one</span></div>
+  <ul id="city-list" role="listbox" hidden></ul></div>
+<div class="field"><span id="size-label">Size</span>
+  <div id="size" role="combobox" tabindex="0" aria-labelledby="size-label" aria-expanded="false" aria-controls="size-list" data-picker="none" data-items="Small|Medium|Large"><span class="placeholder">Pick one</span></div>
+  <ul id="size-list" role="listbox" hidden></ul></div>
+<script>
+(function () {
+  window.pickerLog = [];
+  const open = [];
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") open.slice().forEach(function (c) { c(); }); });
+  document.querySelectorAll("[data-picker]").forEach(function (trigger) {
+    const mode = trigger.dataset.picker, list = document.getElementById(trigger.getAttribute("aria-controls"));
+    const items = trigger.dataset.items.split("|");
+    // One real click fires pointerdown then mousedown; it toggles once.
+    let gesture = false;
+    function close() {
+      list.hidden = true;
+      list.innerHTML = "";
+      trigger.setAttribute("aria-expanded", "false");
+      const i = open.indexOf(close);
+      if (i >= 0) open.splice(i, 1);
+    }
+    function choose(label) {
+      trigger.innerHTML = "<span>" + label + "</span>";
+      window.pickerLog.push(trigger.id + ":" + label);
+      close();
+    }
+    function show() {
+      list.hidden = false;
+      trigger.setAttribute("aria-expanded", "true");
+      list.innerHTML = items.map(function (x, i) { return '<li role="option" id="' + trigger.id + "-o" + i + '">' + x + "</li>"; }).join("");
+      list.querySelectorAll("li").forEach(function (li) {
+        if (mode === "options") li.addEventListener("mousedown", function (e) { if (e.isTrusted) choose(li.textContent); });
+        else li.addEventListener("click", function () { choose(li.textContent); });
+      });
+      open.push(close);
+    }
+    function down(e) {
+      if ((mode !== "none" && !e.isTrusted) || e.button !== 0 || gesture) return;
+      gesture = true;
+      if (list.hidden) show(); else close();
+    }
+    trigger.addEventListener("pointerdown", down);
+    trigger.addEventListener("mousedown", down);
+    trigger.addEventListener("click", function () { gesture = false; });
+  });
+})();
+</script>
+</body>
+</html>

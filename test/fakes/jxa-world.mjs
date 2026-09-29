@@ -129,8 +129,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     tab.execute = ({ javascript }, ae = {}) => {
       bump("tab.execute", b.name);
       if (!present()) throw gone();
+      // state.onExecute(tabSpec) runs as each page script is sent: a world change
+      // (another window raised) that lands while page JS goes unanswered.
+      if (state.onExecute) state.onExecute(spec);
       if (b.kind === "arc" && !tab._active) throw new Error("HANG: Arc background execute");
       if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
+      // Chromium runs no page JS on its own pages (chrome://newtab, settings).
+      if (b.kind === "chrome" && /^(chrome|edge|brave):/.test(tab.page.url)) { state.internalExecs = (state.internalExecs || 0) + 1; throw new Error("Chromium internal page execute"); }
       const limit = ae.timeoutMs ?? 120000, sent = clock.t;
       const unanswered = () => {
         clock.t = sent + limit;
@@ -161,11 +166,14 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (state.jsOff) throw new Error("Executing JavaScript through AppleScript is turned off.");
       // A JS dialog pauses its own tab's page: a dialog's `blocks` is that tab's id.
       // Browser prompts that only look like one (permission, FedCM, passkey) omit it.
-      if (state.dialogs.some((d) => d.blocks != null && String(d.blocks) === String(spec.id))) throw unanswered();
+      const paused = () => state.dialogs.some((d) => d.blocks != null && String(d.blocks) === String(spec.id));
+      if (paused()) throw unanswered();
       // spec.dom: a happy-dom Window standing in for the page.
       const before = tab.pending, ran = tab.page;
       ran.busy = 0;
       const r = spec.dom ? spec.dom.eval(javascript) : vm.runInContext(javascript, tab.page.ctx);
+      // A dialog the script itself opened (alert() in a click handler) stops it before it replies.
+      if (paused()) throw unanswered();
       // A script busy past the caller's timeout ran, but its reply never arrives.
       if (ran.busy) {
         tab.busyUntil = clock.t + ran.busy;
@@ -356,7 +364,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       return true;
     };
     return {
-      compileAndReturnError: () => compile(),
+      // state.compileFails: the handler doesn't compile, so the bounded execute fails fast.
+      compileAndReturnError: () => !state.compileFails && compile(),
       executeAppleEventError: (ev, err) => {
         compile();
         const P = ev.params;

@@ -123,6 +123,14 @@ test("wait on a tab that closes mid-poll is stale_tab", async () => {
   stale(await call("wait", { readyState: "complete", timeout: 5000, target: { tabId: h } }), t0, "wait");
 });
 
+test("wait {quiet} on a tab that closes mid-wait is stale_tab", async () => {
+  twoChrome({ dom: page(`<p>x</p>`) });
+  const h = await listed("https://x.test/");
+  closeAfter("Google Chrome", "x", 3);
+  const t0 = world.clock.t;
+  stale(await call("wait", { quiet: 500, timeout: 5000, target: { tabId: h } }), t0, "wait quiet");
+});
+
 test("eval_js awaitPromise on a tab that closes after the kick is stale_tab, in every browser", async () => {
   for (const [spec, app, id] of [
     [chrome([{ id: 1, active: 1, tabs: tabs(2, "c") }]), "Google Chrome", "c1"],

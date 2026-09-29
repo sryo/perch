@@ -55,6 +55,19 @@ test("wait {expression} mid-navigation answers from the new document within its 
   assert.equal(world.counts["win.id()"] || 0, 0, "the bounded poll needs no window id read");
 });
 
+test("wait {quiet} mid-navigation waits out the dropped reply, then times the window on the new document", async () => {
+  await install();
+  await startNav();
+  const { out: { r, o, t }, took } = await timed(() => call("wait", { quiet: 500, timeout: 5000, target: { tabId: handle } }));
+  assert.equal(r.isError, undefined, t);
+  assert.ok(o.quietFor >= 500, `quietFor ${o.quietFor}`);
+  // The dropped reply (one POLL_EXEC_SECS) restarts the window, so it runs on the new document.
+  assert.ok(took >= 1000 + 500 && took <= 5000 + 1000, `took ${took}ms`);
+  assert.equal(newPage().location.href, NEXT);
+  assert.ok(newPage().__perch_quiet, "the new document was armed");
+  assert.equal(world.log.filter(([k]) => k === "assign").length, 1, "the page's own navigation ran once");
+});
+
 test("eval_js {awaitPromise} mid-navigation ends with a coded error, not the 2-minute Apple Event timeout", async () => {
   await install();
   await startNav();
@@ -377,6 +390,22 @@ test("a fill whose typeahead miss read gets no reply says the fill ran", async (
     pick: "JSON.stringify({settled: true})",
     miss: "JSON.stringify({ok: false, error: 'miss'})",
   }), (e) => RAN("fill").test(e.message));
+});
+
+// Hangs the page after its next n scripts have answered.
+const hangAfter = (n) => { world.state.afterExecute = () => { if (--n > 0) hangAfter(n); else world.state.hung = true; }; };
+
+test("select {trusted} whose readback gets no reply after the pick says the select ran", async () => {
+  await install();
+  calm();
+  hangAfter(4);
+  assert.throws(() => rt("select", {
+    target: { tabId: handle },
+    start: "JSON.stringify({pending: true})",
+    trusted: { open: "JSON.stringify(true)", keep: "JSON.stringify(true)" },
+    pick: "JSON.stringify({ok: true})",
+    read: "JSON.stringify(null)", readFinal: "JSON.stringify(null)",
+  }), (e) => RAN("select").test(e.message));
 });
 
 test("eval_js {awaitPromise} that times out says its code ran", async () => {

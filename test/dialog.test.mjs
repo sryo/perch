@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, OsaDaemon, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { fakeSpawner } from "./fakes/fake-repl.mjs";
+import { page } from "./helpers/page.mjs";
 
 const CANARY = "Google Chrome Canary";
 const saved = { fast: DAEMONS.fast, slow: DAEMONS.slow, dialogs: deps.dialogs, exec: deps.exec };
@@ -16,11 +17,11 @@ afterEach(() => {
 // c.test (tab 7) behind it, window 3 (410) shows www.d.test (tab 8). Chrome's
 // window 2 (500) shows b.test. A dialog's `parent` is the window it is a child of.
 let world;
-function install(dialogs = [], { urls = {}, cg = [] } = {}) {
+function install(dialogs = [], { urls = {}, cg = [], dom } = {}) {
   world = makeWorld({
     browsers: [
       { name: CANARY, kind: "chrome", windows: [
-        { id: 1, active: 0, tabs: [{ id: 5, url: urls[5] || "https://a.test/" }, { id: 7, url: "https://c.test/" }] },
+        { id: 1, active: 0, tabs: [{ id: 5, url: urls[5] || "https://a.test/", dom }, { id: 7, url: "https://c.test/" }] },
         { id: 3, active: 0, x: 900, tabs: [{ id: 8, url: "https://www.d.test/x" }] },
       ] },
       { name: "Google Chrome", kind: "chrome", windows: [{ id: 2, active: 0, x: 1800, tabs: [{ id: 6, url: "https://b.test/" }] }] },
@@ -471,4 +472,41 @@ test("without the daemon, a timeout is checked once and rewritten to dialog_open
   assert.equal(n, 1);
   deps.dialogs = async () => [];
   assert.match((await call("eval_js", { script: "return 1" })).t, /^error: timeout:/);
+});
+
+// The world's daemon, but a call answers after as long as it took on the world's
+// clock, and abort() fails it early as the real daemon's does.
+const onClock = (w) => {
+  let job = null;
+  return {
+    run: (script, timeout, token) => new Promise((resolve, reject) => {
+      const t0 = w.clock.t;
+      let out, err;
+      try { const r = w.run(script); out = r == null ? "" : typeof r === "string" ? r : JSON.stringify(r); } catch (e) { err = e; }
+      const me = job = { token, reject, timer: setTimeout(() => { if (job === me) job = null; if (err) reject(err); else resolve(out); }, w.clock.t - t0) };
+    }),
+    abort(e, token) {
+      if (!job || token === undefined || job.token !== token) return false;
+      const j = job;
+      job = null;
+      clearTimeout(j.timer);
+      j.reject(e);
+      return true;
+    },
+  };
+};
+
+test("a pick whose click opens alert() reports dialog_open, not a timeout", { timeout: 10000 }, async () => {
+  const dom = page(`<label id=lab>Level</label><div class=select__control><div role=combobox aria-labelledby=lab aria-expanded=false tabindex=0><span class=v>Choose</span></div></div><div id=menu></div>`, { url: "https://a.test/" });
+  dom.eval(`document.querySelector('.select__control').addEventListener('mousedown', () => {
+    document.getElementById('menu').innerHTML = '<div role=option>Junior</div><div role=option>Senior</div>';
+    document.querySelectorAll('[role=option]').forEach((o) => o.addEventListener('click', () => alert('Saved')));
+  });`);
+  const w = install([], { dom });
+  dom.alert = () => w.state.dialogs.push({ pid: 40, parent: 400, blocks: 5, texts: ["a.test says", "Saved"], buttons: ["OK"] });
+  DAEMONS.slow = onClock(w);
+  deps.dialogs = async (target) => dialogsOf(target);
+  const { t } = await call("select", { label_pattern: "level", text: "senior", target: A });
+  assert.match(t, /^error: dialog_open: a alert \("Saved"\)/);
+  assert.ok(w.counts.NSAppleScript > 0, "the pick ran on the bounded path");
 });
