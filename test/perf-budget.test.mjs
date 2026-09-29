@@ -379,3 +379,28 @@ test("navigate on a raised background Arc tab costs a fixed count of Apple Event
   assert.equal(o.waited, true);
   assert.equal(appleEvents(), 16, breakdown());
 });
+
+// A plain click is one page call, as eval_js is. A click on a link or submit
+// aimed at a new tab adds the window's tab list in one bulk read before and
+// after the second page call that clicks, plus one read of the shown tab once a
+// tab appeared (goal 1's note). One that opens nothing re-reads the list every
+// 100ms for 500ms before calling it blocked.
+test("click: same-tab links and buttons cost what they did; a _blank link adds the tab reads and one page call", async () => {
+  const html = `<a id=a href="/job/1" target=_blank>Apply</a><a id=same href="/job/2">Details</a><button id=b>Save</button>`;
+  const cost = {};
+  for (const [label, spec, owner] of [["chrome", chrome, "Google Chrome"], ["safari", safari, "Safari"]]) {
+    for (const [sel, opens] of [["#same"], ["#b"], ["#a", true], ["#a", false]]) {
+      const dom = page(html, { url: "https://c0.test/" });
+      install({ browsers: [spec([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner }] });
+      if (opens) dom.document.getElementById("a").addEventListener("click", (e) => world.openTab(owner, 0, e.currentTarget.href));
+      const { o } = await call("click", { selector: sel });
+      assert.equal(o.ok, true, JSON.stringify(o));
+      cost[`${label} ${sel}${opens === false ? " blocked" : ""}`] = appleEvents();
+    }
+  }
+  assert.deepEqual(cost, {
+    "chrome #same": 1, "chrome #b": 1, "chrome #a": 1 + 1 + 1 + 1 + 1, "chrome #a blocked": 1 + 1 + 1 + 6,
+    // Safari's handle also needs the window id.
+    "safari #same": 1, "safari #b": 1, "safari #a": 1 + 1 + 1 + 1 + 1 + 1, "safari #a blocked": 1 + 1 + 1 + 6,
+  });
+});

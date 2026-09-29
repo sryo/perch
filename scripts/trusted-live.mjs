@@ -7,6 +7,7 @@
 //   node scripts/trusted-live.mjs --yes --background-fill [--app "Google Chrome Canary"]
 //   node scripts/trusted-live.mjs --yes --background-press [--app "Google Chrome Canary"]
 //   node scripts/trusted-live.mjs --yes --background-select [--app "Google Chrome Canary"]
+//   node scripts/trusted-live.mjs --yes --new-tab [--background] [--app "Safari"]
 // Uses a scratch about:blank tab in a Chrome-family browser (reused like smoke's).
 // --background, --background-press and --background-select require an existing
 // scratch tab active in its Chrome window;
@@ -134,7 +135,56 @@ const client = await connect({ timeoutMs: 60000 });
 let failures = 0;
 const report = (ok, label, detail) => { if (!ok) failures++; console.log(`${ok ? "PASS" : "FAIL"} ${label} — ${detail}`); };
 
+// --new-tab: plain click on a target=_blank link and on a window.open button,
+// both aimed at a page served here on 127.0.0.1, in a scratch about:blank tab of
+// any browser (--app picks one; with --background it must be shown, behind
+// another app). Records whether the browser blocked each synthetic click's tab
+// and whether it showed the tab, and checks the front app, cursor and the
+// scratch tab's selection. The tabs it opened are closed with close_tab.
+async function newTabProbe() {
+  const { createServer } = await import("node:http");
+  const server = createServer((req, res) => { res.writeHead(200, { "content-type": "text/html" }); res.end("<title>perch landing</title>landed"); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const opened = [];
+  try {
+    const listed = JSON.parse(text(await client.call("list_tabs", { urlContains: "about:blank", limit: 200 }))).tabs;
+    const tab = listed.find((t) => (!appArg || t.app === appArg) && (!background || t.active));
+    if (!tab) throw new Error(`--new-tab needs an existing about:blank tab${background ? " already shown in its window" : ""}; defer rather than creating or selecting one`);
+    if (background && frontApp() === tab.app) throw new Error(`${tab.app} is frontmost; defer --background until another app is naturally in front`);
+    const target = { tabId: tab.tabId };
+    await client.call("eval_js", { target, script: `document.body.innerHTML = '<a id=l href="${base}/link" target=_blank>Open link</a> <button id=w>Open window</button>';
+      document.getElementById('w').onclick = function () { window.__got = window.open('${base}/window') != null; }; return 1;` });
+    const frontBefore = frontApp(), cursorBefore = cursorAt();
+    for (const [sel, label] of [["#l", "_blank link"], ["#w", "window.open button"]]) {
+      const r = JSON.parse(text(await client.call("click", { selector: sel, target })).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m })));
+      if (r.opened && r.opened.tabId) opened.push(r.opened.tabId);
+      console.log(`INFO ${tab.app} ${label}: ${r.opened ? "opened" : r.blocked ? "blocked" : "neither"}${r.note ? ` (${r.note})` : ""} ${JSON.stringify(r)}`);
+      report(r.ok === true, `${label} click answers ok`, JSON.stringify(r));
+      if (sel === "#l") report(!!r.opened !== !!r.blocked, "_blank link reports exactly one of opened or blocked", JSON.stringify(r));
+      await new Promise((resolve) => setTimeout(resolve, 700));
+    }
+    const pageGot = JSON.parse(text(await client.call("eval_js", { target, script: "return window.__got === undefined ? null : window.__got" })));
+    console.log(`INFO window.open returned ${pageGot === null ? "(not called)" : pageGot ? "a window" : "null"} in the page`);
+    const after = JSON.parse(text(await client.call("list_tabs", { limit: 500 }))).tabs;
+    const scratch = after.find((t) => t.tabId === tab.tabId);
+    console.log(`INFO scratch tab still shown: ${scratch ? !!scratch.active : "(gone)"}`);
+    for (const t of after) if (t.url.startsWith(base) && !opened.includes(t.tabId)) opened.push(t.tabId);
+    if (background) report(frontApp() === frontBefore, "front app unchanged", JSON.stringify({ before: frontBefore, after: frontApp() }));
+    const cursorAfter = cursorAt();
+    report(Math.abs(cursorAfter.x - cursorBefore.x) <= 1 && Math.abs(cursorAfter.y - cursorBefore.y) <= 1, "cursor stays in place", JSON.stringify({ before: cursorBefore, after: cursorAfter }));
+    await client.call("eval_js", { target, script: "document.body.innerHTML=''; delete window.__got; return 1" });
+  } finally {
+    for (const tabId of opened) await client.call("close_tab", { tabId }).catch(() => {});
+    server.close();
+  }
+}
+
 try {
+  if (argv.includes("--new-tab")) {
+    await newTabProbe();
+    throw Object.assign(new Error("new-tab probe done"), { done: true });
+  }
   const listed = JSON.parse(text(await client.call("list_tabs", { urlContains: "about:blank", limit: 200 })));
   const chrome = (t) => /chrome|chromium|brave|edge|vivaldi/i.test(t.app) && (!appArg || t.app === appArg);
   let tab = listed.tabs.find((t) => chrome(t) && (fillOnly ? !t.active : (!background || t.active)));

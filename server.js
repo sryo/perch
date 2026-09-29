@@ -460,7 +460,9 @@ function jxaRuntime(BROWSERS, HANG) {
   // default target when the topmost browser is Chromium or Safari. Returns {v},
   // or null (only when the script cannot have run) for the full resolve path.
   const WRONG_TAB = "__perch_wrong_tab__";
-  function quickExec(want, js) {
+  // `at`, if given, gets the tab's window (app, kind, win, w, winId) and `run`,
+  // which sends more page JS the same way.
+  function quickExec(want, js, at) {
     want = want || {};
     if (want.windowId != null || want.tabIndex != null) return null;
     if (want.tabId != null) {
@@ -469,24 +471,38 @@ function jxaRuntime(BROWSERS, HANG) {
       if (KIND[h.app] === "safari") {
         const m = /^(\d+)\.(\d+)\.(.+)$/.exec(h.raw);
         if (!m || !alive("Safari", procs())) return null;
-        const guarded = "(function(){if((" + fp + ")(location.href)!==" + JSON.stringify(m[3]) + ")return " + JSON.stringify(WRONG_TAB) + ";return (" + js + ")})()";
+        const guard = function (s) { return "(function(){if((" + fp + ")(location.href)!==" + JSON.stringify(m[3]) + ")return " + JSON.stringify(WRONG_TAB) + ";return (" + s + ")})()"; };
+        const win = app("Safari").windows.byId(Number(m[1])), tab = win.tabs[Number(m[2])];
         let v;
-        try { v = app("Safari").doJavaScript(guarded, { in: app("Safari").windows.byId(Number(m[1])).tabs[Number(m[2])] }); }
+        try { v = app("Safari").doJavaScript(guard(js), { in: tab }); }
         catch (e) { if (e && e.errorNumber === -1712) throw e; return null; }
-        return v === WRONG_TAB ? null : { v: v };
+        if (v === WRONG_TAB) return null;
+        if (at) Object.assign(at, { app: "Safari", kind: "safari", win: win, winId: m[1], run: function (s) {
+          const r = app("Safari").doJavaScript(guard(s), { in: tab });
+          if (r === WRONG_TAB) throw staleError(want.tabId);
+          return r;
+        } });
+        return { v: v };
       }
       const hn = hints[want.tabId];
       if (KIND[h.app] !== "chrome" || !hn || !alive(h.app, procs())) return null;
-      try { return { v: app(h.app).windows[hn.w].tabs.byId(hn.id).execute({ javascript: js }) }; }
+      const win = app(h.app).windows[hn.w], tab = win.tabs.byId(hn.id);
+      let v;
+      try { v = tab.execute({ javascript: js }); }
       catch (e) { if (noSuchObject(e)) { delete hints[want.tabId]; return null; } throw e; }
+      if (at) Object.assign(at, { app: h.app, kind: "chrome", win: win, w: hn.w, run: function (s) { return tab.execute({ javascript: s }); } });
+      return { v: v };
     }
     if (want.app != null) return null;
     const top = procs().z[0], kind = KIND[top];
     if (!top || (kind !== "chrome" && kind !== "safari")) return null;
     const win = app(top).windows[0];
+    const run = kind === "chrome"
+      ? function (s) { return win.activeTab.execute({ javascript: s }); }
+      : function (s) { return app(top).doJavaScript(s, { in: win.currentTab }); };
+    if (at) Object.assign(at, { app: top, kind: kind, win: win, w: 0, run: run });
     try {
-      if (kind === "chrome") return { v: win.activeTab.execute({ javascript: js }) };
-      return { v: app(top).doJavaScript(js, { in: win.currentTab }) };
+      return { v: run(js) };
     } catch (e) {
       if (noSuchObject(e) || (kind === "safari" && !(e && e.errorNumber === -1712))) return null;
       throw e;
@@ -934,6 +950,75 @@ function jxaRuntime(BROWSERS, HANG) {
     });
   }
 
+  // A click that opens a new tab is found by the target window's tab list, one
+  // bulk read before and after: ids, or Safari's urls (its tabs have no id). The
+  // new tab is never selected; a browser that showed it itself gets a note.
+  const winOf = function (t) { return { app: t.app, kind: t.kind, win: t.win, w: t.w, winId: null }; };
+  function tabSet(W) {
+    try { return W.kind === "safari" ? W.win.tabs.url() : W.win.tabs.id(); } catch (e) { return null; }
+  }
+  function addedAt(kind, before, after) {
+    if (kind !== "safari") {
+      const had = before.map(String);
+      for (let i = 0; i < after.length; i++) if (had.indexOf(String(after[i])) < 0) return i;
+      return -1;
+    }
+    if (after.length <= before.length) return -1;
+    for (let i = 0; i < before.length; i++) if (after[i] !== before[i]) return i;
+    return before.length;
+  }
+  // A popup blocker drops the tab silently, and a browser adds an allowed one
+  // soon after the click, so an empty result is re-read this long first.
+  const OPEN_WAIT_MS = 500;
+  function tabOpened(W, before, href, wait) {
+    const start = Date.now();
+    for (;;) {
+      const after = tabSet(W), i = after ? addedAt(W.kind, before, after) : -1;
+      if (i >= 0) return openedTab(W, after, i, href);
+      if (Date.now() - start >= wait) return null;
+      delay(0.1);
+    }
+  }
+  // A new Safari tab still loading reads blank, so its handle hashes the URL it is loading.
+  function openedTab(W, after, i, href) {
+    const out = { tabId: null, url: href, shown: false };
+    try {
+      if (W.kind === "safari") {
+        out.tabId = safariHandle(W.winId != null ? W.winId : W.win.id(), i, fp(after[i]) === fp("") ? href : after[i]);
+        out.shown = W.win.currentTab.index() === i + 1;
+      } else {
+        out.tabId = handle(W.app, after[i]);
+        if (W.kind === "chrome" && W.w != null) hint(W.app, after[i], W.w);
+        out.shown = String(W.win.activeTab.id()) === String(after[i]);
+      }
+    } catch (e) {}
+    return out;
+  }
+  // `r` is a click's result: `cancelled` (the page prevented the default) and
+  // window.open's opened/blocked, which a tab found in the window replaces.
+  function noteOpened(r, W, before, href) {
+    const cancelled = !!r.cancelled;
+    delete r.cancelled;
+    const o = tabOpened(W, before, href, cancelled ? 0 : OPEN_WAIT_MS);
+    if (o) {
+      delete r.blocked; delete r.href; delete r.note;
+      r.opened = { tabId: o.tabId, url: o.url };
+      if (o.shown) r.note = "the browser showed the new tab";
+    } else if (!cancelled && !r.opened && !r.blocked) {
+      r.blocked = true;
+      r.href = href;
+    }
+    return r;
+  }
+  // `go` is the click's second page call (the first found a new-tab element).
+  function clickBlank(W, href, go) {
+    const before = tabSet(W);
+    const r = go();
+    if (!r || r.ok !== true) return r;
+    if (!before) { delete r.cancelled; return r; }
+    return noteOpened(r, W, before, href);
+  }
+
   // wait {quiet}: timed here, where the clock isn't throttled with the page. The
   // window opens when a poll arms the observer (fresh); a poll that fails or
   // finds a new document restarts it.
@@ -1065,19 +1150,19 @@ function jxaRuntime(BROWSERS, HANG) {
 
     function aimed() {
       const off = offPage(T, probe, pt, area);
-      return off ? { out: off } : { pt: pt, el: probe.el, calibrated: true, calibration: trace, aim: via };
+      return off ? { out: off } : { pt: pt, el: probe.el, blank: probe.blank, calibrated: true, calibration: trace, aim: via };
     }
   }
 
-  // A trusted click on the element a.probe arms: aim, the hit test, `before` (a
-  // result with ok:false stops it), the post, then a.check's `hit`. {stop} is a
+  // A trusted click on the element a.probe arms: aim, the hit test, `before(aim)`
+  // (a result with ok:false stops it), the post, then a.check's `hit`. {stop} is a
   // refusal with nothing posted. The cursor is home again on return.
   function aimedClick(T, a, tool, before) {
     const home = T.background ? null : cursorAt();
     try {
       const A = aim(T, a, tool);
       if (A.out) return { stop: A.out };
-      const bad = before && before();
+      const bad = before && before(A);
       if (bad && bad.ok === false) return { stop: bad };
       if (T.background) skyClick(T.I, A.pt);
       else leftClick(T.I, A.pt);
@@ -2124,16 +2209,35 @@ function jxaRuntime(BROWSERS, HANG) {
         return done(read ? read.value : readExec(t, a.readFinal));
       });
     },
+    // Plain click: evalJs's one page call, which clicks unless the element opens
+    // a new tab; that one goes through clickBlank.
+    clickPage(a) {
+      const at = {};
+      let t = null, v;
+      const q = quickExec(a.target, a.click, at);
+      if (q) v = q.v;
+      else { t = resolve(a.target); visibleGuard(t, "click"); v = exec(t, a.click); }
+      let r = null;
+      try { r = JSON.parse(String(v)); } catch (e) {}
+      if (!r || !r.blank) return v;
+      const W = t ? winOf(t) : at;
+      return JSON.stringify(clickBlank(W, r.blank.href, function () { return JSON.parse(String(t ? exec(t, a.go) : at.run(a.go))); }));
+    },
     // Plain click with readback: click (arming the pre-click text), then poll.
     click(a) {
       const t = pageTarget(a.target, "click");
-      const r = stepRead(t, a.click);
+      let r = stepRead(t, a.click);
+      if (r && r.blank) r = clickBlank(winOf(t), r.blank.href, function () { return stepRead(t, a.go); });
       if (!r || r.ok !== true) return r;
       return Object.assign(r, readback(t, a));
     },
     trustedClick(a) {
       const T = trustedTarget(a);
-      const arm = function () { return a.arm ? parseExec(T.t, a.arm) : null; };
+      let W = null, before = null, href = null;
+      const arm = function (A) {
+        if (A && A.blank) { W = winOf(T.t); before = tabSet(W); href = A.blank.href; }
+        return a.arm ? parseExec(T.t, a.arm) : null;
+      };
       let out;
       if (a.x != null) {
         const home = T.background ? null : cursorAt();
@@ -2153,6 +2257,8 @@ function jxaRuntime(BROWSERS, HANG) {
         const c = aimedClick(T, a, "click", arm);
         if (c.stop) return c.stop;
         out = c.out;
+        if (before && out.ok) noteOpened(out, W, before, href);
+        delete out.cancelled;
       }
       // The cursor is already home, so the settle wait doesn't hold it.
       return a.arm ? Object.assign(out, readback(T.t, a)) : out;
@@ -4020,6 +4126,47 @@ function dropOn(U) {
 }
 `;
 
+// Clicks that open a new tab. blankHref: the absolute http(s) URL a link (not a
+// download) or a form's submit button aimed at _blank opens by default, else
+// null. watchOpen, for one synchronous click: the first window.open call's URL
+// and whether the browser returned a window, and whether the click's default
+// was cancelled.
+// off() takes both hooks away (window.open goes back only if still ours).
+// In Chromium page JS runs in an isolated world, so page handlers call their own
+// window.open and only Safari's are seen.
+const BLANK_LIB = String.raw`
+function blankHref(el) {
+  const a = el.closest("a[href]");
+  if (a) return /^_blank$/i.test(a.getAttribute("target") || "") && /^https?:/i.test(a.href) && !a.hasAttribute("download") ? a.href : null;
+  const b = el.closest("button, input");
+  if (!b || !b.form || !/^(submit|image)$/i.test(b.type || "")) return null;
+  const target = b.hasAttribute("formtarget") ? b.getAttribute("formtarget") : b.form.getAttribute("target");
+  const url = b.hasAttribute("formaction") ? b.formAction : b.form.action;
+  return /^_blank$/i.test(target || "") && /^https?:/i.test(url) ? url : null;
+}
+function watchOpen() {
+  const st = { url: null, got: false, cancelled: false };
+  const own = Object.prototype.hasOwnProperty.call(window, "open"), orig = window.open;
+  const wrap = function (u) {
+    const w = orig.apply(window, arguments);
+    if (st.url == null) {
+      try { st.url = new URL(u == null || u === "" ? "about:blank" : String(u), location.href).href; } catch (e) { st.url = String(u); }
+      st.got = w != null;
+    }
+    return w;
+  };
+  const onClick = function (e) { st.cancelled = e.defaultPrevented; };
+  window.open = wrap;
+  window.addEventListener("click", onClick);
+  st.off = function () {
+    window.removeEventListener("click", onClick);
+    if (window.open !== wrap) return;
+    if (own) window.open = orig; else delete window.open;
+  };
+  return st;
+}
+`;
+
 // Trusted input: find the element, scroll it into view, estimate its screen
 // point, and arm listeners: mousemove for calibration, mousedown for `hit`.
 // Estimate: screen origin + browser chrome (outer - inner, assumed left and top)
@@ -4060,18 +4207,23 @@ if (!r.width || !r.height) return { ok: false, error: ident(el) + " has no size 
 const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
 if (inFrame(document.elementFromPoint && document.elementFromPoint(cx, cy))) return { ok: false, error: ident(el) + FRAMED };
 `;
-const TRUSTED_PROBE_TAIL = String.raw`if (A.forFill && !A.background) { setNativeValue(el, ""); fire(el, ["input"]); }
+// A click that opens a new tab also records whether the page cancelled it.
+const TRUSTED_PROBE_TAIL = BLANK_LIB + String.raw`if (A.forFill && !A.background) { setNativeValue(el, ""); fire(el, ["input"]); }
 const prev = window.__perch_trusted;
 if (prev && prev.off) prev.off();
 const st = window.__perch_trusted = { el: el, down: null, moves: [] };
+const href = !A.forFill && !A.select ? blankHref(el) : null;
 const onMove = function (e) { if (st.moves.length < 20) st.moves.push([e.clientX, e.clientY, e.screenX, e.screenY]); };
 const onDown = function (e) { st.down = el === e.target || el.contains(e.target); window.removeEventListener("mousedown", onDown, true); };
+const onClick = function (e) { st.cancelled = e.defaultPrevented; };
 window.addEventListener("mousemove", onMove, true);
 window.addEventListener("mousedown", onDown, true);
-st.off = function () { window.removeEventListener("mousemove", onMove, true); window.removeEventListener("mousedown", onDown, true); };
+if (href) window.addEventListener("click", onClick);
+st.off = function () { window.removeEventListener("mousemove", onMove, true); window.removeEventListener("mousedown", onDown, true); window.removeEventListener("click", onClick); };
 return {
   ok: true,
   el: ident(el),
+  blank: href ? { href: href } : undefined,
   x: window.screenX + (window.outerWidth - window.innerWidth) + cx,
   y: window.screenY + (window.outerHeight - window.innerHeight) + cy,
   cx: cx,
@@ -4629,12 +4781,31 @@ if (s.already) out.note = "already chosen; not pressed again, since a press woul
 return out;
 `,
 
-  click: READBACK_LIB + String.raw`
-const r = resolveClick(A);
-if (r.out) return r.out;
+  // A.probe: a click that opens a new tab stops before clicking, keeping its
+  // element for A.blank, the second pass, which the runtime brackets with reads
+  // of the window's tabs.
+  click: READBACK_LIB + BLANK_LIB + String.raw`
+let el;
+if (A.blank) {
+  const kept = window.__perch_blank;
+  window.__perch_blank = null;
+  if (!kept || !kept.isConnected) return { ok: false, error: "the page changed before the click; nothing was clicked" };
+  el = kept;
+} else {
+  const r = resolveClick(A);
+  if (r.out) return r.out;
+  el = r.el;
+  const href = A.probe && blankHref(el);
+  if (href) { window.__perch_blank = el; return { ok: true, blank: { href: href } }; }
+}
 if (A.readback) { const bad = rbArm(); if (bad) return bad; }
-r.el.click();
-return { ok: true, el: ident(r.el) };
+const w = watchOpen();
+try { el.click(); } finally { w.off(); }
+const out = { ok: true, el: ident(el) };
+if (A.blank && w.cancelled) out.cancelled = true;
+if (w.url != null && w.got) { out.opened = { url: w.url }; out.note = "list_tabs to find it"; }
+else if (w.url != null) { out.blocked = true; out.href = w.url; }
+return out;
 `,
 
   readback_arm: READBACK_LIB + String.raw`
@@ -5044,6 +5215,7 @@ return { ok: e.ok, trusted: e.trusted, value: e.value, el: ident(el), ...(e.ok ?
 const st = window.__perch_trusted || {};
 if (st.off) st.off();
 const out = { hit: st.down };
+if (st.cancelled) out.cancelled = true;
 if (A.forFill && st.el) {
   const got = String(st.el.value || ""), text = A.text;
   const norm = function (s) { return s.replace(/\r\n/g, "\n").replace(/\s+/g, " "); };
@@ -5400,8 +5572,9 @@ async function click(args = {}) {
   if (!ref && !selector && !label_pattern) throw new Error("click requires `ref`, `selector`, or `label_pattern` (x/y is screen coords, trusted:true only)");
   const A = { ref, selector, label_pattern };
   if (hover) return runPage("click", "hover", A, target);
-  if (!readback) return runPage("click", "click", A, target);
-  return rt("click", { target, click: pageFn("click", { ...A, readback }), ...readbackSteps(readback) }, { lane: "slow" });
+  const go = pageFn("click", { blank: true, readback });
+  if (!readback) return parsePage(await rt("clickPage", { target, click: pageFn("click", { ...A, probe: true }), go }, { raw: true }));
+  return rt("click", { target, click: pageFn("click", { ...A, probe: true, readback }), go, ...readbackSteps(readback) }, { lane: "slow" });
 }
 
 const KEY_CODES = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, Delete: 46, Space: 32, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34 };

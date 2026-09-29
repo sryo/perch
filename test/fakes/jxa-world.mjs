@@ -321,7 +321,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         // Live on macOS 27.2 Safari runs JS in any tab; state.safariCurrentOnly
         // models versions that only run it in the window's current tab.
         if (state.safariCurrentOnly && !tab._active) throw new Error("Safari: tab is not current");
-        const r = vm.runInContext(js, tab.page.ctx);
+        const r = tab.spec.dom ? tab.spec.dom.eval(js) : vm.runInContext(js, tab.page.ctx);
         afterExecute(tab.spec);
         return r;
       },
@@ -757,6 +757,15 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     // Reorder a window's tabs in place: tabs[w] is the live list the runtime reads.
     tabsOf: (name, w) => winsByApp[name][w].tabs,
     winSpec: (name, w) => winsByApp[name][w].spec,
+    // The browser opens a tab by itself (a link's target, a popup), costing no
+    // Apple Event; `select` shows it, as some browsers do.
+    openTab: (name, w, url, { select = false } = {}) => {
+      const W = winsByApp[name][w], id = "pop" + W.tabs.length;
+      W.tabs.push(makeTab({ url, id }, browsers.find((b) => b.name === name), W));
+      if (select) W.spec.active = W.tabs.length - 1;
+      log.push(["opened", name, url]);
+      return id;
+    },
     reset() { for (const o of [counts, geom]) for (const k of Object.keys(o)) delete o[k]; log.length = 0; aeLog.length = 0; },
     state,
     page: (name, w, t) => winsByApp[name][w].tabs[t].page.ctx,

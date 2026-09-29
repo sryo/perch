@@ -23,7 +23,7 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 | `get_text` | innerText, or outerHTML with `html: true`. Paged: `offset` / `maxChars`. |
 | `accessibility_snapshot` | Page outline with refs (below), open shadow roots too. Filter: `role`, `query` (regex per line); `max: 0`: header only. |
 | `console_capture` | `start`, `read` drains `"level: text"`, `stop` restores; navigation clears it. `network` drains finished requests as `"status type ms size url"`. |
-| `click` | By `ref` / `selector` / `label_pattern` (button/link name; ties: `candidates`, no click). `readback: css` adds `{readback, changed, url?, invalid?}`: its text once changed (2s; 0.7s quiet, 1.2s hidden). `hover: true`: hover events (JS menus, not CSS `:hover`). `trusted`: below. |
+| `click` | By `ref` / `selector` / `label_pattern` (button/link name; ties: `candidates`, no click). `readback: css` adds `{readback, changed, url?, invalid?}`: its text once changed (2s; 0.7s quiet, 1.2s hidden). `hover: true`: JS hover events, not CSS `:hover`. New tab: `opened.tabId` or `blocked`+`href`. `trusted`: below. |
 | `press` | `key` (`Enter`, `Escape`, `Tab`, `cmd+k`) on `ref` / `selector` or the focused element, background tabs too. Emulates Enter submit/click, Space click, Tab focus. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | Inputs, textareas, rich editors; verifies it landed; `text:""` clears. `text_path`: long bodies. One call per form: `fields: [{ref\|selector\|label_pattern, text\|checked\|option}]`. |
 | `select` | Native `<select>` or custom combobox, own list only; reads back. Miss or `text:""`: `candidates`. `trusted`: below. |
@@ -39,11 +39,11 @@ Which browser a tab lives in is perch's concern. Pass `target: {tabId}` with a `
 3 combobox "Country" options=["Argentina","Brazil"] value="AR"
 ```
 
-Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Header `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
+Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Header `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
 
 ## Results
 
-- `{ok: false, error}` is an outcome, not a crash; read it.
+- `{ok: false, error}` is an outcome; read it.
 - `fill` returns `{ok, kind: "plain"|"rich"|"typeahead", el, len, ambiguous?, kept?, reveal?, hidden?}`. Typeaheads pick (`selected`) or fail; free text stays (`note`). `ok: true` is proof.
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. `checked` clicks only on a change; `option` also answers a radio group by question. `only_empty`: skip absent/filled fields (`skipped`).
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
@@ -52,7 +52,7 @@ Every value is JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `leve
 
 ## Gotchas
 
-- **Page globals may be invisible** (isolated world): read page state via the DOM.
+- **Page globals may be invisible** (isolated world): read state via the DOM.
 - **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait` (`quiet` to let it settle).
 - **Return summaries, not state.**
 - **Dialogs.** A call stuck behind a page's alert/confirm/prompt fails in ~3s with `dialog_open`. Answer with `press {key:"Enter"|"Escape", dialog:true, target:{tabId}}` (a string fills a prompt), no raise, then re-read. Only the tab's own JS dialog; other prompts go to the user.

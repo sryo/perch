@@ -7,7 +7,7 @@ import { Window } from "happy-dom";
 import { buildEvalWrapper, pageScript } from "../../server.js";
 
 export function page(html, { url = "https://a.test/p" } = {}) {
-  const w = new Window({ url, settings: { enableJavaScriptEvaluation: true, suppressInsecureJavaScriptEnvironmentWarning: true } });
+  const w = new Window({ url, settings: { enableJavaScriptEvaluation: true, suppressInsecureJavaScriptEnvironmentWarning: true, navigation: { disableChildPageNavigation: true } } });
   w.Element.prototype.getBoundingClientRect = function () {
     const at = this.getAttribute("data-rect");
     if (at) {
@@ -18,6 +18,9 @@ export function page(html, { url = "https://a.test/p" } = {}) {
     for (let el = this; el && !z; el = el.parentElement) z = w.getComputedStyle(el).display === "none";
     return { x: 0, y: 0, left: 0, top: 0, width: z ? 0 : 100, height: z ? 0 : 20, right: z ? 0 : 100, bottom: z ? 0 : 20 };
   };
+  // happy-dom follows a link through window.open, which browsers never show page
+  // JS, and a detached window navigates nowhere anyway: links only dispatch.
+  w.HTMLAnchorElement.prototype.dispatchEvent = Object.getPrototypeOf(w.HTMLAnchorElement.prototype).dispatchEvent;
   w.document.body.innerHTML = html;
   return w;
 }
