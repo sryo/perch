@@ -1256,13 +1256,16 @@ test("fill_fields: only_empty skips are never rechecked", () => {
   assert.equal(o.recheck, undefined);
 });
 
-test("fill_fields: a later pass on a page without this run's record rechecks nothing", () => {
+test("fill_fields: a later pass on a page without this batch's record writes nothing", () => {
   const w = page(DEPENDENT);
   runBody(w, CLEARS_ST + " return 1");
-  run(w, "fill_fields", { run: "a", fields: [{ label_pattern: "state", text: "Cordoba" }] });
-  const o = run(w, "fill_fields", { run: "b", from: 1, fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "country", option: "Argentina" }] });
-  assert.equal(val(w, "#st").value, "");
-  assert.equal(o.recheck, undefined);
+  run(w, "fill_fields", { fields: [{ label_pattern: "state", text: "Cordoba" }] });
+  const fields = [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "country", option: "Argentina" }];
+  assert.deepEqual(run(w, "fill_fields", { from: 1, fields }), { gone: true, results: [] });
+  assert.equal(val(w, "#st").value, "Cordoba");
+  assert.equal(val(w, "#co").value, "");
+  runBody(w, "document.getElementById('st').value = ''; return 1");
+  assert.deepEqual(run(w, "fill_fields", { from: 2, fields }), { results: [] });
 });
 
 // The combobox pick clears State, as a country widget clears its dependents.
@@ -1322,6 +1325,70 @@ test("fill {fields}: a page that navigated before the extra pass is not failed",
   assert.equal(sent.length, 2);
   assert.deepEqual(o.results.map((x) => x.ok), [true, true]);
   assert.equal(o.ok, true);
+  assert.equal(o.warning, undefined);
+  assert.equal(o.unverified, undefined);
+});
+
+// Every pass is built from the batch alone, so a repeated batch sends the same
+// scripts, later and re-read passes included, and the browser reuses them.
+test("fill {fields}: every pass of a repeated batch is the same page script", async () => {
+  const fields = [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }, { label_pattern: "city", text: "Rio" }, { label_pattern: "level", option: "junior" }];
+  const calls = [];
+  for (let k = 0; k < 2; k++) {
+    const { world } = onPage(CUSTOM_CLEARS, CUSTOM_CLEARS_JS);
+    const sent = passes(world);
+    await fill({ fields });
+    calls.push(sent);
+  }
+  assert.equal(calls[0].length, 3);
+  assert.deepEqual(calls[1], calls[0]);
+  for (const s of calls[0]) assert.doesNotMatch(s, /\\?"run\\?"/);
+});
+
+// The combobox pick swaps the document: the record is gone and so is the form
+// the rest of the batch was meant for.
+test("fill {fields}: a pick that loads another page stops the batch before the next field", async () => {
+  const { world, dom } = onPage(CUSTOM_CLEARS, CUSTOM_CLEARS_JS);
+  const sent = passes(world);
+  dom.document.getElementById("menu").addEventListener("click", () => {
+    delete dom.__perch_ff;
+    dom.document.body.innerHTML = CUSTOM_CLEARS.replace("Choose", "Senior");
+  });
+  const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }, { label_pattern: "city", text: "Rio" }] });
+  assert.equal(sent.length, 2);
+  assert.equal(dom.document.getElementById("ci").value, "");
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results.length, 3);
+  assert.deepEqual(o.results[2], { ok: false, error: "the page changed after fields[1]; not filled" });
+});
+
+const failSecondPass = (world, fail) => {
+  let n = 0;
+  const d = { run: (s) => (s.includes("PLACEHOLDERISH") && ++n === 2 ? fail(s) : world.daemon.run(s)) };
+  DAEMONS.fast = d; DAEMONS.slow = d;
+};
+
+test("fill {fields}: a final re-read that fails leaves the landed fields unverified, with a warning", async () => {
+  const { world } = onPage(CUSTOM, CUSTOM_JS);
+  failSecondPass(world, async () => { throw new Error("timeout: fake hang"); });
+  const { o } = await fill({ fields: [{ label_pattern: "first", text: "A" }, { label_pattern: "level", option: "senior" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.warning, "the final re-read did not run (timeout); earlier fields are unverified");
+  assert.equal(o.unverified, 1);
+  assert.equal(o.results[0].unverified, true);
+  assert.equal(o.results[1].unverified, undefined);
+});
+
+test("fill {fields}: a final re-read the page throws in leaves the fields unverified, with a warning", async () => {
+  const { world, dom } = onPage(CUSTOM_CLEARS, CUSTOM_CLEARS_JS);
+  passes(world);
+  dom.document.getElementById("menu").addEventListener("click", () => {
+    Object.defineProperty(dom.__perch_ff, "items", { get() { throw new Error("boom"); } });
+  });
+  const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }] });
+  assert.equal(o.warning, "the final re-read did not run (page error); earlier fields are unverified", JSON.stringify(o));
+  assert.equal(o.unverified, 1);
+  assert.equal(o.results[0].ok, true);
 });
 
 // ---- fields_path and ordered option preferences ----
