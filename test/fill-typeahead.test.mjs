@@ -551,8 +551,55 @@ test("typeahead: a lookup that ignores synthetic input misses on a plain fill", 
   const { dom } = onPage(LOCATION, TRUSTED_ONLY_JS());
   const o = await fill({ label_pattern: "location", text: "Rosario" });
   assert.equal(o.ok, false, JSON.stringify(o));
+  assert.ok(o.error.endsWith("; retry with fill {trusted:true}"), o.error);
   assert.equal(dom.lookups, 0);
   assert.equal($(dom, "#loc").value, "");
+});
+
+test("typeahead: a list of other suggestions or a tie names no trusted retry", async () => {
+  onPage(LOCATION, SUGGEST_JS(3));
+  const miss = await fill({ label_pattern: "location", text: "Zzyzx" });
+  assert.equal(miss.ok, false, JSON.stringify(miss));
+  assert.ok(miss.candidates.length);
+  assert.doesNotMatch(miss.error, /trusted/);
+  onPage(ACCENT_HTML(true), ACCENT_JS);
+  const tie = await fill({ selector: "#city", text: "Cordoba" });
+  assert.equal(tie.ambiguous, true, JSON.stringify(tie));
+  assert.doesNotMatch(tie.error, /trusted/);
+});
+
+test("fill {fields}: a lookup that ignores synthetic input names the trusted retry in its own slot", async () => {
+  const { dom } = onPage(LOCATION + "<label>Email <input name=email></label>", TRUSTED_ONLY_JS());
+  const o = await fill({ fields: [{ label_pattern: "^name", text: "Ada" }, { label_pattern: "location", text: "Rosario" }, { label_pattern: "email", text: "a@b.co" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results[0].ok, true);
+  assert.ok(o.results[1].error.endsWith("; retry with fill {trusted:true}"), o.results[1].error);
+  assert.equal(o.results[2].ok, true);
+  assert.equal($(dom, "[name=email]").value, "a@b.co");
+});
+
+// A controlled input that puts back what it held after every write, trusted or not.
+const REVERT = `<label>Code <input id=code value=A1></label>`;
+const REVERT_JS = `const c = document.getElementById('code');
+  for (const t of ['input', 'change']) c.addEventListener(t, () => { c.value = 'A1'; });
+  document.execCommand = (_command, _ui, text) => {
+    const el = document.activeElement;
+    el.value = text;
+    const ev = new Event('input', { bubbles: true });
+    Object.defineProperty(ev, 'isTrusted', { value: true });
+    el.dispatchEvent(ev);
+    return true;
+  };`;
+
+test("fill: a write the page reverts names the trusted retry, but not after a trusted one", async () => {
+  onPage(REVERT, REVERT_JS);
+  const o = await fill({ label_pattern: "code", text: "B2" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.ok(o.error.endsWith("the page reverted the write; retry with fill {trusted:true}"), o.error);
+  onPage(REVERT, REVERT_JS);
+  const t = await fill({ label_pattern: "code", text: "B2", trusted: true });
+  assert.equal(t.ok, false, JSON.stringify(t));
+  assert.doesNotMatch(t.error, /retry with fill/);
 });
 
 test("typeahead: a trusted fill types through the editing command and picks the suggestion", async () => {
@@ -578,6 +625,7 @@ test("typeahead: a trusted fill with no suggestion withdraws the text, never ok"
   assert.equal(o.kind, "typeahead");
   assert.equal(o.trusted, true);
   assert.match(o.error, /no suggestion/);
+  assert.doesNotMatch(o.error, /retry with fill/);
   assert.equal($(dom, "#loc").value, "Lyon");
   assert.equal($(dom, "#selected-location").value, "loc-9");
 });
@@ -990,4 +1038,10 @@ test("typeahead: two concurrent fills on one tab each pick and report their own 
   assert.equal($(dom, "#org-id").value, "org-0");
   assert.equal($(dom, "#dst").value, "Paris, France");
   assert.equal($(dom, "#dst-id").value, "dst-1");
+});
+
+test("the trusted-retry hint is one literal in server.js", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../server.js", import.meta.url), "utf8");
+  assert.equal(src.split("retry with fill {trusted:true}").length - 1, 1);
 });
