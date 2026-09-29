@@ -98,9 +98,8 @@ function jxaRuntime(BROWSERS) {
   }
 
   // AppKit's classes (NSRunningApplication, NSWorkspace, NSBitmapImageRep) exist
-  // only once it is imported. The import alone leaves this osascript unregistered
-  // (no Dock icon); touching NSApplication.sharedApplication would register it as
-  // a regular app, so nothing here does.
+  // only once it is imported. Only DAEMON_LOOP touches NSApplication, to keep the
+  // lanes out of the Dock.
   let appKitReady = false;
   function appKit() {
     if (appKitReady) return;
@@ -2156,8 +2155,8 @@ export function translatePermissionError(msg) {
 // until stdin hits EOF (seen on macOS 27.2), so perch reads lines itself.
 // Indirect eval keeps the prelude's globals across lines. NSData.length comes
 // back as a string in JXA, hence Number(). The Prohibited activation policy
-// keeps the long-lived REPL out of the Dock, where it would otherwise show up
-// under the responsible app's name (e.g. "Claude") once it touches AppKit.
+// keeps the long-lived REPL out of the Dock, where it otherwise registers as a
+// foreground app under the responsible app's name (e.g. "Claude").
 const DAEMON_LOOP = `ObjC.import("Foundation");
 ObjC.import("AppKit");
 $.NSApplication.sharedApplication.setActivationPolicy($.NSApplicationActivationPolicyProhibited);
