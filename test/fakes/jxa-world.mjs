@@ -11,7 +11,7 @@ import vm from "node:vm";
 
 export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, frameMs = 0 } = {}) {
   const clock = { t: 1_000_000 };
-  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [], shots: [], imports: [], policies: [] };
+  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [], shots: [], files: {}, imports: [], policies: [] };
   const cgEntries = cg.map((entry) => ({ ...entry }));
   const twinOf = (name) => (state.twins || []).find((x) => x.name === name);
   const posted = [];
@@ -570,6 +570,35 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     },
     NSApplication: { get sharedApplication() { state.sharedApp = (state.sharedApp || 0) + 1; return { setActivationPolicy: (p) => { state.policies.push(p); return true; } }; } },
   };
+  // screencapture as an NSTask: it runs on the fake clock and writes its image
+  // when done; a terminated one writes nothing.
+  const fakeTask = () => {
+    let shot = null, doneAt = null;
+    const task = {
+      executableURL: null, arguments: null, standardOutput: null, standardError: null, terminationStatus: 0,
+      launchAndReturnError: () => {
+        bump("screencapture");
+        if (state.captureThrows) throw new Error("launch failed");
+        const args = task.arguments, wid = Number(args[args.indexOf("-l") + 1]);
+        shot = { args: [task.executableURL.path, ...args], wid };
+        state.shots.push(shot);
+        doneAt = clock.t + (state.captureMs ?? 0);
+        return true;
+      },
+      get isRunning() {
+        if (shot.killed || clock.t < doneAt) return !shot.killed;
+        if (!shot.written) {
+          shot.written = true;
+          const c = cgEntries.find((e) => (e.wid ?? 1) === shot.wid);
+          const s = state.shotScale ?? 2;
+          state.files[shot.args[shot.args.length - 1]] = c && !state.shotEmpty ? { w: (c.w ?? 800) * s, h: (c.h ?? 600) * s, shot } : { w: 0, h: 0, shot };
+        }
+        return false;
+      },
+      get terminate() { shot.killed = true; task.terminationStatus = 15; return undefined; },
+    };
+    return task;
+  };
   const sandbox = {
     Ref: () => [],
     Application: (name) => {
@@ -590,7 +619,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     },
     // JXA's `$` is callable (`$()` is a nil pointer) and carries the bridged symbols.
     // $(jsString) bridges to an NSString; only real UTF-16LE (0x94000100) encodes.
-    $: Object.assign((str) => (str === undefined ? null : nsString(str)), {
+    $: Object.assign((str) => (str === undefined ? null : Array.isArray(str) ? str.slice() : nsString(str)), {
       // CoreGraphics / AppKit stand-ins for trusted input: events are recorded, not posted.
       CGPointMake: (x, y) => ({ x, y }),
       dlopen: () => ({}),
@@ -695,25 +724,25 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       AXIsProcessTrustedWithOptions: () => state.ax,
       kCFBooleanFalse: false,
       kAXTrustedCheckOptionPrompt: "prompt",
-      // Screen capture: CGWindowListCreateImage returns a CG entry's pixels at
-      // state.shotScale (default 2, a Retina display) times its frame, or an empty
-      // image for a window not in the list or with state.shotEmpty.
-      // state.capture false: no Screen Recording grant. Each capture is recorded
-      // in state.shots as {rect, opt, wid, imgOpt}, plus `crop` (the pixel rect cut
-      // from it), `scaled` (the bitmap context it was drawn into) and `encoded`
-      // ({type, props, w, h}). state.captureThrows: the capture itself throws.
+      // Screen capture: the runtime runs screencapture (an NSTask), which writes a
+      // CG entry's pixels at state.shotScale (default 2, a Retina display) times
+      // its frame to its file, or an empty image for a window not in the list or
+      // with state.shotEmpty. state.capture false: no Screen Recording grant. Each
+      // capture is recorded in state.shots as {args, wid}, plus `crop` (the pixel
+      // rect cut from it), `scaled` (the bitmap context it was drawn into),
+      // `encoded` ({type, props, w, h}) and `killed` (it was terminated).
+      // state.captureThrows: the launch throws. state.captureMs: each capture
+      // takes that long; Infinity never finishes. state.files holds what is
+      // written and not yet removed.
       CGPreflightScreenCaptureAccess: () => { bump("CGPreflight"); return state.capture !== false; },
-      CGRectNull: { x: Infinity, y: Infinity, w: 0, h: 0, isNull: true },
       CGRectMake: (x, y, w, h) => ({ x, y, w, h }),
-      CGWindowListCreateImage: (rect, opt, wid, imgOpt) => {
-        bump("CGWindowListCreateImage");
-        if (state.captureThrows) throw new Error("capture failed");
-        const shot = { rect, opt, wid, imgOpt };
-        state.shots.push(shot);
-        const c = cgEntries.find((e) => (e.wid ?? 1) === wid);
-        const s = state.shotScale ?? 2;
-        return c && !state.shotEmpty ? { w: (c.w ?? 800) * s, h: (c.h ?? 600) * s, shot } : { w: 0, h: 0, shot };
-      },
+      CGWindowListCreateImage: () => { bump("CGWindowListCreateImage"); throw new Error("CGWindowListCreateImage is not used"); },
+      NSTemporaryDirectory: () => nsString("/tmp/fake/"),
+      NSProcessInfo: { processInfo: { processIdentifier: 555 } },
+      NSURL: { fileURLWithPath: (path) => ({ path }) },
+      NSFileHandle: { fileHandleWithNullDevice: { nullDevice: true } },
+      NSTask: { alloc: { get init() { return fakeTask(); } } },
+      NSFileManager: { defaultManager: { removeItemAtPathError: (path) => { const had = path in state.files; delete state.files[path]; return had; } } },
       // A crop keeps the pixels inside the image; the rect is recorded as shot.crop.
       CGImageCreateWithImageInRect: (img, r) => {
         img.shot.crop = { x: r.x, y: r.y, w: r.w, h: r.h };
@@ -730,7 +759,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       CGBitmapContextCreateImage: (ctx) => (ctx.img && !state.scaleFail ? { w: ctx.w, h: ctx.h, shot: ctx.img.shot } : { w: 0, h: 0 }),
       NSBitmapImageFileTypeJPEG: 3,
       NSBitmapImageFileTypePNG: 4,
-      NSBitmapImageRep: { alloc: { initWithCGImage: (img) => ({
+      NSBitmapImageRep: { imageRepWithContentsOfFile: (path) => (state.files[path] ? { isNil: () => false, CGImage: state.files[path] } : null), alloc: { initWithCGImage: (img) => ({
         representationUsingTypeProperties: (type, props) => {
           img.shot.encoded = { type, props: props ? JSON.parse(JSON.stringify(props.js)) : null, w: img.w, h: img.h };
           const bytes = Buffer.alloc(33);

@@ -1017,19 +1017,23 @@ function jxaRuntime(BROWSERS, HANG) {
     return { x: x, y: y, w: Math.min(W, x1) - x, h: Math.min(H, y1) - y, cut: x0 < 0 || y0 < 0 || x1 > W || y1 > H };
   }
 
-  // The window's own pixels, captured and encoded here rather than by spawning
-  // screencapture and sips. CGPreflightScreenCaptureAccess never prompts; without
-  // the grant, or on an empty image, it returns null and screencapture (which
-  // asks for the grant itself) takes over, as it does after a failed downscale.
-  // With a shot map it keeps only the map's box, cut before any downscale.
+  // The window's own pixels, cropped, scaled and encoded here, so a crop happens
+  // inside the runtime call that scrolled and restores. CGPreflightScreenCaptureAccess
+  // never prompts; without the grant, or on an empty image, it returns null and
+  // Node's screencapture (which asks for the grant itself) takes over, as it does
+  // after a failed downscale. With a shot map it keeps only the map's box, cut
+  // before any downscale. A capture that gives no image in time is a coded
+  // timeout, which the crop's restore still follows.
   function capture(wid, format, maxWidth, map) {
+    let shot = null;
     try {
       ObjC.import("CoreGraphics");
       appKit();
       ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]);
       if (!$.CGPreflightScreenCaptureAccess()) return null;
-      // kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming (no shadow, as screencapture -o).
-      let img = $.CGWindowListCreateImage($.CGRectNull, 8, wid, 1);
+      shot = windowShot(wid);
+      if (!shot) return null;
+      let img = shot.img;
       let w = Number($.CGImageGetWidth(img)), h = Number($.CGImageGetHeight(img));
       if (!w || !h) return null;
       let clip = null;
@@ -1060,8 +1064,39 @@ function jxaRuntime(BROWSERS, HANG) {
       const out = { data: data.base64EncodedStringWithOptions(0).js, image: { w: w, h: h } };
       if (clip) { out.clip = { x: clip.x, y: clip.y, w: clip.w, h: clip.h }; if (clip.cut) out.cut = true; }
       return out;
-    } catch (e) { return null; }
+    } catch (e) {
+      if (e && e.message === SHOT_NO_IMAGE) throw e;
+      return null;
+    } finally { if (shot) dropFile(shot.path); }
   }
+  // The capture runs the screencapture binary rather than CGWindowListCreateImage:
+  // since macOS 15 that call is proxied through replayd, which serves one live
+  // process per executable, so once any long-lived osascript (another perch
+  // server's REPL, or another JXA tool) has captured, every other osascript's
+  // capture waits the proxy's 30s and gets no image. screencapture exits after
+  // each shot, so it never holds the proxy, and one that hangs is killed at
+  // SHOT_CAPTURE_SECS. -o leaves out the window shadow.
+  const SHOT_CAPTURE_SECS = 3;
+  const SHOT_NO_IMAGE = "timeout: screenshot: the window capture gave no image within " + SHOT_CAPTURE_SECS + "s; nothing was captured";
+  let shotSeq = 0;
+  function windowShot(wid) {
+    const path = $.NSTemporaryDirectory().js + "perch-" + $.NSProcessInfo.processInfo.processIdentifier + "-" + (++shotSeq) + ".png";
+    const task = $.NSTask.alloc.init;
+    task.executableURL = $.NSURL.fileURLWithPath("/usr/sbin/screencapture");
+    task.arguments = $(["-l", String(wid), "-x", "-o", "-t", "png", path]);
+    task.standardOutput = $.NSFileHandle.fileHandleWithNullDevice;
+    task.standardError = $.NSFileHandle.fileHandleWithNullDevice;
+    if (!task.launchAndReturnError($())) return null;
+    const until = Date.now() + SHOT_CAPTURE_SECS * 1000;
+    while (task.isRunning) {
+      if (Date.now() >= until) { task.terminate; dropFile(path); throw new Error(SHOT_NO_IMAGE); }
+      delay(0.01);
+    }
+    const rep = task.terminationStatus === 0 ? $.NSBitmapImageRep.imageRepWithContentsOfFile(path) : null;
+    if (!rep || rep.isNil()) { dropFile(path); return null; }
+    return { img: rep.CGImage, path: path };
+  }
+  function dropFile(path) { try { $.NSFileManager.defaultManager.removeItemAtPathError(path, $()); } catch (e) {} }
 
   function requireAccessibility() {
     ObjC.import("ApplicationServices");

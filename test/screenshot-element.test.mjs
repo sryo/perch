@@ -418,6 +418,20 @@ test("scroll positions are restored even when the capture fails", async () => {
   assert.deepEqual(where(q), [0, 40, 37]);
 });
 
+test("a capture that gives no image in 3s restores every scroll and is a coded timeout, not the lane's 30s", async () => {
+  const p = scrolled();
+  install(p);
+  world.state.captureMs = Infinity;
+  const calls = spawns(2000);
+  const t0 = world.clock.t;
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.equal(r.content[0].text, "error: timeout: screenshot: the window capture gave no image within 3s; nothing was captured");
+  assert.ok(world.clock.t - t0 < 8000, `took ${world.clock.t - t0}ms`);
+  assert.deepEqual(where(p), [0, 40, 37]);
+  assert.equal(world.state.shots[0].killed, true);
+  assert.deepEqual([calls, world.state.files], [[], {}]);
+});
+
 test("a tab its window doesn't show is tab_not_visible before any page JS runs", async () => {
   const p = scrolled();
   install(p, { active: false });

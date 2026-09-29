@@ -51,14 +51,16 @@ const shoot = async (args) => {
 
 // ---- the runtime capture ----
 
-test("screenshot captures in the runtime: no process spawned, the window alone without its shadow, downscaled to 1568", async () => {
+test("screenshot captures in the runtime: nothing spawned from Node, the window alone without its shadow, downscaled to 1568", async () => {
   canary();
   const calls = spawns();
   const { r, meta, bytes } = await shoot({});
-  assert.deepEqual(calls, [], "no screencapture or sips");
+  assert.deepEqual(calls, [], "no screencapture or sips from Node");
   const [s] = world.state.shots;
-  // kCGWindowListOptionIncludingWindow (8) for CGWindowID 77, kCGWindowImageBoundsIgnoreFraming (1), CGRectNull.
-  assert.deepEqual([s.opt, s.wid, s.imgOpt, s.rect.isNull], [8, 77, 1, true]);
+  // screencapture of CGWindowID 77 without its shadow (-o), never CGWindowListCreateImage.
+  assert.deepEqual(s.args, ["/usr/sbin/screencapture", "-l", "77", "-x", "-o", "-t", "png", "/tmp/fake/perch-555-1.png"]);
+  assert.equal(world.counts.CGWindowListCreateImage, undefined);
+  assert.deepEqual(world.state.files, {}, "its file is removed");
   // A 2x capture of the 800x620 CG frame, drawn into a 1568-wide bitmap.
   assert.deepEqual([s.scaled.w, s.scaled.h, s.scaled.rect], [1568, 1215, { x: 0, y: 0, w: 1568, h: 1215 }]);
   assert.deepEqual(s.encoded, { type: 4, props: null, w: 1568, h: 1215 });
@@ -105,10 +107,33 @@ test("without the Screen Recording grant the runtime never captures, and screenc
   world.state.capture = false;
   const calls = spawns();
   const { meta } = await shoot({});
-  assert.equal(world.counts.CGWindowListCreateImage, undefined);
+  assert.equal(world.counts.screencapture, undefined);
   assert.deepEqual(calls.map((c) => c[0]), ["screencapture", "sips"]);
   assert.deepEqual(calls[0].slice(1, 3), ["-l", "77"]);
   assert.deepEqual(meta, { window: { x: 10, y: 0, w: 800, h: 620 }, image: { w: 1568, h: 1000 } });
+});
+
+// Another long-lived osascript that has captured makes CGWindowListCreateImage
+// wait replayd's 30s, so the capture is a screencapture run the runtime kills.
+test("a runtime capture that gives no image in 3s is killed and refused as a coded timeout, well inside the lane's 30s", async () => {
+  canary();
+  world.state.captureMs = Infinity;
+  const calls = spawns();
+  const t0 = world.clock.t;
+  const r = await handleCall("screenshot", {});
+  assert.equal(r.isError, true);
+  assert.equal(r.content[0].text, "error: timeout: screenshot: the window capture gave no image within 3s; nothing was captured");
+  assert.ok(world.clock.t - t0 < 3100, `took ${world.clock.t - t0}ms`);
+  assert.equal(world.state.shots[0].killed, true);
+  assert.deepEqual([calls, world.state.files], [[], {}], "no Node fallback, no file left");
+});
+
+test("a runtime capture that finishes within 3s is kept", async () => {
+  canary();
+  world.state.captureMs = 2500;
+  spawns();
+  const { meta } = await shoot({ maxWidth: 0 });
+  assert.deepEqual(meta.image, { w: 1600, h: 1240 });
 });
 
 test("an empty capture falls back to screencapture", async () => {
@@ -116,7 +141,7 @@ test("an empty capture falls back to screencapture", async () => {
   world.state.shotEmpty = true;
   const calls = spawns(1000);
   const { r, meta } = await shoot({ format: "jpeg" });
-  assert.equal(world.counts.CGWindowListCreateImage, 1);
+  assert.equal(world.counts.screencapture, 1);
   assert.deepEqual(calls.map((c) => c[0]), ["screencapture"]);
   assert.ok(calls[0].includes("jpg"), calls[0].join(" "));
   assert.equal(r.content[0].mimeType, "image/jpeg");
