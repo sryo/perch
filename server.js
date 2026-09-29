@@ -2698,6 +2698,23 @@ function vis(el) {
   const r = el.getBoundingClientRect();
   return !(r.width === 0 && r.height === 0);
 }
+// vis(), plus a styled control's own input: faded (opacity 0) or shrunk to a
+// pixel inside a visible, sized box at most 3 levels up that contains it, as a
+// react-select input after a pick or a custom checkbox. display:none,
+// visibility:hidden and a box that is itself hidden still hide it.
+function fieldVis(el) {
+  if (vis(el)) return true;
+  if (!el || el.hidden) return false;
+  const cs = getComputedStyle(el);
+  if (cs.display === "none" || cs.visibility === "hidden") return false;
+  const r = el.getBoundingClientRect();
+  for (let p = el.parentElement, i = 0; p && i < 3 && !/^(BODY|HTML)$/.test(p.tagName); p = p.parentElement, i++) {
+    if (!vis(p)) continue;
+    const b = p.getBoundingClientRect();
+    if (b.width > 1 && b.height > 1 && r.left >= b.left - 1 && r.top >= b.top - 1 && r.right <= b.right + 1 && r.bottom <= b.bottom + 1) return true;
+  }
+  return false;
+}
 // Sequential focus order, approximated as DOM order of visible focusables.
 function tabbables() {
   return Array.prototype.filter.call(document.querySelectorAll("a[href], button, input, select, textarea, summary, [tabindex], [contenteditable]"), function (n) {
@@ -2773,7 +2790,7 @@ function role(el) {
   if (editable(el)) return "textbox";
   return "generic";
 }
-function ident(el) { return role(el) + " " + JSON.stringify(accName(el)) + (vis(el) ? "" : " hidden"); }
+function ident(el) { return role(el) + " " + JSON.stringify(accName(el)) + (fieldVis(el) ? "" : " hidden"); }
 // The prototype setter reaches React-controlled fields whose instance setter is patched.
 function setNativeValue(el, v) {
   const P = el.tagName === "TEXTAREA" ? HTMLTextAreaElement : el.tagName === "SELECT" ? HTMLSelectElement : HTMLInputElement;
@@ -3446,7 +3463,7 @@ function fillOne(a) {
     const out = tryFill(r.el);
     if (!out) return { ok: false, error: ident(r.el) + " is not fillable or rejected the text" };
     if (out.ok === false) return out;
-    if (!vis(r.el)) out.hidden = true;
+    if (!fieldVis(r.el)) out.hidden = true;
     if (a.selector) {
       const hits = Array.from(document.querySelectorAll(a.selector)).filter(vis);
       if (hits.length > 1) out.ambiguous = hits.slice(0, 3).map(ident);
@@ -3507,7 +3524,7 @@ function fillOne(a) {
       }
       s = 10;
     }
-    if (vis(el)) s += 20;
+    if (fieldVis(el)) s += 20;
     if (!el.disabled && !el.readOnly) s += 10;
     scored.push({ el: el, root: root, s: s });
   });
@@ -3523,7 +3540,7 @@ function fillOne(a) {
     }
     return out;
   }
-  const shown = scored.filter(function (c) { return vis(c.el); });
+  const shown = scored.filter(function (c) { return fieldVis(c.el); });
   if (!shown.length) {
     const reveal = revealers(re, nearHit), el = ident(scored[0].el);
     const why = el + " matched /" + a.label_pattern + "/i but the field is hidden; ";

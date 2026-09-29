@@ -237,6 +237,31 @@ test("fill by label fails closed on a hidden field and offers the reveal hint", 
   assert.equal(bare.document.querySelector("textarea").value, "");
 });
 
+test("fill by label takes a styled control's faded input inside its visible box", () => {
+  const w = page(`<form><label for=loc>Location</label><div class="select__control"><div class="select__value-container"><div class="select__single-value">Rosario</div><div class="select__input-container"><input id=loc role=combobox aria-autocomplete=list aria-expanded=false style="opacity:0"></div></div></div></form>`);
+  const o = run(w, "fill", { label_pattern: "location", text: "Cordoba" });
+  assert.doesNotMatch(o.error || "", /hidden/, JSON.stringify(o));
+  assert.doesNotMatch(o.el || "", /hidden/, JSON.stringify(o));
+  const t = page(`<form><label for=n>Nickname</label><div class=box><input id=n style="opacity:0;position:absolute;width:1px;height:1px"></div></form>`);
+  const r = run(t, "fill", { label_pattern: "nickname", text: "Ada" });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.el, `textbox "Nickname"`);
+  assert.equal(t.document.querySelector("input").value, "Ada");
+});
+
+test("fieldVis: an overlay input in a visible box is shown; display, visibility and a hidden box still hide it", () => {
+  const w = page(`
+    <label class=check><input id=a type=checkbox style="opacity:0;position:absolute"><span>Agree</span></label>
+    <div class=ctl><div><div><input id=b style="opacity:0"></div></div></div>
+    <div class=ctl><input id=c data-zero></div>
+    <div class=ctl><input id=d style="display:none"></div>
+    <div class=ctl><input id=e style="visibility:hidden;opacity:0"></div>
+    <div style="display:none"><input id=f style="opacity:0"></div>
+    <div data-zero><input id=g style="opacity:0"></div>
+    <input id=h hidden>`);
+  assert.deepEqual(runBody(w, `return 'abcdefgh'.split('').map(id => fieldVis(document.getElementById(id)))`), [true, true, true, false, false, false, false, false]);
+});
+
 test("fill by selector into a hidden field still writes and says hidden", () => {
   const w = page(`<textarea id=t aria-label="Cover letter" style="display:none"></textarea><input id=v aria-label="Name">`);
   const o = run(w, "fill", { selector: "#t", text: "Dear team" });
