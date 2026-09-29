@@ -405,6 +405,43 @@ test("trusted click with a bad readback selector posts nothing", async () => {
   assert.equal(world.posted.filter((e) => e.type === 1).length, 0);
 });
 
+// ---- hidden tabs ----
+
+// A background tab runs its timers about once a second, so a validation error
+// set by setTimeout(..., 300) lands up to a second after the click. The page's
+// own clock follows the fake world's here.
+function hiddenTimer(dom, world, ms, fn) {
+  Object.defineProperty(dom.document, "visibilityState", { value: "hidden", configurable: true });
+  dom.Date.now = () => world.clock.t;
+  const at = world.clock.t + ms, orig = dom.eval.bind(dom);
+  let done = false;
+  dom.eval = (js) => { if (!done && world.clock.t >= at) { done = true; fn(); } return orig(js); };
+}
+
+test("in a hidden tab readback waits out a throttled timer tick before settling", async () => {
+  const { dom, world } = onPage(FORM, "", { frameMs: 16 });
+  hiddenTimer(dom, world, 1000, () => { dom.document.getElementById("s").textContent = "Email is required"; });
+  const o = await click({ selector: "#b", readback: "#s" });
+  assert.deepEqual(o, { ok: true, el: `button "Submit"`, readback: "Email is required", changed: true });
+});
+
+test("a quiet hidden tab settles after about 1.2s, not the 2s cap", async () => {
+  const { dom, world } = onPage(FORM, "", { frameMs: 16 });
+  hiddenTimer(dom, world, Infinity, () => {});
+  const t0 = world.clock.t;
+  assert.equal((await click({ selector: "#b", readback: "#s" })).changed, false);
+  const spent = world.clock.t - t0;
+  assert.ok(spent >= 1200 && spent <= 1500, `spent ${spent}ms`);
+});
+
+test("a visible tab keeps the short quiet window", async () => {
+  const { dom, world } = onPage(FORM, "", { frameMs: 16 });
+  dom.Date.now = () => world.clock.t;
+  const t0 = world.clock.t;
+  assert.equal((await click({ selector: "#b", readback: "#s" })).changed, false);
+  assert.ok(world.clock.t - t0 <= 900, `spent ${world.clock.t - t0}ms`);
+});
+
 // ---- schema ----
 
 test("click schema: readback costs at most 150 chars", () => {
