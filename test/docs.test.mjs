@@ -49,6 +49,19 @@ test("AGENTS.md's Errors bullet names every coded error and no retired mechanism
   }
 });
 
+test("AGENTS.md's Per-tab serialization bullet names every tool tabLockKey locks", async () => {
+  const agents = await read("AGENTS.md");
+  const source = await read("server.js");
+  const line = agents.split("\n").find((l) => l.startsWith("- **Per-tab serialization:**"));
+  assert.ok(line, "AGENTS.md lost its Per-tab serialization bullet");
+  const set = /const LOCKED_TOOLS = new Set\(\[([^\]]*)\]\)/.exec(source);
+  const key = /const tabLockKey = [\s\S]*?\n\n/.exec(source);
+  assert.ok(set && key, "LOCKED_TOOLS or tabLockKey not found in server.js");
+  const names = [...set[1].matchAll(/"([a-z_]+)"/g), ...key[0].matchAll(/name === "([a-z_]+)"/g)].map((m) => m[1]);
+  assert.ok(names.length >= 7, `parsed only ${names}`);
+  for (const n of names) assert.ok(line.includes("`" + n), `Per-tab serialization bullet misses ${n}`);
+});
+
 const SELF_EXPLANATORY = ["message", "subtitle", "sound", "maxWidth", "mode"];
 
 test("every param, element hint, error code and permission toggle stays documented somewhere", async () => {

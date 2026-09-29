@@ -7249,13 +7249,13 @@ async function select(args = {}, prefs = null) {
 
 // Shared guidance lives here once instead of in every tool description.
 export const INSTRUCTIONS = `perch drives the user's own macOS browsers over AppleScript. Which browser a tab lives in is perch's concern, not the caller's.
-Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab; it works for every browser and survives other tabs opening and closing. With no target, tools use the active tab of the topmost browser window.
-Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation; a stale ref errors with a re-snapshot hint.
+Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With no target, tools use the active tab of the topmost browser window.
+Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
 Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS alert/confirm/prompt is open: press {dialog}), bad_url (only http(s), file or about:blank). Only activate_tab and raise:true take focus.`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
-const TARGET = { type: "object", properties: { tabId: { type: ["string", "number"] }, app: { type: "string" } } };
+const TARGET = { type: "object", properties: { tabId: { type: "string" }, app: { type: "string" } } };
 const REF = { type: "string" };
 const SEL = { type: "string" };
 const LABEL = { type: "string" };
