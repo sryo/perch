@@ -5288,12 +5288,16 @@ function chosen(c) {
 // hash of the fields alone, so every pass of a batch is the same source every
 // call and stays in the page's compile cache. A later pass that finds no record
 // or another batch's is on another document, which it must not write to or
-// vouch for. The last pass re-reads them, since a later field's handler may
-// clear or change one, as a country resets its state.
+// vouch for. So is one an SPA routed away from (a new path, not just a hash),
+// or whose first landed field's form left and none of the landed fields can be
+// found again, as a re-render would keep them. The last pass re-reads them,
+// since a later field's handler may clear or change one, as a country resets
+// its state.
 const fp = (function (s) { let h = 5381; for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + s.length; })(JSON.stringify(A.fields));
+const href = location.href.split("#")[0];
 let ff = window.__perch_ff;
-if (!A.from) ff = window.__perch_ff = { fp: fp, items: {} };
-else if (!ff || ff.fp !== fp) return { gone: true, results: [] };
+if (!A.from) ff = window.__perch_ff = { fp: fp, items: {}, href: href };
+else if (!ff || ff.fp !== fp || ff.href !== href || (ff.form && !ff.form.isConnected && !Object.keys(ff.items).some(function (k) { return ff.items[k].el.isConnected || twin(ff.items[k]); }))) return { gone: true, results: [] };
 const AFTER = " after a later field changed; fill it again";
 // A framework re-render replaces a node but keeps its value: a disconnected
 // field is looked up again by id, then by name in its form, then by the call's
@@ -5396,6 +5400,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     got.kind = o.kind;
     got.f = f;
     got.key = { id: got.el.id, name: got.el.name, form: got.el.form };
+    if (!("form" in ff)) ff.form = got.el.form || got.el.closest("form") || null;
     if (got.group) got.pick = chosen({ group: got.group });
     if (got.group || "checked" in got) got.key.value = got.el.value;
     ff.items[i] = got;

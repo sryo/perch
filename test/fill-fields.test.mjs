@@ -1377,6 +1377,65 @@ test("fill {fields}: a pick that loads another page stops the batch before the n
   assert.equal(o.warning, "the page changed after fields[1]; earlier fields may have been cleared, check them");
 });
 
+// A step form of an SPA: the City pick also runs a step script, which may push
+// a route, swap the form or both.
+const STEP_FORM = `<main><form><label>Name <input id=nm></label><label id=lab>City</label><div class="select__control"><div role=combobox aria-labelledby=lab aria-expanded=false tabindex=0><span class=v>Choose</span></div></div><div id=menu></div><label>Email <input id=em></label></form></main>`;
+const STEP_JS = (step) => CUSTOM_JS.replace("Junior</div><div role=option>Senior", "Lima</div><div role=option>Rio")
+  .replace("cb.querySelector('.v').textContent = o.textContent;", "cb.querySelector('.v').textContent = o.textContent; " + step);
+const NEXT_STEP = "document.querySelector('main').innerHTML = '<form><label>Friend email <input id=fe></label></form>';";
+const STEP_FIELDS = [{ label_pattern: "name", text: "Ada" }, { label_pattern: "city", option: "rio" }, { label_pattern: "email", text: "a@x.io" }];
+const stoppedAtCity = (o) => {
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results.length, 3);
+  assert.deepEqual(o.results[2], { ok: false, error: "the page changed after fields[1]; not filled" });
+  assert.equal(o.results[0].unverified, true);
+  assert.equal(o.warning, "the page changed after fields[1]; earlier fields may have been cleared, check them");
+};
+
+test("fill {fields}: a pick that routes an SPA to its next step stops the batch there", async () => {
+  const { world, dom } = onPage(STEP_FORM, STEP_JS("history.pushState({}, '', '/step2'); " + NEXT_STEP));
+  passes(world);
+  const { o } = await fill({ fields: STEP_FIELDS });
+  stoppedAtCity(o);
+  assert.equal(dom.document.getElementById("fe").value, "");
+});
+
+test("fill {fields}: a pick that only pushes a route stops the batch, the form kept", async () => {
+  const { world, dom } = onPage(STEP_FORM, STEP_JS("history.pushState({}, '', '/step2');"));
+  passes(world);
+  const { o } = await fill({ fields: STEP_FIELDS });
+  stoppedAtCity(o);
+  assert.equal(dom.document.getElementById("em").value, "");
+});
+
+test("fill {fields}: a pick that swaps in another form without a route stops the batch", async () => {
+  const { world, dom } = onPage(STEP_FORM, STEP_JS(NEXT_STEP));
+  passes(world);
+  const { o } = await fill({ fields: STEP_FIELDS });
+  stoppedAtCity(o);
+  assert.equal(dom.document.getElementById("fe").value, "");
+});
+
+test("fill {fields}: a pick that changes only the hash keeps filling", async () => {
+  const { world, dom } = onPage(STEP_FORM, STEP_JS("location.hash = '#step';"));
+  passes(world);
+  const { o } = await fill({ fields: STEP_FIELDS });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.warning, undefined);
+  assert.equal(dom.document.getElementById("em").value, "a@x.io");
+});
+
+test("fill {fields}: a pick that re-renders the same form keeps filling it", async () => {
+  const RERENDER = "const f = document.querySelector('form'), c = f.cloneNode(true); c.querySelector('#nm').value = f.querySelector('#nm').value; f.replaceWith(c);";
+  const { world, dom } = onPage(STEP_FORM, STEP_JS(RERENDER));
+  passes(world);
+  const { o } = await fill({ fields: STEP_FIELDS });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.warning, undefined);
+  assert.equal(dom.document.getElementById("em").value, "a@x.io");
+  assert.equal(dom.document.getElementById("nm").value, "Ada");
+});
+
 const failSecondPass = (world, fail) => {
   let n = 0;
   const d = { run: (s) => (s.includes("PLACEHOLDERISH") && ++n === 2 ? fail(s) : world.daemon.run(s)) };
