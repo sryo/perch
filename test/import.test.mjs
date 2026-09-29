@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, symlink, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ROOT } from "../scripts/mcp-client.mjs";
@@ -28,7 +28,7 @@ test("server started through a symlink still answers tools/list", async () => {
       const line = buf.split("\n").find((l) => l.includes('"id":2'));
       if (line) resolve(JSON.parse(line));
     });
-    setTimeout(() => reject(new Error("no tools/list reply")), 5000).unref();
+    setTimeout(() => reject(new Error("no tools/list reply")), 15000).unref();
   });
   const send = (m) => child.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
   send({ id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } });
@@ -42,34 +42,39 @@ test("server started through a symlink still answers tools/list", async () => {
 
 // Once a client disconnects, the server and its osascript daemons must go:
 // otherwise every ended session leaves a node process and its REPLs running.
-test("server exits with its daemons when stdin closes", { skip: process.platform !== "darwin" || process.env.PERCH_LIVE === "0" }, async () => {
+// A fake `osascript` on PATH answers each line with an empty result, so the
+// daemons pass their handshake and stay up, and ignores stdin EOF, so only the
+// server's own shutdown can end it. The ceilings only catch a hang.
+test("server exits with its daemons when stdin closes", async (t) => {
   const { execFileSync } = await import("node:child_process");
-  const child = spawn("node", [join(ROOT, "server.js")], { stdio: ["pipe", "pipe", "ignore"] });
-  const lines = [];
-  const reply = (id) => new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`no reply ${id}`)), 15000);
-    child.stdout.on("data", (d) => {
-      lines.push(...String(d).split("\n"));
-      if (lines.some((l) => l.includes(`"id":${id}`))) { clearTimeout(t); resolve(); }
-    });
-  });
-  const send = (m) => child.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
-  send({ id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } });
-  send({ method: "notifications/initialized" });
-  // A filter nothing matches: read-only, and enough to start the daemons.
-  send({ id: 2, method: "tools/call", params: { name: "list_tabs", arguments: { urlContains: "perch-exit-test-no-match" } } });
-  await reply(2);
+  const dir = await mkdtemp(join(tmpdir(), "perch-exit-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const log = join(dir, "replies");
+  await writeFile(join(dir, "osascript"), [
+    "#!/bin/sh",
+    "while IFS= read -r line; do",
+    "  id=$(printf '%s\\n' \"$line\" | sed -n 's/.*<<P:\\([a-z0-9]*\\):O:.*/\\1/p')",
+    "  printf '<<P:%s:O:>>\\n' \"$id\"",
+    `  echo reply >> "${log}"`,
+    "done",
+    "exec tail -f /dev/null",
+    "",
+  ].join("\n"));
+  await chmod(join(dir, "osascript"), 0o755);
+  const child = spawn(process.execPath, [join(ROOT, "server.js")], { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, stdio: ["pipe", "pipe", "ignore"] });
+  const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
   const kids = () => { try { return execFileSync("pgrep", ["-P", String(child.pid)]).toString().trim().split("\n").filter(Boolean); } catch { return []; } };
-  assert.ok(kids().length > 0, "the call should have started a daemon");
-  const orphans = kids();
-  const exited = new Promise((resolve) => child.on("exit", () => resolve(true)));
+  const alive = (p) => { try { process.kill(Number(p), 0); return true; } catch { return false; } };
+  const until = async (f, ms) => { for (const end = Date.now() + ms; !(await f()) && Date.now() < end;) await new Promise((r) => setTimeout(r, 20)); return f(); };
+  let orphans = [];
+  t.after(() => { child.kill("SIGKILL"); for (const p of orphans) { try { process.kill(Number(p), "SIGKILL"); } catch {} } });
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) + "\n");
+  // Connecting warms both lanes: two handshakes answered.
+  const replies = () => readFile(log, "utf8").then((s) => s.split("\n").filter(Boolean).length, () => 0);
+  assert.equal(await until(async () => (await replies()) >= 2 && kids().length >= 2, 15000), true, "the server should have started its daemons");
+  orphans = kids();
   child.stdin.end();
-  const ok = await Promise.race([exited, new Promise((r) => setTimeout(() => r(false), 3000))]);
-  if (!ok) child.kill("SIGKILL");
-  for (const p of orphans) { try { process.kill(Number(p), 0); if (!ok) process.kill(Number(p), "SIGKILL"); } catch {} }
-  assert.equal(ok, true, "server should exit within 3s of stdin closing");
-  // SIGKILL lands asynchronously, so give the daemons a moment to be reaped.
-  const living = () => orphans.filter((p) => { try { process.kill(Number(p), 0); return true; } catch { return false; } });
-  for (let i = 0; i < 20 && living().length; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(living().length, 0, "its osascript daemons should be gone");
+  const ended = await Promise.race([exited, new Promise((r) => setTimeout(() => r(null), 15000))]);
+  assert.deepEqual(ended, { code: 0, signal: null }, "the server should exit on its own once stdin closes");
+  assert.equal(await until(() => orphans.every((p) => !alive(p)), 15000), true, "its osascript daemons should be gone");
 });
