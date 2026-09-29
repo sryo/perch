@@ -1,7 +1,7 @@
 // Required fields the form header counts but no ordinary row shows: a custom
-// input clipped or faded behind its visible label, a textarea collapsed behind
-// an "Enter manually" button. Each gets a `hidden` row, with the button that
-// reveals it as reveal=<ref>; decoys never do.
+// input faded behind its visible label, a textarea collapsed behind an "Enter
+// manually" button. Each gets a `hidden` row, with the button that reveals it
+// as reveal=<ref>; decoys never do.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -12,7 +12,7 @@ const snap = (w, A = {}) => {
   return { head: JSON.parse(head.slice(2)), lines };
 };
 
-test("snapshot: a clip-hidden or faded required input under a visible label is listed hidden, and fills by ref", () => {
+test("snapshot: a clip-hidden required input under a visible label is a plain row; a faded one is listed hidden; both fill by ref", () => {
   const w = page(`<form>
     <label for=a>Preferred name</label><input id=a name=pref required data-rect="0,0,1,1" style="position:absolute;width:1px;height:1px;clip:rect(0px,0px,0px,0px)">
     <label for=b>Pronouns</label><input id=b name=pron required style="opacity:0">
@@ -20,7 +20,7 @@ test("snapshot: a clip-hidden or faded required input under a visible label is l
   </form>`);
   const { head, lines } = snap(w);
   assert.deepEqual(lines, [
-    `1 textbox "Preferred name" name="pref" required hidden`,
+    `1 textbox "Preferred name" name="pref" required`,
     `2 textbox "City" name="city" required`,
     `3 textbox "Pronouns" name="pron" required hidden`,
   ]);
@@ -34,6 +34,52 @@ test("snapshot: a clip-hidden or faded required input under a visible label is l
     assert.equal(w.document.getElementById(id).value, "Ada");
   }
   assert.deepEqual(snap(w).head.form, { fields: 3, requiredEmpty: 1 });
+});
+
+// The snapshot's `hidden` and fill's must agree: a required sr-only input named
+// by visible text is a field both treat as shown; a trap is never offered as a
+// hidden field to fill, and fill by label refuses it.
+test("snapshot: hidden flags agree with fill on sr-only inputs and traps", () => {
+  const sr = `style="position:absolute;width:1px;height:1px;overflow:hidden" data-rect="0,0,1,1"`;
+  const faded = `style="position:absolute;width:1px;height:1px;opacity:0" data-rect="0,0,1,1"`;
+  for (const css of [sr, faded]) {
+    for (const html of [
+      `<form><label for=r>Referral code</label><input id=r required ${css}></form>`,
+      `<form><label for=r>Referral code</label><input id=r aria-required=true ${css}></form>`,
+      `<form><span id=l>Referral code</span><input id=r aria-labelledby=l required ${css}></form>`,
+    ]) {
+      const w = page(html);
+      const { lines } = snap(w);
+      const shown = css === sr;
+      assert.deepEqual(lines, [`1 textbox "Referral code" required${shown ? "" : " hidden"}`], html + css);
+      const o = run(w, "fill", { ref: "1", text: "AB12" });
+      assert.equal(o.ok, true, html + JSON.stringify(o));
+      assert.equal(o.hidden, shown ? undefined : true, html + css + JSON.stringify(o));
+      assert.equal(w.document.getElementById("r").value, "AB12", html);
+    }
+    for (const html of [
+      `<form><label for=r>Referral code</label><input id=r required tabindex=-1 ${css}></form>`,
+      `<form><label for=r>Referral code</label><input id=r required aria-hidden=true ${css}></form>`,
+      `<form><label for=r>Referral code, leave this blank</label><input id=r required ${css}></form>`,
+      `<form><label for=r>Referral code</label><input id=r ${css}></form>`,
+    ]) {
+      const { head, lines } = snap(page(html));
+      assert.ok(lines.every((l) => !/ hidden\b/.test(l)), html + css + JSON.stringify(lines));
+      if (css === faded) assert.deepEqual(lines, [], html);
+      assert.equal(head.count, lines.length, html);
+      const o = run(page(html), "fill", { label_pattern: "referral code", text: "AB12" });
+      assert.match(o.error || "", /bot trap/, html + css + JSON.stringify(o));
+    }
+  }
+});
+
+test("snapshot: a required combobox input faded inside its painted box is a plain row, as fill sees it", () => {
+  const w = page(`<form><div class=box><span>Select...</span><input id=c role=combobox aria-label=Region required style="opacity:0"></div></form>`);
+  const { head, lines } = snap(w);
+  assert.deepEqual(lines, [`1 combobox "Region" required`]);
+  assert.deepEqual(head.form, { fields: 1, requiredEmpty: 1 });
+  const o = run(w, "fill", { ref: "1", text: "West" });
+  assert.equal(o.hidden, undefined, JSON.stringify(o));
 });
 
 const COVER = ({ controls = true, label = true } = {}) => `<form>
