@@ -154,3 +154,25 @@ test("awaitPromise: once the deadline passed after a negative poll, it ends with
   assert.deepEqual(at.map((x) => x - t0), [0, 250], "the kick, then one poll");
   assert.equal(world.clock.t - t0, 300);
 });
+
+test("wait: one lost final reply after answered polls is a plain deadline timeout", async () => {
+  countProbes(OPEN);
+  const world = install();
+  await call("list_tabs", {});
+  const t0 = world.clock.t;
+  world.state.onExecute = () => { if (world.clock.t - t0 >= 250) world.state.hung = true; };
+  const { t } = await call("wait", { expression: "false", timeout: 300, target: { tabId: "chrome:x" } });
+  assert.equal(t, "error: timeout: wait timed out after 300ms");
+  assert.equal(probes, 0);
+});
+
+test("wait: polls unanswered for a second or more still say the page stopped answering", async () => {
+  countProbes();
+  const world = install();
+  await call("list_tabs", {});
+  const t0 = world.clock.t;
+  world.state.onExecute = () => { if (world.clock.t - t0 >= 500) world.state.hung = true; };
+  const { t } = await call("wait", { expression: "false", timeout: 3000, target: { tabId: "chrome:x" } });
+  assert.equal(t, "error: timeout: wait timed out after 3000ms; the page stopped answering");
+  assert.equal(probes, 1);
+});
