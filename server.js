@@ -5270,14 +5270,19 @@ function chosen(c) {
   const t = shownWhole(box) ? textOf(box).trim() : "";
   return PLACEHOLDERISH.test(t) ? "" : t;
 }
-// This run's landed fields by index. A pass from 0 starts it over and names it
-// (a deferring pass returns the name, later passes send it as A.run), so a
-// batch's first pass is the same source every call and stays in the page's
-// compile cache. The last pass re-reads them, since a later field's handler
-// may clear or change one, as a country resets its state.
+// This batch's landed fields by index. A pass from 0 starts it over, keyed by a
+// hash of the fields alone, so every pass of a batch is the same source every
+// call and stays in the page's compile cache. A later pass that finds no record
+// or another batch's is on another document, which it must not write to. The
+// last pass re-reads them, since a later field's handler may clear or change
+// one, as a country resets its state.
+const fp = (function (s) { let h = 5381; for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + s.length; })(JSON.stringify(A.fields));
 let ff = window.__perch_ff;
-if (!A.from) ff = window.__perch_ff = { run: Math.random().toString(36).slice(2), items: {} };
-else if (!ff || ff.run !== A.run) ff = null;
+if (!A.from) ff = window.__perch_ff = { fp: fp, items: {} };
+else if (!ff || ff.fp !== fp) {
+  if (A.from < A.fields.length) return { gone: true, results: [] };
+  ff = null;
+}
 const AFTER = " after a later field changed; fill it again";
 // A framework re-render replaces a node but keeps its value: a disconnected
 // field is looked up again by id, then by name in its form, then by the call's
@@ -5342,7 +5347,6 @@ function drift(it, again) {
 const results = [];
 const stop = function (i) {
   const out = { results: results, defer: i };
-  if (ff && !A.from) out.run = ff.run;
   if (ff && Object.keys(ff.items).length) out.watch = true;
   return out;
 };
@@ -6518,19 +6522,21 @@ async function fillFields(fields, target, only) {
       halt(e && e.message);
     }
   };
-  let run;
   const recheck = (r) => { for (const [i, x] of Object.entries(r.recheck || {})) if (results[i]) results[i] = x; };
-  let watch = false;
+  let watch = false, warning = null;
   for (let from = 0; from < A.length;) {
-    const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined, run }, target));
+    const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target));
     if (halted) return halted;
     if (!r || !Array.isArray(r.results)) {
       if (!results.length) return r;
       halt(r && r.__perch_error != null ? r.__perch_error : "fill: the page pass returned no results");
       return halted;
     }
+    if (r.gone) {
+      for (let i = from; i < A.length; i++) results.push({ ok: false, error: `the page changed after fields[${from - 1}]; not filled` });
+      return { ok: false, results, ...counts() };
+    }
     results.push(...r.results);
-    if (!from) run = r.run;
     recheck(r);
     watch = !!r.watch;
     if (r.defer == null) break;
@@ -6542,13 +6548,19 @@ async function fillFields(fields, target, only) {
       : { kind: "select", ...s });
     from = r.defer + 1;
     // The combobox ended the batch, so no page pass has re-read the fields
-    // before it. A failed or navigated re-read leaves the results as they are.
+    // before it. A navigated page has nothing to re-read; a re-read that failed
+    // leaves the fields before the combobox unproven, and says so.
     if (from === A.length && watch) {
-      const x = await runPage("fill", "fill_fields", { fields: A, from, run }, target).catch(() => null);
-      if (x) recheck(x);
+      let x, why = null;
+      try { x = await runPage("fill", "fill_fields", { fields: A, from }, target); } catch (e) { why = (/^([a-z_]+):/.exec(codeOsaError(String(e && e.message))) || [0, "error"])[1]; }
+      if (!why && (!x || typeof x !== "object" || x.__perch_error != null)) why = "page error";
+      if (why) {
+        for (let i = 0; i < A.length - 1; i++) if (results[i].ok === true && !results[i].skipped) results[i].unverified = true;
+        warning = `the final re-read did not run (${why}); earlier fields are unverified`;
+      } else recheck(x);
     }
   }
-  return { ok: results.every((x) => x.ok === true), results, ...counts() };
+  return { ok: results.every((x) => x.ok === true), results, ...counts(), ...(warning ? { warning } : {}) };
 }
 
 // A custom combobox given a preference list: the open list is matched against
