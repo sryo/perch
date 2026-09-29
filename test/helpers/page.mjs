@@ -1,7 +1,8 @@
 // Runs perch page scripts in happy-dom exactly as the bridge would: wrapped by
 // buildEvalWrapper (sync) or the async kickoff, with JSON on the way out.
 // Layout is stubbed: every element is 100x20 unless it carries data-zero or sits
-// in a display:none subtree, which Chrome lays out as an empty 0x0 box.
+// in a display:none or [hidden] subtree, which Chrome lays out as an empty 0x0
+// box (happy-dom has no user-agent rule for [hidden]).
 // data-rect="left,top,width,height" places an element anywhere, offscreen too.
 import { Window } from "happy-dom";
 import { buildEvalWrapper, pageScript } from "../../server.js";
@@ -15,7 +16,7 @@ export function page(html, { url = "https://a.test/p" } = {}) {
       return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height };
     }
     let z = this.hasAttribute("data-zero");
-    for (let el = this; el && !z; el = el.parentElement) z = w.getComputedStyle(el).display === "none";
+    for (let el = this; el && !z; el = el.parentElement) z = el.hidden || w.getComputedStyle(el).display === "none";
     return { x: 0, y: 0, left: 0, top: 0, width: z ? 0 : 100, height: z ? 0 : 20, right: z ? 0 : 100, bottom: z ? 0 : 20 };
   };
   // happy-dom follows a link through window.open, which browsers never show page
