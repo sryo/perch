@@ -53,6 +53,35 @@ test("composeEvalScript: file then script, either alone, neither errors", async 
   await assert.rejects(composeEvalScript({ script_path: join(dir, "nope.js") }), /cannot read/);
 });
 
+test("eval_js takes a ref", () => {
+  const t = TOOLS.find((x) => x.name === "eval_js");
+  assert.equal(t.inputSchema.properties.ref.type, "string");
+});
+
+test("composeEvalScript: no ref is byte-identical; a ref splices only its JSON literal", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "perch-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const f = join(dir, "lib.js");
+  await writeFile(f, "window.__x = 41");
+  for (const a of [{ script: "return 1" }, { script_path: f }, { script_path: f, script: "return 2" }]) {
+    const plain = await composeEvalScript(a);
+    assert.equal(await composeEvalScript({ ...a, ref: undefined }), plain);
+    assert.equal(await composeEvalScript({ ...a, ref: null }), plain);
+    assert.equal(await composeEvalScript({ ...a, awaitPromise: true }), plain);
+  }
+  const shape = (ref, body) => composeEvalScript({ ref, script: body });
+  const a = await shape("e1", "return el");
+  const b = await shape("e22", "return el");
+  assert.equal(b, a.split(JSON.stringify("e1")).join(JSON.stringify("e22")), "the ref's JSON literal is the only varying part");
+  assert.ok(a.includes("\nreturn el\n"));
+  const odd = `e"]\\'x`;
+  const c = await shape(odd, "return el");
+  assert.equal(c, a.split(JSON.stringify("e1")).join(JSON.stringify(odd)));
+  assert.doesNotThrow(() => new Function(c));
+  const asy = await composeEvalScript({ ref: "e1", script: "await 0; return el", awaitPromise: true });
+  assert.doesNotThrow(() => new Function("return (async function(){" + asy + "\n})"));
+});
+
 test("shapeTabs: always {tabs,total}; filters are case-insensitive; default limit 50", () => {
   const rows = Array.from({ length: 60 }, (_, i) => ({ app: "Arc", windowId: 1, tabIndex: i, url: `https://Site${i}.test`, title: `T${i}` }));
   const all = shapeTabs(rows, {});

@@ -83,3 +83,12 @@ test("docs say a natively disabled control refuses the click, trusted too, and a
   assert.ok(bullet.includes("is disabled; nothing was clicked"), "AGENTS.md's click bullet misses the disabled refusal");
   assert.ok(/fieldset/.test(bullet) && /legend/.test(bullet) && /trusted/.test(bullet) && /aria-disabled/.test(bullet), "AGENTS.md's click bullet misses fieldset, legend, trusted or aria-disabled");
 });
+
+test("docs say eval_js's ref binds el", async () => {
+  const skill = await read("SKILL.md");
+  const agents = await read("AGENTS.md");
+  const row = skill.split("\n").find((l) => l.startsWith("| `eval_js` |"));
+  assert.ok(row && /`ref`/.test(row) && /`el`/.test(row), "SKILL.md's eval_js row misses ref binding el");
+  const bullet = agents.split("\n").find((l) => l.startsWith("- **eval_js ref:**"));
+  assert.ok(bullet && /__perch_ref_miss/.test(bullet) && /compile cache/.test(bullet), "AGENTS.md misses the eval_js ref bullet");
+});
