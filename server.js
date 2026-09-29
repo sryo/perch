@@ -1836,8 +1836,12 @@ function jxaRuntime(BROWSERS, HANG) {
         }
         viaPage = /!$/.test(r || "");
       }
-      const result = function (waited) {
+      // `href`: the document the check found; `stayed`: the tab's url when loading
+      // settled with it still on the one it had before.
+      const result = function (waited, href, stayed) {
         const o = { waited: waited, tabId: handleOf(t) };
+        if (href != null) o.href = href;
+        if (stayed != null) o.stayed = stayed;
         if (!viaPage && t.kind !== "safari") o.warning = "navigating from outside the page may bring the browser to the front";
         return o;
       };
@@ -1870,7 +1874,8 @@ function jxaRuntime(BROWSERS, HANG) {
         return false;
       };
       if (!canEval && !(arcPage ? leftArcPage() : ownPage)) return result(false);
-      const check = "(function(){try{return JSON.stringify(window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete')}catch(e){return 'false'}})()";
+      // Chrome commits a failed load as its error page, chrome-error://chromewebdata/.
+      const check = "(function(){try{return JSON.stringify({done:window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete',href:location.href,err:location.protocol==='chrome-error:'})}catch(e){return 'null'}})()";
       const start = Date.now();
       // Page JS sent before the new document commits may never be answered, and
       // Chromium's `loading` is already true when setting url returns, so hold off
@@ -1886,15 +1891,19 @@ function jxaRuntime(BROWSERS, HANG) {
       }
       let idle = 0;
       while (Date.now() < deadline) {
-        let done = false;
-        try { done = JSON.parse(String(run(check))) === true; } catch (e) { if (isStale(e)) throw e; }
-        if (done) return result(true);
+        let c = null;
+        try { c = JSON.parse(String(run(check))); } catch (e) { if (isStale(e)) throw e; }
+        if (c && c.done) return c.err ? Object.assign(result(true), { loadFailed: true }) : result(true, String(c.href));
         // A download or 204 never replaces the document; Chrome's `loading` settles.
         // So does a load the page dropped, so it counts only if the tab's URL moved.
         if (t.kind !== "safari" && Date.now() - start > 300) {
           const busy = read(function () { return t.tab.loading(); });
           if (busy != null) idle = busy ? 0 : idle + 1;
-          if (idle >= 2) { const u = read(function () { return String(t.tab.url()); }); return result(preUrl != null && (u == null ? preUrl : u) !== preUrl); }
+          if (idle >= 2) {
+            const u = read(function () { return String(t.tab.url()); });
+            if (preUrl != null && u === preUrl) return result(false, null, preUrl);
+            return result(preUrl != null && u != null);
+          }
         }
         delay(0.05);
       }
@@ -2590,10 +2599,20 @@ const NAV_TIMEOUT = 15000;
 // Some handles follow the page's URL, so navigate returns the tab's current one.
 async function navigate(url, target, raise) {
   const r = await rt("navigate", { target, url, raise: !!raise, timeout: NAV_TIMEOUT }, { lane: "slow", timeout: NAV_TIMEOUT + JXA_OVERHEAD });
+  const same = (x, y) => { try { return new URL(x).href === new URL(y).href; } catch { return x === y; } };
+  const tab = r && r.tabId ? { tabId: r.tabId } : {};
+  if (r && r.loadFailed) return { ok: false, error: `load_failed: ${url} did not load; the browser showed its error page`, ...tab };
+  // A reload that settles on the url it started from is not a failure.
+  if (r && r.stayed != null && !same(r.stayed, url)) {
+    return { ok: false, error: `load_failed: the tab stayed on ${r.stayed}, as a download, a 204 or a load the page dropped leaves it`, ...tab };
+  }
   // waited:false: the new page wasn't confirmed loaded (the timeout ran out, or
   // a background Arc tab can't be checked).
-  const out = { ok: true, url, waited: !!(r && r.waited) };
-  if (r && r.tabId) out.tabId = r.tabId;
+  const committed = r && r.href != null ? r.href : url;
+  const out = { ok: true, url: committed };
+  if (!same(committed, url)) out.requested = url;
+  out.waited = !!(r && r.waited);
+  Object.assign(out, tab);
   if (r && r.warning) out.warning = r.warning;
   return out;
 }
