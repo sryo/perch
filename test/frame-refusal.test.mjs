@@ -23,6 +23,7 @@ function world(urls, extra = []) {
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 600, tabs: [
       { url: "https://shop.test/checkout", id: "t", dom },
       { url: "https://other.test/", id: "u", dom: other },
+      { url: "https://third.test/", id: "v", dom: page(`<p>x</p>`, { url: "https://third.test/" }) },
     ] }] }],
     cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600, ax: { web: [{ ...AREA, frames }] } }],
   });
@@ -158,6 +159,47 @@ test("a ref that names a handoff row in one tab and an ordinary row in another i
   assert.equal(no.ok, false);
   assert.match(no.error, /hand it to the user/);
   assert.deepEqual(w.posted, []);
+});
+
+// f1 is a challenge in tab t and an ordinary button in tab u; tab v has no f1.
+async function splitRef() {
+  const w = world(["https://challenges.cloudflare.com/turnstile"]);
+  await snap();
+  w.winSpec("Google Chrome", 0).active = 1;
+  w.frames[0].url = "https://widget.example/embed";
+  await snap();
+  w.winSpec("Google Chrome", 0).active = 0;
+  w.reset();
+  return w;
+}
+const untouched = (w) => {
+  assert.deepEqual(w.posted, []);
+  for (const k of ["activate(Google Chrome)", "win.index=", "win.activeTabIndex=", "tab.select", "tab.execute"]) assert.equal(w.counts[k], undefined, k);
+};
+
+test("raise:true on a ref that is handoff in the target tab is refused before the browser is raised", async () => {
+  const w = await splitRef();
+  const o = await click("f1", { raise: true, target: { tabId: "chrome:t" } });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /sign-in, challenge or password.*hand it to the user/);
+  untouched(w);
+});
+
+test("raise:true on a ref the target tab never listed is stale before the browser is raised", async () => {
+  const w = await splitRef();
+  const r = await handleCall("click", { ref: "f1", trusted: true, raise: true, target: { tabId: "chrome:v" } });
+  assert.match(text(r), /stale or unknown; call accessibility_snapshot again/);
+  untouched(w);
+});
+
+test("raise:true on the same ref's ordinary row in the other tab still raises and clicks", async () => {
+  const w = await splitRef();
+  w.frames[0].url = "https://widget.example/embed";
+  const o = await click("f1", { raise: true, target: { tabId: "chrome:u" } });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.delivery, "hid");
+  assert.equal(w.counts["activate(Google Chrome)"], 1);
+  assert.deepEqual(w.posted.filter((e) => e.type === 1 && e.pt.x >= 0).map((e) => [e.via, e.pt]), [["hid", { x: 160, y: 187 }]]);
 });
 
 test("a field that turned secure since the snapshot is refused on the fresh walk", async () => {
