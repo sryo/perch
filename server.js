@@ -902,6 +902,21 @@ function jxaRuntime(BROWSERS, HANG) {
   // Node's screencapture fallback runs after the restore, so it would see the
   // page as it was, not the rect measured after the scroll.
   const SHOT_MOVED = "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it, or scroll it into view and call again";
+  // A window the browser stopped painting (covered, hidden, or too slow) still
+  // holds the frame from before the scroll.
+  const SHOT_UNPAINTED = "screenshot: the window isn't painting (covered or hidden); show the window or scroll the element into view and call again; nothing was captured";
+  // After a scroll, a.painted is polled until the page has run two animation
+  // frames, the second after the scroll's frame was painted.
+  const SHOT_POLLS = 6;
+  function shotPainted(t, fn) {
+    for (let i = 0; i < SHOT_POLLS; i++) {
+      delay(0.05);
+      let p = null;
+      try { p = parseExec(t, fn); } catch (e) {}
+      if (p && p.painted === true) return true;
+    }
+    return false;
+  }
   function shotClip(a) {
     const s = shotTarget(a), t = s.t, I = s.I;
     visibleGuard(t, "screenshot");
@@ -912,7 +927,7 @@ function jxaRuntime(BROWSERS, HANG) {
     if (!c || c.ok !== true) {
       if (c && c.restore) {
         try { exec(t, a.restore); } catch (e) {}
-        return { ok: false, error: c.error };
+        return { ok: false, error: c.unpainted ? SHOT_UNPAINTED : c.error };
       }
       if (!threw(c)) return c;
       try { exec(t, a.restore); } catch (e) {}
@@ -924,14 +939,15 @@ function jxaRuntime(BROWSERS, HANG) {
       const m = shotMap(I, c);
       if (typeof m === "string") refused = m;
       else {
-        // The scroll reaches the window's pixels at the browser's next paint.
-        if (c.moved) delay(0.1);
-        const cap = capture(I.windowNumber, a.format, a.maxWidth, m);
-        if (cap) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
-        else if (c.moved) refused = SHOT_MOVED;
-        else I.map = m;
-        I.aim = "ax";
-        if (m.clipped || (cap && cap.cut)) I.clipped = true;
+        if (c.moved && !shotPainted(t, a.painted)) refused = SHOT_UNPAINTED;
+        else {
+          const cap = capture(I.windowNumber, a.format, a.maxWidth, m);
+          if (cap) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
+          else if (c.moved) refused = SHOT_MOVED;
+          else I.map = m;
+          I.aim = "ax";
+          if (m.clipped || (cap && cap.cut)) I.clipped = true;
+        }
       }
     } catch (e) { err = e; }
     let back = null;
@@ -3336,7 +3352,7 @@ async function screenshot(args = {}) {
   const { raise = false, target, format = "png", maxWidth = 1568, ref, selector } = args;
   const aimed = (ref != null && ref !== "") || (selector != null && selector !== "");
   const g = await rt("shot", aimed
-    ? { target, raise, format, maxWidth, clip: pageFn("shot_clip", { ref, selector }), restore: pageFn("shot_restore", {}) }
+    ? { target, raise, format, maxWidth, clip: pageFn("shot_clip", { ref, selector }), painted: pageFn("shot_painted", {}), restore: pageFn("shot_restore", {}) }
     : { target, raise, format, maxWidth });
   // The element's own outcome: a ref miss, no match, a page fault, nothing visible.
   if (aimed && (!g || g.windowNumber == null || g.ok === false)) return g;
@@ -6351,7 +6367,9 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
   // with restore:true, since the scroll already happened.
   // Every scroll position that can move (each ancestor's, across shadow roots,
   // and the window's) is kept on window.__perch_shot for shot_restore, and only
-  // once the element is known to have a box.
+  // once the element is known to have a box. After a scroll, a hidden document
+  // (a covered or minimized window) paints nothing, so the crop is refused for
+  // the restore; a visible one counts two animation frames for shot_painted.
   shot_clip: String.raw`
 const r = resolveEl(A);
 if (r.out) return r.out;
@@ -6378,7 +6396,16 @@ const cut = els.some(function (e) {
   return c.left < x0 - 1 || c.top < y0 - 1 || c.right > x0 + n.clientWidth + 1 || c.bottom > y0 + n.clientHeight + 1;
 });
 if (cut) return { ok: false, error: "screenshot: the element is clipped by a scrolling container; nothing was captured", restore: true };
+if (moved) {
+  if (document.visibilityState === "hidden") return { ok: false, unpainted: true, restore: true };
+  st.painted = false;
+  requestAnimationFrame(function () { requestAnimationFrame(function () { st.painted = true; }); });
+}
 return { ok: true, x: c.left, y: c.top, w: c.width, h: c.height, iw: iw, ih: ih, moved: moved };
+`,
+  shot_painted: String.raw`
+const s = window.__perch_shot;
+return { painted: !!(s && s.painted) };
 `,
   // Puts back what shot_clip kept, instantly even under scroll-behavior: smooth.
   shot_restore: String.raw`

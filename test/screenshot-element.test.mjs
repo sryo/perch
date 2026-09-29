@@ -31,6 +31,9 @@ function scrolled({ rect = "100,200,300,50", from = "100,1200,300,50", iw = 800,
   }
   dom.scrollTo({ left: 0, top: 40, behavior: "instant" });
   box.scrollTop = 37;
+  // Animation frames run one per page script the world sends (see install).
+  dom.rafs = [];
+  dom.requestAnimationFrame = (cb) => dom.rafs.push(cb);
   dom.intoView = [];
   t.scrollIntoView = function (o) {
     dom.intoView.push(o);
@@ -128,6 +131,11 @@ function install(p, { scale = 2, active = true, area = AREA } = {}) {
     cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 100, y: 50, w: 1000, h: 700, ax: { web: [area] } }],
   });
   world.state.shotScale = scale;
+  world.state.scripts = [];
+  world.state.onExecute = (spec, js) => {
+    world.state.scripts.push(js);
+    if (spec.dom && spec.dom.rafs) spec.dom.rafs.splice(0).forEach((cb) => cb(0));
+  };
   world.run(JXA_PRELUDE);
   DAEMONS.fast = world.daemon;
   DAEMONS.slow = world.daemon;
@@ -281,6 +289,85 @@ test("without the capture grant, an element that had to be scrolled into view is
   assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it, or scroll it into view and call again" });
   assert.deepEqual(calls, [], "no screencapture");
   assert.deepEqual(where(p), [0, 40, 37]);
+});
+
+// ---- the paint proof: a scrolled crop captures only a frame painted after the scroll ----
+
+const UNPAINTED = "screenshot: the window isn't painting (covered or hidden); show the window or scroll the element into view and call again; nothing was captured";
+const polls = () => world.state.scripts.filter((js) => /return \{ painted: /.test(js));
+
+test("shot_clip: a moved element in a hidden document is refused for the restore; a visible one arms the paint proof", () => {
+  const p = scrolled();
+  Object.defineProperty(p.dom.document, "visibilityState", { value: "hidden", configurable: true });
+  assert.deepEqual(run(p.dom, "shot_clip", { selector: "#t" }), { ok: false, unpainted: true, restore: true });
+  assert.deepEqual(p.dom.rafs, [], "no frame armed");
+  run(p.dom, "shot_restore", {});
+  assert.deepEqual(where(p), [0, 40, 37]);
+  const q = scrolled();
+  assert.equal(run(q.dom, "shot_clip", { selector: "#t" }).ok, true);
+  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: false });
+  q.dom.rafs.splice(0).forEach((cb) => cb(0));
+  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: false }, "one frame is not enough");
+  q.dom.rafs.splice(0).forEach((cb) => cb(0));
+  assert.deepEqual(run(q.dom, "shot_painted", {}), { painted: true });
+});
+
+test("shot_clip: a hidden document still crops an element that did not move", () => {
+  const p = still();
+  Object.defineProperty(p.dom.document, "visibilityState", { value: "hidden", configurable: true });
+  assert.equal(run(p.dom, "shot_clip", { selector: "#t" }).ok, true);
+});
+
+test("a moved element in a covered window (hidden document) is refused, nothing captured, every scroll restored", async () => {
+  const p = scrolled();
+  Object.defineProperty(p.dom.document, "visibilityState", { value: "hidden", configurable: true });
+  install(p);
+  const calls = spawns(2000);
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.equal(r.content.length, 1, "no image");
+  assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: UNPAINTED });
+  assert.deepEqual([calls, world.state.shots, polls()], [[], [], []]);
+  assert.deepEqual(where(p), [0, 40, 37]);
+  assert.equal(world.log.filter((e) => e[0] === "activate").length, 0);
+});
+
+test("a moved element whose frames never paint is refused after a bounded poll, nothing captured, every scroll restored", async () => {
+  const p = scrolled();
+  p.dom.requestAnimationFrame = () => 0;
+  install(p);
+  const calls = spawns(2000);
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.equal(r.content.length, 1, "no image");
+  assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: UNPAINTED });
+  assert.deepEqual([calls, world.state.shots], [[], []]);
+  assert.ok(polls().length >= 1 && polls().length <= 6, String(polls().length));
+  assert.deepEqual(where(p), [0, 40, 37]);
+});
+
+test("a moved element is captured once, after its frames painted, from a poll whose source never varies", async () => {
+  const p = scrolled();
+  install(p);
+  spawns(2000);
+  await shoot({ selector: "#t" });
+  assert.equal(world.state.shots.length, 1);
+  assert.equal(polls().length, 2, "a double requestAnimationFrame, one frame per page script");
+  const first = polls()[0];
+  const q = scrolled();
+  install(q);
+  q.dom.__perch_refs = { e4: q.t };
+  spawns(2000);
+  await shoot({ ref: "e4" });
+  assert.equal(world.state.shots.length, 1);
+  assert.equal(polls()[0], first, "byte-identical across calls");
+});
+
+test("an element that did not move is captured with no paint poll", async () => {
+  const p = still();
+  install(p);
+  spawns(2000);
+  await shoot({ selector: "#t" });
+  assert.equal(world.state.shots.length, 1);
+  assert.deepEqual(polls(), []);
 });
 
 test("scroll positions are restored even when the capture fails", async () => {
