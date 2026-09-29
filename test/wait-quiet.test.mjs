@@ -109,20 +109,71 @@ test("the quiet window starts when the observer is armed, not at the call", asyn
 test("a new document mid-wait restarts the quiet window", async () => {
   // A fresh document has none of perch's state; dropping it stands in for a navigation.
   const { dom } = onPage();
-  beforeEvals(dom, (n) => { if (n === 8) delete dom.__perch_quiet; });
+  let before = null;
+  beforeEvals(dom, (n) => { if (n === 8) { before = dom.__perch_quiet; delete dom.__perch_quiet; } });
   const { r, t, o } = await call({ quiet: 500 });
   assert.equal(r.isError, undefined, t);
   assert.ok(o.waited >= 7 * 50 + 500, `waited ${o.waited}`);
+  assert.ok(before && dom.__perch_quiet && dom.__perch_quiet !== before, "re-armed on the new document");
 });
 
-test("a quiet poll that throws is a coded error naming only the error name", async () => {
+// Throws on the line that reads perch's state, in the arm (first sample) or a later poll.
+function throwIn(dom, which) {
+  const orig = dom.eval.bind(dom);
+  let n = 0;
+  dom.eval = (js) => {
+    n++;
+    const hit = which === "arm" ? n === 1 : n > 1;
+    return orig(hit ? js.replace(/\n([^\n]*window\.__perch_quiet)/, "\nthrow new TypeError('secret-internal detail');\n$1") : js);
+  };
+}
+
+for (const which of ["arm", "poll"]) {
+  test(`a quiet ${which} that throws is a coded error naming only the error name`, async () => {
+    const { dom } = onPage();
+    throwIn(dom, which);
+    const { r, t } = await call({ quiet: 300, timeout: 2000 });
+    assert.equal(r.isError, true, t);
+    assert.match(t, /^error: wait: the page script failed on this page \(TypeError\); nothing verified$/);
+    for (const k of ["secret-internal", "__perch_error", "stack"]) assert.ok(!t.includes(k), t);
+  });
+}
+
+test("the scripts a wait {quiet} sends are the same every call: an arm and a poll, no per-call id", async () => {
   const { dom } = onPage();
-  const orig = dom.eval.bind(dom), marker = "if (s && s.id === A.id)";
-  dom.eval = (js) => orig(js.includes(marker) ? js.replace(marker, "throw new TypeError('secret-internal detail');" + marker) : js);
-  const { r, t } = await call({ quiet: 300, timeout: 2000 });
-  assert.equal(r.isError, true, t);
-  assert.match(t, /^error: wait: .*\(TypeError\)/);
-  for (const k of ["secret-internal", "__perch_error", "stack"]) assert.ok(!t.includes(k), t);
+  const seen = [], orig = dom.eval.bind(dom);
+  dom.eval = (js) => { seen.push(js); return orig(js); };
+  const runs = [];
+  for (let i = 0; i < 2; i++) {
+    seen.length = 0;
+    const { r, t } = await call({ quiet: 200, timeout: 3000 });
+    assert.equal(r.isError, undefined, t);
+    assert.ok(seen.length >= 3, `${seen.length} evals`);
+    runs.push([...new Set(seen)]);
+  }
+  assert.equal(runs[0].length, 2, "one arm, one poll");
+  assert.deepEqual(runs[1], runs[0]);
+  const [arm, poll] = runs[0];
+  assert.match(arm, /rbStop\(window\.__perch_quiet\)/);
+  assert.match(poll, /const s = window\.__perch_quiet;/);
+  for (const js of runs[0]) {
+    const a = js.match(/\nconst A = (.*);\n/);
+    assert.deepEqual(JSON.parse(a[1]), { life: 3000 });
+  }
+});
+
+test("a stale state from an earlier wait is restarted by the first sample", async () => {
+  // Left behind with no observer and activity matching now: read as-is, it would
+  // never report busy and a mutation would pass unseen.
+  const { dom } = onPage();
+  const stale = { mut: 0, act: "0:0", at: 0, obs: null };
+  dom.__perch_quiet = stale;
+  beforeEvals(dom, (n) => { if (n === 4) dom.document.getElementById("s").textContent = "Saved"; });
+  const { r, t, o } = await call({ quiet: 500 });
+  assert.equal(r.isError, undefined, t);
+  assert.notEqual(dom.__perch_quiet, stale);
+  assert.ok(dom.__perch_quiet.obs, "armed");
+  assert.ok(o.waited >= 3 * 50 + 500, `waited ${o.waited}`);
 });
 
 test("the MutationObserver stops at the first mutation after its timeout", async () => {
