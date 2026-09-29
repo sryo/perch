@@ -242,46 +242,63 @@ function jxaRuntime(BROWSERS, HANG) {
     throw new Error("stale_tab: tab " + want.tabId + " is gone; re-run list_tabs");
   }
 
-  function resolveSafari(want, raw, P) {
+  // strict (close_tab): only the recorded window, and only a tab it can single out.
+  function resolveSafari(want, raw, P, strict) {
     const parts = raw.split("."), winId = parts[0], idx = Number(parts[1]), hash = parts.slice(2).join(".");
     if (!alive("Safari", P)) throw new Error("stale_tab: tab " + want.tabId + " is gone (its browser quit); re-run list_tabs");
     const a = app("Safari");
-    const nearest = function (urls) {
-      let best = -1;
-      urls.forEach(function (u, i) { if (fp(u) === hash && (best < 0 || Math.abs(i - idx) < Math.abs(best - idx))) best = i; });
-      return best;
+    const matches = function (urls) {
+      const m = [];
+      urls.forEach(function (u, i) { if (fp(u) === hash) m.push(i); });
+      return m;
     };
+    const nearest = function (m) {
+      return m.reduce(function (best, i) { return Math.abs(i - idx) < Math.abs(best - idx) ? i : best; });
+    };
+    const record = function (win, i, w) { return { tab: win.tabs[i], idx: i, tabId: null, kind: "safari", app: "Safari", win, w, P }; };
     // The recorded window by id: one event when the tab is still in it.
+    let searched = false;
     if (/^\d+$/.test(winId)) {
       try {
-        const win = a.windows.byId(Number(winId)), best = nearest(win.tabs.url());
-        if (best >= 0) return { tab: win.tabs[best], idx: best, tabId: null, kind: "safari", app: "Safari", win, w: null, P };
-      } catch (e) {}
+        const win = a.windows.byId(Number(winId)), m = matches(win.tabs.url());
+        searched = true;
+        if (m.length) {
+          const best = nearest(m), ambiguous = best !== idx && m.length > 1;
+          if (ambiguous && strict) throw new Error("stale_tab: can't tell which tab " + want.tabId + " is; several tabs in its window show its URL; re-run list_tabs");
+          const t = record(win, best, null);
+          if (ambiguous) t.ambiguous = true;
+          return t;
+        }
+      } catch (e) { if (isStale(e)) throw e; }
     }
+    if (strict) throw new Error("stale_tab: tab " + want.tabId + " is no longer in its window; re-run list_tabs");
     let n = 0; try { n = a.windows.length; } catch (e) {}
-    // The recorded window first, then the rest: the tab may have been dragged out.
-    const order = [];
-    for (let w = 0; w < n; w++) {
-      let id = null; try { id = String(a.windows[w].id()); } catch (e) {}
-      if (id === winId) order.unshift(w); else order.push(w);
-    }
-    for (const w of order) {
+    // The tab may have been dragged out, but only a URL no other tab shows says which.
+    let found = null, count = 0;
+    for (let w = 0; w < n && count < 2; w++) {
       const win = a.windows[w];
+      if (searched) {
+        let id = null; try { id = String(win.id()); } catch (e) {}
+        if (id === winId) continue;
+      }
       let urls; try { urls = win.tabs.url(); } catch (e) { continue; }
-      const best = nearest(urls);
-      if (best >= 0) return { tab: win.tabs[best], idx: best, tabId: null, kind: "safari", app: "Safari", win, w, P };
+      const m = matches(urls);
+      count += m.length;
+      if (m.length) found = record(win, m[0], w);
     }
+    if (count > 1) throw new Error("stale_tab: tab " + want.tabId + " is gone; several tabs show its URL; re-run list_tabs");
+    if (found) return found;
     throw new Error("stale_tab: tab " + want.tabId + " is gone (closed or navigated); re-run list_tabs");
   }
 
   // Tabs are pinned by id where the browser has one: `tabs[i]` is positional and
   // re-evaluated on every use, so a long poll could drift to another tab.
-  function resolve(want) {
+  function resolve(want, strict) {
     want = want || {};
     const P = procs();
     if (want.tabId != null) {
       const h = parseHandle(want.tabId);
-      if (h && KIND[h.app] === "safari") return resolveSafari(want, h.raw, P);
+      if (h && KIND[h.app] === "safari") return resolveSafari(want, h.raw, P, strict);
       // A bare id (from before handles) is searched across browsers, narrowed by `app`.
       return resolveById({ tabId: want.tabId, raw: h ? h.raw : String(want.tabId), app: h ? h.app : want.app, windowId: want.windowId }, P);
     }
@@ -2172,7 +2189,7 @@ function jxaRuntime(BROWSERS, HANG) {
     // Closing a window's last tab closes the window; Arc counts the space's tabs.
     closeTab(a) {
       if (!a.target || !a.target.tabId) throw new Error("close_tab requires `tabId`");
-      const t = resolve(a.target);
+      const t = resolve(a.target, true);
       let n = 2;
       try { n = t.kind === "arc" ? t.win.activeSpace.tabs.id().length : t.win.tabs.length; } catch (e) {}
       if (n <= 1) return { ok: false, error: "last tab in its window; closing it would close the window" };
