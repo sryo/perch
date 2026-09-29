@@ -28,3 +28,16 @@ export function page(html, { url = "https://a.test/p" } = {}) {
 const parse = (s) => (s === "" || s == null ? null : JSON.parse(s));
 export const run = (w, name, A = {}) => parse(w.eval(buildEvalWrapper(pageScript(name, A))));
 export const runBody = (w, body) => parse(w.eval(buildEvalWrapper(pageScript(null, {}) + body)));
+
+// The OS delivers a posted press: a trusted mousedown on `el` (default: body),
+// after whatever the world's onPost already does.
+export function deliverPress(world, dom, el) {
+  const prior = world.state.onPost;
+  world.state.onPost = (e) => {
+    if (prior) prior(e);
+    if (e.type !== 1 || e.pt.x < 0) return;
+    const ev = new dom.MouseEvent("mousedown", { bubbles: true, composed: true });
+    Object.defineProperty(ev, "isTrusted", { value: true });
+    (el || dom.document.body).dispatchEvent(ev);
+  };
+}

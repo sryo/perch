@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { page, run } from "./helpers/page.mjs";
+import { page, run, deliverPress } from "./helpers/page.mjs";
 
 const AREA = { x: 56, y: 157, w: 598, h: 500 };
 const OFF = /the point is not on the page itself \(embedded frame or browser UI\); frame controls need accessibility_snapshot \{frames:true\} and an fN ref/;
@@ -156,6 +156,7 @@ test("without a page area from Accessibility nothing is clicked (no aim by estim
 
 test("ordinary page clicks still post, by selector and by point, background and raised", async () => {
   const w = world({ mode: "closed" });
+  deliverPress(w, w.dom);
   for (const raise of [false, true]) {
     w.posted.length = 0;
     let o = await click({ selector: "#b", raise });

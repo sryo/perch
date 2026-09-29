@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall, chunkUtf16, imageDims } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { page, run } from "./helpers/page.mjs";
+import { page, run, deliverPress } from "./helpers/page.mjs";
 
 // ---- pure helpers ----
 
@@ -587,4 +587,98 @@ test("screenshot: a failed downscale still returns the full-size capture", async
     assert.equal(r.isError, undefined, r.content[0].text);
     assert.deepEqual(JSON.parse(r.content[1].text).image, { w: 3000, h: 2000 });
   } finally { deps.exec = real; }
+});
+
+// ---- a click by point proves delivery the way an element click does ----
+
+const reachesPage = (dom, world) => deliverPress(world, dom, dom.document.getElementById("b"));
+const isCheck = (js) => js.includes("if (st.off) st.off();\nconst out = { hit: st.down };");
+function recordScripts(dom) {
+  const seen = [];
+  const evalPage = dom.eval.bind(dom);
+  dom.eval = (js) => { seen.push(js); return evalPage(js); };
+  return seen;
+}
+
+test("trusted click by point reports the page's mousedown as hit, with the element it landed on", async () => {
+  const { dom, world } = backgroundTab(`<button id=b>Go</button>`, 1);
+  reachesPage(dom, world);
+  const r = await handleCall("click", { trusted: true, x: 106, y: 167, target: { tabIndex: 1 } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.ok, true, r.content[0].text);
+  assert.equal(o.hit, true);
+  assert.equal(o.el, `button "Go"`);
+  assert.deepEqual(o.point, { x: 106, y: 167 });
+  assert.equal(o.delivery, "skylight");
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+  assert.equal(world.log.filter((entry) => entry[0] === "activate").length, 0);
+});
+
+test("a background click by point the page never receives is ok:false, posted once, nothing activated", async () => {
+  const { world } = backgroundTab(`<button id=b>Go</button>`, 1);
+  const r = await handleCall("click", { trusted: true, x: 106, y: 167, target: { tabIndex: 1 } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.ok, false, r.content[0].text);
+  assert.equal(o.hit, false);
+  assert.match(o.error, /no click reached the page at 106,167/);
+  assert.deepEqual(presses(world), [{ x: 106, y: 167 }]);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined);
+  assert.equal(world.counts["win.activeTabIndex="], undefined);
+  assert.deepEqual(world.state.cursor, { x: 1, y: 2 });
+  assert.deepEqual(world.state.warps, []);
+});
+
+test("a click by point resets an earlier click's recorder, so its stale hit can't vouch for a dropped click", async () => {
+  const { dom, world } = backgroundTab(`<button id=b>Go</button>`, 1);
+  reachesPage(dom, world);
+  const first = JSON.parse((await handleCall("click", { trusted: true, selector: "#b", target: { tabIndex: 1 } })).content[0].text);
+  assert.equal(first.hit, true, JSON.stringify(first));
+  assert.equal(dom.window.__perch_trusted.down, true);
+  world.state.onPost = undefined;
+  const o = JSON.parse((await handleCall("click", { trusted: true, x: 106, y: 167, target: { tabIndex: 1 } })).content[0].text);
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.hit, false);
+});
+
+test("a click by point ignores a synthetic mousedown the page fires itself", async () => {
+  const { dom, world } = backgroundTab(`<button id=b>Go</button>`, 1);
+  world.state.onPost = (e) => {
+    if (e.type === 1 && e.pt.x >= 0) dom.document.getElementById("b").dispatchEvent(new dom.MouseEvent("mousedown", { bubbles: true }));
+  };
+  const o = JSON.parse((await handleCall("click", { trusted: true, x: 106, y: 167, target: { tabIndex: 1 } })).content[0].text);
+  assert.equal(o.ok, false, JSON.stringify(o));
+});
+
+test("a click by point that navigates the page is not called a miss", async () => {
+  const { dom, world } = backgroundTab(`<button id=b>Go</button>`, 1);
+  // A new document: the recorder the click armed is gone.
+  world.state.onPost = (e) => { if (e.type === 2 && e.pt.x >= 0) delete dom.window.__perch_trusted; };
+  const o = JSON.parse((await handleCall("click", { trusted: true, x: 106, y: 167, target: { tabIndex: 1 } })).content[0].text);
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.hit, undefined);
+  assert.match(o.note, /unknown/);
+  assert.equal(o.error, undefined);
+});
+
+test("a refused click by point posts nothing and reads no check", async () => {
+  const { dom, world } = backgroundTab(`<button id=b>Go</button>`, 1);
+  const seen = recordScripts(dom);
+  const r = await handleCall("click", { trusted: true, x: 5000, y: 167, target: { tabIndex: 1 } });
+  assert.match(r.content[0].text, /not on the page itself/);
+  assert.equal(world.posted.length, 0);
+  assert.ok(seen.length > 0);
+  assert.equal(seen.filter(isCheck).length, 0);
+});
+
+test("clicks by point send the same page script source every time", async () => {
+  const { dom, world } = backgroundTab(`<button id=b>Go</button>`, 1);
+  reachesPage(dom, world);
+  const seen = recordScripts(dom);
+  await handleCall("click", { trusted: true, x: 106, y: 167, target: { tabIndex: 1 } });
+  const first = seen.splice(0);
+  await handleCall("click", { trusted: true, x: 120, y: 170, target: { tabIndex: 1 } });
+  assert.equal(first.filter(isCheck).length, 1);
+  assert.deepEqual(seen, first);
 });

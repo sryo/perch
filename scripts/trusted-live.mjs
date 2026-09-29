@@ -252,7 +252,7 @@ try {
     }, 75);
   }
 
-  let clickRes, fillRes, tabRes, backRes, enterRes, fruitRes, cityRes, inputError;
+  let clickRes, xyRes, fillRes, tabRes, backRes, enterRes, fruitRes, cityRes, inputError;
   try {
     if (selectOnly) {
       fruitRes = await client.call("select", { trusted: true, selector: "#fruit", text: "Banana", target });
@@ -272,6 +272,12 @@ try {
     } else if (!fillOnly) {
       clickRes = await client.call("click", { trusted: true, raise: !background, selector: "#b", target });
       if (background) foregroundSamples.push(frontApp());
+      // The same button again by screen point: the point the element click aimed at.
+      const aimed = background ? JSON.parse(text(clickRes).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m }))).point : null;
+      if (aimed) {
+        xyRes = await client.call("click", { trusted: true, x: aimed.x, y: aimed.y, target });
+        foregroundSamples.push(frontApp());
+      }
     }
     if (!pressOnly && !selectOnly) {
       fillRes = await client.call("fill", { trusted: true, raise: !background, selector: "#i", text: TEXT, target });
@@ -328,6 +334,11 @@ try {
   if (!fillOnly) {
     const down = rec.rec.downs.find((d) => d.id === "b");
     report(click.hit === true && !!down?.trusted, "trusted click lands on the button", JSON.stringify({ result: click, pageSaw: rec.rec.downs[0] || null }));
+    if (background) {
+      const xy = xyRes ? JSON.parse(text(xyRes).replace(/^error: (.*)$/s, (_, m) => JSON.stringify({ error: m }))) : null;
+      const downs = rec.rec.downs.filter((d) => d.id === "b" && d.trusted);
+      report(xy?.ok === true && xy.hit === true && downs.length === 2, "trusted click by point proves it reached the page", JSON.stringify({ result: xy, trustedDowns: downs.length }));
+    }
     const clicked = rec.rec.clicks.find((e) => e.id === "b");
     report(!!clicked?.trusted && !clicked.meta, "button receives an ordinary trusted click", JSON.stringify(clicked || null));
     if (down) report(Math.abs(down.x - down.center[0]) <= 3 && Math.abs(down.y - down.center[1]) <= 3, "click point matches the element center", `center ${down.center.map(Math.round)}, pressed ${[down.x, down.y]}`);

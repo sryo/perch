@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { page, run } from "./helpers/page.mjs";
+import { page, run, deliverPress } from "./helpers/page.mjs";
 
 const AREA = { x: 56, y: 157, w: 598, h: 500 };
 
@@ -295,10 +295,12 @@ test("a point on a frame is refused under page zoom, and by the page's estimate 
 
 test("a trusted click by point beside a frame still posts", async () => {
   const w = framePage(`<button id=b>Go</button><iframe id=f></iframe>`, { b: [0, 0, 100, 20], f: [100, 100, 300, 80] });
+  deliverPress(w, w.dom);
   const o = JSON.parse(text(await pointClick(56 + 50, 157 + 10)));
   assert.equal(o.ok, true);
   assert.deepEqual(downs(w), [{ x: 106, y: 167 }]);
-  assert.equal(w.counts["tab.execute"], 1, "the frame check is the one page call");
+  assert.equal(o.hit, true);
+  assert.equal(w.counts["tab.execute"], 2, "the frame check, then the hit check");
 });
 
 test("a trusted click by point fails closed when the page can't be checked for frames", async () => {

@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { page } from "./helpers/page.mjs";
+import { page, deliverPress } from "./helpers/page.mjs";
 import { readFileSync } from "node:fs";
 
 function onPage(html, setup, { frameMs = 0 } = {}) {
@@ -383,7 +383,8 @@ test("trusted click by selector reads back after the posted click", async () => 
 });
 
 test("trusted click by point reads back too", async () => {
-  trustedTab(FORM);
+  const { world, dom } = trustedTab(FORM);
+  deliverPress(world, dom);
   const o = await click({ trusted: true, raise: true, x: 60, y: 167, readback: "#s" });
   assert.equal(o.ok, true);
   assert.equal(o.readback, "Saved");
