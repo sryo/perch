@@ -2619,8 +2619,9 @@ export function codeOsaError(msg) {
   return (OSA_CODES[num] || text) + ` (AppleScript ${num})`;
 }
 
-// One long-lived `osascript -i -l JavaScript` REPL per lane. A warm REPL runs a
-// realistic script in ~25ms vs ~90ms cold, dominated by JXA bridge startup.
+// One long-lived `osascript -l JavaScript` process per lane, running DAEMON_LOOP.
+// A warm REPL runs a realistic script in ~25ms vs ~90ms cold, dominated by JXA
+// bridge startup.
 // Two lanes so a long `wait`/awaitPromise poll (slow) never blocks quick calls (fast).
 //
 // Framing: each script is URI-encoded (one ASCII line, no quotes, no newlines) and

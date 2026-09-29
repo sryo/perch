@@ -32,6 +32,23 @@ test("docs don't mention removed tools, params or shapes", async () => {
   }
 });
 
+test("AGENTS.md's Errors bullet names every coded error and no retired mechanism", async () => {
+  const agents = await read("AGENTS.md");
+  const source = await read("server.js");
+  const errors = agents.split("\n").find((l) => l.startsWith("- **Errors:**"));
+  assert.ok(errors, "AGENTS.md lost its Errors bullet");
+  const coded = /const CODED = \/\^\(([a-z_|]+)\)/.exec(source);
+  assert.ok(coded, "CODED regex not found in server.js");
+  for (const c of [...coded[1].split("|"), "window_ambiguous", "frames_unreadable"]) {
+    assert.ok(errors.includes("`" + c + "`"), `AGENTS.md's Errors bullet misses ${c}`);
+  }
+  const comments = source.split("\n").filter((l) => /^\s*\/\//.test(l)).join("\n");
+  for (const w of ["System Events Cmd+T", "osascript -i -l"]) {
+    assert.ok(!agents.includes(w), `AGENTS.md still mentions ${w}`);
+    assert.ok(!comments.includes(w), `a server.js comment still mentions ${w}`);
+  }
+});
+
 const SELF_EXPLANATORY = ["message", "subtitle", "sound", "maxWidth", "mode"];
 
 test("every param, element hint, error code and permission toggle stays documented somewhere", async () => {
