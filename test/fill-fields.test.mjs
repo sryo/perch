@@ -514,3 +514,53 @@ test("fill_fields: a bad date fails its own field with what the page kept", () =
   assert.equal(o.results[0].ok, true);
   assert.deepEqual(o.results[1], { ok: false, el: `textbox "Start date"`, kept: "", error: `textbox "Start date" expects YYYY-MM-DD; the page kept ""`, kind: "text" });
 });
+
+// ---- a label miss names the button that reveals the field ----
+
+const COVER = `<form>
+  <div><label>Resume</label><button type=button>Upload file</button></div>
+  <div><label>Cover letter</label><div><button type=button>Attach</button><button type=button>Enter manually</button></div></div>
+  <div class=bar><button>Submit application</button></div>
+</form>`;
+
+test("fill: a label miss lists the buttons in the matching section, typing ones first", () => {
+  const w = page(COVER);
+  const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+  assert.equal(o.ok, false);
+  assert.deepEqual(o.reveal, [`button "Enter manually"`, `button "Attach"`]);
+  assert.equal(o.error, "no fillable field matched /cover letter/i; it may appear after clicking one of reveal (click {label_pattern} it, then fill again)");
+});
+
+test("fill: a revealed field fills after clicking the listed button by name", () => {
+  const w = page(COVER);
+  runBody(w, `const b = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Enter manually');
+    b.addEventListener('click', () => { const t = document.createElement('textarea'); t.setAttribute('aria-label', 'Cover letter'); b.parentElement.appendChild(t); }); return 1`);
+  const miss = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+  const name = miss.reveal[0].match(/"(.*)"/)[1];
+  assert.equal(run(w, "click", { label_pattern: name }).ok, true);
+  const o = run(w, "fill", { label_pattern: "cover letter", text: "Dear team" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(w.document.querySelector("textarea").value, "Dear team");
+});
+
+test("fill: a button named like the field is listed; submit-bar buttons never are", () => {
+  const w = page(`<div><label>Cover letter</label><button type=submit>Send</button><button type=button>Save draft</button><button type=button>Next</button></div>
+    <button type=button>Write cover letter</button>`);
+  const o = run(w, "fill", { label_pattern: "cover letter", text: "x" });
+  assert.deepEqual(o.reveal, [`button "Write cover letter"`]);
+});
+
+test("fill: no candidate button leaves the plain miss", () => {
+  const w = page(`<label>Name <input></label><button type=button>Help</button>`);
+  const o = run(w, "fill", { label_pattern: "cover letter", text: "x" });
+  assert.deepEqual(o, { ok: false, error: "no fillable field matched /cover letter/i; it may appear only after clicking a button" });
+});
+
+test("fill_fields: a label miss in a batch carries its reveal list", () => {
+  // Nested past the 6 ancestors fill's label search walks, so the page text
+  // around the City field doesn't match "cover letter".
+  const w = page(COVER + `<div><div><div><div><label>City <input></label></div></div></div></div>`);
+  const o = run(w, "fill_fields", { fields: [{ label_pattern: "city", text: "Rosario" }, { label_pattern: "cover letter", text: "x" }] });
+  assert.equal(o.results[0].ok, true);
+  assert.deepEqual(o.results[1].reveal, [`button "Enter manually"`, `button "Attach"`]);
+});
