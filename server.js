@@ -4419,13 +4419,16 @@ function rbNet() {
   catch (e) { return 0; }
 }
 // s.away: the page changed outside the clicked submit button (s.btn). class and
-// style stay out, as hover, focus and animation flip them.
+// style stay out, as hover, focus and animation flip them, and so do busy flags
+// on the armed form scope (s.form) or inside it, which a posting form sets.
+const RB_HOLD_ATTRS = /^(disabled|aria-disabled|aria-busy|readonly)$/;
 function rbSeen(s, r) {
   s.mut += r.length;
   if (!s.btn || s.away) return;
   for (let i = 0; i < r.length; i++) {
     const m = r[i];
     if (m.type === "attributes" && (m.attributeName === "class" || m.attributeName === "style")) continue;
+    if (m.type === "attributes" && RB_HOLD_ATTRS.test(m.attributeName) && s.form && s.form.contains(m.target)) continue;
     if (!s.btn.contains(m.target)) { s.away = true; return; }
   }
 }
@@ -4492,13 +4495,14 @@ function stepOf(scope) {
 // don't pass for a change.
 const READBACK_LIB = QUIET_LIB + INVALID_LIB + STEP_LIB + String.raw`
 function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
-function rbSig() {
+// noOff leaves out the disabled flags, which a form sets while it posts.
+function rbSig(noOff) {
   const n = document.querySelector(A.readback);
   if (!n) return null;
   const els = [n].concat(Array.prototype.slice.call(n.querySelectorAll("*"), 0, 50));
   return els.map(function (el) {
     const f = ["aria-pressed", "aria-checked", "aria-selected", "aria-expanded"].map(function (k) { return el.getAttribute(k); });
-    f.push(!!el.disabled);
+    if (!noOff) f.push(!!el.disabled);
     if (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA") f.push(el.checked, el.type === "password" ? el.value.length : el.value);
     if (el.tagName === "OPTION") f.push(el.selected);
     return JSON.stringify(f);
@@ -4542,16 +4546,25 @@ function rbAlerts(inv) {
   });
   return out;
 }
+// The scope and the fieldsets and fields in it that show a busy flag: aria-busy,
+// disabled, aria-disabled or readonly.
+function rbHeld(scope) {
+  const els = [scope].concat(Array.prototype.slice.call(scope.querySelectorAll("fieldset, [aria-busy], [aria-disabled], " + RB_FIELDS)));
+  return els.filter(function (el) {
+    return attr(el, "aria-busy") === "true" || attr(el, "aria-disabled") === "true" || !!el.disabled || !!el.readOnly;
+  });
+}
 const rbBtn = function (el) { return el && el.closest("button, input[type=submit], input[type=button], [role=button]"); };
 function rbArm(el) {
   let s;
-  try { s = { text: rbText(), sig: rbSig(), cls: rbCls(), url: location.href, inv: invalidSet() }; }
+  try { s = { text: rbText(), sig: rbSig(), sigOn: rbSig(true), cls: rbCls(), url: location.href, inv: invalidSet() }; }
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
   const scope = el ? rbScope(el) : null;
   if (scope && rbShown(scope)) {
     s.form = scope;
     s.step = stepOf(scope);
     s.alerts = rbAlerts(s.inv);
+    s.held = rbHeld(scope);
     const b = rbBtn(el);
     if (b && (/^submit$/i.test(b.type || "") || scope.contains(b))) { s.btn = b; s.btnText = textOf(b); s.btnOff = !!b.disabled; }
   }
@@ -5311,7 +5324,10 @@ const inv = invalidSet();
 const same = function (p, c) { return p.el === c.el || p.name === c.name; };
 const invNew = inv.filter(function (c) { return !s.inv.some(function (p) { return same(p, c) && p.msg === c.msg; }); });
 const invGone = s.inv.some(function (p) { return !inv.some(function (c) { return same(p, c); }); });
-const sig = rbSig();
+// A busy flag the form scope didn't show at arm time: it is posting, so disabled
+// flags that differ are not an outcome.
+const held = !!s.held && s.form.isConnected && rbHeld(s.form).some(function (el) { return s.held.indexOf(el) < 0; });
+const sigMoved = held ? rbSig(true) !== s.sigOn : rbSig() !== s.sig;
 // The form's own outcome: gone, a new step, or a new alert or live-region text.
 let form = null;
 if (s.form) {
@@ -5325,14 +5341,15 @@ if (s.form) {
   }
   if (!Object.keys(form).length) form = null;
 }
-const changed = moved || text !== s.text || sig !== s.sig || clsMoved || invNew.length > 0 || invGone || !!form;
-// A submit button that only relabels or disables itself ("Submitting...") is
-// mid-flight, not an outcome: keep polling for one until the page settles. That
-// holds whatever the readback is on, while nothing outside the button changed.
+const changed = moved || text !== s.text || sigMoved || clsMoved || invNew.length > 0 || invGone || !!form;
+// A submit button that only relabels or disables itself ("Submitting..."), or a
+// form that newly shows a busy flag, is mid-flight, not an outcome: keep polling
+// for one until the page settles. That holds whatever the readback is on, while
+// nothing outside the button and those flags changed.
 const busy = rbBusy(s);
 const node = s.btn && s.btn.isConnected ? document.querySelector(A.readback) : null;
 const onBtn = !!node && (node === s.btn || s.btn.contains(node));
-const inFlight = !!s.btn && s.btn.isConnected && (onBtn || !s.away) && (textOf(s.btn) !== s.btnText || !!s.btn.disabled !== s.btnOff) && !moved && !clsMoved && !invNew.length && !invGone && !form;
+const inFlight = !!s.btn && s.btn.isConnected && (onBtn || !s.away) && (textOf(s.btn) !== s.btnText || !!s.btn.disabled !== s.btnOff || held) && !moved && !clsMoved && !invNew.length && !invGone && !form;
 // Ten polls in a row with no page activity (about 670ms live) settle it early.
 // A hidden tab runs its timers about once a second, so there the quiet stretch
 // must also last 1.2s of page time, long enough for one throttled tick to fire.
