@@ -238,28 +238,56 @@ test("fill by label fails closed on a hidden field and offers the reveal hint", 
 });
 
 test("fill by label takes a styled control's faded input inside its visible box", () => {
-  const w = page(`<form><label for=loc>Location</label><div class="select__control"><div class="select__value-container"><div class="select__single-value">Rosario</div><div class="select__input-container"><input id=loc role=combobox aria-autocomplete=list aria-expanded=false style="opacity:0"></div></div></div></form>`);
+  const w = page(`<form><label for=loc>Location</label><div class="select__control"><div class="select__value-container"><div class="select__single-value">Rosario</div><div class="select__input-container"><input id=loc role=combobox aria-autocomplete=list aria-expanded=false autocomplete=off style="opacity:0"></div></div></div></form>`);
   const o = run(w, "fill", { label_pattern: "location", text: "Cordoba" });
   assert.doesNotMatch(o.error || "", /hidden/, JSON.stringify(o));
   assert.doesNotMatch(o.el || "", /hidden/, JSON.stringify(o));
-  const t = page(`<form><label for=n>Nickname</label><div class=box><input id=n style="opacity:0;position:absolute;width:1px;height:1px"></div></form>`);
-  const r = run(t, "fill", { label_pattern: "nickname", text: "Ada" });
-  assert.equal(r.ok, true, JSON.stringify(r));
-  assert.equal(r.el, `textbox "Nickname"`);
-  assert.equal(t.document.querySelector("input").value, "Ada");
 });
 
-test("fieldVis: an overlay input in a visible box is shown; display, visibility and a hidden box still hide it", () => {
+// Honeypots: faded or zero-size plain inputs that bots fill and people never see.
+test("fill by label never lands in a honeypot input faded inside a visible box", () => {
+  for (const [html, pattern] of [
+    [`<form><div class=row><label for=hp>Email</label><input id=hp name=email2 tabindex=-1 autocomplete=off style="position:absolute;opacity:0" data-zero></div><div class=row><label for=em>Email</label><input id=em type=email></div></form>`, "email"],
+    [`<form><div class=row><label for=hp>Website</label><input id=hp style="opacity:0"></div><div class=row><label for=ws>Website</label><input id=ws></div></form>`, "website"],
+    [`<form><div class=box><label for=n>Nickname</label><input id=n style="opacity:0;position:absolute;width:1px;height:1px"></div><div class=row><label for=nn>Nickname</label><input id=nn></div></form>`, "nickname"],
+  ]) {
+    const w = page(html);
+    const o = run(w, "fill", { label_pattern: pattern, text: "ada@x.test" });
+    assert.equal(o.ok, true, html + " " + JSON.stringify(o));
+    const [hp, real] = w.document.querySelectorAll("input");
+    assert.equal(hp.value, "", html);
+    assert.equal(real.value, "ada@x.test", html);
+  }
+  const lone = page(`<form><div class=box><label for=t>Leave this field empty</label><input id=t style="opacity:0"></div></form>`);
+  const o = run(lone, "fill", { label_pattern: "leave this field", text: "x" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /the field is hidden/);
+  assert.equal(lone.document.querySelector("input").value, "");
+});
+
+test("fill by selector counts only shown fields as ambiguous, honeypots aside", () => {
+  const w = page(`<div class=row><input class=f style="opacity:0"></div><input class=f>`);
+  const o = run(w, "fill", { selector: ".f", text: "hi" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.ambiguous, undefined, JSON.stringify(o));
+});
+
+test("fieldVis: a styled control's faded input in a visible box is shown; plain, aria-hidden or untabbable ones are not", () => {
   const w = page(`
     <label class=check><input id=a type=checkbox style="opacity:0;position:absolute"><span>Agree</span></label>
-    <div class=ctl><div><div><input id=b style="opacity:0"></div></div></div>
-    <div class=ctl><input id=c data-zero></div>
-    <div class=ctl><input id=d style="display:none"></div>
-    <div class=ctl><input id=e style="visibility:hidden;opacity:0"></div>
-    <div style="display:none"><input id=f style="opacity:0"></div>
-    <div data-zero><input id=g style="opacity:0"></div>
-    <input id=h hidden>`);
-  assert.deepEqual(runBody(w, `return 'abcdefgh'.split('').map(id => fieldVis(document.getElementById(id)))`), [true, true, true, false, false, false, false, false]);
+    <div class=ctl><div><div><input id=b role=combobox autocomplete=off style="opacity:0"></div></div></div>
+    <div class=ctl><input id=c aria-autocomplete=list data-zero></div>
+    <div class=ctl><input id=d role=combobox style="display:none"></div>
+    <div class=ctl><input id=e role=combobox style="visibility:hidden;opacity:0"></div>
+    <div style="display:none"><input id=f role=combobox style="opacity:0"></div>
+    <div data-zero><input id=g role=combobox style="opacity:0"></div>
+    <input id=h hidden>
+    <div class=ctl><input id=i style="opacity:0"></div>
+    <div class=ctl><input id=j role=combobox tabindex=-1 style="opacity:0"></div>
+    <div class=ctl aria-hidden=true><label><input id=k type=radio style="opacity:0"> Yes</label></div>
+    <div class=ctl><input id=l autocomplete=off data-zero></div>`);
+  assert.deepEqual(runBody(w, `return 'abcdefghijkl'.split('').map(id => fieldVis(document.getElementById(id)))`),
+    [true, true, true, false, false, false, false, false, false, false, false, false]);
 });
 
 test("fill by selector into a hidden field still writes and says hidden", () => {

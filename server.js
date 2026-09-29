@@ -2716,13 +2716,18 @@ function vis(el) {
   const r = el.getBoundingClientRect();
   return !(r.width === 0 && r.height === 0);
 }
-// vis(), plus a styled control's own input: faded (opacity 0) or shrunk to a
-// pixel inside a visible, sized box at most 3 levels up that contains it, as a
-// react-select input after a pick or a custom checkbox. display:none,
-// visibility:hidden and a box that is itself hidden still hide it.
+// vis(), plus a styled control's own input faded (opacity 0) or shrunk to a
+// pixel inside a visible, sized box at most 3 levels up that contains it: a
+// combobox input (react-select after a pick) or a custom checkbox or radio.
+// A plain faded input is a honeypot, not a control, and so is anything
+// untabbable (tabindex=-1) or aria-hidden. display:none, visibility:hidden and
+// a box that is itself hidden still hide it.
 function fieldVis(el) {
   if (vis(el)) return true;
-  if (!el || el.hidden) return false;
+  if (!el || el.hidden || el.tagName !== "INPUT") return false;
+  const t = (el.type || "").toLowerCase();
+  if (!/^(checkbox|radio)$/.test(t) && attr(el, "role") !== "combobox" && !el.hasAttribute("aria-autocomplete")) return false;
+  if (attr(el, "tabindex") === "-1" || el.closest("[aria-hidden=true]")) return false;
   const cs = getComputedStyle(el);
   if (cs.display === "none" || cs.visibility === "hidden") return false;
   const r = el.getBoundingClientRect();
@@ -3483,7 +3488,7 @@ function fillOne(a) {
     if (out.ok === false) return out;
     if (!fieldVis(r.el)) out.hidden = true;
     if (a.selector) {
-      const hits = Array.from(document.querySelectorAll(a.selector)).filter(vis);
+      const hits = Array.from(document.querySelectorAll(a.selector)).filter(fieldVis);
       if (hits.length > 1) out.ambiguous = hits.slice(0, 3).map(ident);
     }
     return out;
