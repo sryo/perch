@@ -3635,6 +3635,7 @@ function rbArm() {
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
   rbStop(window.__perch_rb);
   s.quiet = 0;
+  s.calm = Date.now();
   rbWatch(s, "__perch_rb", 10000);
   return null;
 }
@@ -4136,8 +4137,12 @@ const invNew = inv.filter(function (c) { return !s.inv.some(function (p) { retur
 const invGone = s.inv.some(function (p) { return !inv.some(function (c) { return same(p, c); }); });
 const changed = moved || text !== s.text || rbSig() !== s.sig || clsMoved || invNew.length > 0 || invGone;
 // Ten polls in a row with no page activity (about 670ms live) settle it early.
-s.quiet = rbBusy(s) ? 0 : s.quiet + 1;
-if (!changed && !A.final && s.quiet < 10) return null;
+// A hidden tab runs its timers about once a second, so there the quiet stretch
+// must also last 1.2s of page time, long enough for one throttled tick to fire.
+if (rbBusy(s)) { s.quiet = 0; s.calm = Date.now(); }
+else s.quiet++;
+const settled = s.quiet >= 10 && (document.visibilityState !== "hidden" || Date.now() - s.calm >= 1200);
+if (!changed && !A.final && !settled) return null;
 rbStop(s);
 delete window.__perch_rb;
 const out = { readback: text, changed: changed };
