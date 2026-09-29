@@ -16,7 +16,7 @@ Tool descriptions come with the schema; this adds what they leave out. `new_tab`
 |---|---|
 | `list_tabs` | Filter: `app`, `urlContains`, `titleContains`. |
 | `navigate` | Returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed; `timeout`: not committed yet, may still load. |
-| `eval_js` | `awaitPromise` only for real async. |
+| `eval_js` | `awaitPromise` only for real async. `ref` binds `el` (a parameter): `return __avis.add(el, 'x')`. |
 | `screenshot` | Not for minimized windows. |
 | `get_text` | Paged: `offset`/`maxChars`. |
 | `accessibility_snapshot` | Refs and rows below; open shadow roots too. Filter: `role`, `query` (regex per line); `max: 0`: header only. |

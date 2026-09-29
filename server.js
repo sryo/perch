@@ -6697,6 +6697,7 @@ const TOOLS = [
     script: { type: "string" },
     script_path: { type: "string", description: "Local .js file." },
     awaitPromise: { type: "boolean", description: "Await async code (30s cap)." },
+    ref: { type: "string", description: "Binds `el` to this ref." },
     target: TARGET,
   }),
   tool("wait", "Wait until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`), or `quiet`.", {
@@ -6811,11 +6812,18 @@ export const HANDLERS = {
 };
 
 // File first, then `script`, in one function body: one call can inject a library and read it back.
-export async function composeEvalScript({ script, script_path } = {}) {
+// With a ref, the body runs as a function of `el`, resolved in the same page
+// call; the ref's JSON literal is the only part that varies between calls.
+export async function composeEvalScript({ script, script_path, ref, awaitPromise } = {}) {
   let file = "";
   if (script_path) ({ data: file } = await readUserFile(script_path, "utf8"));
   if (!file && !script) throw new Error("eval_js requires `script` or `script_path`");
-  return file && script ? file + "\n;\n" + script : file || script;
+  const body = file && script ? file + "\n;\n" + script : file || script;
+  if (ref == null || ref === "") return body;
+  const k = JSON.stringify(String(ref));
+  return `var __perch_el = (window.__perch_refs || {})[${k}];\n` +
+    `if (!__perch_el || !__perch_el.isConnected || !__perch_el.ownerDocument || !__perch_el.ownerDocument.defaultView) return { __perch_ref_miss: true, ref: ${k} };\n` +
+    `return (${awaitPromise ? "async " : ""}function (el) {\n${body}\n}).call(this, __perch_el);`;
 }
 
 export function formatResult(result) {
