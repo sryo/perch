@@ -902,11 +902,11 @@ function jxaRuntime(BROWSERS, HANG) {
   // Node's screencapture fallback runs after the restore, so it would see the
   // page as it was, not the rect measured after the scroll.
   const SHOT_MOVED = "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it, or scroll it into view and call again";
-  // A window the browser stopped painting (covered, hidden, or too slow) still
-  // holds the frame from before the scroll.
   // A capture run with the grant that still gave no usable image (screencapture
   // failed or wrote nothing readable, or the crop or downscale failed).
   const SHOT_NO_CAPTURE = "screenshot: the window capture gave no image; nothing was captured";
+  // A window the browser stopped painting (covered, hidden, or too slow) still
+  // holds the frame from before the scroll.
   const SHOT_UNPAINTED = "screenshot: the window isn't painting (covered or hidden); show the window or scroll the element into view and call again; nothing was captured";
   // Every page call of a crop is bounded where the tab is pinned (pollExec): the
   // clip and the restore get SHOT_STEP_SECS each, and the clip, the page area and
