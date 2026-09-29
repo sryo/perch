@@ -3009,7 +3009,7 @@ function bestMatch(list, key, want) {
 // -> {el} (the select or combobox), {group} (a radio group, only when groups,
 // a function listing them, is given) or {out}. A select and a radio group both
 // matching, or two radio groups, is ambiguous; among selects the first wins.
-function findCtl(a, groups) {
+function findCtl(a, groups, only) {
   if (a.ref || a.selector) {
     const r = resolveEl(a);
     const g = r.el && groups && (r.el.closest(RADIO_OPT) || r.el.querySelector(RADIO_OPT)) && groupOf(r.el, groups());
@@ -3030,7 +3030,9 @@ function findCtl(a, groups) {
   }
   if (sel) return { el: sel };
   if (pool.length) return { group: pool[0] };
-  return { out: { ok: false, error: "no " + (groups ? "select, combobox or radio group" : "select/combobox") + " matched /" + a.label_pattern + "/i" } };
+  const out = { ok: false, error: "no " + (groups ? "select, combobox or radio group" : "select/combobox") + " matched /" + a.label_pattern + "/i" };
+  if (only) out.absent = true;
+  return { out: out };
 }
 function nativeOf(ctl) { return ctl.tagName === "SELECT" ? ctl : (ctl.querySelector && ctl.querySelector("select")) || null; }
 function pickNative(nat, text) {
@@ -3220,7 +3222,7 @@ function popSearch(root, lists, opts) {
 const CHECK_LIB = String.raw`
 const CHECKABLE = "input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [role=switch], [role=menuitemcheckbox]";
 function isOn(el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; }
-function checkOne(a) {
+function checkOne(a, only) {
   let el;
   if (a.ref || a.selector) {
     const r = resolveEl(a);
@@ -3232,7 +3234,7 @@ function checkOne(a) {
     const cands = Array.from(document.querySelectorAll(CHECKABLE));
     const hit = function (x) { return re.test(accName(x)) || re.test(hintText(x)); };
     el = cands.filter(vis).find(hit) || cands.find(hit);
-    if (!el) return { ok: false, error: "no checkbox/radio matched /" + a.label_pattern + "/i" };
+    if (!el) return only ? { ok: true, skipped: "absent" } : { ok: false, error: "no checkbox/radio matched /" + a.label_pattern + "/i" };
   }
   const want = !!a.checked;
   const out = { ok: true, kind: "check", el: ident(el), checked: want };
@@ -3352,6 +3354,18 @@ function taRoot(el) {
   }
   return root;
 }
+// A styled select's wrapper box (react-select and kin: "x__control", "x-control").
+const ctlOf = function (el) { return el.parentElement && el.parentElement.closest('[class*="__control"], [class*="-control"]'); };
+// What such a box shows as picked: its single value, else its chips' labels.
+function shownValue(el) {
+  const c = ctlOf(el);
+  if (!c) return "";
+  const sv = c.querySelector('[class*="single-value"], [class*="singleValue"]');
+  if (sv) return clip(textOf(sv), 200);
+  let chips = c.querySelectorAll('[class*="multi-value__label"], [class*="multiValue__label"]');
+  if (!chips.length) chips = c.querySelectorAll('[class*="multi-value"]:not([class*="__"]), [class*="multiValue"]:not([class*="__"])');
+  return clip(Array.prototype.map.call(chips, function (x) { return clip(textOf(x), 60); }).filter(Boolean).join(", "), 200);
+}
 const TA_POP = "[class*=dropdown], [class*=autocomplete], [class*=suggest], [class*=typeahead], [class*=menu], [role=listbox]";
 function taParts(el) {
   const root = taRoot(el);
@@ -3452,8 +3466,9 @@ function revealers(re, nearHit) {
   found.sort(function (x, y) { return x.rank[0] - y.rank[0] || x.rank[1] - y.rank[1] || x.rank[2] - y.rank[2]; });
   return found.slice(0, 2).map(function (f) { return f.line; });
 }
-// -> fill's result for one field {ref|selector|label_pattern, text}.
-function fillOne(a) {
+// -> fill's result for one field {ref|selector|label_pattern, text}. only:
+// write nothing to a field that is absent, a trap, ambiguous or already set.
+function fillOne(a, only) {
   const text = a.text;
   // Compare non-whitespace counts: rich editors normalize whitespace on the way in.
   const want = Math.floor(text.replace(/\s/g, "").length * 0.9);
@@ -3537,9 +3552,23 @@ function fillOne(a) {
     if (isRich(el)) return setRich(el) ? { ok: true, kind: "rich", el: ident(host || el), len: textOf(el).length } : null;
     return null;
   }
+  // A typeahead holds only its pick (a companion's value or what its control
+  // shows), never typed text alone.
+  function held(el) {
+    if (!isField(el)) return isRich(el) ? { kind: "rich", v: textOf(el).trim() } : null;
+    if (!isTypeahead(el)) return { kind: "plain", v: el.value.trim() };
+    const c = taParts(el).comp;
+    return { kind: "typeahead", v: (c && c.value.trim()) || shownValue(el) };
+  }
+  function keep(el, host) {
+    const h = only && held(el);
+    return h && h.v ? { ok: true, kind: h.kind, skipped: "has value", el: ident(host || el), value: clip(h.v, 60) } : null;
+  }
   if (a.ref || a.selector) {
     const r = resolveEl(a);
     if (r.out) return r.out;
+    const kept = keep(r.el);
+    if (kept) return kept;
     const out = tryFill(r.el);
     if (!out) return { ok: false, error: ident(r.el) + " is not fillable or rejected the text" };
     if (out.ok === false) return out;
@@ -3611,6 +3640,7 @@ function fillOne(a) {
     scored.push({ el: el, root: root, s: s });
   });
   scored.sort(function (a, b) { return b.s - a.s; });
+  if (only && !scored.length && !passed.length) return { ok: true, skipped: "absent" };
   if (!scored.length) {
     const miss = "no fillable field matched /" + a.label_pattern + "/i; it may appear ";
     const reveal = revealers(re, nearHit);
@@ -3628,13 +3658,21 @@ function fillOne(a) {
   const shown = scored.filter(function (c) { return fieldVis(c.el); });
   if (!shown.length) {
     const el = ident(scored[0].el);
-    if (scored.every(function (c) { return trapLike(c.el); })) return { ok: false, el: el, error: el + " matched /" + a.label_pattern + "/i but it looks like a bot trap; leave it empty" };
+    if (scored.every(function (c) { return trapLike(c.el); })) return only ? { ok: true, skipped: "trap", el: el } : { ok: false, el: el, error: el + " matched /" + a.label_pattern + "/i but it looks like a bot trap; leave it empty" };
     const reveal = revealers(re, nearHit);
     const why = el + " matched /" + a.label_pattern + "/i but the field is hidden; ";
     return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button, or pass its ref or selector to fill it anyway" }
       : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
   }
   const best = shown[0];
+  if (only) {
+    // Two fields each named by their own label, neither favoured: guessing would
+    // put the value in the wrong one.
+    const tied = shown.filter(function (c) { return c.s >= 100 && c.s === best.s && (c === best || (!c.el.contains(best.el) && !best.el.contains(c.el))); });
+    if (tied.length > 1) return { ok: true, skipped: "ambiguous", candidates: tied.slice(0, 3).map(function (c) { return ident(c.el); }) };
+    const kept = keep(isField(best.el) ? best.el : best.root, best.el);
+    if (kept) return kept;
+  }
   const out = tryFill(isField(best.el) ? best.el : best.root, best.el);
   if (!out) return { ok: false, error: ident(best.el) + " did not accept the text" };
   if (out.ok === false) return out;
@@ -3872,18 +3910,6 @@ const origin = location.origin;
 // A query tests each line without its ref and keeps counting matches past max.
 const re = A.query == null ? null : new RegExp(A.query, "i");
 const lines = [];
-// A styled select's wrapper box (react-select and kin: "x__control", "x-control").
-const ctlOf = function (el) { return el.parentElement && el.parentElement.closest('[class*="__control"], [class*="-control"]'); };
-// What such a box shows as picked: its single value, else its chips' labels.
-function shownValue(el) {
-  const c = ctlOf(el);
-  if (!c) return "";
-  const sv = c.querySelector('[class*="single-value"], [class*="singleValue"]');
-  if (sv) return clip(textOf(sv), 200);
-  let chips = c.querySelectorAll('[class*="multi-value__label"], [class*="multiValue__label"]');
-  if (!chips.length) chips = c.querySelectorAll('[class*="multi-value"]:not([class*="__"]), [class*="multiValue"]:not([class*="__"])');
-  return clip(Array.prototype.map.call(chips, function (x) { return clip(textOf(x), 60); }).filter(Boolean).join(", "), 200);
-}
 // vis(), plus inputs a stylesheet shrinks or fades to nothing while their
 // widget stays on screen: a radio or checkbox behind its visible label, and a
 // combobox input inside a visible select box (hidden after a pick, or a dummy).
@@ -4076,14 +4102,38 @@ return out;
   // JXA-polled phases, so the pass stops there with {defer: index} and Node
   // resumes after it.
   fill_fields: FILL_LIB + SELECT_LIB + CHECK_LIB + String.raw`
+// What a select, combobox or radio group already shows as chosen, or "" for
+// nothing or a placeholder ("Select...", a disabled or valueless option).
+const PLACEHOLDERISH = /^[\s\-\u2013\u2014]*((please )?(select|choose|pick)\b.*)?$/i;
+function chosen(c) {
+  if (c.group) {
+    const on = c.group.opts.filter(isOn)[0];
+    return on ? c.group.names[c.group.opts.indexOf(on)] : "";
+  }
+  const nat = nativeOf(c.el);
+  if (nat) {
+    const o = nat.options[nat.selectedIndex];
+    return !o || o.value === "" || o.disabled || (nat.selectedIndex === 0 && PLACEHOLDERISH.test(o.text)) ? "" : o.text.trim();
+  }
+  const ctl = c.el;
+  if (ctl.tagName === "INPUT") {
+    const comp = taParts(ctl).comp;
+    return shownValue(ctl) || (comp && comp.value.trim() ? ctl.value.trim() || comp.value.trim() : "") || (ctl.readOnly ? ctl.value.trim() : "");
+  }
+  const box = ctl.closest('.select__control, [class*="-control"], [class*="__control"]') || ctl;
+  const t = shownWhole(box) ? textOf(box).trim() : "";
+  return PLACEHOLDERISH.test(t) ? "" : t;
+}
 const results = [];
 for (let i = A.from || 0; i < A.fields.length; i++) {
   const f = A.fields[i];
   let o, kind;
   if (f.option != null) {
     kind = "select";
-    const c = findCtl(f, radioGroups);
-    if (c.out) o = c.out;
+    const c = findCtl(f, radioGroups, A.only);
+    const v = !c.out && A.only && chosen(c);
+    if (c.out) o = c.out.absent ? { ok: true, skipped: "absent" } : c.out;
+    else if (v) o = { ok: true, skipped: "has value", el: c.group ? "radiogroup " + JSON.stringify(clip(c.group.q, 80)) : ident(nativeOf(c.el) || c.el), value: clip(v, 60) };
     else if (c.group) o = pickRadio(c.group, f.option);
     else {
       const nat = nativeOf(c.el);
@@ -4092,10 +4142,10 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     }
   } else if (f.checked != null) {
     kind = "check";
-    o = checkOne(f);
+    o = checkOne(f, A.only);
   } else {
     kind = "text";
-    o = fillOne(f);
+    o = fillOne(f, A.only);
     if (o.pending) return { results: results, defer: i };
   }
   if (o.__perch_ref_miss) o = { ok: false, error: "ref " + o.ref + " is stale or unknown; call accessibility_snapshot again" };
@@ -5182,13 +5232,13 @@ function validateFields(fields) {
 
 // Native fields go in page passes; each custom combobox in between goes
 // through `select`, so the whole form is one tool call and stays in order.
-async function fillFields(fields, target) {
+async function fillFields(fields, target, only) {
   validateFields(fields);
   const A = fields.map(({ ref, selector, label_pattern, text, checked, option }) =>
     ({ ref, selector, label_pattern, text: text == null ? text : String(text), checked, option: option == null ? option : String(option) }));
   const results = [];
   for (let from = 0; from < A.length;) {
-    const r = await runPage("fill", "fill_fields", { fields: A, from }, target);
+    const r = await runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target);
     if (!r || !Array.isArray(r.results)) return r;
     results.push(...r.results);
     if (r.defer == null) break;
@@ -5199,15 +5249,17 @@ async function fillFields(fields, target) {
       : { kind: "select", ...s });
     from = r.defer + 1;
   }
-  return { ok: results.every((x) => x.ok === true), results };
+  const skipped = results.filter((x) => x.skipped).length;
+  return { ok: results.every((x) => x.ok === true), results, ...(skipped ? { skipped } : {}) };
 }
 
 async function fill(args = {}) {
-  const { selector, label_pattern, ref, text, text_path, target, trusted = false, raise = false, fields } = args;
+  const { selector, label_pattern, ref, text, text_path, target, trusted = false, raise = false, fields, only_empty } = args;
+  if (only_empty && fields == null) throw new Error("fill: only_empty takes `fields`");
   if (fields != null) {
     if (text != null || text_path != null || ref || selector || label_pattern) throw new Error("fill: pass `fields` OR a single field, not both");
     if (trusted || raise) throw new Error("fill: `fields` does not take trusted/raise; fill trusted fields one at a time");
-    return fillFields(fields, target);
+    return fillFields(fields, target, !!only_empty);
   }
   const { checked, option } = args;
   if (checked != null || option != null) {
@@ -5366,6 +5418,7 @@ const TOOLS = [
   }, ["key"]),
   tool("fill", "Fill inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies it landed: {ok,kind,el,len}; empty `text` clears. `fields`: many in one call. `trusted`: trusted input event, no key focus; `raise:true`: foreground keys.", {
     fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]; option: a select or radio group" },
+    only_empty: { type: "boolean", description: "fields: skip absent or already-set ones" },
     text: { type: "string" },
     text_path: { type: "string", description: "Local file." },
     ref: REF,
