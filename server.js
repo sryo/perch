@@ -3751,12 +3751,21 @@ function fillOne(a, only) {
     if (step && step !== "any") f += " in steps of " + step;
     return f;
   }
-  // -> true, false (not landed), or a miss result for a sanitizing type.
+  // -> true, false (not landed), or a miss result for a sanitizing type or a revert.
   function setPlain(el) {
+    const prior = el.value;
     setNativeValue(el, text);
     fire(el, ["input", "change", "blur"]);
     const t = el.tagName === "INPUT" ? (el.type || "text").toLowerCase() : "";
-    if (!Object.prototype.hasOwnProperty.call(FORMATS, t)) return text === "" ? el.value === "" : landed(el.value);
+    if (!Object.prototype.hasOwnProperty.call(FORMATS, t)) {
+      const v = el.value;
+      if (text === "") return v === "";
+      const norm = function (s) { return s.trim().replace(/\s+/g, " "); };
+      if (norm(v).indexOf(norm(text)) >= 0) return true;
+      // Length and digit-suffix checks can't tell a revert from a landed value.
+      if (v !== prior) return landed(v);
+      return { ok: false, el: ident(el), kept: clip(v, 60), error: ident(el) + " kept its previous value " + JSON.stringify(clip(v, 60)) + " instead of the text; the page reverted the write" };
+    }
     if (exact(t, el.value)) return true;
     const kept = clip(el.value, 60);
     return { ok: false, el: ident(el), kept: kept, error: ident(el) + " expects " + format(el, t) + "; the page kept " + JSON.stringify(kept) };
