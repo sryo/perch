@@ -225,3 +225,51 @@ test("snapshot: a hidden required radio's row carries its group's question, and 
   assert.match(lines[lines.length - 2], /^\d+ radio "Need a visa\?" name="visa".* hidden$/);
   assert.match(lines[lines.length - 1], /^\d+ textbox "text" required hidden$/);
 });
+
+// A required dropdown left on its placeholder is empty, whatever the
+// placeholder option's value; value= is the chosen option's text.
+const pickRow = (lines) => lines.find((l) => /"Country"/.test(l));
+
+test("snapshot: a required select on a placeholder option counts as empty and shows no value", () => {
+  const w = page(`<form><label>Country <select name=c required><option value="0">Select...</option><option value="AR">Argentina</option></select></label></form>`);
+  let { head, lines } = snap(w);
+  assert.deepEqual(head.form, { fields: 1, requiredEmpty: 1 });
+  assert.equal(pickRow(lines), `1 combobox "Country" name="c" options=["Select...","Argentina"] required`);
+  w.document.querySelector("select").selectedIndex = 1;
+  ({ head, lines } = snap(w));
+  assert.deepEqual(head.form, { fields: 1, requiredEmpty: 0 });
+  assert.equal(pickRow(lines), `1 combobox "Country" name="c" options=["Select...","Argentina"] value="Argentina" required`);
+});
+
+test("snapshot: a required select whose first option is a real choice is filled", () => {
+  const w = page(`<form><label>Country <select name=c required><option value="AR">Argentina</option><option value="BR">Brazil</option></select></label></form>`);
+  assert.deepEqual(snap(w).head.form, { fields: 1, requiredEmpty: 0 });
+});
+
+test("snapshot: -1, Select and disabled placeholder options all count as empty", () => {
+  for (const ph of [`<option value="-1">Select...</option>`, `<option value="Select">Select</option>`, `<option value="x" disabled selected>Your country</option>`]) {
+    const w = page(`<form><label>Country <select name=c required>${ph}<option value="AR">Argentina</option></select></label></form>`);
+    const { head, lines } = snap(w);
+    assert.deepEqual(head.form, { fields: 1, requiredEmpty: 1 }, ph);
+    assert.doesNotMatch(pickRow(lines), /value=/, ph);
+  }
+});
+
+test("snapshot: a required custom combobox counts while it shows its placeholder", () => {
+  const box = (inner) => page(`<form><label id=l>Authorized?</label>
+    <div role=combobox aria-required=true aria-labelledby=l tabindex=0 class=pick>${inner}</div></form>`);
+  let w = box(`<span class=placeholder>Select...</span>`);
+  let { head, lines } = snap(w);
+  assert.equal(head.form.requiredEmpty, 1);
+  assert.doesNotMatch(lines.find((l) => /Authorized/.test(l)), /value=/);
+  w = box(`<span class=value>Yes</span>`);
+  ({ head, lines } = snap(w));
+  assert.equal(head.form.requiredEmpty, 0);
+  assert.match(lines.find((l) => /Authorized/.test(l)), /value="Yes"/);
+});
+
+test("snapshot: a custom combobox holding its own counted input is counted once", () => {
+  const w = page(`<form><label for=i>City</label>
+    <div role=combobox aria-required=true aria-expanded=false><input id=i name=city required aria-autocomplete=list></div></form>`);
+  assert.deepEqual(snap(w).head.form, { fields: 1, requiredEmpty: 1 });
+});

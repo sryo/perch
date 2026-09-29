@@ -30,10 +30,10 @@ Adds to the tool descriptions; nothing to add for `new_tab`, `activate_tab`, `cl
 # {"url":"https://x/apply","title":"Apply","ready":"complete","count":37,"focus":"4","dialogs":["Cookies"],"form":{"fields":14,"requiredEmpty":3,"unpicked":1}}
 1 heading "Apply" level=1
 2 textbox "Email" name="email" type="email" value="a@b.c" required
-3 combobox "Country" options=["Argentina","Brazil"] value="AR"
+3 combobox "Country" options=["Argentina","Brazil"] value="Argentina"
 ```
 
-Values are JSON. Keys: `name` (HTML name), `type`, `value`, `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Refs die on re-snapshot or navigation. Header `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`; `in`: parent row. `form.step`: wizard step. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
+Values are JSON. Keys: `name` (HTML name), `type`, `value` (a pick's text; none on a placeholder), `options`, `level`, `href`, `error`, `reveal` (its button's ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). Refs die on re-snapshot or navigation. Header `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`; `in`: parent row. `form.step`: wizard step. `form.unpicked` counts `unpicked` rows; `requiredEmpty` includes required ones.
 
 ## Results
 
