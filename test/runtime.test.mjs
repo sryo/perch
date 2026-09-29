@@ -324,7 +324,7 @@ test("wait with an invalid selector is an error, not an instant success", async 
   assert.equal(ok.o.ok, true);
   const { r, t } = await call("wait", { selector: "##" });
   assert.equal(r.isError, true);
-  assert.match(t, /^error: wait: .*##/);
+  assert.equal(t, "error: wait: bad selector: ##");
 });
 
 test("Safari navigate makes the tab current before stamping the old document", async () => {

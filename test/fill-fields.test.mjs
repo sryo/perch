@@ -9,6 +9,7 @@ import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { page, run, runBody } from "./helpers/page.mjs";
+import { throwAt, noRaw } from "./helpers/fault.mjs";
 
 const FORM = `<form>
   <label>Name <input name=name></label>
@@ -1403,20 +1404,6 @@ test("select {trusted}: a pick that throws ends at once as a coded ok:false", as
   assert.equal(o.error, "select: the page script failed on this page (TypeError); nothing verified");
 });
 
-// A perch page script that throws is reported by its error name alone: the
-// message and stack are page internals, not something the agent can act on.
-const SECRET = "throw new TypeError('secret-internal detail');";
-// Makes the nth (by `when`) page script containing `marker` throw just before it.
-function throwAt(dom, marker, when = () => true) {
-  const ev = dom.eval.bind(dom);
-  let n = 0, threw = 0;
-  dom.eval = (js) => js.includes(marker) && when(++n, js) ? (threw++, ev(js.replace(marker, SECRET + marker))) : ev(js);
-  return () => threw;
-}
-const noRaw = (x) => {
-  const s = JSON.stringify(x);
-  for (const k of ["secret-internal", "__perch_error", "stack"]) assert.ok(!s.includes(k), s);
-};
 
 test("select: a pick or read that throws is ok:false with the error name only", async () => {
   for (const marker of ["s.polls++;", `if (!s) return { ok: false, error: "the page changed after the pick was pressed; not verified" };`]) {
