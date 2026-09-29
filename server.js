@@ -2274,19 +2274,19 @@ function jxaRuntime(BROWSERS, HANG) {
       try { const s = JSON.parse(String(page)), nl = s.indexOf("\n"); vp = JSON.parse(s.slice(2, nl < 0 ? s.length : nl)); } catch (e) { return out; }
       try {
         const W = frameWalk(frameTarget(t), vp);
-        // The page rows already hold a same-origin frame's controls: drop the rows
-        // whose outermost frame sits where one of those frames is (vp.fr, CSS px).
+        // The page rows already hold a walked same-origin frame's controls: drop the
+        // rows whose own frame sits where one of those frames is (vp.fr, CSS px). A
+        // frame nested inside one was never read by page JS, so its rows stay.
         const P = W.page, z = P ? P.w / (vp.iw || P.w) : 1;
         const walked = (P ? vp.fr || [] : []).map(function (r) { return { x: P.x + r[0] * z, y: P.y + r[1] * z, w: r[2] * z, h: r[3] * z }; });
         const near = function (a, b) { return !!a && Math.abs(a.x - b.x) <= 2 && Math.abs(a.y - b.y) <= 2 && Math.abs(a.w - b.w) <= 2 && Math.abs(a.h - b.h) <= 2; };
-        const rows = W.rows.filter(function (r) {
-          let f = r.fr;
-          while (f.up) f = f.up;
-          return !walked.some(function (b) { return near(f.box, b); });
-        });
+        const rows = W.rows.filter(function (r) { return !walked.some(function (b) { return near(r.fr.box, b); }); });
         out.frames = rows.map(function (r) { return { role: r.role, name: r.name, url: r.url, up: r.up, ord: r.ord, flags: r.flags }; });
         if (W.truncated) out.truncated = true;
-      } catch (e) { out.error = String(e.message || e); }
+      } catch (e) {
+        const m = String((e && e.message) || e), num = e && typeof e.errorNumber === "number" ? " (" + e.errorNumber + ")" : "";
+        out.error = num && m.slice(-num.length) !== num ? m + num : m;
+      }
       return out;
     },
     // Never trusts stored coordinates: walks the frames again, finds the row by
@@ -4375,8 +4375,10 @@ function walk(root) {
     lines.push(ref + " " + line);
   }
 }
+// A frame counts as walked only when the cap left all its rows listed.
+const walkedFrames = new Set();
 walk(null);
-frameDocs.forEach(function (i, d) { if (re || !truncated) walk(d); });
+frameDocs.forEach(function (i, d) { if (re || !truncated) walk(d); if (!truncated) walkedFrames.add(i); });
 // The shown boxes around a hidden field, nearest first, up to one holding more
 // than 5 fields: their label text names the field when nothing else does, and
 // they hold the button that reveals it.
@@ -4467,7 +4469,7 @@ const head = { url: location.href, title: document.title, ready: document.readyS
 if (A.frames) {
   head.iw = innerWidth; head.ih = innerHeight;
   // Content boxes of the frames walked here, so the frame walk skips them.
-  const fr = embedded.filter(function (e) { return e.same; }).map(function (e) {
+  const fr = embedded.filter(function (e, i) { return walkedFrames.has(i); }).map(function (e) {
     const b = e.f.getBoundingClientRect();
     return [b.left + (e.f.clientLeft || 0), b.top + (e.f.clientTop || 0), e.f.clientWidth || b.width, e.f.clientHeight || b.height];
   });
@@ -5370,6 +5372,16 @@ function guardFrameRefs(name, args) {
   if (name !== "click" || args.trusted !== true) throw new Error(`${name}: frame refs need click {trusted:true}`);
 }
 
+// Why the frame walk didn't run, coded: the runtime's own reasons pass through,
+// and a raw bridge or AppleScript failure never reaches the caller as is.
+function codeFrameError(msg) {
+  if (/^no page area: |^Accessibility permission required/.test(msg)) return msg;
+  const coded = codeOsaError(msg);
+  if (/^[a-z][a-z_]*: /.test(coded) || translatePermissionError(msg)) return coded;
+  const num = / \((-\d+)\)$/.exec(msg);
+  return "frames_unreadable: Accessibility could not read the page's frames; the page rows are unaffected, retry for frame rows" + (num ? ` (AppleScript ${num[1]})` : "");
+}
+
 async function accessibilitySnapshot(args = {}) {
   const { role = null, query = null, target, frames = false } = args;
   const max = args.max == null ? 500 : Math.max(0, Number(args.max) || 0);
@@ -5386,7 +5398,7 @@ async function accessibilitySnapshot(args = {}) {
   delete head.ih;
   delete head.fr;
   const lines = [];
-  if (r.error) head.frames = { error: r.error };
+  if (r.error) head.frames = { error: codeFrameError(r.error) };
   else {
     const roles = role == null ? null : [].concat(role);
     const re = query == null ? null : new RegExp(query, "i");
