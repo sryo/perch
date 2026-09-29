@@ -137,3 +137,56 @@ test("label_pattern is exclusive with ref, selector and x/y, and must be a valid
   assert.equal(bad.isError, true);
   assert.match(bad.content[0].text, /click: invalid label_pattern/);
 });
+
+// A disabled control drops el.click(), so a click by ref or selector refuses rather than reporting ok.
+function logged(html) {
+  const w = page(html);
+  w.eval(`window.log = []; document.querySelectorAll("[id]").forEach((el) => el.addEventListener("click", () => window.log.push(el.id)));`);
+  return w;
+}
+const DISABLED = /is disabled; nothing was clicked/;
+
+test("a disabled button refuses by selector and by ref, and nothing runs", () => {
+  const w = logged(`<button id=save disabled>Save</button>`);
+  const o = run(w, "click", { selector: "#save" });
+  assert.equal(o.ok, false);
+  assert.equal(o.el, `button "Save"`);
+  assert.match(o.error, DISABLED);
+  w.eval(`window.__perch_refs = { "7": document.getElementById("save") }`);
+  const r = run(w, "click", { ref: "7" });
+  assert.equal(r.ok, false);
+  assert.match(r.error, DISABLED);
+  assert.deepEqual([...w.log], []);
+});
+
+test("a fieldset's disabled reaches its controls, except those in its first legend", () => {
+  const w = logged(`<fieldset disabled><legend><button id=l>Legend</button></legend><button id=b>Inside</button></fieldset>`);
+  const o = run(w, "click", { selector: "#b" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, DISABLED);
+  assert.deepEqual(run(w, "click", { selector: "#l" }), { ok: true, el: `button "Legend"` });
+  assert.deepEqual([...w.log], ["l"]);
+});
+
+test("a ref inside a disabled button refuses and names the button", () => {
+  const w = logged(`<button disabled>Go <span id=inner>now</span></button>`);
+  const o = run(w, "click", { selector: "#inner" });
+  assert.equal(o.ok, false);
+  assert.equal(o.el, `button "Go now"`);
+  assert.match(o.error, DISABLED);
+  assert.deepEqual([...w.log], []);
+});
+
+test("a disabled submit input refuses", () => {
+  const w = logged(`<form><input id=s type=submit value=Send disabled></form>`);
+  const o = run(w, "click", { selector: "#s" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, DISABLED);
+  assert.deepEqual([...w.log], []);
+});
+
+test("aria-disabled still clicks: such forms show their errors on click", () => {
+  const w = logged(`<div role=button id=a aria-disabled=true>Next</div>`);
+  assert.deepEqual(run(w, "click", { selector: "#a" }), { ok: true, el: `button "Next"` });
+  assert.deepEqual([...w.log], ["a"]);
+});

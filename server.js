@@ -3486,6 +3486,20 @@ function resolveEl(a, dflt) {
 }
 const CLICKABLE = "button, a[href], [role=button], [role=link], [role=menuitem], [role=tab], [role=checkbox], [role=radio], [role=option], input[type=submit], input[type=button], input[type=reset], summary";
 function isDisabled(el) { return el.disabled === true || attr(el, "aria-disabled") === "true"; }
+// The form control holding el when it is natively disabled: browsers drop clicks on it
+// and its descendants. A disabled fieldset spares its first legend's controls; the
+// walk covers engines whose :disabled skips fieldset inheritance.
+function inertCtl(el) {
+  const c = el.closest("button, input, select, textarea");
+  if (!c) return null;
+  try { if (c.disabled || c.matches(":disabled")) return c; } catch (e) {}
+  for (let f = c.closest("fieldset[disabled]"); f; f = f.parentElement && f.parentElement.closest("fieldset[disabled]")) {
+    const lg = Array.prototype.find.call(f.children, function (k) { return k.tagName === "LEGEND"; });
+    if (!(lg && lg.contains(c))) return c;
+  }
+  return null;
+}
+function inertOut(c) { return { ok: false, el: ident(c), error: ident(c) + " is disabled; nothing was clicked" }; }
 const WORD_CH = /[\p{L}\p{N}_]/u;
 // How well a pattern names s: 0 the whole name (whole matches the anchored
 // pattern), 1 a match that starts and ends on word boundaries, 2 any other
@@ -4791,7 +4805,9 @@ const clickNow = function (el, blank) {
 };
 const r = resolveClick(A);
 if (r.out) return r.out;
-const el = r.el, href = A.probe && blankHref(el);
+const el = r.el, off = inertCtl(el);
+if (off) return inertOut(off);
+const href = A.probe && blankHref(el);
 if (!href) return clickNow(el, false);
 window.__perch_blank = { run: function () { return el.isConnected ? clickNow(el, true) : null; } };
 return { ok: true, blank: { href: href } };
@@ -4816,6 +4832,8 @@ if (A.select) {
   const r = A.ref || A.selector ? resolveEl(A) : clickableByLabel(A);
   if (r.out) return r.out;
   el = r.el;
+  const off = !A.forFill && inertCtl(el);
+  if (off) return inertOut(off);
 } else {
   const re = new RegExp(A.label_pattern, "i");
   const fields = Array.from(document.querySelectorAll("input, textarea")).filter(function (e) {
