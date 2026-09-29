@@ -697,7 +697,7 @@ const noRaw = (x) => {
   for (const k of ["secret-internal", "__perch", "stack"]) assert.ok(!s.includes(k), s);
 };
 const RB_ARM = "return rbArm(A.probed";
-const RB_READ = "const text = rbText();";
+const RB_READ = "const text = rbText(s ? s.sel : A.readback);";
 const CHECK = "const out = { hit: st.down };";
 const clickReply = async (args) => {
   const r = await handleCall("click", { ...args, trusted: true, target: { tabIndex: 1 } });

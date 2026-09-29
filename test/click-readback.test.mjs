@@ -656,7 +656,7 @@ test("a disabled button with readback refuses and arms nothing", async () => {
 test("a readback read that throws is ok:false with the error name only", async () => {
   const { dom } = onPage(FORM, SAVE);
   const ev = dom.eval.bind(dom);
-  const marker = "const text = rbText();";
+  const marker = "const text = rbText(s ? s.sel : A.readback);";
   dom.eval = (js) => ev(js.includes(marker) ? js.replace(marker, "throw new TypeError('secret-internal detail');" + marker) : js);
   const o = await click({ selector: "#b", readback: "#s" });
   assert.equal(o.ok, false, JSON.stringify(o));
