@@ -62,7 +62,7 @@ test("select_pick and fill_ta_pick answer the option they pressed", () => {
   const w = page(`<div id=c role=combobox aria-label=Team aria-controls=pop aria-expanded=true>Pick</div><ul id=pop role=listbox><li role=option>Design (Lima)</li><li role=option>Sales</li></ul>`);
   const A = { selector: "#c", text: "design" };
   run(w, "select_start", A);
-  assert.deepEqual(run(w, "select_pick", A), { picked: "Design (Lima)" });
+  assert.deepEqual(run(w, "select_pick", A), { picked: "Design (Lima)", tok: w.__perch_select.tok });
   const t = page(`<input id=loc role=combobox aria-autocomplete=list aria-controls=lb aria-label=City><ul id=lb role=listbox><li role=option>Rosario, Santa Fe</li></ul>`);
   assert.equal(run(t, "fill", { selector: "#loc", text: "Rosario" }).pending, true);
   assert.deepEqual(run(t, "fill_ta_pick", {}), { picked: "Rosario, Santa Fe" });

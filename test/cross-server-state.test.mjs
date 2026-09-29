@@ -7,6 +7,7 @@
 // A's page evaluations: the page state is all two servers share.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { JXA_PRELUDE, DAEMONS, handleCall, buildEvalWrapper, pageScript, CLICK_BLANK_GO } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
@@ -400,4 +401,92 @@ test("readback and quiet scripts are byte-identical across calls", async () => {
   // readback_arm, the trusted click's, is fixed source too.
   const arm = (A) => pageScript("readback_arm", A);
   assert.equal(arm({ readback: "#s", probed: true }), arm({ readback: "#s", probed: true }));
+});
+
+// ---- select ----
+// Two listbox comboboxes that both offer "Other", driven by trusted-select.html's
+// script: data-picker "none" takes synthetic presses, "open" opens only on a
+// trusted one.
+
+const TS = readFileSync(new URL("./fixtures/trusted-select.html", import.meta.url), "utf8");
+const TS_SCRIPT = /<script>([\s\S]*?)<\/script>/.exec(TS)[1];
+const combo = (id, label, mode, items) => `<div class="field"><span id="${id}-label">${label}</span>
+  <div id="${id}" role="combobox" tabindex="0" aria-labelledby="${id}-label" aria-expanded="false" aria-controls="${id}-list" data-picker="${mode}" data-items="${items}"><span class="placeholder">Pick one</span></div>
+  <ul id="${id}-list" role="listbox" hidden></ul></div>`;
+const PLACES = (mode = "none") => combo("country", "Country", mode, "Argentina|Chile|Other") + combo("region", "Region", "none", "North|South|Other");
+// Every press that reaches an option, by the option's list.
+const COUNT_OPTS = `window.optClicks = {}; document.addEventListener("click", function (e) { const o = e.target.closest && e.target.closest("[role=option]"); if (o) { const k = o.parentElement.id + ":" + o.textContent; window.optClicks[k] = (window.optClicks[k] || 0) + 1; } }, true);`;
+const TAKEN = "another perch call on this tab took over this select; not verified";
+const PICK = "s.polls++;";
+const selA = (selector, text, extra = {}) => ({ ref: null, selector, label_pattern: null, text, ...extra });
+const shows = (dom, id) => dom.document.getElementById(id).textContent;
+// B's select to the end, as its server's runtime runs the phases.
+function finishSelect(dom, A) {
+  let v = null;
+  for (let i = 0; i < 20 && !(v && !v.pending); i++) v = run(dom, "select_pick", A);
+  if (!v || v.picked == null) return v;
+  for (let i = 0; i < 10; i++) { const r = run(dom, "select_read", A); if (r && !r.pending) return r; }
+  return run(dom, "select_read", { ...A, final: true });
+}
+
+test("select: another server's select_start between A's start and A's pick is refused; A presses nothing in B's list", async () => {
+  const { dom } = onPage(PLACES(), TS_SCRIPT + COUNT_OPTS);
+  let startB = null;
+  beforeEvals(dom, (n, js) => { if (!startB && js.includes(PICK)) startB = run(dom, "select_start", selA("#region", "Other")); });
+  const { r, o } = await call("select", { selector: "#country", text: "Other" });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.ok(startB && startB.pending, JSON.stringify(startB));
+  assert.deepEqual(o, { ok: false, error: TAKEN });
+  assert.deepEqual({ ...dom.optClicks }, {}, "A pressed no option");
+  assert.deepEqual([...dom.pickerLog], []);
+  assert.equal(shows(dom, "country"), "Pick one");
+  // B's own select still finishes on its own control.
+  const b = finishSelect(dom, selA("#region", "Other"));
+  assert.equal(b.ok, true, JSON.stringify(b));
+  assert.equal(b.selected, "Other");
+  assert.match(b.el, /Region/);
+  assert.deepEqual([...dom.pickerLog], ["region:Other"]);
+  assert.equal(shows(dom, "country"), "Pick one");
+});
+
+test("select: another server with identical args is caught by its token", async () => {
+  const { dom } = onPage(PLACES(), TS_SCRIPT + COUNT_OPTS);
+  let startB = null;
+  beforeEvals(dom, (n, js) => { if (!startB && js.includes(PICK)) startB = run(dom, "select_start", selA("#country", "Other")); });
+  const { o } = await call("select", { selector: "#country", text: "Other" });
+  assert.ok(startB && startB.pending, JSON.stringify(startB));
+  assert.deepEqual(o, { ok: false, error: TAKEN });
+  assert.ok((dom.optClicks["country-list:Other"] || 0) <= 1);
+});
+
+test("select: a select alone still reads its own control, with no token in its result", async () => {
+  const { dom } = onPage(PLACES(), TS_SCRIPT + COUNT_OPTS);
+  const { o } = await call("select", { selector: "#country", text: "Other" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Other");
+  assert.equal("tok" in o, false);
+  assert.deepEqual([...dom.pickerLog], ["country:Other"]);
+});
+
+test("select {trusted}: a probe that finds another call's select state posts no event", async () => {
+  const dom = page(PLACES("open"), { url: "https://form.test/" });
+  for (const [k, v] of Object.entries({ screenX: 0, screenY: 57, outerWidth: 854, innerWidth: 798, outerHeight: 600, innerHeight: 500 })) Object.defineProperty(dom, k, { value: v, configurable: true });
+  dom.eval(TS_SCRIPT + COUNT_OPTS);
+  const world = makeWorld({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 1, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "about:blank", id: "other" }, { url: "https://form.test/", id: "t", dom }] }] }],
+    cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 4242, wid: 50, x: 0, y: 57, w: 854, h: 600, ax: { web: [{ x: 56, y: 157, w: 798, h: 500, frames: [] }] } }],
+  });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  world.reset();
+  let startB = null;
+  beforeEvals(dom, (n, js) => { if (!startB && js.includes(`A.select === "option"`)) startB = run(dom, "select_start", selA("#region", "Other")); });
+  const { r, o } = await call("select", { target: { tabIndex: 1 }, selector: "#country", text: "Other", trusted: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.ok(startB && startB.pending, JSON.stringify(startB));
+  assert.deepEqual(o, { ok: false, error: TAKEN });
+  assert.deepEqual(world.posted, [], "no event posted at B's control");
+  assert.deepEqual({ ...dom.optClicks }, {});
+  assert.equal(dom.document.getElementById("region").getAttribute("aria-expanded"), "true", "B's open list is left alone");
 });

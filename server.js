@@ -1379,6 +1379,7 @@ function jxaRuntime(BROWSERS, HANG) {
     if (v) delete v.tok;
     return v;
   }
+  const SELECT_TAKEN = "another perch call on this tab took over this select; not verified";
   const RB_REPLACED = "timeout: click sent, but another perch call on this tab took over its readback state; the outcome is not verified";
 
   // A click that opens a new tab is found by the app's tab lists, one bulk read
@@ -1636,6 +1637,8 @@ function jxaRuntime(BROWSERS, HANG) {
       delay(0.05);
     }
     if (!probe.ok) return { out: probe };
+    // Another call's select state: its control is not this call's to press.
+    if (a.tok != null && probe.tok !== a.tok) return { out: { ok: false, lost: true } };
     let pt = { x: probe.x, y: probe.y };
     const trace = [];
     let via = "estimate", area;
@@ -2710,17 +2713,30 @@ function jxaRuntime(BROWSERS, HANG) {
       // No start: the caller's own page call already opened the control.
       const r = a.start ? stepRead(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
+      // r.tok: the owner token of this call's page state. An answer from another
+      // call's state (another perch server's select on this tab) ends the call,
+      // with nothing more pressed or posted. No token (typeahead phases): no check.
+      const tok = r.tok;
+      let lost = false;
+      const own = function (v) { if (tok != null && v && typeof v === "object" && (v.lost || (v.tok != null && v.tok !== tok))) lost = true; return !lost; };
+      const until = function (js, ms, step) { return poll(t, js, ms, 50, step, function (v) { return !own(v) || (v != null && v !== false && !v.pending); }); };
+      const once = function (v) { own(v); return v; };
       return afterStep(a.tool || "select", function () {
         // a.trusted: a control whose synthetic open shows no list of its own gets a
         // trusted click (the tab its window shows only; never raised). A refused or
         // missed click fails closed.
         const X = a.trusted, used = [];
-        const done = function (o) { if (used.length && o) o.trusted = used; return o; };
+        const done = function (o) {
+          if (lost) o = { ok: false, error: SELECT_TAKEN };
+          if (used.length && o) o.trusted = used;
+          if (o && typeof o === "object") delete o.tok;
+          return o;
+        };
         let T = null;
         const selectClick = function (part) {
           if (!T) T = trustedTarget({ target: a.target }, "select {trusted:true}");
-          const c = aimedClick(T, { probe: part, check: X.check }, "select");
-          if (c.stop) return c.stop.gone ? null : c.stop;
+          const c = aimedClick(T, { probe: part, check: X.check, tok: tok }, "select");
+          if (c.stop) return c.stop.lost ? (lost = true) : c.stop.gone ? null : c.stop;
           if (!c.out.ok) return { ok: false, hit: c.out.hit, el: c.out.el, error: "the trusted click on " + c.out.el + " did not land on it (hit: " + c.out.hit + "); nothing was picked" };
           used.push(part === X.option ? "option" : "control");
           return null;
@@ -2729,36 +2745,43 @@ function jxaRuntime(BROWSERS, HANG) {
         // text box can take the editing command's trusted input instead (select_type).
         // So does a shown one whose menu a trusted click leaves shut (it opens on typing).
         let typed = false;
-        if (X && !poll(t, X.open, 400, 50)) {
+        if (X && !until(X.open, 400)) {
+          if (lost) return done(null);
           const shown = isActive(t);
           if (shown) {
             const c = selectClick(X.control);
-            if (c) return c;
+            if (c) return done(c);
           }
-          if (!shown || !poll(t, X.open, 400, 50)) {
-            const r = stepRead(t, X.type);
+          if (!shown || !until(X.open, 400)) {
+            if (lost) return done(null);
+            const r = once(stepRead(t, X.type));
+            if (lost) return done(null);
             if (r && r.none && !shown) throw new Error(notVisible("select {trusted:true}"));
             if (r && r.ok) { used.push("typed"); typed = true; }
             else if (!r || !r.none) return done(r);
           }
         }
+        if (lost) return done(null);
         // a.short: give up early unless a.probe says a list or companion is there.
         // A pick step answering {settled} has found nothing more worth waiting for.
-        let picked = poll(t, a.pick, a.short || a.wait || 2500, 50, true);
-        if (!picked && a.short && readExec(t, a.probe) === true) picked = poll(t, a.pick, a.wait - a.short, 50, true);
+        let picked = until(a.pick, a.short || a.wait || 2500, true);
+        if (!picked && !lost && a.short && readExec(t, a.probe) === true) picked = until(a.pick, a.wait - a.short, true);
+        if (lost) return done(null);
         if (picked && picked.value.settled) picked = null;
-        if (!picked && !a.missFinal) return done(readExec(t, a.miss));
+        if (!picked && !a.missFinal) return done(once(readExec(t, a.miss)));
         if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : readExec(t, a.missFinal); }
         // A thrown pick never reaches the option click or the read: Node codes it.
         if (picked.value.ok === false || picked.value.__perch_error != null) return done(picked.value);
         const pressed = picked.value.picked;
         // A pick that doesn't show while the popup stays open gets a trusted click on the option.
-        if (X && !typed && !poll(t, X.keep, 500, 50)) {
+        if (X && !typed && !until(X.keep, 500)) {
+          if (lost) return done(null);
           const c = selectClick(X.option);
           if (c) return done(c);
         }
-        const read = poll(t, a.read, 500, 50);
-        const out = read ? read.value : readExec(t, a.readFinal);
+        if (lost) return done(null);
+        const read = until(a.read, 500);
+        const out = read ? read.value : once(readExec(t, a.readFinal));
         if (out && out.ok === false && typeof pressed === "string" && /^the page changed/.test(out.error)) out.pressed = pressed;
         return done(out);
       });
@@ -4098,6 +4121,15 @@ function setNative(nat, opts, opt, pref) {
 }
 // What the box shows as a whole, or "" while it shows a placeholder.
 function shownWhole(box) { return !box || box.tagName === "INPUT" || box.querySelector("[class*=placeholder], [data-placeholder]") ? "" : norm(textOf(box)); }
+`;
+
+// select's own phases, not typeahead's: whether window.__perch_select is this
+// call's. Another perch server's select on this tab may have replaced it, and a
+// phase must not press, type or Escape on a state made under other args.
+const SELECT_OWN_LIB = String.raw`
+const selKey = JSON.stringify([A.ref, A.selector, A.label_pattern, A.text, !!A.trusted]);
+const selNow = window.__perch_select;
+const selLost = selNow && selNow.key !== selKey ? { lost: true, tok: selNow.tok } : null;
 `;
 
 // What select's picker steps use beyond the matching that fill_fields shares.
@@ -5475,13 +5507,14 @@ return { ok: true, blank: { href: href }, tok: tok };
 // embedded frame is refused: frame controls take an fN ref.
 const TRUSTED_PROBE_HEAD = CLICK_LIB + String.raw`
 if (document.visibilityState === "hidden") return { ok: false, retry: "hidden" };
-let el;
+let el, selTok;
 if (A.select) {
   // select {trusted}: the control select pressed, or the option it picked (gone once its list closed).
   const s = window.__perch_select;
   if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
+  selTok = s.tok;
   el = A.select === "option" ? s.optEl : s.openEl;
-  if (A.select === "option" && !(el && el.isConnected && vis(el))) return { ok: false, gone: true };
+  if (A.select === "option" && !(el && el.isConnected && vis(el))) return { ok: false, gone: true, tok: selTok };
 } else if (A.ref || A.selector || !A.forFill) {
   const r = A.ref || A.selector ? resolveEl(A) : clickableByLabel(A);
   if (r.out) return r.out;
@@ -5532,6 +5565,7 @@ return {
   cy: cy,
   iw: window.innerWidth,
   ih: window.innerHeight,
+  tok: selTok,
 };`;
 
 // Puts back the scroll positions a shot_clip record kept, instantly even under
@@ -6067,7 +6101,7 @@ return out;
 
   // select runs in phases polled from JXA (runtime `select`), never with page
   // timers: Chrome throttles those to ~1/s in background tabs.
-  select_start: TYPEAHEAD_LIB + SELECT_LIB + SELECT_PICK_LIB + String.raw`
+  select_start: TOK_LIB + TYPEAHEAD_LIB + SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + String.raw`
 const c = findCtl(A);
 if (c.out) return c.out;
 const ctl = c.el;
@@ -6080,7 +6114,7 @@ const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], 
 const box = wrap || (ctl.tagName === "INPUT" ? ctl.parentElement : ctl);
 // A bare input's box is its parent, which may hold only its label: its value is in the input.
 const shows = wrap || ctl.tagName !== "INPUT";
-const s = { ctl: ctl, input: input, box: box, polls: 0, shown: shows ? shownParts(box) : [], whole: shows ? shownWhole(box) : "", multiBox: shows && multiBox(box, labelText(ctl)) };
+const s = { key: selKey, tok: rbTok(), ctl: ctl, input: input, box: box, polls: 0, shown: shows ? shownParts(box) : [], whole: shows ? shownWhole(box) : "", multiBox: shows && multiBox(box, labelText(ctl)) };
 // A text input's value and hidden companion go back after a miss: opening or
 // closing a typeahead may clear the text it holds.
 if (input && input.tagName === "INPUT") { s.prior = input.value; s.comp = taParts(input).comp; s.priorComp = s.comp && s.comp.value; }
@@ -6104,15 +6138,17 @@ if (!open) {
 }
 s.openEl = wrap || ctl;
 window.__perch_select = s;
-return { pending: true };
+return { pending: true, tok: s.tok };
 `,
 
-  // null = keep polling. The unfiltered list is matched first; a filter is typed
+  // {pending} = keep polling. The unfiltered list is matched first; a filter is typed
   // only when that has no match (an async or virtualized list, or one that opens
   // on input), cut at the first punctuation so a strict filter can't empty it.
-  select_pick: SELECT_LIB + SELECT_PICK_LIB + String.raw`
+  select_pick: SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
+if (selLost) return selLost;
+const tok = s.tok, wait = { pending: true, tok: tok };
 s.polls++;
 const all = ownOptions(s);
 const opts = all.filter(function (o) { return !optOff(o); });
@@ -6129,21 +6165,21 @@ if (opt) {
   s.multi = isMulti(s, opt);
   if (chosenAlready(s, opt, s.pickedN)) s.already = true;
   else press(opt);
-  return { picked: s.picked };
+  return { picked: s.picked, tok: tok };
 }
 const box = s.input || s.filter;
 // A disabled match short of exact settles only once no search box could still turn up an enabled one.
 const offM = !s.typed && wantN ? matchTier(all.filter(optOff), function (o) { return norm(textOf(o)); }, wantN) : { hits: [] };
 if (offM.hits.length) {
   s.disabled = clip(textOf(offM.hits.sort(function (a, b) { return textOf(a).length - textOf(b).length; })[0]), 60);
-  if (offM.exact || !box) return { settled: true };
+  if (offM.exact || !box) return { settled: true, tok: tok };
 }
 // A combobox that opens only on input events (Downshift) may have a toggle button
 // naming the same list; pressed once the press on the control has had a poll to show.
 if (s.opened && !all.length && !s.toggled && s.polls >= 2 && !stillOpen(s)) {
   const ids = [s.ctl, s.input].map(function (e) { return attr(e, "aria-controls"); }).filter(Boolean);
   const tog = ids.length && Array.from(document.querySelectorAll("button[aria-controls]")).find(function (b) { return b !== s.ctl && ids.indexOf(attr(b, "aria-controls")) >= 0; });
-  if (tog) { press(tog); s.toggled = true; return null; }
+  if (tog) { press(tog); s.toggled = true; return wait; }
 }
 // A miss settles ({settled}) once the list has held: text:"" after 3 polls; a
 // no-match after 8 (about 400ms), and after a typed filter only once the list
@@ -6155,10 +6191,10 @@ const sig = opts.length ? Array.from(keys.values()).join("\n") : null;
 s.same = sig && sig === s.sig ? s.same + 1 : 0;
 s.sig = sig;
 if (s.typed && sig !== s.typedSig) s.answered = true;
-if (sig && s.same >= (wantN ? 8 : 3) && (!wantN || s.answered || !box)) return { settled: true };
+if (sig && s.same >= (wantN ? 8 : 3) && (!wantN || s.answered || !box)) return { settled: true, tok: tok };
 if (s.typed && s.typedSig && !sig) {
   s.emptied = loadingIn([s.ctl, s.input, s.box, s.pop, s.listRoot].concat(linkedLists(s))) ? 0 : (s.emptied || 0) + 1;
-  if (s.emptied >= 8) return { settled: true };
+  if (s.emptied >= 8) return { settled: true, tok: tok };
 } else s.emptied = 0;
 if (!s.typed && wantN && box && s.polls >= 4) {
   const q = wantT.trim().split(/[^\p{L}\p{N} ]/u)[0].trim() || wantT.trim();
@@ -6170,14 +6206,15 @@ if (!s.typed && wantN && box && s.polls >= 4) {
   s.typed = box;
   s.typedSig = sig;
 }
-return null;
+return wait;
 `,
 
   // Candidates come from the control's own list, unfiltered when it was seen; the
   // typed filter is cleared and a menu select opened is closed again.
-  select_miss: TYPEAHEAD_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + EDIT_LIB + String.raw`
+  select_miss: TYPEAHEAD_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + EDIT_LIB + SELECT_OWN_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
+if (selLost) return selLost;
 const now = ownOptions(s).filter(function (o) { return !optOff(o); }).slice(0, 30).map(function (o) { return clip(textOf(o), 60); });
 const cands = s.cands || now;
 if (s.typedTrusted) { editClear(s.typed); taBlur(s.typed); }
@@ -6186,27 +6223,29 @@ if (s.prior != null && s.input.value !== s.prior) { setNativeValue(s.input, s.pr
 if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
 // Escape on a closed Downshift menu clears its selection, so only an open one gets it.
 if (s.opened && stillOpen(s)) escapeOwn(s);
-if (s.disabled) return { ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands };
-if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [] };
-const out = { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands };
+if (s.disabled) return { ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands, tok: s.tok };
+if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [], tok: s.tok };
+const out = { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands, tok: s.tok };
 // For fill's preference list: a typed filter missed, so a later preference may still turn up.
 if (s.typed && Array.isArray(A.text)) out.filtered = true;
 return out;
 `,
 
   // select {trusted}: whether the synthetic open showed the control's own list.
-  select_open: SELECT_LIB + SELECT_PICK_LIB + String.raw`
+  select_open: SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + String.raw`
 const s = window.__perch_select;
-return !!s && stillOpen(s);
+if (!s) return false;
+return selLost || (stillOpen(s) ? { tok: s.tok } : { pending: true, tok: s.tok });
 `,
 
   // select {trusted} in a background tab, where no trusted click can open the menu:
   // types a filter into the control's own empty text box through the editing
   // command. The box is the control itself, its inner input, an input in its box,
   // or a search box in its linked popup; never one elsewhere. {none}: no such box.
-  select_type: TYPEAHEAD_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + EDIT_LIB + String.raw`
+  select_type: TYPEAHEAD_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + EDIT_LIB + SELECT_OWN_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
+if (selLost) return selLost;
 const lists = linkedLists(s);
 const own = [s.input].concat(Array.from(s.box.querySelectorAll ? s.box.querySelectorAll("input") : []));
 lists.forEach(function (m) { own.push.apply(own, Array.from(m.querySelectorAll("input"))); });
@@ -6216,26 +6255,27 @@ const el = own.find(function (i) {
   if (lists.some(function (m) { return m.contains(i); })) return true;
   return !i.closest("[role=search]") && (s.ctl.contains(i) || s.box.contains(i));
 });
-if (!el) return { none: true };
+if (!el) return { none: true, tok: s.tok };
 // The option's text up to its first punctuation, so a strict filter can't empty the list.
 const t = wantT.trim(), cut = t.split(/[,;(\/-]/)[0].trim().slice(0, 30);
 const e = editType(el, cut.length >= 2 ? cut : t.slice(0, 30));
 if (!e.ok) {
   editClear(el);
   taBlur(el);
-  return { ok: false, error: "the picker ignored background typing", trusted: [] };
+  return { ok: false, error: "the picker ignored background typing", trusted: [], tok: s.tok };
 }
 s.typed = el;
 s.typedSig = null;
 s.typedTrusted = true;
-return { ok: true };
+return { ok: true, tok: s.tok };
 `,
 
-  // Until the control shows the choice: null (keep polling); A.final reports anyway.
+  // Until the control shows the choice: {pending} (keep polling); A.final reports anyway.
   // A.keep leaves an open popup alone, so a pick that didn't show can still be clicked.
-  select_read: SELECT_LIB + SELECT_PICK_LIB + String.raw`
+  select_read: SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "the page changed after the pick was pressed; not verified" };
+if (selLost) return selLost;
 // A popup select opened and a pick left open (a multi-select) closes again.
 if (s.opened && !s.closed && !A.keep) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
 // An input's own value first: its wrapper may hold only its label.
@@ -6249,8 +6289,8 @@ const shown = clip(parts.length > 1 && !/[,;\n]/.test(full) ? parts.join(", ") :
 const now = norm(full);
 const grew = !s.multi && s.whole && now !== s.whole && now.indexOf(s.whole) === 0;
 const seen = has(full) || (!s.multi && parts.some(function (t) { return norm(t) === s.pickedN; })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; })));
-if (!seen && !A.final) return null;
-const out = { ok: true, selected: s.picked, el: ident(s.ctl), value: shown };
+if (!seen && !A.final) return { pending: true, tok: s.tok };
+const out = { ok: true, selected: s.picked, el: ident(s.ctl), value: shown, tok: s.tok };
 if (s.pref) out.pref = s.pref;
 if (!seen) out.unverified = true;
 if (s.already) out.note = "already chosen; not pressed again, since a press would toggle it off";
