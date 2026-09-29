@@ -5972,7 +5972,13 @@ const s = window.__perch_rb;
 const text = rbText();
 if (!s) {
   if (!A.final && (text == null || document.readyState === "loading")) return null;
-  return { readback: text, changed: true, navigated: true, url: location.href };
+  const out = { readback: text, changed: true, navigated: true, url: location.href }, page = {};
+  const hd = ["h1", "h2"].map(function (t) { return Array.prototype.find.call(document.querySelectorAll(t), vis); }).filter(Boolean)[0];
+  const heading = clip(textOf(hd), 120), alert = clip(rbAlerts([]).join(" | "), 140);
+  if (heading) page.heading = heading;
+  if (alert) page.alert = alert;
+  if (heading || alert) out.page = page;
+  return out;
 }
 const moved = location.href !== s.url;
 // A class change must still be there on the next poll.
@@ -7333,7 +7339,7 @@ const TOOLS = [
     y: { type: "number" },
     trusted: { type: "boolean" },
     raise: { type: "boolean" },
-    readback: { type: "string", description: "CSS; its text once changed (2s cap; ~0.7s quiet, 1.2s hidden tab): {readback,changed,url?} +form outcome." },
+    readback: { type: "string", description: "CSS; its text once changed (2s cap; ~0.7s quiet, 1.2s hidden tab): {readback,changed,url?} +form/page." },
     hover: { type: "boolean" },
     target: TARGET,
   }),
