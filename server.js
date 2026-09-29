@@ -64,11 +64,12 @@ function jxaRuntime(BROWSERS, HANG) {
     const m = /^([a-z-]+):(.+)$/.exec(String(h));
     return m && BY_KEY[m[1]] ? { app: BY_KEY[m[1]], raw: m[2] } : null;
   }
-  function handleOf(t) {
+  // `count`: the caller issues the handle (navigate), so its window's counts go in the note.
+  function handleOf(t, count) {
     try {
       if (t.kind === "safari") {
         const id = t.win.id();
-        if (t.idx == null) return safariHandle(id, t.idx, t.tab.url());
+        if (t.idx == null || !count) return safariHandle(id, t.idx, t.tab.url());
         const urls = t.win.tabs.url(), h = safariHandle(id, t.idx, urls[t.idx]);
         counted(h, urls, t.idx);
         return h;
@@ -2126,7 +2127,7 @@ function jxaRuntime(BROWSERS, HANG) {
       // `href`: the document the check found; `stayed`: the tab's url when loading
       // settled with it still on the one it had before.
       const result = function (waited, href, stayed) {
-        const o = { waited: waited, tabId: handleOf(t) };
+        const o = { waited: waited, tabId: handleOf(t, true) };
         if (href != null) o.href = href;
         if (stayed != null) o.stayed = stayed;
         if (!viaPage && t.kind !== "safari") o.warning = "navigating from outside the page may bring the browser to the front";
@@ -2859,10 +2860,16 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   if (typeof out === "string" && out.startsWith(NOTE_MARK)) {
     const end = out.indexOf(NOTE_MARK, 1), n = JSON.parse(out.slice(1, end));
     out = out.slice(end + 1);
-    if (stampedHandles.size > 5000 || stampCounts.size > 20000) { stampedHandles.clear(); movedTo.clear(); stampCounts.clear(); }
+    if (stampedHandles.size > 5000) { stampedHandles.clear(); movedTo.clear(); }
     if (n.s) stampedHandles.add(n.s);
-    for (const h in n.c || {}) stampCounts.set(h, n.c[h]);
     const c = callNotes.getStore();
+    // Counts wait for the result, which says which handles the call issued.
+    if (n.c) {
+      if (c) {
+        Object.assign((c.counts ||= {}), n.c);
+        if (n.s) (c.stamped ||= new Set()).add(n.s);
+      } else if (n.s && n.c[n.s]) keepCounts({ [n.s]: n.c[n.s] }, () => true);
+    }
     if (n.m) {
       if (n.m !== tabId) movedTo.set(tabId, n.m);
       if (c) c.moved = n.m;
@@ -2884,6 +2891,17 @@ const movedTo = new Map();
 // unstamped page at its index only while these still match: a reload keeps them,
 // a same-URL tab sliding in after its tab closed changes them.
 const stampCounts = new Map();
+export const STAMP_LIMITS = { counts: 20000 };
+// Only counts a call can vouch for are kept: those of a handle its result issued,
+// or of the one its pick stamped (page JS proved the tab). Past the cap only the
+// counts go, so a stamped handle is refused rather than trusted.
+function keepCounts(counts, ok) {
+  for (const h in counts) {
+    if (!ok(h)) continue;
+    if (stampCounts.size > STAMP_LIMITS.counts) stampCounts.clear();
+    stampCounts.set(h, counts[h]);
+  }
+}
 const callNotes = new AsyncLocalStorage();
 
 // A page's alert/confirm/prompt blocks its JS, and with it our call, until the
@@ -6364,6 +6382,7 @@ export function formatResult(result) {
 function issuedHandles(name, result) {
   if (!result || typeof result !== "object") return [];
   if (name === "list_tabs") return (result.tabs || []).map((t) => t.tabId);
+  if (name === "click") return result.opened && result.opened.tabId ? [result.opened.tabId] : [];
   return name === "new_tab" || name === "navigate" ? [result.tabId] : [];
 }
 
@@ -6391,7 +6410,9 @@ export async function handleCall(name, args = {}) {
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
     const note = {};
     const result = await callNotes.run(note, () => handler(args));
-    for (const t of issuedHandles(name, result)) { stampedHandles.delete(t); movedTo.delete(t); }
+    const issued = new Set(issuedHandles(name, result));
+    if (note.counts) keepCounts(note.counts, (h) => issued.has(h) || (note.stamped && note.stamped.has(h)));
+    for (const t of issued) { stampedHandles.delete(t); movedTo.delete(t); }
     return note.moved ? withMoved(name, result, note.moved) : formatResult(result);
   } catch (e) {
     return { content: [{ type: "text", text: `error: ${e.message}` }], isError: true };

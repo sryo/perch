@@ -4,7 +4,7 @@
 // recorded window and closes only the tab at the recorded index.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, STAMP_LIMITS } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
 
@@ -340,4 +340,32 @@ test("a navigate handle that stamped still runs after its page reloads", async (
   const e = await call("eval_js", { script: HIT, target: { tabId: h } });
   assert.notEqual(e.r.isError, true, e.t);
   assert.equal(world.page("Safari", 0, 1).hits, 1);
+});
+
+// Counts are a stamped handle's only proof a reload is its own, so only a call
+// that issued the handle, or stamped it, may record them.
+for (const [label, args] of [["urlContains", { urlContains: "a0" }], ["limit", { limit: 1 }]]) {
+  test(`a list_tabs whose ${label} leaves the handle out records no counts for it`, async () => {
+    install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), at("user"), other("a3")] }]);
+    const h = await handleIn(3, U);
+    assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: h } })).r.isError, true);
+    world.tabsOf("Safari", 0).splice(1, 1);
+    stale(await call("eval_js", { script: HIT, target: { tabId: h } }), "before", /can't tell which tab/);
+    const l = await call("list_tabs", args);
+    assert.ok(!l.o.tabs.some((t) => t.tabId === h), l.t);
+    stale(await call("eval_js", { script: HIT, target: { tabId: h } }), "after", /can't tell which tab/);
+    untouched(0, 1, "user");
+  });
+}
+
+test("past the counts cap a stamped handle loses its counts, not its stamp, and is refused", async () => {
+  install([{ id: 3, active: 0, tabs: [other("n0")] }, { id: 4, active: 0, tabs: [other("a0"), at("agent"), other("a2")] }]);
+  const h = await handleIn(4, U);
+  assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: h } })).r.isError, true);
+  const cap = STAMP_LIMITS.counts;
+  STAMP_LIMITS.counts = 0;
+  try { assert.equal((await call("new_tab", { url: "https://n.test/", app: "Safari" })).r.isError, undefined); } finally { STAMP_LIMITS.counts = cap; }
+  world.tabsOf("Safari", 1)[1].spec.dom = form(U);
+  stale(await call("eval_js", { script: HIT, target: { tabId: h } }), "eval_js", /can't tell which tab/);
+  assert.equal(hits(1, 1), 0);
 });
