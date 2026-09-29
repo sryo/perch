@@ -60,6 +60,34 @@ test("a Safari handle whose tab moved still runs once, in the right tab", async 
   assert.equal(world.page("Safari", 0, 1).hits, undefined, "the tab now at the recorded index never ran the script");
 });
 
+test("a Safari handle that stamped its page stays one Apple Event where the handle says", async () => {
+  install({ browsers: [safari([{ id: 3, active: 1, tabs: tabs(3, "s") }])], cg: [{ owner: "Safari" }] });
+  const h = (await listed("Safari")).find((t) => t.url === "https://s1.test/").tabId;
+  await call("eval_js", { script: "return 1", target: { tabId: h } });
+  world.reset();
+  const { o } = await call("eval_js", { script: "return location.href", target: { tabId: h } });
+  assert.equal(o, "https://s1.test/");
+  assert.equal(appleEvents(), 1, breakdown());
+});
+
+// Off its index among same-URL tabs, a handle tries one candidate per event,
+// nearest first, until its stamp answers: here the recorded index (1 event),
+// the window's URLs (1), then the user's tab (1) before its own (1).
+test("a stamped Safari handle off its index among same-URL tabs costs one event per candidate tried", async () => {
+  const same = (id) => ({ url: "https://u.test/", title: "u", id });
+  install({ browsers: [safari([{ id: 3, active: 0, tabs: [same("agent"), ...tabs(2, "s"), same("user")] }])], cg: [{ owner: "Safari" }] });
+  const h = (await listed("Safari")).find((t) => t.url === "https://u.test/").tabId;
+  await call("eval_js", { script: "return 1", target: { tabId: h } });
+  const live = world.tabsOf("Safari", 0);
+  live.splice(3, 0, live.shift()); // agent to index 3, behind the user's tab now at 2
+  world.reset();
+  const { r, t } = await call("eval_js", { script: "window.hits = (window.hits || 0) + 1; return 1", target: { tabId: h } });
+  assert.notEqual(r.isError, true, t);
+  assert.equal(world.page("Safari", 0, 3).hits, 1);
+  assert.equal(world.page("Safari", 0, 2).hits, undefined);
+  assert.equal(appleEvents(), 4, breakdown());
+});
+
 test("a Safari handle whose tab navigated away is stale and runs nothing", async () => {
   install({ browsers: [safari([{ id: 3, active: 1, tabs: tabs(2, "s") }])], cg: [{ owner: "Safari" }] });
   const h = (await listed("Safari"))[1].tabId;

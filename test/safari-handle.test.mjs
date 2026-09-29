@@ -10,9 +10,13 @@ import { page } from "./helpers/page.mjs";
 
 const safari = (windows) => ({ name: "Safari", kind: "safari", windows });
 const U = "https://u.test/";
-const form = () => page(`<input id="i"><button id="b">Go</button>`);
-const at = (id) => ({ url: U, title: "u", id, dom: form() });
-const other = (id) => ({ url: `https://${id}.test/`, title: id, id, dom: form() });
+const form = (url) => {
+  const w = page(`<input id="i"><button id="b">Go</button>`, { url });
+  w.document.getElementById("b").addEventListener("click", () => { w.clicks = (w.clicks || 0) + 1; });
+  return w;
+};
+const at = (id) => ({ url: U, title: "u", id, dom: form(U) });
+const other = (id) => ({ url: `https://${id}.test/`, title: id, id, dom: form(`https://${id}.test/`) });
 
 let world;
 function install(windows) {
@@ -38,7 +42,19 @@ function dragOut(from, i, to) {
   world.openTab("Safari", to, moved.spec.url);
   world.tabsOf("Safari", to).at(-1).spec.dom = moved.spec.dom;
 }
-const hits = (w, i) => world.tabsOf("Safari", w)[i].spec.dom.hits ?? 0;
+const dom = (w, i) => world.tabsOf("Safari", w)[i].spec.dom;
+const hits = (w, i) => dom(w, i).hits ?? 0;
+// No body ran on the tab: no eval hit, no click, nothing typed.
+const untouched = (w, i, what) => {
+  assert.equal(hits(w, i), 0, what + ": eval_js");
+  assert.equal(dom(w, i).clicks ?? 0, 0, what + ": click");
+  assert.equal(dom(w, i).document.getElementById("i").value, "", what + ": fill");
+};
+// A document perch touched under another handle.
+const stampedElsewhere = (w, i) => { dom(w, i).__perch_h = "3.9.other"; };
+const NOT_AE = /^(win\.tabs|tabs\.byId|win\.activeTab|windows\[\d+\]\(.*\)|Application\(.*\)|running\(.*\)|deepUnwrap|CGWindowList)$/;
+const events = () => Object.entries(world.counts).filter(([k]) => !NOT_AE.test(k)).reduce((s, [, n]) => s + n, 0);
+const meta = (r) => JSON.parse(r.content.filter((c) => c.type === "text").at(-1).text);
 const HIT = "window.hits = (window.hits || 0) + 1; return 1";
 const stale = ({ r, t }, what, re = /^error: stale_tab: /) => {
   assert.equal(r.isError, true, `${what}: ${t}`);
@@ -78,6 +94,8 @@ test("a tab dragged out to another window, the only one at its URL, still resolv
   const e = await call("eval_js", { script: HIT, target: { tabId: h } });
   assert.notEqual(e.r.isError, true, e.t);
   assert.equal(hits(1, 1), 1);
+  assert.equal(meta(e.r).tabId, h.replace("safari:3.1.", "safari:4.1."));
+  // The old handle still reaches it: the page's stamp names the refreshed one.
   const f = await call("fill", { selector: "#i", text: "hi", target: { tabId: h } });
   assert.notEqual(f.r.isError, true, f.t);
   assert.equal(f.o.ok, true, f.t);
@@ -128,12 +146,111 @@ test("close_tab closes the tab at the recorded index even when another tab in th
   assert.deepEqual(closes(), [["close", "Safari", "agent"]]);
 });
 
-test("page tools keep the nearest same-URL tab in the recorded window when the index drifted", async () => {
+test("page tools keep the same-URL tab carrying their stamp in the recorded window when the index drifted", async () => {
   install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), other("a2"), at("user")] }]);
   const h = await handleIn(3, U);
+  assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: h } })).r.isError, true);
   world.tabsOf("Safari", 0).splice(0, 1);
   const { r, t } = await call("eval_js", { script: HIT, target: { tabId: h } });
   assert.notEqual(r.isError, true, t);
   assert.equal(hits(0, 0), 1);
   assert.equal(hits(0, 2), 0);
+});
+
+test("an unstamped handle whose index drifted between two same-URL tabs is stale_tab and runs nothing", async () => {
+  install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), other("a2"), at("user")] }]);
+  const h = await handleIn(3, U);
+  world.tabsOf("Safari", 0).splice(0, 1);
+  stale(await call("eval_js", { script: HIT, target: { tabId: h } }), "eval_js", /can't tell which tab .*several tabs show its URL/);
+  untouched(0, 0, "agent");
+  untouched(0, 2, "user");
+});
+
+for (const [label, mark] of [["unstamped", () => {}], ["stamped by another handle", stampedElsewhere]]) {
+  test(`a stamped tab that shifted left runs, not the ${label} same-URL tab now at its recorded index`, async () => {
+    install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), at("user")] }]);
+    const h = await handleIn(3, U);
+    assert.notEqual((await call("eval_js", { script: HIT, target: { tabId: h } })).r.isError, true);
+    mark(0, 2);
+    world.tabsOf("Safari", 0).splice(0, 1);
+    const e = await call("eval_js", { script: HIT, target: { tabId: h } });
+    assert.notEqual(e.r.isError, true, e.t);
+    assert.equal(hits(0, 0), 2);
+    untouched(0, 1, "user");
+    const m = meta(e.r);
+    assert.equal(m.moved, true);
+    assert.equal(m.tabId, h.replace("safari:3.1.", "safari:3.0."));
+    assert.match(m.warning, /tab moved; tabId refreshed/);
+  });
+}
+
+test("a closed tab's handle is stale_tab when two unstamped same-URL tabs remain in its window", async () => {
+  install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), at("user1"), at("user2")] }]);
+  const h = await handleIn(3, U);
+  assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: h } })).r.isError, true);
+  world.tabsOf("Safari", 0).splice(1, 1);
+  stale(await call("click", { selector: "#b", target: { tabId: h } }), "click", /can't tell which tab .*several tabs show its URL/);
+  stale(await call("fill", { selector: "#i", text: "x", target: { tabId: h } }), "fill", /several tabs/);
+  stale(await call("eval_js", { script: HIT, target: { tabId: h } }), "eval_js", /several tabs/);
+  untouched(0, 1, "user1");
+  untouched(0, 2, "user2");
+  assert.equal(dom(0, 1).__perch_h, undefined);
+  assert.equal(dom(0, 2).__perch_h, undefined);
+});
+
+test("a closed tab's handle refuses a same-URL tab stamped by another handle that slid into its index", async () => {
+  install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), at("user"), other("a3")] }]);
+  const h = await handleIn(3, U);
+  assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: h } })).r.isError, true);
+  stampedElsewhere(0, 2);
+  world.tabsOf("Safari", 0).splice(1, 1);
+  stale(await call("eval_js", { script: HIT, target: { tabId: h } }), "eval_js");
+  stale(await call("click", { selector: "#b", target: { tabId: h } }), "click");
+  stale(await call("fill", { selector: "#i", text: "x", target: { tabId: h } }), "fill");
+  untouched(0, 1, "user");
+  assert.equal(dom(0, 1).__perch_h, "3.9.other");
+});
+
+// The known residual: nothing on the page tells an unstamped user tab from the agent's.
+test("a closed tab's handle still runs on an unstamped same-URL tab that slid into its index", async () => {
+  install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), at("user"), other("a3")] }]);
+  const h = await handleIn(3, U);
+  assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: h } })).r.isError, true);
+  world.tabsOf("Safari", 0).splice(1, 1);
+  const e = await call("eval_js", { script: HIT, target: { tabId: h } });
+  assert.notEqual(e.r.isError, true, e.t);
+  assert.equal(hits(0, 1), 1);
+});
+
+test("a single unstamped same-URL tab off the recorded index runs, and returns its refreshed tabId", async () => {
+  install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), other("a2")] }]);
+  const h = await handleIn(3, U);
+  world.tabsOf("Safari", 0).splice(0, 1);
+  const f = await call("fill", { selector: "#i", text: "hi", target: { tabId: h } });
+  assert.notEqual(f.r.isError, true, f.t);
+  assert.equal(f.o.ok, true, f.t);
+  assert.equal(f.o.moved, true, f.t);
+  assert.match(f.o.warning, /tab moved; tabId refreshed/);
+  const fresh = h.replace("safari:3.1.", "safari:3.0.");
+  assert.equal(f.o.tabId, fresh);
+  world.reset();
+  const e = await call("eval_js", { script: HIT, target: { tabId: fresh } });
+  assert.notEqual(e.r.isError, true, e.t);
+  assert.equal(hits(0, 0), 1);
+  assert.equal(events(), 1, JSON.stringify(world.counts));
+  assert.equal(e.r.content.length, 1, "no moved note on an in-place hit");
+});
+
+test("a list_tabs handle for a tab stamped under its older handle runs in one event", async () => {
+  install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), other("a2")] }]);
+  const h = await handleIn(3, U);
+  assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: h } })).r.isError, true);
+  world.tabsOf("Safari", 0).splice(0, 1);
+  const fresh = await handleIn(3, U);
+  assert.notEqual(fresh, h);
+  world.reset();
+  const e = await call("eval_js", { script: HIT, target: { tabId: fresh } });
+  assert.notEqual(e.r.isError, true, e.t);
+  assert.equal(hits(0, 0), 1);
+  assert.equal(events(), 1, JSON.stringify(world.counts));
 });
