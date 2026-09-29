@@ -266,7 +266,7 @@ function jxaRuntime(BROWSERS, HANG) {
     const record = function (win, i, w) { return { tab: win.tabs[i], idx: i, tabId: null, kind: "safari", app: "Safari", win, w, P }; };
     // Which candidate is the handle's own is settled by the stamp on the first page JS (pickRun).
     const picking = function (t, m, id, away, total) {
-      t.pick = { tabId: want.tabId, raw: raw, hash: hash, idx: away ? -1 : idx, winId: id, cands: m, total: total, cnt: want.cnt, own: !!want.own, mine: ours(want, raw) };
+      t.pick = { tabId: want.tabId, raw: raw, hash: hash, idx: away ? -1 : idx, winId: id, cands: m, total: total, cnt: want.cnt, own: !!want.own, mine: ours(want, raw), foreign: want.foreign };
       return t;
     };
     // The recorded window by id: one event when the tab is still in it.
@@ -500,16 +500,19 @@ function jxaRuntime(BROWSERS, HANG) {
   // ran it under in window.__perch_h; a tab at a handle's URL that carries another
   // handle's stamp is some other tab. The guard runs `s` only on a page at `hash`
   // whose stamp `mode` allows, and rewrites the stamp to `set`:
-  //   any: any stamp (a handle perch hasn't stamped with, fresh from a listing)
+  //   any: any stamp but those in `foreign` (a handle perch hasn't stamped with,
+  //        fresh from a listing; `foreign` are handles that stamped since it was issued)
   //   free: one of `ours` or none
   //   ours: one of `ours` only; an unstamped page answers UNSTAMPED
   // `ours` is the handle's raw id and those of the handles perch refreshed it to.
   const WRONG_TAB = "__perch_wrong_tab__", UNSTAMPED = "__perch_unstamped__";
   const ours = function (want, raw) { return [raw].concat(want.next || []); };
-  function stampGuard(s, hash, mine, set, mode) {
+  function stampGuard(s, hash, mine, set, mode, foreign) {
     const q = JSON.stringify;
+    const refuse = mode !== "any" ? "h!==undefined&&" + q(mine) + ".indexOf(h)<0"
+      : foreign && foreign.length ? q(foreign) + ".indexOf(h)>=0" : "";
     return "(function(){if((" + fp + ")(location.href)!==" + q(hash) + ")return " + q(WRONG_TAB) + ";var h=window.__perch_h;" +
-      (mode === "any" ? "" : "if(h!==undefined&&" + q(mine) + ".indexOf(h)<0)return " + q(WRONG_TAB) + ";") +
+      (refuse ? "if(" + refuse + ")return " + q(WRONG_TAB) + ";" : "") +
       (mode === "ours" ? "if(h===undefined)return " + q(UNSTAMPED) + ";" : "") +
       "window.__perch_h=" + q(set) + ";return (\n" + s + "\n)})()";
   }
@@ -547,7 +550,7 @@ function jxaRuntime(BROWSERS, HANG) {
       const set = P.winId == null ? P.raw : P.winId + "." + i + "." + P.hash;
       t.idx = i;
       t.tab = t.win.tabs[i];
-      const r = safariJs(t, stampGuard(js, P.hash, P.mine, set, mode));
+      const r = safariJs(t, stampGuard(js, P.hash, P.mine, set, mode, P.foreign));
       if (r === WRONG_TAB || r === UNSTAMPED) return r;
       noted(P.raw, set);
       if (P.total != null) (note.c = note.c || {})["safari:" + set] = [c.length, P.total];
@@ -562,8 +565,15 @@ function jxaRuntime(BROWSERS, HANG) {
     // is its reload, or a tab that slid in; only unchanged counts say reload.
     const same = P.own && P.cnt != null && P.cnt[0] === c.length && P.cnt[1] === P.total && c.indexOf(P.idx) >= 0;
     if (c.length === 1 && (!P.own || same)) return one(run(c[0], c[0] === P.idx && !P.own ? "any" : "free"));
-    if (!P.own && c.indexOf(P.idx) >= 0) return one(run(P.idx, "any"));
-    const order = c.slice().sort(function (x, y) { return (x !== P.idx) - (y !== P.idx) || Math.abs(x - P.idx) - Math.abs(y - P.idx) || x - y; });
+    // A stamp written since the listing (P.foreign) refuses the tab at the index;
+    // another candidate may still carry this handle's own stamp.
+    let refused = -1;
+    if (!P.own && c.indexOf(P.idx) >= 0) {
+      const r = run(P.idx, "any");
+      if (r !== WRONG_TAB) return r.v;
+      refused = P.idx;
+    }
+    const order = c.filter(function (i) { return i !== refused; }).sort(function (x, y) { return (x !== P.idx) - (y !== P.idx) || Math.abs(x - P.idx) - Math.abs(y - P.idx) || x - y; });
     for (const i of order) {
       const r = run(i, "ours");
       if (r !== WRONG_TAB && r !== UNSTAMPED) return r.v;
@@ -590,7 +600,7 @@ function jxaRuntime(BROWSERS, HANG) {
         if (!m || !alive("Safari", procs())) return null;
         // A page stamped under another handle, or (for a handle that has stamped
         // before) not stamped at all, is left to pickRun, which sees the other candidates.
-        const guard = function (s, mode) { return stampGuard(s, m[3], ours(want, h.raw), h.raw, mode); };
+        const guard = function (s, mode) { return stampGuard(s, m[3], ours(want, h.raw), h.raw, mode, want.foreign); };
         const win = app("Safari").windows.byId(Number(m[1])), tab = win.tabs[Number(m[2])];
         let v;
         try { v = app("Safari").doJavaScript(guard(js, want.own ? "ours" : "any"), { in: tab }); }
@@ -2845,10 +2855,20 @@ async function jxaOneShot(script, { timeout = JXA_DEFAULT_TIMEOUT } = {}) {
 async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   const tabId = args && args.target && args.target.tabId;
   const safari = typeof tabId === "string" && tabId.startsWith("safari:");
-  if (safari && (stampedHandles.has(tabId) || movedTo.has(tabId))) {
-    const next = [];
-    for (let h = movedTo.get(tabId); h && next.length < 10; h = movedTo.get(h)) next.push(h.slice(7));
-    args = { ...args, target: { ...args.target, own: true, next, cnt: stampCounts.get(tabId) } };
+  if (safari) {
+    let own = stampedHandles.has(tabId) || movedTo.has(tabId), foreign = null;
+    if (!own) {
+      const at = issueSeq.get(tabId);
+      // Unknown to Node (a restart, a hand-built handle) it is trusted like a fresh
+      // listing until a cap has forgotten a handle, since it may be that one.
+      if (at == null) own = forgotHandle;
+      else own = at < stampFloor || (foreign = stampsSince(tabId, at)) === null;
+    }
+    if (own) {
+      const next = [];
+      for (let h = movedTo.get(tabId); h && next.length < 10; h = movedTo.get(h)) next.push(h.slice(7));
+      args = { ...args, target: { ...args.target, own: true, next, cnt: stampCounts.get(tabId) } };
+    } else if (foreign && foreign.length) args = { ...args, target: { ...args.target, foreign } };
   }
   const call = `__perch.${fn}(${JSON.stringify(args)})`;
   let script = raw ? call : `JSON.stringify(${call})`;
@@ -2861,8 +2881,12 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   if (typeof out === "string" && out.startsWith(NOTE_MARK)) {
     const end = out.indexOf(NOTE_MARK, 1), n = JSON.parse(out.slice(1, end));
     out = out.slice(end + 1);
-    if (stampedHandles.size > 5000) { stampedHandles.clear(); movedTo.clear(); }
-    if (n.s) stampedHandles.add(n.s);
+    if (n.s) {
+      remember(stampedHandles, n.s);
+      remember(stampSeq, n.s, ++stampClock);
+      issueSeq.delete(n.s);
+      issueSeq.delete(tabId);
+    }
     const c = callNotes.getStore();
     // Counts wait for the result, which says which handles the call issued.
     if (n.c) {
@@ -2872,7 +2896,7 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
       } else if (n.s && n.c[n.s]) keepCounts({ [n.s]: n.c[n.s] }, () => true);
     }
     if (n.m) {
-      if (n.m !== tabId) movedTo.set(tabId, n.m);
+      if (n.m !== tabId) remember(movedTo, tabId, n.m);
       if (c) c.moved = n.m;
     }
   }
@@ -2892,7 +2916,41 @@ const movedTo = new Map();
 // unstamped page at its index only while these still match: a reload keeps them,
 // a same-URL tab sliding in after its tab closed changes them.
 const stampCounts = new Map();
-export const STAMP_LIMITS = { counts: 20000 };
+export const STAMP_LIMITS = { counts: 20000, stamped: 5000 };
+// Issues and stamps share one clock, so a stamp can be dated against an issue.
+// issueSeq: a Safari handle a call's result issued and that hasn't stamped since.
+// stampSeq: a Safari handle -> its latest stamp.
+let stampClock = 0;
+const issueSeq = new Map(), stampSeq = new Map();
+// Past STAMP_LIMITS.stamped the oldest entries go (each collection is kept in
+// last-use order), and the caps fail closed: once any handle is forgotten, one
+// Node doesn't know is held to a stamped handle's rules, and a handle issued
+// before the latest forgotten stamp (stampFloor) is too, since it can't be
+// told which stamps came after it.
+let forgotHandle = false, stampFloor = 0;
+function remember(coll, k, v) {
+  coll.delete(k);
+  if (coll instanceof Set) coll.add(k); else coll.set(k, v);
+  for (const [old, at] of coll.entries()) {
+    if (coll.size <= STAMP_LIMITS.stamped) break;
+    coll.delete(old);
+    if (coll === stampSeq) stampFloor = at; else forgotHandle = true;
+  }
+}
+// Raw ids of the handles that stamped a tab in `tabId`'s window at its URL after
+// clock `since`: a tab they stamped is not the one the listing vouched for. null
+// when there are too many to send, so the handle is held to the strict rules.
+function stampsSince(tabId, since) {
+  const [win, , ...rest] = tabId.slice(7).split("."), hash = rest.join(".");
+  const out = [];
+  for (const [h, at] of stampSeq) {
+    if (at <= since || h === tabId) continue;
+    const [w, , ...r] = h.slice(7).split(".");
+    if (w !== win || r.join(".") !== hash) continue;
+    if (out.push(h.slice(7)) > 20) return null;
+  }
+  return out;
+}
 // Only counts a call can vouch for are kept: those of a handle its result issued,
 // or of the one its pick stamped (page JS proved the tab). Past the cap only the
 // counts go, so a stamped handle is refused rather than trusted.
@@ -6413,7 +6471,11 @@ export async function handleCall(name, args = {}) {
     const result = await callNotes.run(note, () => handler(args));
     const issued = new Set(issuedHandles(name, result));
     if (note.counts) keepCounts(note.counts, (h) => issued.has(h) || (note.stamped && note.stamped.has(h)));
-    for (const t of issued) { stampedHandles.delete(t); movedTo.delete(t); }
+    for (const t of issued) {
+      stampedHandles.delete(t);
+      movedTo.delete(t);
+      if (typeof t === "string" && t.startsWith("safari:")) remember(issueSeq, t, ++stampClock);
+    }
     return note.moved ? withMoved(name, result, note.moved) : formatResult(result);
   } catch (e) {
     return { content: [{ type: "text", text: `error: ${e.message}` }], isError: true };

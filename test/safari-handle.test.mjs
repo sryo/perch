@@ -328,6 +328,21 @@ test("a list_tabs handle for a tab stamped under its older handle runs in one ev
   assert.equal(events(), 1, JSON.stringify(world.counts));
 });
 
+// A listing vouches for its handles' indexes only as of the listing: a stamp
+// another handle wrote since then marks a tab that slid in, not this one.
+test("a never-stamped handle refuses a same-URL tab another handle stamped after the listing", async () => {
+  install([{ id: 3, active: 0, tabs: [other("x"), at("a"), at("b")] }]);
+  const [a, b] = (await call("list_tabs", {})).o.tabs.filter((t) => t.url === U).map((t) => t.tabId);
+  assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: b } })).r.isError, true);
+  world.tabsOf("Safari", 0).splice(0, 1);
+  stale(await call("eval_js", { script: HIT, target: { tabId: a } }), "eval_js");
+  stale(await call("fill", { selector: "#i", text: "x", target: { tabId: a } }), "fill");
+  stale(await call("click", { selector: "#b", target: { tabId: a } }), "click");
+  untouched(0, 1, "b");
+  untouched(0, 0, "a");
+  assert.equal(dom(0, 1).__perch_h, b.slice(7));
+});
+
 test("a navigate handle that stamped still runs after its page reloads", async () => {
   install([{ id: 3, active: 0, tabs: [{ url: "https://a0.test/" }, { url: "https://a1.test/" }] }]);
   const h0 = await handleIn(3, "https://a1.test/");
@@ -368,4 +383,44 @@ test("past the counts cap a stamped handle loses its counts, not its stamp, and 
   world.tabsOf("Safari", 1)[1].spec.dom = form(U);
   stale(await call("eval_js", { script: HIT, target: { tabId: h } }), "eval_js", /can't tell which tab/);
   assert.equal(hits(1, 1), 0);
+});
+
+// Past STAMP_LIMITS.stamped the oldest stamped handles are forgotten; a handle
+// perch no longer knows is then held to a stamped handle's rules, not trusted.
+test("a stamped handle evicted past the stamped cap is refused an unstamped page after counts change", async () => {
+  install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), other("a2")] }]);
+  const s = await handleIn(3, U), t = await handleIn(3, "https://a2.test/");
+  assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: s } })).r.isError, true);
+  const cap = STAMP_LIMITS.stamped;
+  STAMP_LIMITS.stamped = 1;
+  try { assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: t } })).r.isError, true); } finally { STAMP_LIMITS.stamped = cap; }
+  world.tabsOf("Safari", 0)[1].spec.dom = form(U);
+  world.openTab("Safari", 0, "https://a3.test/");
+  stale(await call("eval_js", { script: HIT, target: { tabId: s } }), "eval_js", /can't tell which tab/);
+  stale(await call("fill", { selector: "#i", text: "x", target: { tabId: s } }), "fill", /can't tell which tab/);
+  untouched(0, 1, "user");
+});
+
+test("after an eviction a freshly listed handle still runs on the unstamped page at its index in one event", async () => {
+  install([{ id: 3, active: 0, tabs: [other("a0"), at("agent"), other("a2")] }]);
+  const h = await handleIn(3, U);
+  world.reset();
+  const e = await call("eval_js", { script: HIT, target: { tabId: h } });
+  assert.notEqual(e.r.isError, true, e.t);
+  assert.equal(hits(0, 1), 1);
+  assert.equal(events(), 1, JSON.stringify(world.counts));
+});
+
+test("a never-stamped handle issued before a forgotten stamp refuses a same-URL tab stamped since", async () => {
+  install([{ id: 3, active: 0, tabs: [other("x"), at("a"), at("b"), other("c")] }]);
+  const tabs = (await call("list_tabs", {})).o.tabs;
+  const [a, b] = tabs.filter((t) => t.url === U).map((t) => t.tabId), c = tabs.find((t) => t.url === "https://c.test/").tabId;
+  assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: b } })).r.isError, true);
+  const cap = STAMP_LIMITS.stamped;
+  STAMP_LIMITS.stamped = 1;
+  try { assert.notEqual((await call("eval_js", { script: "return 1", target: { tabId: c } })).r.isError, true); } finally { STAMP_LIMITS.stamped = cap; }
+  world.tabsOf("Safari", 0).splice(0, 1);
+  stale(await call("eval_js", { script: HIT, target: { tabId: a } }), "eval_js");
+  untouched(0, 1, "b");
+  assert.equal(dom(0, 1).__perch_h, b.slice(7));
 });
