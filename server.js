@@ -2029,17 +2029,19 @@ function jxaRuntime(BROWSERS, HANG) {
         };
         // A tab its window doesn't show can't take a trusted click; its control's own
         // text box can take the editing command's trusted input instead (select_type).
+        // So does a shown one whose menu a trusted click leaves shut (it opens on typing).
         let typed = false;
         if (X && !poll(t, X.open, 400, 50)) {
-          if (isActive(t)) {
+          const shown = isActive(t);
+          if (shown) {
             const c = selectClick(X.control);
             if (c) return c;
-          } else {
+          }
+          if (!shown || !poll(t, X.open, 400, 50)) {
             const r = stepRead(t, X.type);
-            if (r && r.none) throw new Error(notVisible("select {trusted:true}"));
-            if (!r || !r.ok) return r;
-            used.push("typed");
-            typed = true;
+            if (r && r.none && !shown) throw new Error(notVisible("select {trusted:true}"));
+            if (r && r.ok) { used.push("typed"); typed = true; }
+            else if (!r || !r.none) return done(r);
           }
         }
         // a.short: give up early unless a.probe says a list or companion is there.
