@@ -6270,7 +6270,7 @@ s.typedTrusted = true;
 return { ok: true, tok: s.tok };
 `,
 
-  // Until the control shows the choice: {pending} (keep polling); A.final reports anyway.
+  // Until the control shows the choice: {pending} (keep polling); A.final answers ok:false.
   // A.keep leaves an open popup alone, so a pick that didn't show can still be clicked.
   select_read: SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + String.raw`
 const s = window.__perch_select;
@@ -6290,9 +6290,10 @@ const now = norm(full);
 const grew = !s.multi && s.whole && now !== s.whole && now.indexOf(s.whole) === 0;
 const seen = has(full) || (!s.multi && parts.some(function (t) { return norm(t) === s.pickedN; })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; })));
 if (!seen && !A.final) return { pending: true, tok: s.tok };
-const out = { ok: true, selected: s.picked, el: ident(s.ctl), value: shown, tok: s.tok };
+const out = seen
+  ? { ok: true, selected: s.picked, el: ident(s.ctl), value: shown, tok: s.tok }
+  : { ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control shows ' + (shown ? '"' + shown + '"' : "nothing") + "; not verified", pressed: s.picked, el: ident(s.ctl), value: shown, tok: s.tok };
 if (s.pref) out.pref = s.pref;
-if (!seen) out.unverified = true;
 if (s.already) out.note = "already chosen; not pressed again, since a press would toggle it off";
 return out;
 `,

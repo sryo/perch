@@ -228,25 +228,25 @@
   {
    "label_pattern": "destination",
    "text": "Córdoba, Argentina",
-   "r": "{\"ok\":true,\"selected\":\"Córdoba, Argentina\",\"el\":\"combobox \\\"Destination\\\"\",\"value\":\"Destination\",\"unverified\":true}",
+   "r": "{\"ok\":false,\"error\":\"pressed \\\"Córdoba, Argentina\\\" but the control shows \\\"Destination\\\"; not verified\",\"pressed\":\"Córdoba, Argentina\",\"el\":\"combobox \\\"Destination\\\"\",\"value\":\"Destination\"}",
    "changed": []
   },
   {
    "label_pattern": "destination",
    "text": "cordoba",
-   "r": "{\"ok\":true,\"selected\":\"Córdoba, Spain\",\"el\":\"combobox \\\"Destination\\\"\",\"value\":\"Destination\",\"unverified\":true}",
+   "r": "{\"ok\":false,\"error\":\"pressed \\\"Córdoba, Spain\\\" but the control shows \\\"Destination\\\"; not verified\",\"pressed\":\"Córdoba, Spain\",\"el\":\"combobox \\\"Destination\\\"\",\"value\":\"Destination\"}",
    "changed": []
   },
   {
    "label_pattern": "destination",
    "text": "zone 1199",
-   "r": "{\"ok\":true,\"selected\":\"Göteborg, Iceland, Zone 1199\",\"el\":\"combobox \\\"Destination\\\"\",\"value\":\"Destination\",\"unverified\":true}",
+   "r": "{\"ok\":false,\"error\":\"pressed \\\"Göteborg, Iceland, Zone 1199\\\" but the control shows \\\"Destination\\\"; not verified\",\"pressed\":\"Göteborg, Iceland, Zone 1199\",\"el\":\"combobox \\\"Destination\\\"\",\"value\":\"Destination\"}",
    "changed": []
   },
   {
    "label_pattern": "destination",
    "text": "reykjavik, sweden",
-   "r": "{\"ok\":true,\"selected\":\"Reykjavík, Sweden\",\"el\":\"combobox \\\"Destination\\\"\",\"value\":\"Destination\",\"unverified\":true}",
+   "r": "{\"ok\":false,\"error\":\"pressed \\\"Reykjavík, Sweden\\\" but the control shows \\\"Destination\\\"; not verified\",\"pressed\":\"Reykjavík, Sweden\",\"el\":\"combobox \\\"Destination\\\"\",\"value\":\"Destination\"}",
    "changed": []
   }
  ],

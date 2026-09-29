@@ -257,9 +257,12 @@ document.getElementById("c2").addEventListener("click", function () {
 test("a single value that only contains the pick does not verify it", async () => {
   const dom = onPage(STUCK);
   const o = await select({ selector: "#c2", text: "Paris" });
-  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.ok, false, JSON.stringify(o));
   assert.deepEqual([...dom.stuckLog], ["Paris"]);
-  assert.equal(o.unverified, true, JSON.stringify(o));
+  assert.equal(o.pressed, "Paris");
+  assert.match(o.value, /Paris, Texas/);
+  assert.match(o.error, /^pressed "Paris" but the control shows ".*Paris, Texas.*"; not verified$/);
+  assert.equal(o.unverified, undefined, JSON.stringify(o));
 });
 
 const LEGACY = `<div class="field"><label for="speak">Speaks</label>
