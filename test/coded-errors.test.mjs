@@ -183,6 +183,12 @@ test("one-shot failures map the same way and keep the number", async () => {
   await assert.rejects(via("Connection is invalid."), (e) => /^no_browser: .*\(AppleScript -609\)$/.test(e.message));
 });
 
+test("a coded runtime error keeps its code even with an error number attached", async () => {
+  for (const msg of ["bad_url: navigate takes an absolute http(s) URL or about:blank; got file", "tab_not_scriptable: x"]) {
+    await assert.rejects(jxa("1", { daemons: { fast: { run: async () => { throw new Error(msg + " (-1728)"); } } } }), (e) => e.message === msg + " (-1728)");
+  }
+});
+
 test("an error number the map doesn't know keeps its message and its number", async () => {
   await assert.rejects(jxa("1", { daemons: { fast: { run: async () => { throw new Error("Something odd. (-2753)"); } } } }), (e) => e.message === "Something odd. (AppleScript -2753)");
 });

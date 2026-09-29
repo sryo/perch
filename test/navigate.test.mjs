@@ -186,8 +186,6 @@ for (const [name, setup, url, code] of [
   // listener calling preventDefault); a url set through AppleScript is not
   // cancelable that way.
   ["the page cancels the load", cancelLoads, "https://next.test/", /^tab_not_visible: /],
-  ["the url is not http(s) or about:blank", () => {}, "data:text/html,<p>x</p>", /^tab_not_visible: /],
-  ["the url is relative", () => {}, "/next.html", /^tab_not_visible: /],
   ["page JS is off", () => { world.state.jsOff = true; }, "https://next.test/", /turned off/],
   ["the page never answers", () => { world.state.hung = true; world.state.linger = 1e9; }, "https://next.test/", /^timeout: /],
 ]) {
@@ -210,19 +208,19 @@ for (const [name, setup, url, code] of [
   });
 }
 
-test("navigate on Chrome: with its window already in front, the tab's url is set without raise:true", () => {
-  install(fixture());
-  const r = runtimeNavigate("data:text/html,<p>x</p>");
+test("navigate on Arc: a background tab with its window already in front has its url set without raise:true", () => {
+  install({ ...arcFixture(), cg: [{ owner: "Arc" }] });
+  const r = arcNavigate(1);
   assert.equal(r.warning, RAISE);
-  assert.deepEqual(paths(), [["navigate", "Google Chrome", "data:text/html,<p>x</p>"]]);
+  assert.deepEqual(paths(), [["navigate", "Arc", "https://next.test/"]]);
 });
 
 test("navigate on Chrome: the browser in front is not enough when the tab's window is behind another of its windows", () => {
   install({
-    browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://front.test/", id: 5 }] }, { id: 2, active: 0, tabs: [{ url: "https://back.test/", id: 7 }] }])],
+    browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://front.test/", id: 5 }] }, { id: 2, active: 0, tabs: [{ url: "chrome://newtab/", id: 7 }] }])],
     cg: [{ owner: "Google Chrome" }],
   });
-  assert.throws(() => navWith({ url: "data:text/html,x", target: { tabId: "chrome:7" } }), (e) => /^tab_not_visible: /.test(e.message));
+  assert.throws(() => navWith({ url: "https://next.test/", target: { tabId: "chrome:7" } }), (e) => /^tab_not_scriptable: /.test(e.message));
   assert.equal(world.counts["tab.url="], undefined);
 });
 
@@ -266,19 +264,22 @@ test("navigate on Chrome: after a one-off fast failure, a hung page costs a boun
   let n = 0;
   world.state.onExecute = () => { if (++n === 1) { world.state.hung = true; throw new Error("Some other AppleScript error."); } };
   const t0 = world.clock.t;
-  const r = navWith({ url: "data:text/html,x" });
+  const r = navWith({ url: "https://next.test/" });
   assert.equal(r.warning, RAISE);
   assert.ok(world.clock.t - t0 <= NAV_TIMEOUT + 200, `took ${world.clock.t - t0}ms`);
-  assert.deepEqual(paths(), [["navigate", "Google Chrome", "data:text/html,x"]]);
+  assert.deepEqual(paths(), [["navigate", "Google Chrome", "https://next.test/"]]);
 });
 
-test("navigate on Chrome: a url the page can't load, refused because its window left the front, says so", () => {
+// The window order is read again right before the url is set.
+test("navigate on Chrome: a url set from outside the page, refused because its window left the front, says so", () => {
   install({
-    browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://front.test/", id: 5 }] }, { id: 2, active: 0, tabs: [{ url: "https://other.test/", id: 7 }] }])],
+    browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "chrome://newtab/", id: 5 }] }, { id: 2, active: 0, tabs: [{ url: "https://other.test/", id: 7 }] }])],
     cg: [{ owner: "Google Chrome" }],
   });
-  world.state.onExecute = () => { world.apps["Google Chrome"].windows[1].index = 1; };
-  assert.throws(() => navWith({ url: "data:text/html,x", target: { tabId: "chrome:5" } }),
+  const tab = world.tabsOf("Google Chrome", 0)[0];
+  const loading = Object.getOwnPropertyDescriptor(tab, "loading");
+  Object.defineProperty(tab, "loading", { configurable: true, get() { world.apps["Google Chrome"].windows[1].index = 1; return loading.get.call(tab); } });
+  assert.throws(() => navWith({ url: "https://next.test/", target: { tabId: "chrome:5" } }),
     (e) => /^tab_not_visible: .*no longer in front/.test(e.message) && !/refused or cancelled/.test(e.message) && OPT_IN.test(e.message));
   assert.equal(world.counts["tab.url="], undefined);
 });
@@ -311,12 +312,12 @@ test("navigate on Chrome: from its own new-tab page with its window in front set
 });
 
 test("navigate tool: refusal is an error naming the opt-in, and raise:true passes through with the warning", async () => {
-  install(away(fixture()));
-  const res = await handleCall("navigate", { url: "data:text/html,x" });
+  install(away(newTabFixture()));
+  const res = await handleCall("navigate", { url: "https://next.test/" });
   assert.equal(res.isError, true);
-  assert.match(res.content[0].text, /^error: tab_not_visible: .*raise:true/);
+  assert.match(res.content[0].text, /^error: tab_not_scriptable: .*raise:true/);
   assert.equal(world.counts["tab.url="], undefined);
-  const o = JSON.parse((await handleCall("navigate", { url: "data:text/html,x", raise: true })).content[0].text);
+  const o = JSON.parse((await handleCall("navigate", { url: "https://next.test/", raise: true })).content[0].text);
   assert.equal(o.warning, RAISE);
   assert.equal(o.ok, true);
 });

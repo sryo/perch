@@ -14,6 +14,8 @@ The benchmark to beat is Claude in Chrome (`bench/compare/`), not Playwright.
 - The user's own browser, as it is: no extension, no debug port, no relaunch,
   no separate profile.
 - Single-file server, one runtime dependency, one-command install.
+- perch loads only absolute http(s) URLs and about:blank; local files reach a
+  page only through file_upload.
 
 ## Goals, in priority order
 When two goals conflict, the higher one wins.
