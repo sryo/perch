@@ -34,6 +34,7 @@ test("every param, element hint, error code and permission toggle stays document
   }
   assert.match(INSTRUCTIONS, /`ref` \(from accessibility_snapshot\)/, room);
   assert.match(INSTRUCTIONS, /`label_pattern` \([^)]*regex/, room);
+  assert.match(INSTRUCTIONS, /CSS `selector`/, room);
   const toolNames = TOOLS.map((t) => t.name);
   const thrown = [...source.matchAll(/["`]([a-z]+_[a-z_]+): /g)].map((m) => m[1]).filter((c) => !toolNames.includes(c));
   const codes = new Set(["tab_not_visible", "stale_tab", "window_offscreen", "window_ambiguous", "no_browser", "timeout", "tab_not_scriptable", "dialog_open", ...thrown]);
