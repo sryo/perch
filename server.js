@@ -3557,7 +3557,10 @@ function resolveClick(a) { return a.label_pattern ? clickableByLabel(a) : resolv
 const SELECT_LIB = String.raw`
 // Curly quotes and dashes fold to ASCII, so typed text matches typographic options.
 const norm = function (s) { return String(s || "").replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2010-\u2015]/g, "-").replace(/\s+/g, " ").trim().toLowerCase(); };
-const wantN = norm(A.text);
+// fill may pass an ordered preference list; the first is the one typed as a filter.
+const wantL = Array.isArray(A.text) ? A.text.map(norm) : [norm(A.text)];
+const wantN = wantL[0];
+const wantT = String(Array.isArray(A.text) ? A.text[0] : A.text);
 const OPT = "[role=option], [cmdk-item]";
 const press = function (el) {
   ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (t) {
@@ -3645,10 +3648,28 @@ function findCtl(a, groups, only) {
   return { out: out };
 }
 function nativeOf(ctl) { return ctl.tagName === "SELECT" ? ctl : (ctl.querySelector && ctl.querySelector("select")) || null; }
+// text may be an ordered preference list: a missing or disabled one moves on to
+// the next, a tie stops there, and when all miss the first one's error says so.
 function pickNative(nat, text) {
   if (unsent(nat)) return unsentOut(nat);
-  const w = norm(text);
+  const prefs = Array.isArray(text) ? text : [text];
   const opts = Array.from(nat.options);
+  let first = null;
+  for (let i = 0; i < prefs.length; i++) {
+    const m = nativeMatch(nat, opts, prefs[i]);
+    if (m.opt) return setNative(nat, opts, m.opt, i);
+    if (m.out.ambiguous) { if (i) m.out.pref = i; return m.out; }
+    if (!first) first = m.out;
+  }
+  if (Array.isArray(text)) {
+    first.tried = prefs;
+    if (!first.candidates) first.candidates = opts.slice(0, 30).map(function (o) { return clip(o.text, 60); });
+  }
+  return first;
+}
+// -> {opt} or {out}: the one enabled option text names, else why not.
+function nativeMatch(nat, opts, text) {
+  const w = norm(text);
   const on = function (o) { return !o.disabled && !(o.parentElement && o.parentElement.tagName === "OPTGROUP" && o.parentElement.disabled); };
   // Matching runs over every option so a disabled best match is named, never
   // traded for a weaker enabled one; an enabled twin of equal rank still wins.
@@ -3658,20 +3679,22 @@ function pickNative(nat, text) {
   };
   const byValue = w ? opts.filter(function (o) { return norm(o.value) === w; }) : [];
   let opt = byValue.filter(on)[0];
-  if (!opt && byValue.length) return offOut(byValue);
+  if (!opt && byValue.length) return { out: offOut(byValue) };
   if (!opt) {
     // Several equal hits short of exact are a tie, never settled by length or
     // order; of exact ones (equal once accents fold) the unfolded match goes first.
     const m = matchTier(opts, function (o) { return norm(o.text); }, w);
     const hits = m.hits.filter(on);
-    if (m.hits.length && !hits.length) return offOut(m.hits);
+    if (m.hits.length && !hits.length) return { out: offOut(m.hits) };
     if (hits.length > 1 && !m.exact) {
-      return { ok: false, ambiguous: true, error: "several options matched " + JSON.stringify(String(text)) + " equally; give a more specific text",
-        candidates: hits.slice(0, 30).map(function (o) { return clip(o.text, 60); }) };
+      return { out: { ok: false, ambiguous: true, error: "several options matched " + JSON.stringify(String(text)) + " equally; give a more specific text",
+        candidates: hits.slice(0, 30).map(function (o) { return clip(o.text, 60); }) } };
     }
     opt = hits.find(function (o) { return norm(o.text) === w; }) || hits[0];
   }
-  if (!opt) return { ok: false, error: "no matching option", candidates: opts.slice(0, 30).map(function (o) { return clip(o.text, 60); }) };
+  return opt ? { opt: opt } : { out: { ok: false, error: "no matching option", candidates: opts.slice(0, 30).map(function (o) { return clip(o.text, 60); }) } };
+}
+function setNative(nat, opts, opt, pref) {
   const prior = nat.selectedIndex;
   // Setting .value selects the first option holding it, so a later twin goes by index.
   if (opts.some(function (o) { return o.index < opt.index && o.value === opt.value; })) {
@@ -3680,7 +3703,7 @@ function pickNative(nat, text) {
   } else setNativeValue(nat, opt.value);
   fire(nat, ["input", "change"]);
   const shown = nat.options[nat.selectedIndex];
-  if (shown === opt) return { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
+  if (shown === opt) return pref ? { ok: true, selected: clip(opt.text, 80), el: ident(nat), pref: pref } : { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
   const kept = clip(shown ? shown.text : "", 80);
   return { ok: false, el: ident(nat), kept: kept, error: ident(nat) + " kept " + JSON.stringify(kept) + (nat.selectedIndex === prior
     ? " instead of " + JSON.stringify(clip(opt.text, 60)) + "; the page reverted the pick" : "; the page changed the pick to another option") };
@@ -4013,19 +4036,28 @@ function groupOf(el, gs) {
 }
 // Picks by select's match tiers, through the option's own click so page
 // handlers run, then reads back which option the group shows checked.
+// A preference list is tried in order before anything is clicked; a tie stops.
 function pickRadio(g, text) {
   const el = "radiogroup " + JSON.stringify(clip(g.q, 80));
-  const m = matchTier(g.opts.map(function (o, i) { return i; }), function (i) { return norm(g.names[i]); }, norm(text));
+  const prefs = Array.isArray(text) ? text : [text];
+  let m = null, p = 0;
+  for (; p < prefs.length; p++) {
+    m = matchTier(g.opts.map(function (o, i) { return i; }), function (i) { return norm(g.names[i]); }, norm(prefs[p]));
+    if (m.hits.length) break;
+  }
+  if (p === prefs.length) p = 0;
   if (m.hits.length !== 1) {
-    const out = { ok: false, kind: "radio", el: el, error: m.hits.length ? "several options matched " + JSON.stringify(String(text)) + " equally; give a more specific text" : "no matching option" };
+    const out = { ok: false, kind: "radio", el: el, error: m.hits.length ? "several options matched " + JSON.stringify(String(prefs[p])) + " equally; give a more specific text" : "no matching option" };
     if (m.hits.length) out.ambiguous = true;
+    if (m.hits.length && p) out.pref = p;
     out.candidates = g.names.slice(0, 30).map(function (n) { return clip(n, 60); });
+    if (!m.hits.length && Array.isArray(text)) out.tried = prefs;
     return out;
   }
   const i = m.hits[0], o = g.opts[i];
   if (!isOn(o)) o.click();
   const on = g.opts.filter(isOn);
-  if (on.length === 1 && on[0] === o) return { ok: true, kind: "radio", selected: clip(g.names[i], 80), el: el };
+  if (on.length === 1 && on[0] === o) return p ? { ok: true, kind: "radio", selected: clip(g.names[i], 80), el: el, pref: p } : { ok: true, kind: "radio", selected: clip(g.names[i], 80), el: el };
   return { ok: false, kind: "radio", el: el, error: "clicked " + JSON.stringify(clip(g.names[i], 80)) + " but it did not stick; the group reverted it",
     selected: on.length ? clip(g.names[g.opts.indexOf(on[0])], 80) : null };
 }
@@ -5368,7 +5400,9 @@ const opts = all.filter(function (o) { return !optOff(o); });
 const texts = opts.map(textOf), keys = new Map();
 opts.forEach(function (o, i) { keys.set(o, norm(texts[i])); });
 if (!s.typed && opts.length) s.cands = texts.slice(0, 30).map(function (t) { return clip(t, 60); });
-const opt = bestMatch(opts, function (o) { return keys.get(o); }, wantN);
+// Every preference is matched against the list as it is, in order, before any typing.
+let opt = null;
+wantL.some(function (w, i) { opt = bestMatch(opts, function (o) { return keys.get(o); }, w); s.pref = i; return !!opt; });
 if (opt) {
   s.picked = clip(textOf(opt), 80);
   s.pickedN = keys.get(opt);
@@ -5408,7 +5442,7 @@ if (s.typed && s.typedSig && !sig) {
   if (s.emptied >= 8) return { settled: true };
 } else s.emptied = 0;
 if (!s.typed && wantN && box && s.polls >= 4) {
-  const q = String(A.text).trim().split(/[^\p{L}\p{N} ]/u)[0].trim() || String(A.text).trim();
+  const q = wantT.trim().split(/[^\p{L}\p{N} ]/u)[0].trim() || wantT.trim();
   // Taken before typing: a list that re-renders on input detaches its options at once.
   if (opts.length) s.listRoot = opts[0].parentElement;
   if (box.focus) box.focus();
@@ -5435,7 +5469,10 @@ if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
 if (s.opened && stillOpen(s)) escapeOwn(s);
 if (s.disabled) return { ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands };
 if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [] };
-return { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands };
+const out = { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands };
+// For fill's preference list: a typed filter missed, so a later preference may still turn up.
+if (s.typed && Array.isArray(A.text)) out.filtered = true;
+return out;
 `,
 
   // select {trusted}: whether the synthetic open showed the control's own list.
@@ -5462,7 +5499,7 @@ const el = own.find(function (i) {
 });
 if (!el) return { none: true };
 // The option's text up to its first punctuation, so a strict filter can't empty the list.
-const t = String(A.text).trim(), cut = t.split(/[,;(\/-]/)[0].trim().slice(0, 30);
+const t = wantT.trim(), cut = t.split(/[,;(\/-]/)[0].trim().slice(0, 30);
 const e = editType(el, cut.length >= 2 ? cut : t.slice(0, 30));
 if (!e.ok) {
   editClear(el);
@@ -5494,6 +5531,7 @@ const grew = !s.multi && s.whole && now !== s.whole && now.indexOf(s.whole) === 
 const seen = has(full) || (!s.multi && parts.some(function (t) { return norm(t) === s.pickedN; })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; })));
 if (!seen && !A.final) return null;
 const out = { ok: true, selected: s.picked, el: ident(s.ctl), value: shown };
+if (s.pref) out.pref = s.pref;
 if (!seen) out.unverified = true;
 if (s.already) out.note = "already chosen; not pressed again, since a press would toggle it off";
 return out;
@@ -6381,6 +6419,7 @@ async function press(args = {}) {
 }
 
 const VALUE_KEYS = ["text", "checked", "option"];
+const OPTION_PREFS = 10, FIELDS_FILE_MAX = 256 << 10;
 
 function validateFields(fields) {
   if (!Array.isArray(fields) || !fields.length) throw new Error("fill: fields: empty; pass [{ref|selector|label_pattern, text|checked|option}]");
@@ -6389,6 +6428,11 @@ function validateFields(fields) {
     if (!f || (!f.ref && !f.selector && !f.label_pattern)) throw new Error(`${at} requires \`ref\`, \`selector\`, or \`label_pattern\``);
     if (VALUE_KEYS.filter((k) => f[k] != null).length !== 1) throw new Error(`${at} takes exactly one of \`text\`, \`checked\`, \`option\``);
     if (f.checked != null && typeof f.checked !== "boolean") throw new Error(`${at}: \`checked\` must be a boolean`);
+    if (Array.isArray(f.option)) {
+      if (!f.option.length) throw new Error(`${at}: \`option\` list is empty`);
+      if (f.option.some((o) => typeof o !== "string")) throw new Error(`${at}: \`option\` list takes only strings`);
+      if (f.option.length > OPTION_PREFS) throw new Error(`${at}: \`option\` lists at most ${OPTION_PREFS} preferences`);
+    }
     if (f.label_pattern) validateLabelPattern(at, f.label_pattern);
   });
 }
@@ -6398,7 +6442,7 @@ function validateFields(fields) {
 async function fillFields(fields, target, only) {
   validateFields(fields);
   const A = fields.map(({ ref, selector, label_pattern, text, checked, option }) =>
-    ({ ref, selector, label_pattern, text: text == null ? text : String(text), checked, option: option == null ? option : String(option) }));
+    ({ ref, selector, label_pattern, text: text == null ? text : String(text), checked, option: option == null ? option : Array.isArray(option) ? option.map(String) : String(option) }));
   const results = [];
   const counts = () => {
     const skipped = results.filter((x) => x.skipped).length, unverified = results.filter((x) => x.unverified).length;
@@ -6434,7 +6478,7 @@ async function fillFields(fields, target, only) {
     watch = !!r.watch;
     if (r.defer == null) break;
     const f = A[r.defer];
-    const s = await step(() => f.text != null ? pickSuggestion(target) : select({ ...f, text: f.option, target }));
+    const s = await step(() => f.text != null ? pickSuggestion(target) : selectPrefs(f, target));
     if (halted) return halted;
     results.push(s && s.__perch_ref_miss
       ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
@@ -6450,12 +6494,48 @@ async function fillFields(fields, target, only) {
   return { ok: results.every((x) => x.ok === true), results, ...counts() };
 }
 
+// A custom combobox given a preference list: the open list is matched against
+// every preference at once. Only a type-to-filter box that typed a preference
+// and found nothing (a plain miss) moves on to the next one, with a fresh call.
+async function selectPrefs(f, target) {
+  const prefs = f.option;
+  if (!Array.isArray(prefs)) return select({ ...f, text: prefs, target });
+  let first = null;
+  for (let i = 0; i < prefs.length; i++) {
+    const r = await select({ ...f, target }, prefs.slice(i));
+    if (!r || typeof r !== "object" || r.__perch_ref_miss) return r;
+    const { filtered, pref = 0, ...out } = r;
+    if (out.ok !== false) return i + pref ? { ...out, pref: i + pref } : out;
+    if (!first) first = out;
+    if (!filtered || out.error !== "no option of this control matched") return first === out ? { ...out, tried: prefs } : out;
+  }
+  return { ...first, tried: prefs };
+}
+
+async function readFieldsFile(p) {
+  const at = "fill: fields_path:";
+  if (typeof p !== "string" || !p) throw new Error(`${at} must be a file path`);
+  let data;
+  try {
+    ({ data } = await readUserFile(p, "utf8", (abs, size) => {
+      if (size > FIELDS_FILE_MAX) throw Object.assign(new Error(`${at} file too large (${Math.ceil(size / 1024)}KB, over ${FIELDS_FILE_MAX >> 10}KB)`), { cap: true });
+    }));
+  } catch (e) { throw e.cap ? e : new Error(`${at} ${e.message}`); }
+  let fields;
+  try { fields = JSON.parse(data); } catch (e) { throw new Error(`${at} bad JSON: ${e.message}`); }
+  if (!Array.isArray(fields)) throw new Error(`${at} the top level must be an array of fields`);
+  return fields;
+}
+
 async function fill(args = {}) {
-  const { selector, label_pattern, ref, text, text_path, target, trusted = false, raise = false, fields, only_empty } = args;
-  if (only_empty && fields == null) throw new Error("fill: only_empty takes `fields`");
-  if (fields != null) {
+  const { selector, label_pattern, ref, text, text_path, target, trusted = false, raise = false, fields_path, only_empty } = args;
+  let { fields } = args;
+  if (fields != null && fields_path != null) throw new Error("fill: pass `fields` OR `fields_path`, not both");
+  if (only_empty && fields == null && fields_path == null) throw new Error("fill: only_empty takes `fields` or `fields_path`");
+  if (fields != null || fields_path != null) {
     if (text != null || text_path != null || ref || selector || label_pattern) throw new Error("fill: pass `fields` OR a single field, not both");
     if (trusted || raise) throw new Error("fill: `fields` does not take trusted/raise; fill trusted fields one at a time");
+    if (fields_path != null) fields = await readFieldsFile(fields_path);
     return fillFields(fields, target, !!only_empty);
   }
   const { checked, option } = args;
@@ -6494,12 +6574,14 @@ const pickSuggestion = (target) => rt("select", {
   short: 1000, probe: pageFn("fill_ta_pick", { probe: true }),
 }, { lane: "slow" });
 
-async function select(args = {}) {
-  const { ref = null, selector = null, label_pattern = null, text = null, trusted = false, target } = args;
+// prefs: fill's ordered option list, which the tool itself never takes.
+async function select(args = {}, prefs = null) {
+  const { ref = null, selector = null, label_pattern = null, trusted = false, target } = args;
+  const text = prefs || args.text;
   if (text == null) throw new Error("select requires `text` (the option to choose)");
   if (!ref && !selector && !label_pattern) throw new Error("select requires `ref`, `selector`, or `label_pattern`");
   if (label_pattern) validateLabelPattern("select", label_pattern);
-  const A = { ref, selector, label_pattern, text: String(text), ...(trusted ? { trusted: true } : {}) };
+  const A = { ref, selector, label_pattern, text: prefs || String(text), ...(trusted ? { trusted: true } : {}) };
   const step = (name, extra = {}) => pageFn(name, { ...A, ...extra });
   return rt("select", {
     target,
@@ -6613,9 +6695,10 @@ const TOOLS = [
     dialog: { type: ["boolean", "string"] },
     target: TARGET,
   }, ["key"]),
-  tool("fill", "Fill inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies it landed: {ok,kind,el,len}; empty `text` clears. `fields`: many in one call. `trusted`: trusted input event, no key focus; `raise:true`: foreground keys.", {
-    fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]; option: a select or radio group" },
-    only_empty: { type: "boolean", description: "fields: skip absent or already-set ones" },
+  tool("fill", "Fill inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies it landed: {ok,kind,el,len}; empty `text` clears. `fields`: many at once. `trusted`: trusted input, no key focus; `raise:true`: foreground keys.", {
+    fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option}]; option may be a list, in order" },
+    fields_path: { type: "string", description: "JSON file of fields." },
+    only_empty: { type: "boolean", description: "skip absent/set fields" },
     text: { type: "string" },
     text_path: { type: "string", description: "Local file." },
     ref: REF,

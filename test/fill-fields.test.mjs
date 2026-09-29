@@ -5,7 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS, deps, codeOsaError } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { page, run, runBody } from "./helpers/page.mjs";
 
 const FORM = `<form>
@@ -1256,4 +1258,185 @@ test("fill {fields}: a page that navigated before the extra pass is not failed",
   assert.equal(sent.length, 2);
   assert.deepEqual(o.results.map((x) => x.ok), [true, true]);
   assert.equal(o.ok, true);
+});
+
+// ---- fields_path and ordered option preferences ----
+
+const PROFILE_FX = (() => { const h = readFileSync(new URL("./fixtures/profile.html", import.meta.url), "utf8"); return h.slice(h.indexOf("<style>")); })();
+const tmp = mkdtempSync(join(tmpdir(), "perch-fields-"));
+const jsonFile = (name, body) => { const p = join(tmp, name); writeFileSync(p, typeof body === "string" ? body : JSON.stringify(body)); return p; };
+const PROFILE_MAP = [
+  { label_pattern: "first name", text: "Ada" },
+  { label_pattern: "email", text: "other@example.test" },
+  { label_pattern: "website", text: "https://ada.example" },
+  { label_pattern: "city", text: "Rosario" },
+  { label_pattern: "country", option: ["Nope", "Argentina"] },
+  { label_pattern: "authorized", option: ["Maybe", "No", "Yes"] },
+];
+
+test("fill {fields_path}: file errors are named before the page is touched", async () => {
+  onPage(PROFILE_FX);
+  const err = async (args) => (await handleCall("fill", args)).content[0].text;
+  const missing = join(tmp, "nope.json");
+  const t = await err({ fields_path: missing });
+  assert.match(t, /fill: fields_path: .*ENOENT/);
+  assert.ok(t.includes(missing), t);
+  assert.match(await err({ fields_path: jsonFile("bad.json", "[{") }), /fill: fields_path: bad JSON: /);
+  assert.match(await err({ fields_path: jsonFile("obj.json", {}) }), /fill: fields_path: .*array/);
+  assert.match(await err({ fields_path: jsonFile("big.json", " ".repeat(256 * 1024 + 1)) }), /fill: fields_path: file too large/);
+  const ok = jsonFile("ok.json", PROFILE_MAP);
+  assert.match(await err({ fields: PROFILE_MAP, fields_path: ok }), /fill: pass `fields` OR `fields_path`, not both/);
+  assert.match(await err({ fields_path: ok, label_pattern: "city", text: "x" }), /`fields` OR a single field/);
+  assert.match(await err({ fields_path: ok, trusted: true }), /trusted/);
+  assert.match(await err({ fields_path: jsonFile("empty.json", []) }), /fields: empty/);
+  assert.match(await err({ label_pattern: "city", text: "x", only_empty: true }), /only_empty takes `fields` or `fields_path`/);
+});
+
+test("fill {fields_path}: a file of fields fills exactly as the same fields inline", async () => {
+  const p = jsonFile("profile.json", PROFILE_MAP);
+  const a = onPage(PROFILE_FX);
+  const inline = await fill({ fields: PROFILE_MAP, only_empty: true });
+  const b = onPage(PROFILE_FX);
+  const fromFile = await fill({ fields_path: p, only_empty: true });
+  assert.deepEqual(fromFile.o, inline.o);
+  for (const { dom } of [a, b]) assert.equal(dom.document.getElementById("country").value, "032");
+});
+
+test("fill {fields_path, only_empty}: the profile fixture skips the set field and the trap, and takes the first listed option present", async () => {
+  const { dom } = onPage(PROFILE_FX);
+  const { r, o } = await fill({ fields_path: jsonFile("profile2.json", PROFILE_MAP), only_empty: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.equal(o.ok, true, JSON.stringify(o));
+  const [fn, em, web, city, country, auth] = o.results;
+  assert.equal(fn.ok, true);
+  assert.deepEqual([em.skipped, em.value], ["has value", "ada@parsed.test"]);
+  assert.equal(web.skipped, "trap");
+  assert.equal(city.skipped, undefined);
+  assert.deepEqual([country.ok, country.selected, country.pref], [true, "Argentina", 1]);
+  assert.deepEqual([auth.ok, auth.kind, auth.selected, auth.pref], [true, "radio", "No", 1]);
+  const d = dom.document;
+  assert.deepEqual(["fn", "em", "website", "city", "country"].map((id) => d.getElementById(id).value), ["Ada", "ada@parsed.test", "", "Rosario", "032"]);
+  assert.equal(d.querySelector("[name=auth][value=n]").checked, true);
+});
+
+test("fill_fields option list: each preference keeps the match tiers, never mid-word", () => {
+  const pick = (option) => {
+    const w = page(PROFILE_FX);
+    return { r: run(w, "fill_fields", { fields: [{ label_pattern: "country", option }] }).results[0], v: val(w, "#country").value };
+  };
+  const first = pick(["Argentina", "Brazil"]);
+  assert.deepEqual([first.r.ok, first.r.selected, "pref" in first.r, first.v], [true, "Argentina", false, "032"]);
+  const prefix = pick(["Arg"]);
+  assert.deepEqual([prefix.r.ok, prefix.r.selected, prefix.v], [true, "Argentina", "032"]);
+  const mid = pick(["gentina"]);
+  assert.equal(mid.r.ok, false);
+  assert.equal(mid.r.error, "no matching option");
+  assert.deepEqual(mid.r.tried, ["gentina"]);
+  assert.equal(mid.v, "");
+  const none = pick(["Nope", "gentina"]);
+  assert.equal(none.r.error, "no matching option");
+  assert.deepEqual(none.r.tried, ["Nope", "gentina"]);
+  assert.ok(none.r.candidates.includes("Argentina"));
+  const tie = pick(["Ar", "Brazil"]);
+  assert.equal(tie.r.ok, false);
+  assert.equal(tie.r.ambiguous, true);
+  assert.match(tie.r.error, /several options matched "Ar"/);
+  assert.deepEqual(tie.r.candidates, ["Armenia", "Argentina"]);
+  assert.equal(tie.v, "", "a tie stops; a later preference never settles it");
+});
+
+test("fill_fields option list: a disabled option moves on to the next preference", () => {
+  const html = `<label>Size <select id=s><option value="">Pick</option><option value=m disabled>Medium</option><option value=l>Large</option></select></label>`;
+  const r = run(page(html), "fill_fields", { fields: [{ label_pattern: "size", option: ["Medium", "Large"] }] }).results[0];
+  assert.deepEqual([r.ok, r.selected, r.pref], [true, "Large", 1]);
+  const miss = run(page(html), "fill_fields", { fields: [{ label_pattern: "size", option: ["Medium", "Huge"] }] }).results[0];
+  assert.equal(miss.ok, false);
+  assert.match(miss.error, /"Medium" is disabled/);
+  assert.deepEqual(miss.tried, ["Medium", "Huge"]);
+  assert.ok(Array.isArray(miss.candidates));
+});
+
+test("fill_fields option list: a radio group takes the first preference it has; a tie stops", () => {
+  const w = page(PROFILE_FX);
+  const r = run(w, "fill_fields", { fields: [{ label_pattern: "authorized", option: ["Maybe", "Yes", "No"] }] }).results[0];
+  assert.deepEqual([r.ok, r.selected, r.pref], [true, "Yes", 1]);
+  assert.equal(val(w, "[value=y]").checked, true);
+  const w2 = page(`<fieldset><legend>Shift</legend><label><input type=radio name=s value=a> Early morning</label><label><input type=radio name=s value=b> Early evening</label><label><input type=radio name=s value=c> Late</label></fieldset>`);
+  const tie = run(w2, "fill_fields", { fields: [{ label_pattern: "shift", option: ["Early", "Late"] }] }).results[0];
+  assert.equal(tie.ambiguous, true, JSON.stringify(tie));
+  assert.equal(w2.document.querySelector("input:checked"), null);
+  const miss = run(w2, "fill_fields", { fields: [{ label_pattern: "shift", option: ["Night", "Noon"] }] }).results[0];
+  assert.deepEqual([miss.ok, miss.error, miss.tried], [false, "no matching option", ["Night", "Noon"]]);
+});
+
+test("fill {fields}: option lists are validated", async () => {
+  onPage(FORM);
+  const err = async (option) => (await handleCall("fill", { fields: [{ label_pattern: "country", option }] })).content[0].text;
+  assert.match(await err([]), /fields\[0\].*`option`.*empty/);
+  assert.match(await err(["a", 2]), /fields\[0\].*`option`.*strings/);
+  assert.match(await err(Array.from({ length: 11 }, (_, i) => "o" + i)), /fields\[0\].*`option`.*10/);
+});
+
+const countSelects = (world) => {
+  const c = { n: 0 }, orig = world.ctx.__perch.select;
+  world.ctx.__perch.select = (...a) => { c.n++; return orig(...a); };
+  return c;
+};
+const COUNT_OPENS = `window.opened = 0; document.querySelector('.select__control').addEventListener('mousedown', () => window.opened++);`;
+
+test("fill {fields}: a custom combobox takes the first listed option it has, opened once", async () => {
+  const { dom, world } = onPage(CUSTOM, CUSTOM_JS.replace("<div role=option>Junior</div><div role=option>Senior</div>", "<div role=option>Onsite</div><div role=option>Hybrid</div>") + COUNT_OPENS);
+  const selects = countSelects(world);
+  const { o } = await fill({ fields: [{ label_pattern: "level", option: ["Remote", "Hybrid"] }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(selects.n, 1);
+  assert.deepEqual([o.results[0].selected, o.results[0].pref], ["Hybrid", 1]);
+  assert.equal(dom.document.querySelector(".v").textContent, "Hybrid");
+  assert.equal(dom.window.opened, 1);
+});
+
+test("fill {fields}: a custom combobox with nothing to type into misses once, listing what it tried", async () => {
+  const { dom, world } = onPage(CUSTOM, CUSTOM_JS + COUNT_OPENS);
+  const selects = countSelects(world);
+  const { o } = await fill({ fields: [{ label_pattern: "level", option: ["Remote", "Onsite"] }] });
+  assert.equal(selects.n, 1, "one select run: nothing was typed, so no later preference can turn up");
+  const r = o.results[0];
+  assert.equal(r.ok, false, JSON.stringify(o));
+  assert.equal(r.error, "no option of this control matched");
+  assert.deepEqual(r.tried, ["Remote", "Onsite"]);
+  assert.deepEqual(r.candidates, ["Junior", "Senior"]);
+  assert.equal("filtered" in r, false);
+  assert.equal(dom.window.opened, 1);
+});
+
+// A search box whose full catalog shows only once a filter is typed.
+const OFFICE = `<div><label id=sl>Office</label><input id=so role=combobox aria-labelledby=sl aria-controls=sm aria-expanded=false></div><ul id=sm role=listbox></ul>`;
+const OFFICE_JS = `
+  const inp = document.getElementById('so'), ul = document.getElementById('sm');
+  const show = (xs) => { ul.innerHTML = xs.map((x) => '<li role=option>' + x + '</li>').join(''); inp.setAttribute('aria-expanded', 'true'); };
+  const all = ['Berlin', 'Madrid', 'Oslo', 'Porto'];
+  const top = () => show(['Berlin', 'Madrid']);
+  window.typedQ = [];
+  inp.addEventListener('focus', () => { if (!ul.children.length) top(); });
+  inp.addEventListener('mousedown', () => { if (!ul.children.length) top(); });
+  inp.addEventListener('input', () => { if (inp.value) window.typedQ.push(inp.value); if (inp.value) show(all.filter((x) => x.toLowerCase().startsWith(inp.value.toLowerCase()))); else top(); });
+  ul.addEventListener('click', (e) => { inp.value = e.target.textContent; ul.innerHTML = ''; inp.setAttribute('aria-expanded', 'false'); });`;
+
+test("fill {fields}: a type-to-filter combobox tries the next preference only after a plain typed miss", async () => {
+  const { dom, world } = onPage(OFFICE, OFFICE_JS);
+  const selects = countSelects(world);
+  const { o } = await fill({ fields: [{ label_pattern: "office", option: ["Paris", "Oslo", "Porto"] }] });
+  assert.equal(selects.n, 2, "Porto is never tried once Oslo lands");
+  const r = o.results[0];
+  assert.equal(r.ok, true, JSON.stringify(o));
+  assert.deepEqual([r.selected, r.pref], ["Oslo", 1]);
+  assert.equal(dom.document.getElementById("so").value, "Oslo");
+  assert.deepEqual([...dom.window.typedQ], ["Paris", "Oslo"]);
+});
+
+test("the standalone select tool keeps a string text", () => {
+  const t = TOOLS.find((x) => x.name === "select");
+  assert.deepEqual(t.inputSchema.properties.text, { type: "string" });
+  const f = TOOLS.find((x) => x.name === "fill").inputSchema.properties;
+  assert.equal(f.fields_path.type, "string");
 });
