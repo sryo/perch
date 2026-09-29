@@ -58,7 +58,9 @@ test("screenshot captures in the runtime: nothing spawned from Node, the window 
   assert.deepEqual(calls, [], "no screencapture or sips from Node");
   const [s] = world.state.shots;
   // screencapture of CGWindowID 77 without its shadow (-o), never CGWindowListCreateImage.
-  assert.deepEqual(s.args, ["/usr/sbin/screencapture", "-l", "77", "-x", "-o", "-t", "png", "/tmp/fake/perch-555-1.png"]);
+  // A shot to be downscaled is taken as an uncompressed TIFF, which screencapture
+  // writes faster than a PNG it would compress only for perch to decode again.
+  assert.deepEqual(s.args, ["/usr/sbin/screencapture", "-l", "77", "-x", "-o", "-r", "-t", "tiff", "/tmp/fake/perch-555-1.tiff"]);
   assert.equal(world.counts.CGWindowListCreateImage, undefined);
   assert.deepEqual(world.state.files, {}, "its file is removed");
   // A 2x capture of the 800x620 CG frame, drawn into a 1568-wide bitmap.
@@ -82,6 +84,44 @@ test("screenshot downscales only when wider than maxWidth; maxWidth:0 keeps full
   assert.deepEqual((await shoot({ maxWidth: 400 })).meta.image, { w: 400, h: 310 });
 });
 
+test("a png screenshot that needs no downscale returns screencapture's own PNG, never decoded or encoded again", async () => {
+  canary();
+  const calls = spawns();
+  for (const maxWidth of [0, 1600]) {
+    world.state.shots.length = 0;
+    const { r, meta, bytes } = await shoot({ maxWidth });
+    const [s] = world.state.shots;
+    assert.deepEqual(s.args.slice(1, -1), ["-l", "77", "-x", "-o", "-r", "-t", "png"], `maxWidth ${maxWidth}`);
+    assert.match(s.args[s.args.length - 1], /\.png$/);
+    assert.deepEqual([s.scaled, s.encoded], [undefined, undefined]);
+    assert.equal(r.content[0].mimeType, "image/png");
+    assert.deepEqual([bytes.readUInt32BE(0), bytes.readUInt32BE(16), bytes.readUInt32BE(20)], [0x89504e47, 1600, 1240], "the file's own bytes");
+    assert.deepEqual(meta, { window: { x: 10, y: 0, w: 800, h: 620 }, image: { w: 1600, h: 1240 } });
+  }
+  assert.deepEqual([calls, world.state.files], [[], {}]);
+});
+
+test("a PNG taken to be returned as is that turns out wider than maxWidth is still downscaled", async () => {
+  canary();
+  spawns();
+  // The screens report 1x, but the capture comes back at 2x.
+  world.state.screenScale = 1;
+  const { meta } = await shoot({ maxWidth: 1000 });
+  const [s] = world.state.shots;
+  assert.deepEqual(s.args.slice(-3, -1), ["-t", "png"]);
+  assert.deepEqual(s.encoded, { type: 4, props: null, w: 1000, h: 775 });
+  assert.deepEqual(meta.image, { w: 1000, h: 775 });
+});
+
+test("a capture is polled every 2ms, not 10", async () => {
+  canary();
+  spawns();
+  world.state.captureMs = 101;
+  const t0 = world.clock.t;
+  await shoot({});
+  assert.ok(world.clock.t - t0 <= 103, `took ${world.clock.t - t0}ms`);
+});
+
 test("screenshot falls back to screencapture and sips when the runtime can't downscale", async () => {
   canary();
   const calls = spawns();
@@ -96,6 +136,7 @@ test("screenshot jpeg is encoded at 0.8 and sent as image/jpeg", async () => {
   const calls = spawns();
   const { r, meta, bytes } = await shoot({ format: "jpeg", maxWidth: 0 });
   assert.deepEqual(calls, []);
+  assert.deepEqual(world.state.shots[0].args.slice(-3, -1), ["-t", "tiff"], "never screencapture's own JPEG, whose quality isn't 0.8");
   assert.deepEqual(world.state.shots[0].encoded, { type: 3, props: { NSImageCompressionFactor: 0.8 }, w: 1600, h: 1240 });
   assert.equal(r.content[0].mimeType, "image/jpeg");
   assert.deepEqual([bytes[0], bytes[1]], [0xff, 0xd8]);

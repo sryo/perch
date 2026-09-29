@@ -568,6 +568,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         return { isNil: () => false, activationPolicy: x ? x.policy ?? 2 : 0 };
       },
     },
+    // state.screenScale: every screen's backing scale (default state.shotScale, or 2).
+    NSScreen: { get screens() { const k = state.screenScale ?? state.shotScale ?? 2; return { count: 1, objectAtIndex: () => ({ backingScaleFactor: k }) }; } },
     NSApplication: { get sharedApplication() { state.sharedApp = (state.sharedApp || 0) + 1; return { setActivationPolicy: (p) => { state.policies.push(p); return true; } }; } },
   };
   // screencapture as an NSTask: it runs on the fake clock and writes its image
@@ -581,7 +583,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         bump("screencapture");
         if (state.captureThrows) throw new Error("launch failed");
         const args = task.arguments, wid = Number(args[args.indexOf("-l") + 1]);
-        shot = { args: [task.executableURL.path, ...args], wid };
+        shot = { args: [task.executableURL.path, ...args], wid, type: args[args.indexOf("-t") + 1], axBefore: counts.AX || 0 };
         state.shots.push(shot);
         doneAt = clock.t + (state.captureMs ?? 0);
         return true;
@@ -749,6 +751,15 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       NSProcessInfo: { processInfo: { processIdentifier: 555 } },
       NSURL: { fileURLWithPath: (path) => ({ path }) },
       NSFileHandle: { fileHandleWithNullDevice: { nullDevice: true } },
+      // A file's bytes: a PNG or TIFF header naming the image's size.
+      NSData: { dataWithContentsOfFile: (path) => {
+        const f = state.files[path];
+        if (!f) return { isNil: () => true, length: 0 };
+        const bytes = Buffer.alloc(33);
+        if (f.shot.type === "png") { bytes.writeUInt32BE(0x89504e47, 0); bytes.writeUInt32BE(f.w, 16); bytes.writeUInt32BE(f.h, 20); }
+        else bytes.writeUInt32BE(0x49492a00, 0);
+        return { isNil: () => false, length: bytes.length, base64EncodedStringWithOptions: () => ({ js: bytes.toString("base64") }) };
+      } },
       NSTask: { alloc: { get init() { return fakeTask(); } } },
       kill: (pid, sig) => { (state.sigkills = state.sigkills || []).push([pid, sig]); const t = tasks[pid]; if (t && sig === 9) { t.shot().killed = true; t.terminationStatus = 9; } return 0; },
       NSFileManager: { defaultManager: { removeItemAtPathError: (path) => { const had = path in state.files; delete state.files[path]; return had; } } },

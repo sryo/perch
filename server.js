@@ -970,7 +970,9 @@ function jxaRuntime(BROWSERS, HANG) {
       // PerchStaleRef stays raw for handleCall, which maps it to the call's ref miss.
       return faultName(c) === "PerchStaleRef" ? c : { ok: false, error: "screenshot: the page script failed on this page (" + faultName(c) + "); nothing was captured" };
     }
-    let err = null, refused = null, silent = false;
+    let err = null, refused = null, silent = false, early = null;
+    // An element that did not move is captured while Accessibility places it.
+    if (!c.moved) { try { if (shotGranted()) early = startShot(I.windowNumber, "tiff"); } catch (e) {} }
     try {
       const m = shotMap(I, c, deadline);
       if (typeof m === "string") refused = m;
@@ -979,7 +981,9 @@ function jxaRuntime(BROWSERS, HANG) {
         if (painted === null) silent = true;
         else if (!painted) refused = SHOT_UNPAINTED;
         else {
-          const cap = capture(I.windowNumber, a.format, a.maxWidth, m);
+          const run = early;
+          early = null;
+          const cap = capture(I.windowNumber, a.format, a.maxWidth, m, run);
           if (cap && cap.data) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
           else if (c.moved) refused = cap ? SHOT_NO_CAPTURE : SHOT_MOVED;
           else I.map = m;
@@ -988,6 +992,7 @@ function jxaRuntime(BROWSERS, HANG) {
         }
       }
     } catch (e) { err = e; }
+    if (early) dropShot(early);
     const left = shotRestore(t, a.restore, c.token);
     if (err && err.message === SHOT_NO_IMAGE) throw new Error(SHOT_NO_IMAGE + left);
     if (err) throw err;
@@ -1029,21 +1034,27 @@ function jxaRuntime(BROWSERS, HANG) {
   // screencapture and sips also take over unless the page had to scroll. With a
   // shot map it keeps only the map's box, cut before any downscale. A capture
   // that gives no image in time is a coded timeout, which the crop's restore
-  // still follows.
+  // still follows. `run` is a capture startShot already began, which this call
+  // then owns; `points` is the window's width, for a shot with no map.
   const NO_IMAGE = { noImage: true };
-  function capture(wid, format, maxWidth, map) {
-    let shot = null, granted = false;
+  function capture(wid, format, maxWidth, map, run, points) {
+    let granted = !!run;
     try {
-      ObjC.import("CoreGraphics");
-      appKit();
-      ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]);
-      if (!$.CGPreflightScreenCaptureAccess()) return null;
-      granted = true;
-      shot = windowShot(wid);
-      if (!shot) return NO_IMAGE;
-      let img = shot.img;
+      if (!run) {
+        if (!shotGranted()) return null;
+        granted = true;
+        run = startShot(wid, !map && format !== "jpeg" && fitsAsIs(points, maxWidth) ? "png" : "tiff");
+      }
+      const src = awaitShot(run);
+      if (!src) return NO_IMAGE;
+      let img = src.CGImage;
       let w = Number($.CGImageGetWidth(img)), h = Number($.CGImageGetHeight(img));
       if (!w || !h) return NO_IMAGE;
+      if (run.type === "png" && !(maxWidth > 0 && w > maxWidth)) {
+        const file = $.NSData.dataWithContentsOfFile(run.path);
+        if (!file || file.isNil() || !Number(file.length)) return NO_IMAGE;
+        return { data: file.base64EncodedStringWithOptions(0).js, image: { w: w, h: h } };
+      }
       let clip = null;
       if (map) {
         clip = clipPixels(map, w, h);
@@ -1075,7 +1086,25 @@ function jxaRuntime(BROWSERS, HANG) {
     } catch (e) {
       if (e && e.message === SHOT_NO_IMAGE) throw e;
       return granted ? NO_IMAGE : null;
-    } finally { if (shot) dropFile(shot.path); }
+    } finally { if (run) dropFile(run.path); }
+  }
+  function shotGranted() {
+    ObjC.import("CoreGraphics");
+    appKit();
+    ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]);
+    return !!$.CGPreflightScreenCaptureAccess();
+  }
+  // Whether a window `points` wide comes back no wider than maxWidth on the
+  // densest screen, so screencapture's own PNG can go back as it is. A wrong
+  // guess costs time, never the result: a PNG that turns out wider is scaled.
+  function fitsAsIs(points, maxWidth) {
+    if (!(maxWidth > 0)) return true;
+    let k = 0;
+    try {
+      const s = $.NSScreen.screens;
+      for (let i = 0; i < Number(s.count); i++) k = Math.max(k, Number(s.objectAtIndex(i).backingScaleFactor));
+    } catch (e) { return false; }
+    return k > 0 && points > 0 && points * k <= maxWidth;
   }
   // The capture runs the screencapture binary rather than CGWindowListCreateImage:
   // since macOS 15 that call is proxied through replayd, which serves one live
@@ -1083,26 +1112,40 @@ function jxaRuntime(BROWSERS, HANG) {
   // server's REPL, or another JXA tool) has captured, every other osascript's
   // capture waits the proxy's 30s and gets no image. screencapture exits after
   // each shot, so it never holds the proxy, and one that hangs is killed at
-  // SHOT_CAPTURE_SECS. -o leaves out the window shadow.
+  // SHOT_CAPTURE_SECS. -o leaves out the window shadow, -r the dpi metadata.
+  // A shot perch decodes is taken as TIFF, which screencapture writes about 40ms
+  // sooner than a PNG it would compress only for perch to decode again.
   const SHOT_CAPTURE_SECS = 3;
+  const SHOT_POLL_SECS = 0.002;
   const SHOT_NO_IMAGE = "timeout: screenshot: the window capture gave no image within " + SHOT_CAPTURE_SECS + "s; nothing was captured";
   let shotSeq = 0;
-  function windowShot(wid) {
-    const path = $.NSTemporaryDirectory().js + "perch-" + $.NSProcessInfo.processInfo.processIdentifier + "-" + (++shotSeq) + ".png";
+  function startShot(wid, type) {
+    const path = $.NSTemporaryDirectory().js + "perch-" + $.NSProcessInfo.processInfo.processIdentifier + "-" + (++shotSeq) + "." + type;
     const task = $.NSTask.alloc.init;
     task.executableURL = $.NSURL.fileURLWithPath("/usr/sbin/screencapture");
-    task.arguments = $(["-l", String(wid), "-x", "-o", "-t", "png", path]);
+    task.arguments = $(["-l", String(wid), "-x", "-o", "-r", "-t", type, path]);
     task.standardOutput = $.NSFileHandle.fileHandleWithNullDevice;
     task.standardError = $.NSFileHandle.fileHandleWithNullDevice;
-    if (!task.launchAndReturnError($())) return null;
-    const until = Date.now() + SHOT_CAPTURE_SECS * 1000;
+    let launched = false;
+    try { launched = !!task.launchAndReturnError($()); } catch (e) {}
+    return { task: launched ? task : null, path: path, type: type, until: Date.now() + SHOT_CAPTURE_SECS * 1000 };
+  }
+  // The run's image, or null when it failed (its file removed); a run still
+  // going at its deadline is stopped and refused as a coded timeout.
+  function awaitShot(run) {
+    const task = run.task;
+    if (!task) return null;
     while (task.isRunning) {
-      if (Date.now() >= until) { stopTask(task); dropFile(path); throw new Error(SHOT_NO_IMAGE); }
-      delay(0.01);
+      if (Date.now() >= run.until) { stopTask(task); dropFile(run.path); throw new Error(SHOT_NO_IMAGE); }
+      delay(SHOT_POLL_SECS);
     }
-    const rep = task.terminationStatus === 0 ? $.NSBitmapImageRep.imageRepWithContentsOfFile(path) : null;
-    if (!rep || rep.isNil()) { dropFile(path); return null; }
-    return { img: rep.CGImage, path: path };
+    const rep = task.terminationStatus === 0 ? $.NSBitmapImageRep.imageRepWithContentsOfFile(run.path) : null;
+    if (!rep || rep.isNil()) { dropFile(run.path); return null; }
+    return rep;
+  }
+  function dropShot(run) {
+    if (run.task && run.task.isRunning) stopTask(run.task);
+    dropFile(run.path);
   }
   // SIGTERM, then SIGKILL if it is still running after SHOT_TERM_MS, so no run
   // outlives the call to write its file after dropFile.
@@ -2589,7 +2632,7 @@ function jxaRuntime(BROWSERS, HANG) {
     // `image` {w,h}; without them the caller runs screencapture.
     shot(a) {
       if (a.clip) return shotClip(a);
-      const I = shotGeom(a), c = capture(I.windowNumber, a.format, a.maxWidth);
+      const I = shotGeom(a), c = capture(I.windowNumber, a.format, a.maxWidth, null, null, (I.cgBounds || I.geom).w);
       if (c && c.data) { I.data = c.data; I.image = c.image; }
       return I;
     },
