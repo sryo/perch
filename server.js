@@ -2475,7 +2475,12 @@ function jxaRuntime(BROWSERS, HANG) {
           if (bad && bad.ok === false) return bad;
           if (T.background) skyClick(T.I, { x: a.x, y: a.y });
           else leftClick(T.I, { x: a.x, y: a.y });
+          delay(0.05);
+          const check = afterStep("click", function () { return readExec(T.t, a.check); });
           out = { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" };
+          if (check.hit === undefined) out.note = "the page changed after the click (it may have navigated), so whether it landed is unknown";
+          else if (check.hit !== true) return Object.assign(out, { ok: false, hit: false, error: "no click reached the page at " + a.x + "," + a.y });
+          else Object.assign(out, { hit: true }, check.el ? { el: check.el } : {});
         } finally {
           if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
         }
@@ -6026,13 +6031,26 @@ if (A.forFill) {
 
   // A click by point has no element to probe, so it takes the viewport rects of
   // the page's embedded frames, plus the page's own estimate of its screen origin
-  // for when Accessibility can't place the page.
+  // for when Accessibility can't place the page. It also arms trusted_check's
+  // recorder: the first trusted mousedown and what it landed on.
   trusted_frames: String.raw`
 const out = { iw: innerWidth, ih: innerHeight, ox: screenX + outerWidth - innerWidth, oy: screenY + outerHeight - innerHeight, rects: [] };
 deepAll("iframe, frame, object, embed").forEach(function (f) {
   const r = f.getBoundingClientRect();
   if (r.width && r.height) out.rects.push([r.left, r.top, r.right, r.bottom]);
 });
+const prev = window.__perch_trusted;
+if (prev && prev.off) prev.off();
+const st = window.__perch_trusted = { down: null, moves: [] };
+const onDown = function (e) {
+  if (!e.isTrusted) return;
+  const at = e.composedPath ? e.composedPath()[0] : e.target;
+  st.down = true;
+  st.at = at && at.nodeType === 1 ? ident(at) : null;
+  window.removeEventListener("mousedown", onDown, true);
+};
+window.addEventListener("mousedown", onDown, true);
+st.off = function () { window.removeEventListener("mousedown", onDown, true); };
 return out;`,
 
   // Drains recorded mouse moves as [clientX, clientY, screenX, screenY]; null if none.
@@ -6074,11 +6092,13 @@ if (e.ok && ta) {
 return { ok: e.ok, trusted: e.trusted, value: e.value, el: ident(el), ...(e.ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
 `,
 
-  // hit: the mousedown landed on the element; null: no mousedown reached the page.
+  // hit: the mousedown landed on the element (a click by point: on the page, at
+  // `el`); null: no mousedown reached the page; missing: no recorder, a new document.
   trusted_check: String.raw`
 const st = window.__perch_trusted || {};
 if (st.off) st.off();
 const out = { hit: st.down };
+if (st.at) out.el = st.at;
 if (st.cancelled) out.cancelled = true;
 if (A.forFill && st.el) {
   const got = String(st.el.value || ""), text = A.text;
@@ -6373,7 +6393,7 @@ async function trustedClick({ ref, selector, label_pattern, x, y, raise, target,
     frames: probing ? null : pageFn("trusted_frames", {}),
     cal: probing ? pageFn("trusted_cal", {}) : null,
     calReset: probing ? pageFn("trusted_cal", { reset: true }) : null,
-    check: probing ? pageFn("trusted_check", {}) : null,
+    check: pageFn("trusted_check", {}),
     arm: readback ? pageFn("readback_arm", { readback, probed: probing }) : null,
     ...readbackSteps(readback),
   }, readback ? { lane: "slow" } : {});
