@@ -177,7 +177,9 @@ test("navigate to a download or 204 returns once loading settles, not at the tim
   world.state.noContent = /\.zip$/;
   const t0 = world.clock.t;
   const { o } = await call("navigate", { url: "https://t0.test/file.zip" });
-  assert.equal(o.ok, true);
+  // The tab still shows its page; a load the page dropped looks the same.
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: the tab stayed on https:\/\/t0\.test\/, as a download/);
   // Past the 300ms grace, two idle loading() reads in a row end the wait.
   assert.ok(world.clock.t - t0 >= 300 && world.clock.t - t0 < 1000, `took ${world.clock.t - t0}ms`);
   assert.equal(world.page("Google Chrome", 0, 0).location.href, "https://t0.test/");

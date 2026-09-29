@@ -62,7 +62,14 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     page.ctx = vm.createContext(win, { microtaskMode: "afterEvaluate" });
     vm.runInContext("window = globalThis; document = { get readyState() { return __ready(); } };", page.ctx);
     page.ctx.__ready = () => (page.ticks-- > 0 ? "loading" : "complete");
-    page.ctx.location = { href: url, assign: (u) => go(/^[a-z]+:/i.test(u) ? u : new URL(u, page.url).href, "page") };
+    // state.errorPage (a RegExp): a matching URL commits Chrome's net error page,
+    // whose document is chrome-error://chromewebdata/ while the tab shows the URL.
+    const href = state.errorPage && state.errorPage.test(url) ? "chrome-error://chromewebdata/" : url;
+    page.ctx.location = {
+      href,
+      get protocol() { return this.href.slice(0, this.href.indexOf(":") + 1); },
+      assign: (u) => go(/^[a-z]+:/i.test(u) ? u : new URL(u, page.url).href, "page"),
+    };
     page.ctx.URL = URL;
     // __busy(ms): the script holds the page's thread that long (see tab.execute).
     page.ctx.__busy = (ms) => { page.busy = (page.busy || 0) + ms; };

@@ -393,6 +393,77 @@ test("navigate on Chrome: a page-started load that never leaves the old page is 
   assert.equal(world.page("Google Chrome", 0, 0).location.href, "http://127.0.0.1:8787/fixture.html");
 });
 
+// Goal 2: the result names the URL the tab committed, not the one asked for.
+const navTool = async (args) => {
+  const res = await handleCall("navigate", args);
+  return { res, o: JSON.parse(res.content[0].text) };
+};
+const redirectTo = (final) => {
+  const loc = world.page("Google Chrome", 0, 0).location;
+  const assign = loc.assign;
+  loc.assign = () => assign(final);
+};
+
+test("navigate tool: a redirect reports the committed url and the one requested", async () => {
+  install(fixture());
+  world.state.commitMs = 60;
+  redirectTo("https://a.test/login");
+  const { o } = await navTool({ url: "https://a.test/apply" });
+  assert.deepEqual(o, { ok: true, url: "https://a.test/login", requested: "https://a.test/apply", waited: true, tabId: "chrome:7" });
+});
+
+test("navigate tool: a url committed as asked, up to spelling, carries no requested key", async () => {
+  install(fixture());
+  world.state.commitMs = 60;
+  redirectTo("https://next.test/");
+  const { o } = await navTool({ url: "https://NEXT.test" });
+  assert.deepEqual(o, { ok: true, url: "https://next.test/", waited: true, tabId: "chrome:7" });
+});
+
+test("navigate tool: the browser's network error page is load_failed naming the url, not ok", async () => {
+  install(fixture());
+  world.state.commitMs = 60;
+  world.state.errorPage = /^http:\/\/127\.0\.0\.1:9\//;
+  const { res, o } = await navTool({ url: "http://127.0.0.1:9/" });
+  assert.equal(res.isError, undefined);
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: http:\/\/127\.0\.0\.1:9\/ /);
+  assert.equal(o.tabId, "chrome:7");
+  assert.equal(o.url, undefined);
+});
+
+test("navigate tool: a load that never leaves the old page is load_failed, loaded once", async () => {
+  install(fixture());
+  world.page("Google Chrome", 0, 0).location.assign = (u) => { world.log.push(["assign", "Google Chrome", u]); };
+  const { o } = await navTool({ url: "https://next.test/" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: the tab stayed on http:\/\/127\.0\.0\.1:8787\/fixture\.html/);
+  assert.deepEqual(paths(), [["assign", "Google Chrome", "https://next.test/"]]);
+  assert.equal(world.counts["tab.url="], undefined);
+});
+
+// A download or 204 never replaces the document. It is never fetched a second
+// time from outside the page, and the tab still shows the old page.
+test("navigate tool: a download leaves the tab on its page, reported as such and fetched once", async () => {
+  install(fixture());
+  world.state.noContent = /\.zip$/;
+  const { o } = await navTool({ url: "https://next.test/file.zip" });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^load_failed: the tab stayed on .*download/);
+  assert.deepEqual(paths(), [["assign", "Google Chrome", "https://next.test/file.zip"]]);
+  assert.equal(world.counts["tab.url="], undefined);
+});
+
+test("navigate tool: a reload that settles on the same url and a #hash move stay ok", async () => {
+  install(fixture());
+  world.page("Google Chrome", 0, 0).location.assign = () => {};
+  let { o } = await navTool({ url: "http://127.0.0.1:8787/fixture.html" });
+  assert.deepEqual(o, { ok: true, url: "http://127.0.0.1:8787/fixture.html", waited: false, tabId: "chrome:7" });
+  install(fixture());
+  ({ o } = await navTool({ url: "http://127.0.0.1:8787/fixture.html#sec" }));
+  assert.deepEqual(o, { ok: true, url: "http://127.0.0.1:8787/fixture.html#sec", waited: true, tabId: "chrome:7" });
+});
+
 // A fresh document at the URL the tab already showed is the page reloading
 // itself, not the load navigate asked for; the retried stamp starts it.
 test("navigate on Chrome: a lost reply after the page reloaded itself loads the url from page JS", () => {
@@ -433,6 +504,15 @@ test("navigate on Arc: a background tab, where page JS hangs, is refused without
   assert.equal(r.warning, RAISE);
   assert.deepEqual(paths(), [["navigate", "Arc", "https://next.test/"]]);
   assert.equal(world.counts["tab.execute"] || 0, 0);
+});
+
+test("navigate tool on Arc: a background tab, which can't be checked, reports the url asked for, unwaited", async () => {
+  install(arcFixture());
+  const o = JSON.parse((await handleCall("navigate", { url: "https://next.test/", raise: true, target: { tabId: "arc:a1" } })).content[0].text);
+  assert.equal(o.ok, true);
+  assert.equal(o.url, "https://next.test/");
+  assert.equal(o.requested, undefined);
+  assert.equal(o.waited, false);
 });
 
 test("navigate on Arc: its own new-tab page is refused without raise:true", () => {
