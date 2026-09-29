@@ -589,6 +589,63 @@ test("fill: text-like inputs keep the tolerant check", () => {
   assert.equal(run(w, "fill", { label_pattern: "city", text: "  Rosario " }).ok, true);
 });
 
+// ---- a controlled field that snaps back to what it held ----
+
+const revert = (w, sel) => runBody(w, `const e = document.querySelector(${JSON.stringify(sel)}); const was = e.value;
+  e.addEventListener('input', () => { e.value = was; }); return 1`);
+
+test("fill: a field that restores its previous value is not ok", () => {
+  const w = page(`<label>Phone <input id=p value=5493516116242></label>`);
+  revert(w, "#p");
+  const o = run(w, "fill", { label_pattern: "phone", text: "9 351 611 6242" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kept, "5493516116242");
+  assert.match(o.error, /kept its previous value "5493516116242"/);
+});
+
+test("fill: a same-length date revert is not ok", () => {
+  const w = page(`<label>Since <input id=d value=04/03/2021></label>`);
+  revert(w, "#d");
+  const o = run(w, "fill", { label_pattern: "since", text: "03/04/2021" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.kept, "04/03/2021");
+});
+
+test("fill: a mask reformatting an empty field still lands", () => {
+  const w = page(`<label>Phone <input type=tel></label>`);
+  sanitize(w, "[type=tel]", (v) => { const d = v.replace(/\D/g, "").slice(-10); return d ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : ""; });
+  const o = run(w, "fill", { label_pattern: "phone", text: "+54 9 351 611 6242" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(w.document.querySelector("[type=tel]").value, "(351) 611-6242");
+});
+
+test("fill: a field that collapses whitespace lands", () => {
+  const w = page(`<label>Name <input id=n></label>`);
+  sanitize(w, "#n", (v) => v.trim().replace(/\s+/g, " "));
+  assert.equal(run(w, "fill", { label_pattern: "name", text: "  a   b " }).ok, true);
+  assert.equal(val(w, "#n").value, "a b");
+});
+
+test("fill: an empty field keeps its result shape", () => {
+  const w = page(`<label>City <input id=c></label>`);
+  assert.deepEqual(run(w, "fill", { label_pattern: "city", text: "Rosario" }), { ok: true, kind: "plain", el: `textbox "City"`, len: 7 });
+});
+
+test("fill: refilling a field with the value it holds is ok", () => {
+  const w = page(`<label>City <input id=c value=Rosario></label>`);
+  revert(w, "#c");
+  assert.deepEqual(run(w, "fill", { label_pattern: "city", text: "Rosario" }), { ok: true, kind: "plain", el: `textbox "City"`, len: 7 });
+});
+
+test("fill_fields: only the reverting entry fails", () => {
+  const w = page(`<label>Name <input id=n></label><label>Phone <input id=p value=5493516116242></label><label>City <textarea id=c></textarea></label>`);
+  revert(w, "#p");
+  const o = run(w, "fill_fields", { fields: [{ selector: "#n", text: "Ada" }, { selector: "#p", text: "9 351 611 6242" }, { selector: "#c", text: "Rosario" }] });
+  assert.deepEqual(o.results.map((r) => r.ok), [true, false, true]);
+  assert.equal(o.results[1].kept, "5493516116242");
+  assert.match(o.results[1].error, /previous value/);
+});
+
 test("fill_fields: a bad date fails its own field with what the page kept", () => {
   const w = page(`<label>Company <input name=co></label><label>Start date <input type=date></label>`);
   const o = run(w, "fill_fields", { fields: [{ label_pattern: "company", text: "Acme" }, { label_pattern: "start", text: "03/15/2026" }] });
