@@ -640,6 +640,14 @@ test("typeahead: a pick the widget ignores is not claimed when the typed text eq
   assert.equal($(dom, "#c").value, "Buenos Aires");
 });
 
+test("typeahead: a list that closes without the field showing the pick is not claimed", async () => {
+  const { dom } = onPage(INERT, INERT_JS(["Buenos Aires"], "ul.innerHTML = '';"));
+  const o = await fill({ label_pattern: "^city", text: "Buenos" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /still shows only the typed text/);
+  assert.equal($(dom, "#c").value, "Buenos");
+});
+
 test("typeahead: an exact-text pick the widget accepts by closing its list is proof", async () => {
   const { dom } = onPage(INERT, INERT_JS(["Buenos Aires"], "ul.innerHTML = '';"));
   const o = await fill({ label_pattern: "^city", text: "Buenos Aires" });

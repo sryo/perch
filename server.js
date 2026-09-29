@@ -5241,10 +5241,11 @@ const shown = taShown(el);
 const v = taNorm(shown);
 const seen = !!v && (v.indexOf(s.pickedN) >= 0 || v.indexOf(taNorm(s.text)) >= 0);
 // The typed text still showing proves nothing unless the press moved something:
-// the field, the hidden companion, or the widget's own list closing.
+// the field, the hidden companion, or the widget's own list closing, which
+// counts only once the field shows the picked option.
 const compChanged = !!s.comp && s.comp.value !== s.compBefore;
 const listGone = !taOptions(s).length || (s.openBefore && attr(el, "aria-expanded") === "false");
-const moved = v !== s.before || compChanged || listGone;
+const moved = v !== s.before || compChanged || (listGone && v.indexOf(s.pickedN) >= 0);
 // A companion that held this same value before (re-picking on an edit form)
 // can't change, so the widget closing its list is the proof there.
 const filled = !s.comp || (!!s.comp.value && (compChanged || listGone));
