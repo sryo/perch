@@ -5,8 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS, deps, codeOsaError } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
+import { tempDir } from "../scripts/temp.mjs";
 import { join } from "node:path";
 import { page, run, runBody } from "./helpers/page.mjs";
 import { throwAt, noRaw } from "./helpers/fault.mjs";
@@ -1809,7 +1809,7 @@ test("fill {fields}: a nameless, unlabelled required field is still named in lef
 // ---- fields_path and ordered option preferences ----
 
 const PROFILE_FX = (() => { const h = readFileSync(new URL("./fixtures/profile.html", import.meta.url), "utf8"); return h.slice(h.indexOf("<style>")); })();
-const tmp = mkdtempSync(join(tmpdir(), "perch-fields-"));
+const tmp = tempDir("perch-fields-");
 const jsonFile = (name, body) => { const p = join(tmp, name); writeFileSync(p, typeof body === "string" ? body : JSON.stringify(body)); return p; };
 const PROFILE_MAP = [
   { label_pattern: "first name", text: "Ada" },

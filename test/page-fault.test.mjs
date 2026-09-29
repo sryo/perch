@@ -4,8 +4,8 @@
 // click or typing) the reply says so, so the agent checks before retrying.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
+import { tempDir } from "../scripts/temp.mjs";
 import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
@@ -115,8 +115,7 @@ test("get_text and console_capture: a page script that throws is the neutral fau
 });
 
 async function cvFile(t) {
-  const dir = await mkdtemp(join(tmpdir(), "perch-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  const dir = tempDir("perch-", t);
   const f = join(dir, "cv.pdf");
   await writeFile(f, "%PDF-1.4");
   return f;

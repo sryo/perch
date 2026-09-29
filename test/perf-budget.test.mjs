@@ -4,8 +4,8 @@
 // sends. These tests pin that number with the fake world's accessor counts.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
+import { tempDir } from "../scripts/temp.mjs";
 import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall, PAGE_PRELUDE, PAGE_SCRIPTS, pageScript, buildEvalWrapper } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
@@ -579,10 +579,10 @@ test("fill {fields}: native fields cost one Apple Event; a batch ending on a cus
 });
 
 // A native form is one page pass whether its fields come inline or from a file.
-test("fill {fields} costs the same Apple Events inline and from fields_path", async () => {
+test("fill {fields} costs the same Apple Events inline and from fields_path", async (t) => {
   const html = `<label>Name <input name=n></label><label>Country <select name=c><option value="">Pick</option><option value=ar>Argentina</option></select></label>`;
   const fields = [{ label_pattern: "name", text: "Ada" }, { label_pattern: "country", option: ["Nope", "Argentina"] }];
-  const p = join(mkdtempSync(join(tmpdir(), "perch-perf-")), "f.json");
+  const p = join(tempDir("perch-perf-", t), "f.json");
   writeFileSync(p, JSON.stringify(fields));
   const cost = {};
   for (const [form, args] of [["inline", { fields }], ["path", { fields_path: p }]]) {
