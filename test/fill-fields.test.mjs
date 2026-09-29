@@ -3,7 +3,7 @@
 // handed to the select runtime, in order) runs through the fake JXA world.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { readFileSync } from "node:fs";
 import { page, run, runBody } from "./helpers/page.mjs";
@@ -866,4 +866,77 @@ test("fill: only_empty takes fields", async () => {
   assert.match(await err({ label_pattern: "email", text: "a@b.test", only_empty: true }), /fill: only_empty takes `fields`/);
   assert.match(await err({ label_pattern: "relocate", checked: true, only_empty: true }), /fill: only_empty takes `fields`/);
   assert.equal(TOOLS.find((x) => x.name === "fill").inputSchema.properties.only_empty.type, "boolean");
+});
+
+// ---- a batch that ends early keeps what landed ----
+
+const NO_SHOW_JS = CUSTOM_JS.replace("cb.querySelector('.v').textContent = o.textContent;", "");
+const tabOf = async () => JSON.parse((await handleCall("list_tabs", {})).content[0].text).tabs[0].tabId;
+function closeTabNow(world, app, id) {
+  const list = world.tabsOf(app, 0), spec = world.winSpec(app, 0);
+  list.splice(list.findIndex((t) => String(t.spec.id) === String(id)), 1);
+  spec.active = Math.min(spec.active, list.length - 1);
+}
+const TWO = [{ label_pattern: "first", text: "A" }, { label_pattern: "level", option: "senior" }];
+
+test("fill {fields}: a pick the control never shows is counted as unverified at the top", async () => {
+  onPage(CUSTOM, NO_SHOW_JS);
+  const { o } = await fill({ fields: TWO });
+  assert.equal(o.results[1].unverified, true, JSON.stringify(o));
+  assert.equal(o.unverified, 1);
+  assert.equal(o.ok, true);
+});
+
+test("fill {fields}: a tab closing during a later select keeps the fields that landed", async () => {
+  const { world } = onPage(CUSTOM, CUSTOM_JS);
+  const tabId = await tabOf();
+  world.state.afterExecute = () => { world.state.afterExecute = null; closeTabNow(world, "Google Chrome", "x"); };
+  const { r, o } = await fill({ fields: TWO, target: { tabId } });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.equal(o.ok, false);
+  assert.equal(o.results.length, 2);
+  assert.equal(o.results[0].ok, true);
+  assert.equal(o.results[1].ok, false);
+  assert.match(o.results[1].error, /^stale_tab: /);
+  assert.equal(o.error, o.results[1].error);
+});
+
+test("fill {fields}: a dialog raised by an earlier field's handler keeps the fields that landed", async (t) => {
+  const { dom, world } = onPage(CUSTOM, CUSTOM_JS);
+  const tabId = await tabOf();
+  // The handler's alert comes a tick later (after a save request), so the pass that fired it still replies.
+  let alerted = false;
+  dom.document.querySelector("[aria-label=First]").addEventListener("change", () => { alerted = true; });
+  world.state.afterExecute = () => {
+    if (!alerted) return;
+    world.state.afterExecute = null;
+    world.state.dialogs.push({ pid: 1, blocks: "x", texts: ["a.test says", "Saved"], buttons: ["OK"] });
+  };
+  const saved = deps.dialogs;
+  t.after(() => { deps.dialogs = saved; });
+  deps.dialogs = async () => (world.state.dialogs.length ? [{ kind: "alert", message: "Saved" }] : []);
+  const { r, o } = await fill({ fields: TWO, target: { tabId } });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.equal(o.ok, false);
+  assert.equal(o.results.length, 2);
+  assert.equal(o.results[0].ok, true);
+  assert.match(o.results[1].error, /^dialog_open: /);
+  assert.equal(o.error, o.results[1].error);
+});
+
+test("fill {fields}: an error on the first field still ends the call as before", async () => {
+  const { world } = onPage(CUSTOM, CUSTOM_JS);
+  const tabId = await tabOf();
+  closeTabNow(world, "Google Chrome", "x");
+  const { r, o } = await fill({ fields: TWO, target: { tabId } });
+  assert.equal(r.isError, true);
+  assert.match(o, /^error: stale_tab: /);
+});
+
+test("fill {fields}: an all-green batch carries no new keys", async () => {
+  onPage(CUSTOM, CUSTOM_JS);
+  const { o } = await fill({ fields: [...TWO, { label_pattern: "last", text: "B" }] });
+  assert.deepEqual(Object.keys(o), ["ok", "results"]);
+  assert.deepEqual(Object.keys(o.results[1]), ["kind", "ok", "selected", "el", "value"]);
+  assert.equal(o.ok, true);
 });

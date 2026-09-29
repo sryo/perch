@@ -6043,20 +6043,36 @@ async function fillFields(fields, target, only) {
   const A = fields.map(({ ref, selector, label_pattern, text, checked, option }) =>
     ({ ref, selector, label_pattern, text: text == null ? text : String(text), checked, option: option == null ? option : String(option) }));
   const results = [];
+  const counts = () => {
+    const skipped = results.filter((x) => x.skipped).length, unverified = results.filter((x) => x.unverified).length;
+    return { ...(skipped ? { skipped } : {}), ...(unverified ? { unverified } : {}) };
+  };
+  // A coded failure after some fields landed ends the batch with them; before
+  // any landed, it throws as a single call would.
+  let halted = null;
+  const step = async (fn) => {
+    try { return await fn(); } catch (e) {
+      const error = e && e.message;
+      if (!results.length || !CODED.test(String(error))) throw e;
+      results.push({ ok: false, error });
+      halted = { ok: false, results, error, ...counts() };
+    }
+  };
   for (let from = 0; from < A.length;) {
-    const r = await runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target);
+    const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target));
+    if (halted) return halted;
     if (!r || !Array.isArray(r.results)) return r;
     results.push(...r.results);
     if (r.defer == null) break;
     const f = A[r.defer];
-    const s = f.text != null ? await pickSuggestion(target) : await select({ ...f, text: f.option, target });
+    const s = await step(() => f.text != null ? pickSuggestion(target) : select({ ...f, text: f.option, target }));
+    if (halted) return halted;
     results.push(s && s.__perch_ref_miss
       ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
       : { kind: "select", ...s });
     from = r.defer + 1;
   }
-  const skipped = results.filter((x) => x.skipped).length;
-  return { ok: results.every((x) => x.ok === true), results, ...(skipped ? { skipped } : {}) };
+  return { ok: results.every((x) => x.ok === true), results, ...counts() };
 }
 
 async function fill(args = {}) {
