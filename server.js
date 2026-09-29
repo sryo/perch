@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const exec = promisify(execFile);
 
@@ -256,6 +257,11 @@ function jxaRuntime(BROWSERS, HANG) {
       return m.reduce(function (best, i) { return Math.abs(i - idx) < Math.abs(best - idx) ? i : best; });
     };
     const record = function (win, i, w) { return { tab: win.tabs[i], idx: i, tabId: null, kind: "safari", app: "Safari", win, w, P }; };
+    // Which candidate is the handle's own is settled by the stamp on the first page JS (pickRun).
+    const picking = function (t, m, id, away) {
+      t.pick = { tabId: want.tabId, raw: raw, hash: hash, idx: away ? -1 : idx, winId: id, cands: m, own: !!want.own, mine: ours(want, raw) };
+      return t;
+    };
     // The recorded window by id: one event when the tab is still in it.
     let searched = false;
     if (/^\d+$/.test(winId)) {
@@ -265,7 +271,8 @@ function jxaRuntime(BROWSERS, HANG) {
         if (m.length) {
           // A tab at another index with the URL may be the user's, once the agent's is gone.
           if (strict && m.indexOf(idx) < 0) throw new Error("stale_tab: can't tell which tab " + want.tabId + " is; re-run list_tabs");
-          return record(win, strict ? idx : nearest(m), null);
+          if (strict) return record(win, idx, null);
+          return picking(record(win, nearest(m), null), m, winId);
         }
       } catch (e) { if (isStale(e)) throw e; }
     }
@@ -275,14 +282,18 @@ function jxaRuntime(BROWSERS, HANG) {
     let found = null, count = 0;
     for (let w = 0; w < n && count < 2; w++) {
       const win = a.windows[w];
+      let id = null;
       if (searched) {
-        let id = null; try { id = String(win.id()); } catch (e) {}
+        try { id = String(win.id()); } catch (e) {}
         if (id === winId) continue;
       }
       let urls; try { urls = win.tabs.url(); } catch (e) { continue; }
       const m = matches(urls);
       count += m.length;
-      if (m.length) found = record(win, m[0], w);
+      if (m.length === 1 && count === 1) {
+        if (id == null) { try { id = String(win.id()); } catch (e) {} }
+        found = picking(record(win, m[0], w), m, id, true);
+      }
     }
     if (count > 1) throw new Error("stale_tab: tab " + want.tabId + " is gone; several tabs show its URL; re-run list_tabs");
     if (found) return found;
@@ -358,6 +369,9 @@ function jxaRuntime(BROWSERS, HANG) {
   // `shown`: resolve just read the tab as its window's shown tab.
   function isActive(t) {
     if (t.shown) return true;
+    // A Safari handle with more than one possible tab settles which first, so the
+    // tab checked is the one its page JS will run in.
+    if (t.pick && !(t.pick.cands.length === 1 && t.pick.cands[0] === t.idx)) execOnce(t, "1");
     try {
       if (t.kind === "chrome") {
         if (t.tabId != null) return String(t.win.activeTab.id()) === String(t.tabId);
@@ -457,12 +471,8 @@ function jxaRuntime(BROWSERS, HANG) {
   }
   function execOnce(t, js) {
     if (t.kind === "safari") {
-      try { return app(t.app).doJavaScript(js, { in: t.tab }); }
-      catch (e) {
-        if (noSuchObject(e)) throw e;
-        if (!isActive(t)) throw new Error(notVisible("page JS"));
-        throw e;
-      }
+      if (t.pick) return pickRun(t, js);
+      return safariJs(t, js);
     }
     const x = t.tab.execute({ javascript: js });
     // Arc JSON.stringifies whatever execute returns; perch's wrappers already did.
@@ -470,11 +480,75 @@ function jxaRuntime(BROWSERS, HANG) {
     return x;
   }
 
+  function safariJs(t, js) {
+    try { return app(t.app).doJavaScript(js, { in: t.tab }); }
+    catch (e) {
+      if (noSuchObject(e)) throw e;
+      if (!isActive(t)) throw new Error(notVisible("page JS"));
+      throw e;
+    }
+  }
+
+  // Safari tabs have no id, so the page keeps the raw id of the handle perch last
+  // ran it under in window.__perch_h; a tab at a handle's URL that carries another
+  // handle's stamp is some other tab. The guard runs `s` only on a page at `hash`
+  // whose stamp `mode` allows, and rewrites the stamp to `set`:
+  //   any: any stamp (a handle perch hasn't stamped with, fresh from a listing)
+  //   free: one of `ours` or none
+  //   ours: one of `ours` only; an unstamped page answers UNSTAMPED
+  // `ours` is the handle's raw id and those of the handles perch refreshed it to.
+  const WRONG_TAB = "__perch_wrong_tab__", UNSTAMPED = "__perch_unstamped__";
+  const ours = function (want, raw) { return [raw].concat(want.next || []); };
+  function stampGuard(s, hash, mine, set, mode) {
+    const q = JSON.stringify;
+    return "(function(){if((" + fp + ")(location.href)!==" + q(hash) + ")return " + q(WRONG_TAB) + ";var h=window.__perch_h;" +
+      (mode === "any" ? "" : "if(h!==undefined&&" + q(mine) + ".indexOf(h)<0)return " + q(WRONG_TAB) + ";") +
+      (mode === "ours" ? "if(h===undefined)return " + q(UNSTAMPED) + ";" : "") +
+      "window.__perch_h=" + q(set) + ";return (\n" + s + "\n)})()";
+  }
+  // What a call reports beside its result: the handle it stamped a page with (s),
+  // and that handle again as m when it differs from the one the call came with.
+  let note = null;
+  function noted(raw, set) {
+    note = note || {};
+    note.s = "safari:" + set;
+    if (set !== raw) note.m = note.s;
+  }
+
+  // The first page JS on a resolved Safari handle picks its tab among the
+  // candidates at its URL. The tab at the recorded index is tried first, then the
+  // nearest; each costs one event, so an ambiguous window costs one per candidate.
+  function pickRun(t, js) {
+    const P = t.pick, c = P.cands;
+    t.pick = null;
+    const run = function (i, mode) {
+      const set = P.winId + "." + i + "." + P.hash;
+      t.idx = i;
+      t.tab = t.win.tabs[i];
+      const r = safariJs(t, stampGuard(js, P.hash, P.mine, set, mode));
+      if (r === WRONG_TAB || r === UNSTAMPED) return r;
+      noted(P.raw, set);
+      return { v: r };
+    };
+    const one = function (r) {
+      if (r === WRONG_TAB || r === UNSTAMPED) throw new Error("stale_tab: tab " + P.tabId + " is gone; the tab at its URL is another one; re-run list_tabs");
+      return r.v;
+    };
+    if (c.length === 1) return one(run(c[0], c[0] === P.idx && !P.own ? "any" : "free"));
+    if (!P.own && c.indexOf(P.idx) >= 0) return one(run(P.idx, "any"));
+    const order = c.slice().sort(function (x, y) { return (x !== P.idx) - (y !== P.idx) || Math.abs(x - P.idx) - Math.abs(y - P.idx) || x - y; });
+    for (const i of order) {
+      const r = run(i, "ours");
+      if (r !== WRONG_TAB && r !== UNSTAMPED) return r.v;
+    }
+    throw new Error("stale_tab: can't tell which tab " + P.tabId + " is; several tabs show its URL; re-run list_tabs");
+  }
+
   // One-event page JS for a target that needs no guard: a Chromium handle with a
-  // window hint, a Safari handle (the page checks its own URL hash first), or the
-  // default target when the topmost browser is Chromium or Safari. Returns {v},
-  // or null (only when the script cannot have run) for the full resolve path.
-  const WRONG_TAB = "__perch_wrong_tab__";
+  // window hint, a Safari handle (the page checks its own URL hash and stamp
+  // first), or the default target when the topmost browser is Chromium or Safari.
+  // Returns {v}, or null (only when the script cannot have run) for the full
+  // resolve path.
   // `at`, if given, gets the tab's window (app, kind, win, w, winId) and `run`,
   // which sends more page JS the same way.
   function quickExec(want, js, at) {
@@ -486,15 +560,18 @@ function jxaRuntime(BROWSERS, HANG) {
       if (KIND[h.app] === "safari") {
         const m = /^(\d+)\.(\d+)\.(.+)$/.exec(h.raw);
         if (!m || !alive("Safari", procs())) return null;
-        const guard = function (s) { return "(function(){if((" + fp + ")(location.href)!==" + JSON.stringify(m[3]) + ")return " + JSON.stringify(WRONG_TAB) + ";return (" + s + ")})()"; };
+        // A page stamped under another handle, or (for a handle that has stamped
+        // before) not stamped at all, is left to pickRun, which sees the other candidates.
+        const guard = function (s, mode) { return stampGuard(s, m[3], ours(want, h.raw), h.raw, mode); };
         const win = app("Safari").windows.byId(Number(m[1])), tab = win.tabs[Number(m[2])];
         let v;
-        try { v = app("Safari").doJavaScript(guard(js), { in: tab }); }
+        try { v = app("Safari").doJavaScript(guard(js, want.own ? "ours" : "any"), { in: tab }); }
         catch (e) { if (e && e.errorNumber === -1712) throw e; return null; }
-        if (v === WRONG_TAB) return null;
+        if (v === WRONG_TAB || v === UNSTAMPED) return null;
+        noted(h.raw, h.raw);
         if (at) Object.assign(at, { app: "Safari", kind: "safari", win: win, winId: m[1], run: function (s) {
-          const r = app("Safari").doJavaScript(guard(s), { in: tab });
-          if (r === WRONG_TAB) throw staleError(want.tabId);
+          const r = app("Safari").doJavaScript(guard(s, "ours"), { in: tab });
+          if (r === WRONG_TAB || r === UNSTAMPED) throw staleError(want.tabId);
           return r;
         } });
         return { v: v };
@@ -1832,6 +1909,7 @@ function jxaRuntime(BROWSERS, HANG) {
     // Run by the daemons' handshake, so no call pays the AppKit import; one-shot
     // runs keep it lazy.
     warm() { try { appKit(); } catch (e) {} },
+    takeNote() { const n = note; note = null; return n; },
     dialogs(a) {
       return provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
     },
@@ -2727,13 +2805,43 @@ async function jxaOneShot(script, { timeout = JXA_DEFAULT_TIMEOUT } = {}) {
 // Calls a runtime entry. `raw` returns the entry's string result untouched
 // (page JSON from eval); otherwise the result is JSON round-tripped.
 async function rt(fn, args, { raw = false, lane, timeout } = {}) {
+  const tabId = args && args.target && args.target.tabId;
+  const safari = typeof tabId === "string" && tabId.startsWith("safari:");
+  if (safari && (stampedHandles.has(tabId) || movedTo.has(tabId))) {
+    const next = [];
+    for (let h = movedTo.get(tabId); h && next.length < 10; h = movedTo.get(h)) next.push(h.slice(7));
+    args = { ...args, target: { ...args.target, own: true, next } };
+  }
   const call = `__perch.${fn}(${JSON.stringify(args)})`;
-  const script = raw ? call : `JSON.stringify(${call})`;
-  const out = DIALOG_BLIND.has(fn)
+  let script = raw ? call : `JSON.stringify(${call})`;
+  // The runtime's note (the stamp it wrote, a moved tab's handle) rides ahead of the result.
+  if (safari) script = `(function(){__perch.takeNote();var r=${script},n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
+  let out = DIALOG_BLIND.has(fn)
     ? await jxa(script, { lane, timeout })
     : await watchDialogs(args && args.target ? args.target : {}, lane, (token) => jxa(script, { lane, timeout, token }));
+  if (safari && typeof out === "string" && out.startsWith(NOTE_MARK)) {
+    const end = out.indexOf(NOTE_MARK, 1), n = JSON.parse(out.slice(1, end));
+    out = out.slice(end + 1);
+    if (stampedHandles.size > 5000) { stampedHandles.clear(); movedTo.clear(); }
+    stampedHandles.add(n.s);
+    const c = callNotes.getStore();
+    if (n.m) {
+      if (n.m !== tabId) movedTo.set(tabId, n.m);
+      if (c) c.moved = n.m;
+    }
+  }
   return raw ? out : JSON.parse(out);
 }
+
+const NOTE = "\\u0001", NOTE_MARK = "\u0001";
+// Safari handles perch has written on a page as its stamp: a page at their index
+// without it is not taken on trust. A handle a listing just issued is dropped
+// again, since the listing vouches for the tab at its index.
+const stampedHandles = new Set();
+// A handle -> the handle a call on it answered under after its tab moved; the
+// page's stamp then names the newer one, which the older handle still accepts.
+const movedTo = new Map();
+const callNotes = new AsyncLocalStorage();
 
 // A page's alert/confirm/prompt blocks its JS, and with it our call, until the
 // timeout. Once a call has been in flight DIALOG_PROBE_MS, a one-shot osascript
@@ -6087,6 +6195,27 @@ export function formatResult(result) {
   return { content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }] };
 }
 
+function issuedHandles(name, result) {
+  if (!result || typeof result !== "object") return [];
+  if (name === "list_tabs") return (result.tabs || []).map((t) => t.tabId);
+  return name === "new_tab" || name === "navigate" ? [result.tabId] : [];
+}
+
+// A Safari tab found off its handle's index answers under its new handle, so the
+// next call is a one-event hit again. eval_js's value is the page's own, so the
+// note goes beside it.
+const MOVED = "tab moved; tabId refreshed";
+function withMoved(name, result, tabId) {
+  const plain = result && typeof result === "object" && !Array.isArray(result) && !result.__image && !result.__perch_ref_miss && result.__perch_error === undefined;
+  if (plain && name !== "eval_js") {
+    // A result's own tabId (navigate's, after the URL changed) is already the current one.
+    return formatResult({ ...result, tabId: result.tabId ?? tabId, moved: true, warning: result.warning ? `${result.warning}; ${MOVED}` : MOVED });
+  }
+  const out = formatResult(result);
+  out.content.push({ type: "text", text: JSON.stringify({ tabId, moved: true, warning: MOVED }) });
+  return out;
+}
+
 export async function handleCall(name, args = {}) {
   const handler = Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : null;
   try {
@@ -6094,7 +6223,10 @@ export async function handleCall(name, args = {}) {
     guardFrameRefs(name, args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
-    return formatResult(await handler(args));
+    const note = {};
+    const result = await callNotes.run(note, () => handler(args));
+    for (const t of issuedHandles(name, result)) { stampedHandles.delete(t); movedTo.delete(t); }
+    return note.moved ? withMoved(name, result, note.moved) : formatResult(result);
   } catch (e) {
     return { content: [{ type: "text", text: `error: ${e.message}` }], isError: true };
   }
