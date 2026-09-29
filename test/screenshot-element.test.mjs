@@ -12,37 +12,50 @@ import { throwAt, noRaw } from "./helpers/fault.mjs";
 const saved = { fast: DAEMONS.fast, slow: DAEMONS.slow, exec: deps.exec };
 afterEach(() => Object.assign(DAEMONS, { fast: saved.fast, slow: saved.slow }) && Object.assign(deps, { exec: saved.exec }));
 
-// A page whose #t sits at `rect` (client CSS px) once scrolled into view, inside
-// #box, a scroller at 37; the window is scrolled to (0, 40). scrollIntoView
-// scrolls both, as a browser would, and records how it was asked.
-function scrolled({ rect = "100,200,300,50", iw = 800, ih = 620, dpr = 1, est = { screenX: 100, screenY: 50, outerWidth: 1000, outerHeight: 700 } } = {}) {
-  const dom = page(`<div id=box><p id=t data-rect="${rect}">x</p></div><p id=u>u</p>`);
-  for (const [k, v] of Object.entries({ innerWidth: iw, innerHeight: ih, devicePixelRatio: dpr, ...est })) {
+// A page whose #t sits at `from` (client CSS px, below the viewport by default)
+// and at `rect` once scrolled into view, inside #box, a scroller at 37; the
+// window is scrolled to (0, 40). scrollIntoView scrolls both, as a browser
+// would, and records how it was asked.
+function scrolled({ rect = "100,200,300,50", from = "100,1200,300,50", iw = 800, ih = 620 } = {}) {
+  const dom = page(`<div id=box><p id=t data-rect="${from}">x</p></div><p id=u>u</p>`);
+  for (const [k, v] of Object.entries({ innerWidth: iw, innerHeight: ih })) {
     Object.defineProperty(dom, k, { value: v, configurable: true });
   }
   const box = dom.document.getElementById("box"), t = dom.document.getElementById("t");
   dom.scrollTo({ left: 0, top: 40, behavior: "instant" });
   box.scrollTop = 37;
   dom.intoView = [];
-  t.scrollIntoView = function (o) { dom.intoView.push(o); dom.scrollTo({ left: 0, top: 900, behavior: "instant" }); box.scrollTop = 0; };
+  t.scrollIntoView = function (o) { dom.intoView.push(o); t.setAttribute("data-rect", rect); dom.scrollTo({ left: 0, top: 900, behavior: "instant" }); box.scrollTop = 0; };
   return { dom, box, t };
 }
 const where = ({ dom, box }) => [dom.scrollX, dom.scrollY, box.scrollTop];
-// An element already in view: scrollIntoView moves nothing.
-function still(opts) {
-  const p = scrolled(opts);
-  p.t.scrollIntoView = function (o) { p.dom.intoView.push(o); };
-  return p;
-}
+// An element already wholly inside the viewport, which shot_clip leaves in place.
+const still = (opts = {}) => scrolled({ ...opts, from: opts.rect || "100,200,300,50" });
 
 
 // ---- the page scripts ----
 
-test("shot_clip scrolls the element to the center and reports its client rect, viewport and the window's screen corner", () => {
-  const p = scrolled({ dpr: 2 });
+test("shot_clip scrolls an element outside the viewport the least way in and reports its client rect and viewport", () => {
+  const p = scrolled();
   const c = run(p.dom, "shot_clip", { selector: "#t" });
-  assert.equal(JSON.stringify(p.dom.intoView), JSON.stringify([{ block: "center", inline: "nearest", behavior: "instant" }]));
-  assert.deepEqual(c, { ok: true, x: 100, y: 200, w: 300, h: 50, iw: 800, ih: 620, dpr: 2, right: 1100, bottom: 750, moved: true });
+  assert.equal(JSON.stringify(p.dom.intoView), JSON.stringify([{ block: "nearest", inline: "nearest", behavior: "instant" }]));
+  assert.deepEqual(c, { ok: true, x: 100, y: 200, w: 300, h: 50, iw: 800, ih: 620, moved: true });
+});
+
+test("shot_clip leaves an element wholly inside the viewport where it is, even on a scrolled page", () => {
+  for (const rect of ["100,200,300,50", "0,0,800,620"]) {
+    const p = still({ rect });
+    const c = run(p.dom, "shot_clip", { selector: "#t" });
+    assert.deepEqual(p.dom.intoView, [], rect);
+    assert.equal(c.moved, false);
+    assert.deepEqual(where(p), [0, 40, 37]);
+    assert.deepEqual(run(p.dom, "shot_restore", {}), { ok: true });
+  }
+  for (const from of ["100,-10,300,50", "700,200,300,50", "100,600,300,50"]) {
+    const p = scrolled({ from });
+    run(p.dom, "shot_clip", { selector: "#t" });
+    assert.equal(p.dom.intoView.length, 1, from);
+  }
 });
 
 test("shot_restore puts back the window's scroll and every scrolled ancestor's, then forgets them", () => {
@@ -69,7 +82,7 @@ test("shot_clip takes a ref; a stale or unknown ref is a ref miss that scrolls n
 });
 
 test("shot_clip: no match, or an element with no size, scrolls nothing", () => {
-  const p = scrolled({ rect: "0,0,0,0" });
+  const p = scrolled({ rect: "0,0,0,0", from: "0,0,0,0" });
   assert.deepEqual(run(p.dom, "shot_clip", { selector: "#nope" }), { ok: false, error: "no element for selector #nope" });
   const c = run(p.dom, "shot_clip", { selector: "#t" });
   assert.equal(c.ok, false);
@@ -83,11 +96,11 @@ test("shot_clip: no match, or an element with no size, scrolls nothing", () => {
 // in (a left side panel) and 80pt down (tabs and toolbar), 800x620 points.
 const AREA = { x: 300, y: 130, w: 800, h: 620 };
 let world;
-function install(p, { scale = 2, active = true } = {}) {
+function install(p, { scale = 2, active = true, area = AREA } = {}) {
   const tabsList = [{ url: "https://a.test/", id: "c0", dom: p.dom }, { url: "https://b.test/", id: "c1" }];
   world = makeWorld({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: active ? 0 : 1, x: 100, y: 50, w: 1000, h: 700, tabs: tabsList }] }],
-    cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 100, y: 50, w: 1000, h: 700, ax: { web: [AREA] } }],
+    cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 100, y: 50, w: 1000, h: 700, ax: { web: [area] } }],
   });
   world.state.shotScale = scale;
   world.run(JXA_PRELUDE);
@@ -115,7 +128,7 @@ const shoot = async (args) => {
 };
 
 test("a 2x capture is cropped to the element plus 8 CSS px, placed by the Accessibility page area", async () => {
-  const p = scrolled({ dpr: 2 });
+  const p = scrolled();
   install(p);
   const calls = spawns(2000);
   const { meta } = await shoot({ selector: "#t" });
@@ -129,51 +142,49 @@ test("a 2x capture is cropped to the element plus 8 CSS px, placed by the Access
   assert.equal(world.log.filter((e) => e[0] === "activate").length, 0);
 });
 
-test("without Accessibility the page's estimate places the viewport; 1x and 2x map the same box", async () => {
-  for (const [scale, dpr] of [[1, 1], [2, 2]]) {
-    const p = scrolled({ dpr });
-    install(p, { scale });
+test("without Accessibility an element crop is refused before any page JS, whatever the browser's panels", async () => {
+  // DevTools docked at the bottom: the page is 400 of the window's 620 content points.
+  for (const ih of [620, 400]) {
+    const p = scrolled({ ih });
+    install(p);
     world.state.ax = false;
-    spawns(2000);
-    const { meta } = await shoot({ selector: "#t" });
-    const k = scale;
-    assert.deepEqual(meta.clip, { x: 292 * k, y: 272 * k, w: 316 * k, h: 66 * k }, `scale ${scale}`);
-    assert.equal(meta.aim, "estimate");
-    assert.equal(meta.clipped, undefined);
-    assert.deepEqual(where(p), [0, 40, 37]);
+    const calls = spawns(2000);
+    const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+    assert.equal(r.content.length, 1, "no image");
+    assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: "screenshot: cropping to an element needs the Accessibility grant to place the page in the window; grant it, or screenshot without ref or selector" });
+    assert.equal(world.counts["tab.execute"], undefined);
+    assert.deepEqual([calls, world.state.shots, p.dom.intoView], [[], [], []]);
   }
 });
 
+test("with a bottom-docked panel the Accessibility page area places the crop", async () => {
+  const p = scrolled({ ih: 400 });
+  install(p, { scale: 1, area: { x: 300, y: 130, w: 800, h: 400 } });
+  spawns(2000);
+  const { meta } = await shoot({ selector: "#t" });
+  assert.deepEqual(meta.clip, { x: 292, y: 272, w: 316, h: 66 });
+  assert.equal(meta.aim, "ax");
+});
+
+test("when Accessibility finds no page area the crop is refused, with the scroll restored", async () => {
+  const p = scrolled();
+  install(p, { area: { x: 300, y: 130, w: 500, h: 300 } });
+  const calls = spawns(2000);
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: "screenshot: Accessibility shows no page area matching this tab's viewport; nothing was captured; screenshot without ref or selector" });
+  assert.deepEqual([calls, world.state.shots], [[], []]);
+  assert.deepEqual(where(p), [0, 40, 37]);
+});
+
 test("page zoom: the Accessibility area's width over innerWidth scales the CSS box", async () => {
-  // 125% zoom: 640x496 CSS px fill the 800x620pt area; devicePixelRatio 2.5 on a 2x display.
-  const p = scrolled({ iw: 640, ih: 496, dpr: 2.5 });
+  // 125% zoom: 640x496 CSS px fill the 800x620pt area.
+  const p = scrolled({ iw: 640, ih: 496 });
   install(p);
   spawns(2000);
   const { meta } = await shoot({ selector: "#t" });
   // 92..408 x 192..258 CSS px * 1.25 + (200, 80), * 2.
   assert.deepEqual(meta.clip, { x: 630, y: 640, w: 790, h: 165 });
   assert.equal(meta.aim, "ax");
-  // The estimate gets the zoom from devicePixelRatio over the capture's 2px per
-  // point: the 640x496 CSS px viewport is 800x620 points, so the browser's own
-  // frame is 1000-800 points wide at the left and 700-620 tall at the top, in the
-  // same points as outerWidth and outerHeight.
-  for (const [scale, dpr, clip] of [[2, 2.5, { x: 630, y: 640, w: 790, h: 165 }], [1, 1.25, { x: 315, y: 320, w: 395, h: 83 }]]) {
-    const est = scrolled({ iw: 640, ih: 496, dpr });
-    install(est, { scale });
-    world.state.ax = false;
-    spawns(2000);
-    const { meta: m } = await shoot({ selector: "#t" });
-    assert.equal(m.aim, "estimate");
-    assert.deepEqual(m.clip, clip, `scale ${scale}`);
-  }
-  // Node's screencapture fallback places it the same way.
-  const fb = still({ iw: 640, ih: 496, dpr: 2.5 });
-  install(fb);
-  world.state.ax = false;
-  world.state.capture = false;
-  const calls = spawns(2000);
-  assert.deepEqual((await shoot({ selector: "#t" })).meta.clip, { x: 630, y: 640, w: 790, h: 165 });
-  assert.deepEqual(calls[1].slice(0, 6), ["sips", "--cropToHeightWidth", "165", "790", "--cropOffset", "640"]);
 });
 
 test("an element past the viewport's edge is cropped at the viewport, clipped:true", async () => {
@@ -199,7 +210,7 @@ test("the crop comes before the downscale", async () => {
 });
 
 test("without the capture grant, an element already in view is cropped by sips before any resample", async () => {
-  const p = still({ dpr: 2 });
+  const p = still();
   install(p);
   world.state.capture = false;
   const calls = spawns(2000);
@@ -216,15 +227,13 @@ test("without the capture grant, an element already in view is cropped by sips b
 });
 
 test("without the capture grant, an element that had to be scrolled into view is refused, not cropped from the restored page", async () => {
-  const p = scrolled({ dpr: 2 });
+  const p = scrolled();
   install(p);
   world.state.capture = false;
   const calls = spawns(2000);
   const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
   assert.equal(r.content.length, 1, "no image");
-  const out = JSON.parse(r.content[0].text);
-  assert.equal(out.ok, false);
-  assert.match(out.error, /^screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant/);
+  assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it, or scroll it into view and call again" });
   assert.deepEqual(calls, [], "no screencapture");
   assert.deepEqual(where(p), [0, 40, 37]);
 });

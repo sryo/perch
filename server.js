@@ -890,12 +890,24 @@ function jxaRuntime(BROWSERS, HANG) {
   }
   function shotGeom(a) { return shotTarget(a).I; }
 
-  // screenshot {ref|selector}: a.clip scrolls the element into view and measures
+  // screenshot {ref|selector}: a.clip brings the element into view and measures
   // it, the capture is cut to it, and a.restore puts every scroll position back
-  // before the call returns, whatever the capture did.
+  // before the call returns, whatever the capture did. Only the Accessibility
+  // page area places the viewport in the window: the page's own screenX and
+  // outer size can't tell browser chrome from a docked DevTools or side panel.
+  // A refusal carries only its error, none of the window's geometry.
+  const SHOT_NO_AX = "screenshot: cropping to an element needs the Accessibility grant to place the page in the window; grant it, or screenshot without ref or selector";
+  const SHOT_NO_AREA = "screenshot: Accessibility shows no page area matching this tab's viewport; nothing was captured; screenshot without ref or selector";
+  const SHOT_OUTSIDE = "screenshot: the element is outside the visible page even after scrolling it into view; nothing was captured";
+  // Node's screencapture fallback runs after the restore, so it would see the
+  // page as it was, not the rect measured after the scroll.
+  const SHOT_MOVED = "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it, or scroll it into view and call again";
   function shotClip(a) {
     const s = shotTarget(a), t = s.t, I = s.I;
     visibleGuard(t, "screenshot");
+    let trusted = false;
+    try { ObjC.import("ApplicationServices"); trusted = !!$.AXIsProcessTrusted(); } catch (e) {}
+    if (!trusted) return { ok: false, error: SHOT_NO_AX };
     const c = parseExec(t, a.clip);
     if (!c || c.ok !== true) {
       if (!threw(c)) return c;
@@ -903,63 +915,49 @@ function jxaRuntime(BROWSERS, HANG) {
       // PerchStaleRef stays raw for handleCall, which maps it to the call's ref miss.
       return faultName(c) === "PerchStaleRef" ? c : { ok: false, error: "screenshot: the page script failed on this page (" + faultName(c) + "); nothing was captured" };
     }
-    let err = null;
+    let err = null, refused = null;
     try {
       const m = shotMap(I, c);
-      if (!m) {
-        Object.assign(I, { ok: false, error: "screenshot: the element is outside the visible page even after scrolling it into view; nothing was captured" });
-      } else {
+      if (typeof m === "string") refused = m;
+      else {
         // The scroll reaches the window's pixels at the browser's next paint.
         if (c.moved) delay(0.1);
         const cap = capture(I.windowNumber, a.format, a.maxWidth, m);
-        // Node's screencapture fallback runs after the restore, so it would see
-        // the page as it was, not the rect measured after the scroll.
         if (cap) Object.assign(I, { data: cap.data, image: cap.image, clip: cap.clip });
-        else if (c.moved) Object.assign(I, { ok: false, error: SHOT_MOVED });
+        else if (c.moved) refused = SHOT_MOVED;
         else I.map = m;
-        I.aim = m.aim;
+        I.aim = "ax";
         if (m.clipped || (cap && cap.cut)) I.clipped = true;
       }
     } catch (e) { err = e; }
     let back = null;
     try { back = parseExec(t, a.restore); } catch (e) {}
     if (err) throw err;
+    if (refused) return { ok: false, error: refused };
     if (!back || back.ok !== true) I.warning = "the page's scroll positions may not have been restored";
     return I;
   }
 
-  // Where the clip's CSS box lands in the capture: pixel = k * (ox + s*v) + d*(v - e)
-  // for a CSS coordinate v, k being capture pixels per window point. The
-  // Accessibility page area gives the viewport's origin (ox, oy) in window points
-  // and points per CSS px (s) exactly, with d = 0. Without it devicePixelRatio is
-  // pixels per CSS px (d), zoom included, and the origin is the window's far
-  // corner (ox, oy) less the viewport's size (e: innerWidth, innerHeight) in
-  // points, e * d / k: innerWidth is CSS px while outerWidth is points, so the
-  // two only subtract once the zoom (d / k) is known. The box is the element
-  // plus SHOT_MARGIN CSS px, cut at the viewport; null when nothing of it is left.
+  // Where the clip's CSS box lands in the capture: pixel = k * (ox + s*v) for a
+  // CSS coordinate v, k being capture pixels per window point, (ox, oy) the
+  // Accessibility page area's origin in window points and s its points per CSS
+  // px (zoom included). The box is the element plus SHOT_MARGIN CSS px, cut at
+  // the viewport. A string is the refusal when there is no box or no area.
   const SHOT_MARGIN = 8;
-  const SHOT_MOVED = "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it or scroll the page yourself";
   function shotMap(I, c) {
     const r = I.cgBounds || I.geom, g = SHOT_MARGIN;
     const box = { x0: Math.max(0, c.x - g), y0: Math.max(0, c.y - g), x1: Math.min(c.iw, c.x + c.w + g), y1: Math.min(c.ih, c.y + c.h + g) };
-    if (!(box.x1 > box.x0 && box.y1 > box.y0)) return null;
-    let w = null;
-    try {
-      ObjC.import("ApplicationServices");
-      if ($.AXIsProcessTrusted()) w = axPageArea(I, { iw: c.iw, ih: c.ih });
-    } catch (e) {}
-    const m = w ? { ox: w.x - r.x, oy: w.y - r.y, s: w.scale, d: 0, aim: "ax" } : { ox: c.right - r.x, oy: c.bottom - r.y, ex: c.iw, ey: c.ih, s: 0, d: c.dpr || 1, aim: "estimate" };
-    m.box = box;
-    m.cw = r.w;
-    m.clipped = c.x < 0 || c.y < 0 || c.x + c.w > c.iw || c.y + c.h > c.ih;
-    return m;
+    if (!(box.x1 > box.x0 && box.y1 > box.y0)) return SHOT_OUTSIDE;
+    const w = axPageArea(I, { iw: c.iw, ih: c.ih });
+    if (!w) return SHOT_NO_AREA;
+    return { ox: w.x - r.x, oy: w.y - r.y, s: w.scale, box: box, cw: r.w, clipped: c.x < 0 || c.y < 0 || c.x + c.w > c.iw || c.y + c.h > c.ih };
   }
   // A shot map's box in pixels of a W x H capture, kept inside it (cut if it had
   // to be). Node's clipPixels does the same for the screencapture fallback.
   function clipPixels(m, W, H) {
-    const k = W / m.cw, px = function (o, e, v) { return k * (o + m.s * v) + m.d * (v - (e || 0)); };
-    const x0 = Math.floor(px(m.ox, m.ex, m.box.x0) + 1e-6), y0 = Math.floor(px(m.oy, m.ey, m.box.y0) + 1e-6);
-    const x1 = Math.ceil(px(m.ox, m.ex, m.box.x1) - 1e-6), y1 = Math.ceil(px(m.oy, m.ey, m.box.y1) - 1e-6);
+    const k = W / m.cw, px = function (o, v) { return k * (o + m.s * v); };
+    const x0 = Math.floor(px(m.ox, m.box.x0) + 1e-6), y0 = Math.floor(px(m.oy, m.box.y0) + 1e-6);
+    const x1 = Math.ceil(px(m.ox, m.box.x1) - 1e-6), y1 = Math.ceil(px(m.oy, m.box.y1) - 1e-6);
     const x = Math.max(0, x0), y = Math.max(0, y0);
     return { x: x, y: y, w: Math.min(W, x1) - x, h: Math.min(H, y1) - y, cut: x0 < 0 || y0 < 0 || x1 > W || y1 > H };
   }
@@ -3323,9 +3321,9 @@ export const deps = { exec, dialogs: probeDialogs };
 
 // The runtime's clipPixels, for a screencapture of W x H pixels.
 function clipPixels(m, W, H) {
-  const k = W / m.cw, px = (o, e, v) => k * (o + m.s * v) + m.d * (v - (e || 0));
-  const x0 = Math.floor(px(m.ox, m.ex, m.box.x0) + 1e-6), y0 = Math.floor(px(m.oy, m.ey, m.box.y0) + 1e-6);
-  const x1 = Math.ceil(px(m.ox, m.ex, m.box.x1) - 1e-6), y1 = Math.ceil(px(m.oy, m.ey, m.box.y1) - 1e-6);
+  const k = W / m.cw, px = (o, v) => k * (o + m.s * v);
+  const x0 = Math.floor(px(m.ox, m.box.x0) + 1e-6), y0 = Math.floor(px(m.oy, m.box.y0) + 1e-6);
+  const x1 = Math.ceil(px(m.ox, m.box.x1) - 1e-6), y1 = Math.ceil(px(m.oy, m.box.y1) - 1e-6);
   const x = Math.max(0, x0), y = Math.max(0, y0);
   return { x, y, w: Math.min(W, x1) - x, h: Math.min(H, y1) - y, cut: x0 < 0 || y0 < 0 || x1 > W || y1 > H };
 }
@@ -6340,12 +6338,11 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
   // What a frame click needs from the page: its URL and viewport.
   viewport: "return { url: location.href, iw: innerWidth, ih: innerHeight };",
 
-  // screenshot {ref|selector}: the element's client rect once scrolled into
-  // view. Every scroll position that can move (each ancestor's, across shadow
-  // roots, and the window's) is kept on window.__perch_shot for shot_restore,
-  // and only once the element is known to have a box. right/bottom: the window's
-  // far corner in screen points, from which the runtime estimates the viewport's
-  // origin (browser chrome left and top) once it knows the zoom.
+  // screenshot {ref|selector}: the element's client rect in view. One wholly
+  // inside the viewport stays put; any other is scrolled the least way in.
+  // Every scroll position that can move (each ancestor's, across shadow roots,
+  // and the window's) is kept on window.__perch_shot for shot_restore, and only
+  // once the element is known to have a box.
   shot_clip: String.raw`
 const r = resolveEl(A);
 if (r.out) return r.out;
@@ -6356,10 +6353,11 @@ if (!b.width || !b.height) return { ok: false, error: ident(el) + " has no size 
 const els = [];
 for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
 const st = window.__perch_shot = { els: els, x: window.scrollX, y: window.scrollY };
-try { el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (e) {}
+const iw = innerWidth, ih = innerHeight;
+if (!(b.left >= 0 && b.top >= 0 && b.right <= iw && b.bottom <= ih)) try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); } catch (e) {}
 const c = el.getBoundingClientRect();
 const moved = window.scrollX !== st.x || window.scrollY !== st.y || els.some(function (e) { return e[0].scrollLeft !== e[1] || e[0].scrollTop !== e[2]; });
-return { ok: true, x: c.left, y: c.top, w: c.width, h: c.height, iw: innerWidth, ih: innerHeight, dpr: window.devicePixelRatio || 1, right: screenX + outerWidth, bottom: screenY + outerHeight, moved: moved };
+return { ok: true, x: c.left, y: c.top, w: c.width, h: c.height, iw: iw, ih: ih, moved: moved };
 `,
   // Puts back what shot_clip kept, instantly even under scroll-behavior: smooth.
   shot_restore: String.raw`
@@ -7083,7 +7081,7 @@ const TOOLS = [
     timeout: { type: "number", description: "ms, default 10000." },
     target: TARGET,
   }),
-  tool("screenshot", "Capture the target window without raising it; the tab must be the one its window shows. Returns the image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w. ref/selector: scroll it into view, crop to it (meta.clip).", {
+  tool("screenshot", "Capture the target window without raising it; the tab must be the one its window shows. Returns the image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w. ref/selector (needs Accessibility): scroll it into view, crop to it (meta.clip).", {
     ref: REF,
     selector: SEL,
     raise: { type: "boolean" },
