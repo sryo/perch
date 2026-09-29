@@ -174,3 +174,13 @@ test("snapshot: hidden rows stop at 10 and respect max", () => {
   assert.equal(lines.length, 3);
   assert.equal(head.truncated, true);
 });
+
+test("snapshot: the form header carries the wizard's step, and only when one shows", () => {
+  const html = readFileSync(new URL("./fixtures/wizard.html", import.meta.url), "utf8");
+  const w = page(html.slice(html.indexOf("<body>") + 6, html.indexOf("<script>")));
+  assert.equal(snap(w).head.form.step, "1/3");
+  w.document.querySelector(".steps").remove();
+  assert.equal(snap(w).head.form.step, "1/3", "the Step n of m text stands in");
+  w.document.getElementById("count").remove();
+  assert.equal("step" in snap(w).head.form, false);
+});

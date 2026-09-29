@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Wizard</title></head>
+<body>
+<main id="app">
+  <ol class="steps"><li aria-current="step">Contact</li><li>Details</li><li>Review</li></ol>
+  <form id="wiz" novalidate>
+    <p id="count">Step 1 of 3</p>
+    <div id="banner"></div>
+    <fieldset data-step="1">
+      <legend>Contact</legend>
+      <div><label for="name">Name</label><input id="name" name="name" required><div id="name-e" class="error"></div></div>
+      <div><label for="email">Email</label><input id="email" name="email" type="email" required><div id="email-e" class="error"></div></div>
+    </fieldset>
+    <fieldset data-step="2" style="display:none">
+      <legend>Details</legend>
+      <div><label for="city">City</label><input id="city" name="city"></div>
+      <div><label for="phone">Phone</label><input id="phone" name="phone"></div>
+    </fieldset>
+    <fieldset data-step="3" style="display:none">
+      <legend>Review</legend>
+      <div><label for="notes">Notes</label><textarea id="notes" name="notes"></textarea></div>
+    </fieldset>
+    <button id="next" type="button">Next</button>
+    <button id="send" type="submit" style="display:none">Submit</button>
+  </form>
+</main>
+
+<div id="quick" role="dialog" aria-modal="true" aria-label="Quick apply">
+  <div class="body">
+    <label for="q1">First name</label><input id="q1">
+    <label for="q2">Last name</label><input id="q2">
+    <button id="qnext" type="button">Next</button>
+  </div>
+</div>
+
+<section id="loose">
+  <div class="fields">
+    <label for="l1">Code</label><input id="l1">
+    <label for="l2">Zip</label><input id="l2">
+    <button id="lnext" type="button">Continue</button>
+  </div>
+</section>
+
+<button id="help" type="button">Help</button>
+<p id="helpout">Closed</p>
+
+<script>
+  var step = 1;
+  function show(n) {
+    step = n;
+    document.querySelectorAll("#wiz fieldset").forEach(function (f) { f.style.display = f.dataset.step === String(n) ? "" : "none"; });
+    document.querySelectorAll(".steps li").forEach(function (li, i) {
+      if (i === n - 1) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
+    });
+    document.getElementById("count").textContent = "Step " + n + " of 3";
+    document.getElementById("next").style.display = n === 3 ? "none" : "";
+    document.getElementById("send").style.display = n === 3 ? "" : "none";
+  }
+  document.getElementById("next").addEventListener("click", function () {
+    var bad = [];
+    document.querySelectorAll('#wiz fieldset[data-step="' + step + '"] [required]').forEach(function (el) {
+      var err = document.getElementById(el.id + "-e");
+      if (el.value) { el.removeAttribute("aria-invalid"); err.textContent = ""; }
+      else { el.setAttribute("aria-invalid", "true"); err.textContent = "This field is required"; bad.push(el); }
+    });
+    var banner = document.getElementById("banner");
+    if (bad.length) {
+      banner.setAttribute("role", "alert");
+      banner.textContent = "Please fix " + bad.length + " errors";
+      return;
+    }
+    banner.removeAttribute("role");
+    banner.textContent = "";
+    show(step + 1);
+  });
+  document.getElementById("wiz").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var b = document.getElementById("send");
+    b.textContent = "Submitting...";
+    b.disabled = true;
+    setTimeout(function () {
+      var done = document.createElement("div");
+      done.className = "thanks";
+      done.textContent = "Thanks, we received your application.";
+      document.getElementById("wiz").replaceWith(done);
+    }, 300);
+  });
+  document.getElementById("qnext").addEventListener("click", function () {
+    setTimeout(function () { document.getElementById("quick").remove(); }, 0);
+  });
+  document.getElementById("lnext").addEventListener("click", function () {
+    document.querySelector("#loose .fields").remove();
+    document.getElementById("loose").textContent = "Code accepted";
+  });
+  document.getElementById("help").addEventListener("click", function () {
+    document.getElementById("helpout").textContent = "Open";
+  });
+</script>
+</body>
+</html>

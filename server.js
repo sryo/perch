@@ -4210,13 +4210,48 @@ function rbWatch(s, key, life) {
 }
 `;
 
+// A form's step indicator, "n/m" (or the current step's own text when it sits
+// in no list), else null. Looks in the form and up to 2 ancestors, nearest
+// first: aria-current=step, then a progressbar, then "Step 2 of 3" text.
+const STEP_LIB = String.raw`
+function stepRoots(scope) {
+  const roots = [scope];
+  for (let p = scope.parentElement, i = 0; p && i < 2 && !/^(BODY|HTML)$/.test(p.tagName); p = p.parentElement, i++) roots.push(p);
+  return roots;
+}
+function stepOf(scope) {
+  if (!scope || !scope.isConnected) return null;
+  const roots = stepRoots(scope);
+  for (const r of roots) {
+    const cur = r.querySelector("[aria-current=step]");
+    if (!cur) continue;
+    const li = cur.closest("li, [role=listitem]");
+    const list = li && li.parentElement;
+    if (list) {
+      const items = Array.prototype.filter.call(list.children, function (c) { return c.matches("li, [role=listitem]"); });
+      return (items.indexOf(li) + 1) + "/" + items.length;
+    }
+    return clip(textOf(cur), 40) || null;
+  }
+  for (const r of roots) {
+    const bar = r.querySelector("[role=progressbar][aria-valuenow][aria-valuemax]");
+    if (bar) return attr(bar, "aria-valuenow") + "/" + attr(bar, "aria-valuemax");
+  }
+  for (const r of roots) {
+    const m = /step\s+(\d+)\s+(?:of|de|\/)\s+(\d+)/i.exec(String(r.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200));
+    if (m) return m[1] + "/" + m[2];
+  }
+  return null;
+}
+`;
+
 // click {readback}: the pre-click text, state and url live on window.__perch_rb until read.
 // The state catches toggles that change no text: ARIA flags, disabled and the
 // checked/selected/value of controls on the element and its first 50
 // descendants. Classes count only when they are state names (not hover, focus
 // or animation ones) and still hold on the next poll, so transient effects
 // don't pass for a change.
-const READBACK_LIB = QUIET_LIB + INVALID_LIB + String.raw`
+const READBACK_LIB = QUIET_LIB + INVALID_LIB + STEP_LIB + String.raw`
 function rbText() { const n = document.querySelector(A.readback); return n ? clip(textOf(n), 300) : null; }
 function rbSig() {
   const n = document.querySelector(A.readback);
@@ -4240,10 +4275,47 @@ function rbCls() {
     }).sort().join(" ");
   }).join("|");
 }
-function rbArm() {
+const RB_FIELDS = "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]), textarea, select, [contenteditable]:not([contenteditable=false])";
+const rbShown = function (n) { if (!n || !n.isConnected) return false; const b = n.getBoundingClientRect(); return b.width > 0 || b.height > 0; };
+// The clicked element's form: its <form>, else a modal around it, else the
+// nearest ancestor (at most 8 up, below body) holding 2 or more fields.
+function rbScope(el) {
+  const f = (el.form && el.form.tagName === "FORM" ? el.form : null) || el.closest("form") || el.closest("[role=dialog][aria-modal=true], dialog[open]");
+  if (f) return f;
+  for (let p = el.parentElement, i = 0; p && i < 8 && !/^(BODY|HTML)$/.test(p.tagName); p = p.parentElement, i++) {
+    if (p.querySelectorAll(RB_FIELDS).length >= 2) return p;
+  }
+  return null;
+}
+// Visible alert and live-region texts that are not a field's own error: not
+// inside a field, not a field's describedby/errormessage target, and not
+// repeating an invalid field's message.
+function rbAlerts(inv) {
+  const own = new Set(), msgs = inv.map(function (c) { return c.msg; }).filter(Boolean);
+  document.querySelectorAll("[aria-describedby], [aria-errormessage]").forEach(function (f) {
+    (attr(f, "aria-describedby") + " " + attr(f, "aria-errormessage")).split(/\s+/).forEach(function (id) { if (id) own.add(id); });
+  });
+  const out = [];
+  document.querySelectorAll("[role=alert], [aria-live=assertive], [aria-live=polite]").forEach(function (n) {
+    if ((n.id && own.has(n.id)) || (n.parentElement && n.parentElement.closest(RB_FIELDS)) || !vis(n)) return;
+    const t = clip(textOf(n), 140);
+    if (t && msgs.indexOf(t) < 0 && out.indexOf(t) < 0) out.push(t);
+  });
+  return out;
+}
+const rbBtn = function (el) { return el && el.closest("button, input[type=submit], input[type=button], [role=button]"); };
+function rbArm(el) {
   let s;
   try { s = { text: rbText(), sig: rbSig(), cls: rbCls(), url: location.href, inv: invalidSet() }; }
   catch (e) { return { ok: false, error: "bad readback selector: " + A.readback }; }
+  const scope = el ? rbScope(el) : null;
+  if (scope && rbShown(scope)) {
+    s.form = scope;
+    s.step = stepOf(scope);
+    s.alerts = rbAlerts(s.inv);
+    const b = rbBtn(el);
+    if (b && (/^submit$/i.test(b.type || "") || scope.contains(b))) { s.btn = b; s.btnText = textOf(b); s.btnOff = !!b.disabled; }
+  }
   rbStop(window.__perch_rb);
   s.quiet = 0;
   s.calm = Date.now();
@@ -4328,7 +4400,7 @@ function watchOpen() {
 
 const CLICK_BODY = String.raw`
 const clickNow = function (el, blank) {
-  if (A.readback) { const bad = rbArm(); if (bad) return bad; }
+  if (A.readback) { const bad = rbArm(el); if (bad) return bad; }
   const w = watchOpen();
   try { el.click(); } finally { w.off(); }
   const out = { ok: true, el: ident(el) };
@@ -4420,7 +4492,7 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
 `,
 
   // Line format: "# {header json}", then "<ref> <role> <json name> key=<json>... flags".
-  snapshot: INVALID_LIB + TA_BOX_LIB + EMBED_LIB + String.raw`
+  snapshot: INVALID_LIB + STEP_LIB + TA_BOX_LIB + EMBED_LIB + String.raw`
 const refs = {};
 window.__perch_refs = refs;
 const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
@@ -4601,6 +4673,8 @@ if (forms.length) {
   if (loose.length) form.unpicked = loose.length;
   const inv = invalidSet(big.ownerDocument).filter(function (c) { return big.contains(c.el); }).length;
   if (inv) form.invalid = inv;
+  const step = stepOf(big);
+  if (step) form.step = step;
   const unseen = empty.filter(function (el) { return !snapVis(el); });
   if (unseen.length) hiddenRows(unseen);
 }
@@ -4974,7 +5048,7 @@ return out;
   click_readback: READBACK_LIB + BLANK_LIB + CLICK_BODY,
 
   readback_arm: READBACK_LIB + String.raw`
-return rbArm() || { ok: true };
+return rbArm(A.probed && window.__perch_trusted ? window.__perch_trusted.el : null) || { ok: true };
 `,
 
   // null (keep polling) until the text or url moved, or the page stayed quiet for
@@ -4998,14 +5072,33 @@ const inv = invalidSet();
 const same = function (p, c) { return p.el === c.el || p.name === c.name; };
 const invNew = inv.filter(function (c) { return !s.inv.some(function (p) { return same(p, c) && p.msg === c.msg; }); });
 const invGone = s.inv.some(function (p) { return !inv.some(function (c) { return same(p, c); }); });
-const changed = moved || text !== s.text || rbSig() !== s.sig || clsMoved || invNew.length > 0 || invGone;
+const sig = rbSig();
+// The form's own outcome: gone, a new step, or a new alert or live-region text.
+let form = null;
+if (s.form) {
+  form = {};
+  if (!rbShown(s.form)) form.gone = true;
+  else {
+    const step = stepOf(s.form);
+    if (s.step != null && step != null && step !== s.step) form.step = step;
+    const fresh = rbAlerts(inv).filter(function (t) { return s.alerts.indexOf(t) < 0; });
+    if (fresh.length) form.alert = clip(fresh.join(" | "), 140);
+  }
+  if (!Object.keys(form).length) form = null;
+}
+const changed = moved || text !== s.text || sig !== s.sig || clsMoved || invNew.length > 0 || invGone || !!form;
+// A submit button that only relabels or disables itself ("Submitting...") is
+// mid-flight, not an outcome: keep polling for one until the page settles.
+const node = s.btn && s.btn.isConnected ? document.querySelector(A.readback) : null;
+const onBtn = !!node && (node === s.btn || s.btn.contains(node) || (node.contains(s.btn) && sig === s.sig));
+const inFlight = onBtn && (textOf(s.btn) !== s.btnText || !!s.btn.disabled !== s.btnOff) && !moved && !clsMoved && !invNew.length && !invGone && !form;
 // Ten polls in a row with no page activity (about 670ms live) settle it early.
 // A hidden tab runs its timers about once a second, so there the quiet stretch
 // must also last 1.2s of page time, long enough for one throttled tick to fire.
 if (rbBusy(s)) { s.quiet = 0; s.calm = Date.now(); }
 else s.quiet++;
 const settled = s.quiet >= 10 && (document.visibilityState !== "hidden" || Date.now() - s.calm >= 1200);
-if (!changed && !A.final && !settled) return null;
+if ((!changed || inFlight) && !A.final && !settled) return null;
 rbStop(s);
 delete window.__perch_rb;
 const out = { readback: text, changed: changed };
@@ -5014,6 +5107,7 @@ if (invNew.length) {
   out.invalid = inv.slice(0, 5).map(function (c) { return clip(c.name + (c.msg ? ": " + c.msg : ""), 140); });
   if (inv.length > 5) out.invalidCount = inv.length;
 }
+if (form) out.form = form;
 return out;
 `,
 
@@ -5665,7 +5759,7 @@ async function trustedClick({ ref, selector, label_pattern, x, y, raise, target,
     cal: probing ? pageFn("trusted_cal", {}) : null,
     calReset: probing ? pageFn("trusted_cal", { reset: true }) : null,
     check: probing ? pageFn("trusted_check", {}) : null,
-    arm: readback ? pageFn("readback_arm", { readback }) : null,
+    arm: readback ? pageFn("readback_arm", { readback, probed: probing }) : null,
     ...readbackSteps(readback),
   }, readback ? { lane: "slow" } : {});
 }
@@ -6008,7 +6102,7 @@ const TOOLS = [
     y: { type: "number" },
     trusted: { type: "boolean" },
     raise: { type: "boolean" },
-    readback: { type: "string", description: "CSS; its text once changed (2s cap; ~0.7s once quiet, 1.2s in a hidden tab): {readback,changed,url?}." },
+    readback: { type: "string", description: "CSS; its text once changed (2s cap; ~0.7s quiet, 1.2s hidden tab): {readback,changed,url?} +form outcome." },
     hover: { type: "boolean" },
     target: TARGET,
   }),

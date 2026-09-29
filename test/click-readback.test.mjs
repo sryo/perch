@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
+import { readFileSync } from "node:fs";
 
 function onPage(html, setup, { frameMs = 0 } = {}) {
   const dom = page(html);
@@ -449,4 +450,81 @@ test("click schema: readback costs at most 150 chars", () => {
   assert.ok(c.inputSchema.properties.readback, "readback is declared");
   const added = JSON.stringify({ readback: c.inputSchema.properties.readback }).length - 2;
   assert.ok(added <= 150, `readback property is ${added} chars`);
+});
+
+// ---- form outcome ----
+
+// test/fixtures/wizard.html: markup, then its script run with page timers
+// driven by the fake world's clock (checked before each page script runs).
+const WIZ = readFileSync(new URL("./fixtures/wizard.html", import.meta.url), "utf8");
+const WIZ_BODY = WIZ.slice(WIZ.indexOf("<body>") + 6, WIZ.indexOf("<script>"));
+const WIZ_JS = WIZ.slice(WIZ.indexOf("<script>") + 8, WIZ.indexOf("</script>"));
+function wizard(prep = "") {
+  const { dom, world } = onPage(WIZ_BODY, "", { frameMs: 16 });
+  const timers = [];
+  dom.setTimeout = (fn, ms) => { timers.push({ fn, at: world.clock.t + (ms || 0) }); return timers.length; };
+  const orig = dom.eval.bind(dom);
+  dom.eval = (js) => {
+    for (const t of timers.filter((x) => !x.done && world.clock.t >= x.at)) { t.done = true; t.fn(); }
+    return orig(js);
+  };
+  orig(WIZ_JS + prep);
+  return { dom, world };
+}
+const FILLED = `document.getElementById('name').value = 'Ada'; document.getElementById('email').value = 'a@b.c';`;
+
+test("form: a Next that advances the wizard reports the new step", async () => {
+  wizard(FILLED);
+  const o = await click({ selector: "#next", readback: "#count" });
+  assert.deepEqual(o, { ok: true, el: `button "Next"`, readback: "Step 2 of 3", changed: true, form: { step: "2/3" } });
+});
+
+test("form: a blocked Next reports the alert banner beside the invalid fields, no step", async () => {
+  wizard();
+  const o = await click({ selector: "#next", readback: "#count" });
+  assert.equal(o.changed, true);
+  assert.deepEqual(o.form, { alert: "Please fix 2 errors" });
+  assert.deepEqual(o.invalid, ["Name: This field is required", "Email: This field is required"]);
+});
+
+test("form: a submit that shows Submitting... then replaces the form reads gone, not the transient text", async () => {
+  wizard(`show(3);`);
+  const o = await click({ selector: "#send", readback: "#send" });
+  assert.deepEqual(o, { ok: true, el: `button "Submitting..."`, readback: null, changed: true, form: { gone: true } });
+});
+
+test("form: a submit button that only relabels itself settles on the quiet window with its last text", async () => {
+  const { world } = wizard(`show(3); document.getElementById('wiz').addEventListener('submit', function (e) { e.stopImmediatePropagation(); e.preventDefault(); document.getElementById('send').textContent = 'Submitting...'; }, true);`);
+  const t0 = world.clock.t;
+  const o = await click({ selector: "#send", readback: "#send" });
+  assert.deepEqual(o, { ok: true, el: `button "Submitting..."`, readback: "Submitting...", changed: true });
+  assert.ok(world.clock.t - t0 >= 450, `spent ${world.clock.t - t0}ms`);
+});
+
+test("form: a modal holding the fields in plain divs reads gone once Next removes it", async () => {
+  wizard();
+  const o = await click({ selector: "#qnext", readback: "#quick" });
+  assert.deepEqual(o, { ok: true, el: `button "Next"`, readback: null, changed: true, form: { gone: true } });
+});
+
+test("form: with no form or modal, the nearest container of 2 fields is the scope", async () => {
+  wizard();
+  const o = await click({ selector: "#lnext", readback: "#loose" });
+  assert.deepEqual(o, { ok: true, el: `button "Continue"`, readback: "Code accepted", changed: true, form: { gone: true } });
+});
+
+test("form: a click with no form scope adds no form key and ends on the first change", async () => {
+  const { world } = wizard();
+  const t0 = world.clock.t;
+  assert.deepEqual(await click({ selector: "#help", readback: "#helpout" }), { ok: true, el: `button "Help"`, readback: "Open", changed: true });
+  assert.ok(world.clock.t - t0 < 200, `spent ${world.clock.t - t0}ms`);
+});
+
+test("trusted click with readback reports the form outcome too", async () => {
+  const { world, dom } = trustedTab(WIZ_BODY + `<p id=s>Idle</p>`);
+  dom.eval(WIZ_JS + FILLED);
+  world.state.onPost = (e) => { if (e.type === 2 && e.pt.x >= 0) dom.document.getElementById("next").click(); };
+  const o = await click({ trusted: true, raise: true, selector: "#next", readback: "#count" });
+  assert.equal(o.readback, "Step 2 of 3");
+  assert.deepEqual(o.form, { step: "2/3" });
 });
