@@ -3521,12 +3521,6 @@ function invalidSet() {
 }
 `;
 
-// Page activity since the last poll, for click {readback} and wait {quiet}: DOM
-// mutations anywhere (takeRecords too, since the observer's callback may not
-// have run between polls) and completed fetch/XHR requests, as resource timing
-// entries. A request still in flight shows only once it completes. rbWatch keeps
-// the state on window[key]; one that is never read again stops its observer at
-// the first mutation after `life` ms.
 // Chrome's editing command emits a trusted input event in an inactive tab,
 // including when its window has no on-screen CG entry. It needs no mouse
 // event, tab selection, window geometry, or AppKit focus change. Replaces el's
@@ -3552,6 +3546,12 @@ function editClear(el) {
 }
 `;
 
+// Page activity since the last poll, for click {readback} and wait {quiet}: DOM
+// mutations anywhere (takeRecords too, since the observer's callback may not
+// have run between polls) and completed fetch/XHR requests, as resource timing
+// entries. A request still in flight shows only once it completes. rbWatch keeps
+// the state on window[key]; one that is never read again stops its observer at
+// the first mutation after `life` ms.
 const QUIET_LIB = String.raw`
 function rbNet() {
   try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
