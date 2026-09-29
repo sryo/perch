@@ -502,18 +502,24 @@ test("file_upload assigns a File via DataTransfer, by selector or ref", () => {
   assert.equal(run(w, "file_upload", { ...A, ref: "1" }).ok, true);
 });
 
-test("console capture: start is idempotent, entries are strings, stop restores", () => {
+test("console capture: a second start is counted, entries are strings, the last stop restores", () => {
   const w = page(``);
   assert.equal(run(w, "console_start").ok, true);
   assert.equal(run(w, "console_start").already, true);
   runBody(w, `console.warn('x', {a: 1}); console.log('y'); return 1`);
-  assert.deepEqual(run(w, "console_read"), { ok: true, entries: ['warn: x {"a":1}', "log: y"] });
+  const first = run(w, "console_read");
+  assert.deepEqual(first.entries, ['warn: x {"a":1}', "log: y"]);
+  assert.deepEqual([first.prevGen, first.gen], [0, 1]);
   assert.deepEqual(run(w, "console_read").entries, []);
   for (let i = 0; i < 501; i++) w.eval("console.log(" + i + ")");
   const r = run(w, "console_read");
   assert.equal(r.entries.length, 500);
   assert.equal(r.dropped, 1);
-  assert.equal(run(w, "console_stop").ok, true);
+  assert.equal(run(w, "console_stop").stillCapturing, true);
+  assert.equal(run(w, "console_read").ok, true);
+  const last = run(w, "console_stop");
+  assert.equal(last.ok, true);
+  assert.equal(last.stillCapturing, undefined);
   assert.equal(run(w, "console_read").ok, false);
 });
 

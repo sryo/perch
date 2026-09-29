@@ -490,3 +490,84 @@ test("select {trusted}: a probe that finds another call's select state posts no 
   assert.deepEqual({ ...dom.optClicks }, {});
   assert.equal(dom.document.getElementById("region").getAttribute("aria-expanded"), "true", "B's open list is left alone");
 });
+
+// ---- console_capture ----
+// A is this server through the tool layer; B is another server's page scripts.
+
+const NOTE = "another perch call read entries since your last read; some may be missing";
+const cc = async (mode) => (await call("console_capture", mode ? { mode } : {})).o;
+
+test("console_capture: a read after another server drained says partial, never a bare empty ok", async () => {
+  const { dom } = onPage(FORM);
+  assert.equal((await cc("start")).ok, true);
+  assert.equal(run(dom, "console_start").ok, true);
+  dom.console.error("boom");
+  assert.deepEqual(run(dom, "console_read").entries, ["error: boom"]);
+  const a = await cc();
+  assert.equal(a.ok, true, JSON.stringify(a));
+  assert.deepEqual(a.entries, []);
+  assert.equal(a.partial, true, JSON.stringify(a));
+  assert.equal(a.note, NOTE);
+  for (const k of ["gen", "prevGen", "id"]) assert.ok(!(k in a), `${k} in ${JSON.stringify(a)}`);
+  // Nothing drained since: the next read is whole again.
+  dom.console.warn("next");
+  assert.deepEqual(await cc(), { ok: true, entries: ["warn: next"] });
+});
+
+test("console_capture: another server's stop leaves A capturing; the last stop restores console", async () => {
+  const { dom } = onPage(FORM);
+  const orig = { error: dom.console.error, assert: dom.console.assert };
+  await cc("start");
+  run(dom, "console_start");
+  const b = run(dom, "console_stop");
+  assert.equal(b.ok, true, JSON.stringify(b));
+  assert.equal(b.stillCapturing, true, JSON.stringify(b));
+  assert.notEqual(dom.console.error, orig.error, "still hooked for A");
+  dom.console.error("later");
+  const a = await cc();
+  assert.equal(a.ok, true, JSON.stringify(a));
+  assert.deepEqual(a.entries, ["error: later"]);
+  const s = await cc("stop");
+  assert.equal(s.ok, true, JSON.stringify(s));
+  assert.ok(!("stillCapturing" in s), JSON.stringify(s));
+  assert.equal(dom.console.error, orig.error);
+  assert.equal(dom.console.assert, orig.assert);
+  dom.console.error("after");
+  assert.equal((await cc()).ok, false);
+});
+
+test("console_capture: one server's reads and stop never carry partial", async () => {
+  const { dom } = onPage(FORM);
+  await cc("start");
+  dom.console.log("a");
+  assert.deepEqual(await cc(), { ok: true, entries: ["log: a"] });
+  assert.deepEqual(await cc(), { ok: true, entries: [] });
+  dom.console.log("b");
+  assert.deepEqual(await cc(), { ok: true, entries: ["log: b"] });
+  dom.console.log("c");
+  assert.deepEqual(await cc("stop"), { ok: true, entries: ["log: c"] });
+  // A new capture on the same document starts whole.
+  await cc("start");
+  assert.deepEqual(await cc(), { ok: true, entries: [] });
+  await cc("stop");
+});
+
+test("console_capture: a drain between A's start and its first read is caught too", async () => {
+  const { dom } = onPage(FORM);
+  run(dom, "console_start");
+  await cc("start");
+  dom.console.log("x");
+  run(dom, "console_read");
+  const a = await cc("stop");
+  assert.equal(a.partial, true, JSON.stringify(a));
+  assert.equal(a.stillCapturing, true, "B still holds its start");
+});
+
+test("console_capture scripts are byte-identical across calls", async () => {
+  const { dom, world } = onPage(FORM);
+  const sent = [];
+  world.state.onExecute = (spec, js) => sent.push(js);
+  await cc("start"); await cc(); await cc(); await cc("stop");
+  await cc("start"); await cc(); await cc("stop");
+  assert.equal(new Set(sent.filter((js) => js.includes("__perch_console"))).size, 3);
+});

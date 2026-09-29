@@ -6579,8 +6579,10 @@ return dropOn(U);
   // events (DOM events cross worlds). If CSP blocks it, the local console is patched.
   console_start: String.raw`
 const s = window.__perch_console;
-if (s && s.installed) return { ok: true, already: true, count: s.entries.length };
-const st = { entries: [], dropped: 0, installed: true, bridge: false, unhook: null };
+if (s && s.installed) { s.starts++; return { ok: true, already: true, count: s.entries.length, id: s.id, gen: s.gen }; }
+// Several servers can capture at once: starts counts them, and every drain
+// bumps gen so a reader can tell someone else drained in between.
+const st = { entries: [], dropped: 0, installed: true, bridge: false, unhook: null, starts: 1, gen: 0, id: Math.random().toString(36).slice(2, 10) || "0" };
 window.__perch_console = st;
 function safe(v) {
   let out;
@@ -6670,13 +6672,13 @@ document.addEventListener("perch:console-pong", pong);
 document.dispatchEvent(new CustomEvent("perch:console-ping"));
 document.removeEventListener("perch:console-pong", pong);
 if (!st.bridge) st.unhook = hooks(safe, push);
-return { ok: true, started: true, bridge: st.bridge };
+return { ok: true, started: true, bridge: st.bridge, id: st.id, gen: st.gen };
 `,
 
   console_read: String.raw`
 const s = window.__perch_console;
 if (!s || !s.installed) return { ok: false, error: "console_capture not started on this page (or it navigated since)" };
-const out = { ok: true, entries: s.entries.splice(0) };
+const out = { ok: true, entries: s.entries.splice(0), id: s.id, prevGen: s.gen, gen: ++s.gen };
 if (s.dropped) { out.dropped = s.dropped; s.dropped = 0; }
 return out;
 `,
@@ -6684,11 +6686,13 @@ return out;
   console_stop: String.raw`
 const s = window.__perch_console;
 if (!s || !s.installed) return { ok: false, error: "console_capture not started" };
+const out = { ok: true, entries: s.entries.splice(0), id: s.id, prevGen: s.gen, gen: ++s.gen };
+if (--s.starts > 0) { out.stillCapturing = true; return out; }
 if (s.bridge) document.dispatchEvent(new CustomEvent("perch:console-stop"));
 if (s.unhook) s.unhook();
 document.removeEventListener("perch:console", s.relay);
 s.installed = false;
-return { ok: true, entries: s.entries.splice(0) };
+return out;
 `,
 
   // Completed requests from Resource Timing, which the browser buffers on its own:
@@ -7194,8 +7198,22 @@ async function frameClick({ ref, raise, target }) {
 async function consoleCapture(args = {}) {
   const { mode = "read", target } = args;
   if (!["start", "read", "stop", "network"].includes(mode)) throw new Error(`console_capture: unknown mode '${mode}' (expected start | read | stop | network)`);
-  return runPage("console_capture", mode === "network" ? "network_read" : "console_" + mode, {}, target);
+  const r = await runPage("console_capture", mode === "network" ? "network_read" : "console_" + mode, {}, target);
+  if (!r || typeof r !== "object" || typeof r.id !== "string") return r;
+  const { id, gen, prevGen, ...out } = r;
+  if (mode === "start") consoleGens.set(id, gen);
+  else {
+    if (prevGen !== (consoleGens.get(id) || 0)) { out.partial = true; out.note = "another perch call read entries since your last read; some may be missing"; }
+    consoleGens.delete(id);
+    if (!(mode === "stop" && !out.stillCapturing)) consoleGens.set(id, gen);
+  }
+  while (consoleGens.size > CONSOLE_GENS_MAX) consoleGens.delete(consoleGens.keys().next().value);
+  return out;
 }
+// The capture state's gen this server last saw, keyed by that state's page-made
+// id (one per document and capture): a read whose prevGen differs follows
+// another server's drain. With no entry, 0 assumes nothing was drained before.
+const consoleGens = new Map(), CONSOLE_GENS_MAX = 500;
 
 async function notify(args = {}) {
   const { message, title = "perch", subtitle, sound = "Glass" } = args;
