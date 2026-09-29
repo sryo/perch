@@ -3416,12 +3416,6 @@ function paints(p, el) {
   }
   return false;
 }
-// Sequential focus order, approximated as DOM order of visible focusables.
-function tabbables() {
-  return Array.prototype.filter.call(document.querySelectorAll("a[href], button, input, select, textarea, summary, [tabindex], [contenteditable]"), function (n) {
-    return n.tabIndex >= 0 && !n.disabled && n.type !== "hidden" && vis(n);
-  });
-}
 // Strong label sources, in accessible-name precedence order.
 function labelText(el) {
   const ids = attr(el, "aria-labelledby");
@@ -3519,22 +3513,7 @@ function resolveEl(a, dflt) {
   try { el = document.querySelector(sel) || deepAll(sel)[0]; } catch (e) { return { out: { ok: false, error: "bad selector: " + sel } }; }
   return el ? { el: el } : { out: { ok: false, error: "no element for selector " + sel } };
 }
-const CLICKABLE = "button, a[href], [role=button], [role=link], [role=menuitem], [role=tab], [role=checkbox], [role=radio], [role=option], input[type=submit], input[type=button], input[type=reset], summary";
 function isDisabled(el) { return el.disabled === true || attr(el, "aria-disabled") === "true"; }
-// The form control holding el when it is natively disabled: browsers drop clicks on it
-// and its descendants. A disabled fieldset spares its first legend's controls; the
-// walk covers engines whose :disabled skips fieldset inheritance.
-function inertCtl(el) {
-  const c = el.closest("button, input, select, textarea");
-  if (!c) return null;
-  try { if (c.disabled || c.matches(":disabled")) return c; } catch (e) {}
-  for (let f = c.closest("fieldset[disabled]"); f; f = f.parentElement && f.parentElement.closest("fieldset[disabled]")) {
-    const lg = Array.prototype.find.call(f.children, function (k) { return k.tagName === "LEGEND"; });
-    if (!(lg && lg.contains(c))) return c;
-  }
-  return null;
-}
-function inertOut(c) { return { ok: false, el: ident(c), error: ident(c) + " is disabled; nothing was clicked" }; }
 const WORD_CH = /[\p{L}\p{N}_]/u;
 // How well a pattern names s: 0 the whole name (whole matches the anchored
 // pattern), 1 a match that starts and ends on word boundaries, 2 any other
@@ -3552,6 +3531,25 @@ function nameTier(whole, re, s) {
   }
   return best;
 }
+`;
+
+// Click targeting, shipped only with the scripts that click or hover by label.
+const CLICK_LIB = String.raw`
+const CLICKABLE = "button, a[href], [role=button], [role=link], [role=menuitem], [role=tab], [role=checkbox], [role=radio], [role=option], input[type=submit], input[type=button], input[type=reset], summary";
+// The form control holding el when it is natively disabled: browsers drop clicks on it
+// and its descendants. A disabled fieldset spares its first legend's controls; the
+// walk covers engines whose :disabled skips fieldset inheritance.
+function inertCtl(el) {
+  const c = el.closest("button, input, select, textarea");
+  if (!c) return null;
+  try { if (c.disabled || c.matches(":disabled")) return c; } catch (e) {}
+  for (let f = c.closest("fieldset[disabled]"); f; f = f.parentElement && f.parentElement.closest("fieldset[disabled]")) {
+    const lg = Array.prototype.find.call(f.children, function (k) { return k.tagName === "LEGEND"; });
+    if (!(lg && lg.contains(c))) return c;
+  }
+  return null;
+}
+function inertOut(c) { return { ok: false, el: ident(c), error: ident(c) + " is disabled; nothing was clicked" }; }
 // The one control whose accessible name (or button value) best fits a.label_pattern:
 // enabled and visible ones first, then by nameTier. A tie refuses rather than guess.
 function clickableByLabel(a) {
@@ -3588,37 +3586,18 @@ function clickableByLabel(a) {
 }
 function resolveClick(a) { return a.label_pattern ? clickableByLabel(a) : resolveEl(a); }
 `;
+const TABBABLE_LIB = String.raw`
+// Sequential focus order, approximated as DOM order of visible focusables.
+function tabbables() {
+  return Array.prototype.filter.call(document.querySelectorAll("a[href], button, input, select, textarea, summary, [tabindex], [contenteditable]"), function (n) {
+    return n.tabIndex >= 0 && !n.disabled && n.type !== "hidden" && vis(n);
+  });
+}
+`;
 
 const SELECT_LIB = String.raw`
 // Curly quotes and dashes fold to ASCII, so typed text matches typographic options.
 const norm = function (s) { return String(s || "").replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2010-\u2015]/g, "-").replace(/\s+/g, " ").trim().toLowerCase(); };
-// fill may pass an ordered preference list; the first is the one typed as a filter.
-const wantL = Array.isArray(A.text) ? A.text.map(norm) : [norm(A.text)];
-const wantN = wantL[0];
-const wantT = String(Array.isArray(A.text) ? A.text[0] : A.text);
-const OPT = "[role=option], [cmdk-item]";
-const press = function (el) {
-  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (t) {
-    const C = t.indexOf("pointer") === 0 && window.PointerEvent ? PointerEvent : MouseEvent;
-    el.dispatchEvent(new C(t, { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window }));
-  });
-};
-// Presses target, then focuses el if the press didn't. A background tab moves
-// focus but fires no focus event, and widgets that track focus from that event
-// (react-select) then never open, so one is sent when none came.
-const pressFocus = function (target, el) {
-  const was = document.activeElement;
-  let fired = false;
-  const on = function () { fired = true; };
-  el.addEventListener("focus", on);
-  press(target);
-  if (document.activeElement !== el && el.focus) el.focus();
-  el.removeEventListener("focus", on);
-  if (fired || was === el || document.activeElement !== el) return;
-  el.dispatchEvent(new FocusEvent("focus"));
-  el.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
-};
-const pressEscape = function (el) { el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true })); };
 // Accents fold away for comparison only, so "Cordoba" matches "Córdoba".
 const fold = function (s) { return String(s || "").normalize("NFD").replace(/\p{M}+/gu, ""); };
 const wordsOf = function (s) { return String(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean); };
@@ -3743,6 +3722,39 @@ function setNative(nat, opts, opt, pref) {
   return { ok: false, el: ident(nat), kept: kept, error: ident(nat) + " kept " + JSON.stringify(kept) + (nat.selectedIndex === prior
     ? " instead of " + JSON.stringify(clip(opt.text, 60)) + "; the page reverted the pick" : "; the page changed the pick to another option") };
 }
+// What the box shows as a whole, or "" while it shows a placeholder.
+function shownWhole(box) { return !box || box.tagName === "INPUT" || box.querySelector("[class*=placeholder], [data-placeholder]") ? "" : norm(textOf(box)); }
+`;
+
+// What select's picker steps use beyond the matching that fill_fields shares.
+const SELECT_PICK_LIB = String.raw`
+// fill may pass an ordered preference list; the first is the one typed as a filter.
+const wantL = Array.isArray(A.text) ? A.text.map(norm) : [norm(A.text)];
+const wantN = wantL[0];
+const wantT = String(Array.isArray(A.text) ? A.text[0] : A.text);
+const OPT = "[role=option], [cmdk-item]";
+const press = function (el) {
+  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (t) {
+    const C = t.indexOf("pointer") === 0 && window.PointerEvent ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new C(t, { bubbles: true, cancelable: true, button: 0, buttons: 1, view: window }));
+  });
+};
+// Presses target, then focuses el if the press didn't. A background tab moves
+// focus but fires no focus event, and widgets that track focus from that event
+// (react-select) then never open, so one is sent when none came.
+const pressFocus = function (target, el) {
+  const was = document.activeElement;
+  let fired = false;
+  const on = function () { fired = true; };
+  el.addEventListener("focus", on);
+  press(target);
+  if (document.activeElement !== el && el.focus) el.focus();
+  el.removeEventListener("focus", on);
+  if (fired || was === el || document.activeElement !== el) return;
+  el.dispatchEvent(new FocusEvent("focus"));
+  el.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+};
+const pressEscape = function (el) { el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true })); };
 function mine(s, el) { return [s.ctl, s.input, s.box].some(function (m) { return m && (m === el || m.contains(el) || el.contains(m)); }); }
 // cmdk writes data-disabled="false" on enabled items; Radix marks disabled ones with a bare data-disabled.
 function optOff(o) { const d = o.getAttribute("data-disabled"); return attr(o, "aria-disabled") === "true" || d === "" || d === "true"; }
@@ -3761,8 +3773,6 @@ function shownParts(box) {
   return out;
 }
 function commaParts(t) { return String(t || "").split(/[,;\n]/).map(function (x) { return norm(x); }).filter(Boolean); }
-// What the box shows as a whole, or "" while it shows a placeholder.
-function shownWhole(box) { return !box || box.tagName === "INPUT" || box.querySelector("[class*=placeholder], [data-placeholder]") ? "" : norm(textOf(box)); }
 // A class word (split at -, _ and camelCase) naming a chip: badge, chip, tag, multi-value.
 function chipLike(el) {
   return String(el.className && el.className.baseVal != null ? el.className.baseVal : el.className || "").split(/\s+/).some(function (c) {
@@ -4138,6 +4148,19 @@ function isTypeahead(el) {
 }
 `;
 const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
+// Typed with input events and no blur, so the widget runs its own lookup.
+function taType(el, text) {
+  if (el.focus) el.focus();
+  setNativeValue(el, text);
+  const key = text.slice(-1);
+  el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: key }));
+  el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+  el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: key }));
+}
+`;
+
+// A typeahead's shown text and blur, for the scripts that read back or leave a pick.
+const TA_UI_LIB = String.raw`
 const taNorm = function (s) { return String(s || "").replace(/\s+/g, " ").trim().toLowerCase(); };
 // What the field shows: its text, else (an emptied react-select input) its control's.
 function taShown(el) {
@@ -4150,20 +4173,11 @@ function taBlur(el) {
   if (had) el.blur();
   if (!had || !el.ownerDocument.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
 }
-// Typed with input events and no blur, so the widget runs its own lookup.
-function taType(el, text) {
-  if (el.focus) el.focus();
-  setNativeValue(el, text);
-  const key = text.slice(-1);
-  el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: key }));
-  el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
-  el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: key }));
-}
 `;
 
 // The typeahead's suggestions come only from its own lists (select's rule), else
 // its box's popup; never the rest of the page, so an empty list means keep waiting.
-const TA_PICK_LIB = TYPEAHEAD_LIB + SELECT_LIB + String.raw`
+const TA_PICK_LIB = TYPEAHEAD_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + String.raw`
 function taScopes(s) {
   const own = linkedLists({ ctl: s.el, input: s.el, box: s.el });
   return own.length ? own : s.pop ? [s.pop] : [];
@@ -4874,7 +4888,7 @@ function watchOpen() {
 }
 `;
 
-const CLICK_BODY = String.raw`
+const CLICK_BODY = CLICK_LIB + String.raw`
 const clickNow = function (el, blank) {
   if (A.readback) { const bad = rbArm(el); if (bad) return bad; }
   const w = watchOpen();
@@ -4901,7 +4915,7 @@ return { ok: true, blank: { href: href } };
 // + the element's center. A hidden tab's screenX/outerWidth are stale, so it
 // asks to retry until the tab is visible. An element that is or sits under an
 // embedded frame is refused: frame controls take an fN ref.
-const TRUSTED_PROBE_HEAD = String.raw`
+const TRUSTED_PROBE_HEAD = CLICK_LIB + String.raw`
 if (document.visibilityState === "hidden") return { ok: false, retry: "hidden" };
 let el;
 if (A.select) {
@@ -5479,7 +5493,7 @@ return Object.keys(recheck).length ? { results: results, recheck: recheck } : { 
 
   // select runs in phases polled from JXA (runtime `select`), never with page
   // timers: Chrome throttles those to ~1/s in background tabs.
-  select_start: TYPEAHEAD_LIB + SELECT_LIB + String.raw`
+  select_start: TYPEAHEAD_LIB + SELECT_LIB + SELECT_PICK_LIB + String.raw`
 const c = findCtl(A);
 if (c.out) return c.out;
 const ctl = c.el;
@@ -5522,7 +5536,7 @@ return { pending: true };
   // null = keep polling. The unfiltered list is matched first; a filter is typed
   // only when that has no match (an async or virtualized list, or one that opens
   // on input), cut at the first punctuation so a strict filter can't empty it.
-  select_pick: SELECT_LIB + String.raw`
+  select_pick: SELECT_LIB + SELECT_PICK_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
 s.polls++;
@@ -5587,7 +5601,7 @@ return null;
 
   // Candidates come from the control's own list, unfiltered when it was seen; the
   // typed filter is cleared and a menu select opened is closed again.
-  select_miss: TYPEAHEAD_LIB + SELECT_LIB + EDIT_LIB + String.raw`
+  select_miss: TYPEAHEAD_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + EDIT_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
 const now = ownOptions(s).filter(function (o) { return !optOff(o); }).slice(0, 30).map(function (o) { return clip(textOf(o), 60); });
@@ -5607,7 +5621,7 @@ return out;
 `,
 
   // select {trusted}: whether the synthetic open showed the control's own list.
-  select_open: SELECT_LIB + String.raw`
+  select_open: SELECT_LIB + SELECT_PICK_LIB + String.raw`
 const s = window.__perch_select;
 return !!s && stillOpen(s);
 `,
@@ -5616,7 +5630,7 @@ return !!s && stillOpen(s);
   // types a filter into the control's own empty text box through the editing
   // command. The box is the control itself, its inner input, an input in its box,
   // or a search box in its linked popup; never one elsewhere. {none}: no such box.
-  select_type: TYPEAHEAD_LIB + SELECT_LIB + EDIT_LIB + String.raw`
+  select_type: TYPEAHEAD_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + EDIT_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
 const lists = linkedLists(s);
@@ -5645,7 +5659,7 @@ return { ok: true };
 
   // Until the control shows the choice: null (keep polling); A.final reports anyway.
   // A.keep leaves an open popup alone, so a pick that didn't show can still be clicked.
-  select_read: SELECT_LIB + String.raw`
+  select_read: SELECT_LIB + SELECT_PICK_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "the page changed after the pick was pressed; not verified" };
 // A popup select opened and a pick left open (a multi-select) closes again.
@@ -5747,7 +5761,7 @@ return out;
 `,
 
   // Synthetic key events trigger no browser defaults, so the ones pages rely on are emulated.
-  press: String.raw`
+  press: TABBABLE_LIB + String.raw`
 const r = resolveEl(A);
 if (r.out) return r.out;
 if (r.el) r.el.focus();
@@ -5784,7 +5798,7 @@ return { ok: true, el: ident(el), prevented: prevented, focus: f && f !== docume
 `,
 
   // JS-driven hover menus listen for these; CSS :hover needs a real pointer.
-  hover: String.raw`
+  hover: CLICK_LIB + String.raw`
 const r = resolveClick(A);
 if (r.out) return r.out;
 const b = r.el.getBoundingClientRect();
@@ -6146,7 +6160,7 @@ return out;
 
   // Focuses the ref/selector element (else keeps document.activeElement) and
   // records the first keydown and keyup the window sees.
-  trusted_key_arm: String.raw`
+  trusted_key_arm: TABBABLE_LIB + String.raw`
 const framed = function (e) { return e && /^(IFRAME|FRAME|OBJECT|EMBED)$/.test(e.tagName) ? { ok: false, error: ident(e) + " is an embedded frame; frames take only click {trusted:true}" } : null; };
 let el = document.activeElement;
 if (A.ref || A.selector) {

@@ -461,6 +461,8 @@ test("fill {fields}: a 5-field form's page script has no comment lines and stays
   assert.equal(seen.length, 1);
   assert.equal(commentLines(seen[0]), 0);
   assert.ok(seen[0].length < 60000, `eval'd ${seen[0].length} bytes`);
+  // Click and select-picker helpers ship only with the scripts that call them.
+  for (const s of ["clickableByLabel", "loadingIn", "function tabbables", "function taBlur"]) assert.ok(!seen[0].includes(s), s);
 });
 
 // Stripping whole comment lines and indentation is safe only while no string,
@@ -474,6 +476,22 @@ test("page scripts have no backticks, block comments or line continuations, and 
     const js = buildEvalWrapper(pageScript(name, {}));
     assert.equal(commentLines(js), 0, name);
     assert.doesNotThrow(() => new Function(js), name);
+  }
+});
+
+// Helpers that live in a lib only some scripts include: a script that calls one
+// must carry its definition, or the call throws only at run time.
+test("page scripts define every split-out helper they call", () => {
+  const helpers = ["CLICKABLE", "inertCtl", "inertOut", "clickableByLabel", "resolveClick", "tabbables", "wantL", "wantN", "wantT", "OPT",
+    "press", "pressFocus", "pressEscape", "bestMatch", "optOff", "shownEls", "ownText", "shownParts", "commaParts", "chipLike", "multiBox",
+    "isMulti", "chosenAlready", "loadingIn", "stillOpen", "escapeOwn", "linkedLists", "byIdNear", "ownOptions", "popSearch", "mine",
+    "taNorm", "taShown", "taBlur"];
+  for (const name of Object.keys(PAGE_SCRIPTS)) {
+    const js = pageScript(name, {});
+    for (const h of helpers) {
+      if (!new RegExp("(^|[^.\\w$])" + h + "(?![\\w$:])", "m").test(js)) continue;
+      assert.ok(new RegExp("^(function " + h + "\\(|const " + h + " = )", "m").test(js), `${name} calls ${h} without defining it`);
+    }
   }
 });
 
