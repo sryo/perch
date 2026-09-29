@@ -4816,6 +4816,15 @@ function holdsText(v, text) {
   const norm = function (s) { return String(s || "").trim().replace(/\s+/g, " "); };
   return norm(v).indexOf(norm(text)) >= 0 || sameNumber(v, text);
 }
+// WHATWG autofill field names, minus payment (cc-*) and credential ones.
+const AC_TOKENS = /^(name|honorific-(prefix|suffix)|(given|additional|family)-name|nickname|username|organization(-title)?|street-address|address-line[1-3]|address-level[1-4]|country(-name)?|postal-code|transaction-(currency|amount)|language|bday(-(day|month|year))?|sex|url|photo|tel(-(country-code|national|area-code|local|extension))?|email|impp)$/;
+// The last field name in el's autocomplete, skipping section-*, shipping,
+// billing, home, work and other modifiers; "" when it has none.
+function acToken(el) {
+  const t = attr(el, "autocomplete").toLowerCase().split(/\s+/);
+  for (let i = t.length - 1; i >= 0; i--) if (AC_TOKENS.test(t[i])) return t[i];
+  return "";
+}
 // -> fill's result for one field {ref|selector|label_pattern, text}. only:
 // write nothing to a field that is absent, a trap, ambiguous or already set.
 // onLand(el, rich) hears of each field or editor root that took the text.
@@ -4943,6 +4952,9 @@ function fillOne(a, only, onLand) {
   // Ranked search across every editable surface, so a visible field outranks a
   // hidden one and text never lands silently in the wrong element.
   const re = new RegExp(a.label_pattern, "i");
+  // An autocomplete token counts as the field's own label only when the whole
+  // token matches: "name" names autocomplete=name, not given-name.
+  const acWhole = new RegExp("^(?:" + a.label_pattern + ")$", "i");
   const scored = [];
   // Fields share ancestors: test each ancestor's text once.
   const near = new Map();
@@ -4983,9 +4995,10 @@ function fillOne(a, only, onLand) {
     if (!fillable(el)) return;
     const root = el.tagName === "IFRAME" ? el.contentDocument && el.contentDocument.body : el;
     if (!root) return;
-    let s;
+    let s, tok;
     const own = labelText(el), hint = hintText(el);
     if (re.test(own)) s = 100;
+    else if ((tok = acToken(el)) && acWhole.test(tok)) s = 100;
     else if (re.test(hint)) s = 40;
     else {
       let p = el, hit = false;

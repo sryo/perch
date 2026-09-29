@@ -21,7 +21,7 @@ Adds to the tool descriptions; nothing to add for `new_tab`, `activate_tab`, `cl
 | `accessibility_snapshot` | Rows below; open shadow roots too. `query`: regex per line; `max: 0`: header only. |
 | `click` | `label_pattern`: button/link name; ties: `candidates`. Natively disabled (own or fieldset's): `ok:false`, not clicked, trusted too; `aria-disabled` clicks. `readback` adds `invalid?`, `form?`. `form`: {gone, alert, step} after a submit/Next; navigated: `page` {heading?, alert?}; decide success yourself. `hover: true`: JS events, not `:hover`. New tab: `opened.tabId`; `blocked`/`unconfirmed`+`href`. `trusted`: below. |
 | `press` | Background tabs too; Enter submits/clicks, Space clicks. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
-| `fill` | `text_path`: long bodies. One call per form: `fields` (no `raise`); `fields_path`: JSON file. |
+| `fill` | `text_path`: long bodies. One call per form: `fields` (no `raise`); `fields_path`: JSON file. `label_pattern` also matches a whole autocomplete token (`given-name`, `email`, `tel`). |
 | `file_upload` | File onto an `<input type=file>` or drop zone (`dropped`); bytes skip context. |
 
 ## Snapshot format
