@@ -6935,8 +6935,9 @@ function withMoved(name, result, tabId) {
 }
 
 // Multi-step tools keep state on window globals between page calls (a typeahead
-// pick, fill {fields}' record, select, click readback, upload), so two such calls
-// on one tab run one at a time. Keyed by the target as given: untargeted calls
+// pick, fill {fields}' record, select, click readback, upload, the armed target
+// of click {trusted} and select {trusted}, press {trusted}'s key watch, wait
+// {quiet}'s activity watch), so two such calls on one tab run one at a time. Keyed by the target as given: untargeted calls
 // share "default", and a targeted and an untargeted call on the same tab are
 // not serialized (resolving the default tab first would cost Apple Events).
 export const tabLocks = new Map();
@@ -6950,7 +6951,8 @@ export function withTabLock(key, fn) {
 }
 const LOCKED_TOOLS = new Set(["fill", "select", "file_upload"]);
 const tabLockKey = (name, args) =>
-  LOCKED_TOOLS.has(name) || (name === "click" && args.readback)
+  LOCKED_TOOLS.has(name) || (name === "click" && (args.readback || args.trusted)) ||
+  (name === "press" && args.trusted) || (name === "wait" && args.quiet != null)
     ? (args.target && args.target.tabId != null ? "tab:" + args.target.tabId : "default")
     : null;
 
