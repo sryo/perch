@@ -458,6 +458,8 @@ test("fill {fields}: a 5-field form's page script has no comment lines and stays
   ];
   const { o } = await call("fill", { fields });
   assert.deepEqual(o.results.map((r) => r.ok), [true, true, true, true, true], JSON.stringify(o));
+  // The form census rides the same page pass: no extra Apple Event.
+  assert.deepEqual(o.form, { requiredEmpty: 0 });
   assert.equal(seen.length, 1);
   assert.equal(commentLines(seen[0]), 0);
   assert.ok(seen[0].length < 60000, `eval'd ${seen[0].length} bytes`);
@@ -485,7 +487,7 @@ test("page scripts define every split-out helper they call", () => {
   const helpers = ["CLICKABLE", "inertCtl", "inertOut", "clickableByLabel", "resolveClick", "tabbables", "wantL", "wantN", "wantT", "OPT",
     "press", "pressFocus", "pressEscape", "bestMatch", "optOff", "shownEls", "ownText", "shownParts", "commaParts", "chipLike", "multiBox",
     "isMulti", "chosenAlready", "loadingIn", "stillOpen", "escapeOwn", "linkedLists", "byIdNear", "ownOptions", "popSearch", "mine",
-    "taNorm", "taShown", "taBlur"];
+    "taNorm", "taShown", "taBlur", "snapVis", "unpicked", "reqEmpty", "census"];
   for (const name of Object.keys(PAGE_SCRIPTS)) {
     const js = pageScript(name, {});
     for (const h of helpers) {

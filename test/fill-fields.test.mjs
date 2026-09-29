@@ -1134,7 +1134,7 @@ test("fill {fields}: order-independent fields stay ok and nothing extra leaks in
     { ok: true, kind: "plain", el: `textbox "Name"`, len: 12 },
     { ok: true, kind: "plain", el: `textbox "Email"`, len: 16 },
     { ok: true, kind: "check", el: `checkbox "I agree"`, checked: true },
-  ] });
+  ], form: { requiredEmpty: 0 } });
 });
 
 test("fill_fields: a masked phone the page reformats after landing stays ok", () => {
@@ -1670,6 +1670,82 @@ test("fill {fields}: a final re-read the page throws in leaves the fields unveri
   assert.equal(o.warning, "the final re-read did not run (page error); earlier fields are unverified", JSON.stringify(o));
   assert.equal(o.unverified, 1);
   assert.equal(o.results[0].ok, true);
+});
+
+// ---- what the form still wants, from the final pass ----
+
+const REQ3 = `<form><label>Name <input name=nm required></label><label>Email <input name=em required></label><label>Phone <input name=ph required></label></form>`;
+
+test("fill {fields}: the result names the required field the batch left empty", async () => {
+  onPage(REQ3);
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }, { label_pattern: "email", text: "a@x.io" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(o.form, { requiredEmpty: 1, left: [{ name: "ph", label: "Phone" }] });
+});
+
+test("fill {fields}: a filled form reads requiredEmpty 0 with nothing left", async () => {
+  onPage(REQ3);
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }, { label_pattern: "email", text: "a@x.io" }, { label_pattern: "phone", text: "1" }] });
+  assert.deepEqual(o.form, { requiredEmpty: 0 });
+});
+
+test("fill {fields}: a typeahead left typed but unpicked counts as unpicked and required-empty", async () => {
+  const { dom } = onPage(`<form><label>Name <input name=nm required></label><div class=loc><label for=li>Location</label>
+    <input id=li name=loc required><input type=hidden name=selectedLocation required><div class=dropdown-results></div></div></form>`);
+  Object.getOwnPropertyDescriptor(dom.HTMLInputElement.prototype, "value").set.call(dom.document.getElementById("li"), "Buenos");
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(o.form, { requiredEmpty: 1, unpicked: 1, left: [{ name: "loc", label: "Location" }] });
+});
+
+test("fill {fields}: a batch the page changed under carries no form census", async () => {
+  const { world } = onPage(HIDE_FORM.replace("<input id=fe>", "<input id=fe required>"), STEP_JS(HIDE_S1));
+  passes(world);
+  const { o } = await fill({ fields: STEP_FIELDS });
+  stoppedAtCity(o);
+  assert.equal("form" in o, false);
+});
+
+test("fill {fields}: a field in another form on the page is not counted", async () => {
+  onPage(REQ3 + `<form><label>Search site <input name=q2 required></label><label>Coupon <input name=cp required></label></form>`);
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }, { label_pattern: "email", text: "a@x.io" }] });
+  assert.deepEqual(o.form, { requiredEmpty: 1, left: [{ name: "ph", label: "Phone" }] });
+});
+
+test("fill {fields}: left names at most 10 fields; requiredEmpty counts them all", async () => {
+  let h = "<form><label>Name <input name=nm required></label>";
+  for (let i = 1; i <= 15; i++) h += `<label>Q${i} <input name=q${i} required></label>`;
+  onPage(h + "</form>");
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }] });
+  assert.equal(o.form.requiredEmpty, 15);
+  assert.equal(o.form.left.length, 10);
+  assert.deepEqual(o.form.left[0], { name: "q1", label: "Q1" });
+  assert.deepEqual(o.form.left[9], { name: "q10", label: "Q10" });
+});
+
+test("fill {fields}: a batch ending on a combobox takes the census from the re-read", async () => {
+  const REQ_CUSTOM = "<form>" + CUSTOM.replace("<input aria-label=Last>", "<input aria-label=Last name=last required>") + "</form>";
+  const { world } = onPage(REQ_CUSTOM, CUSTOM_JS);
+  const sent = passes(world);
+  const { o } = await fill({ fields: [{ label_pattern: "first", text: "A" }, { label_pattern: "level", option: "senior" }] });
+  assert.equal(sent.length, 2);
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(o.form, { requiredEmpty: 1, left: [{ name: "last", label: "Last" }] });
+});
+
+test("fill {fields}: a final re-read that fails carries no form census", async () => {
+  const { world } = onPage("<form>" + CUSTOM.replace("<input aria-label=Last>", "<input aria-label=Last required>") + "</form>", CUSTOM_JS);
+  failSecondPass(world, async () => { throw new Error("timeout: fake hang"); });
+  const { o } = await fill({ fields: [{ label_pattern: "first", text: "A" }, { label_pattern: "level", option: "senior" }] });
+  assert.match(o.warning, /final re-read did not run/);
+  assert.equal("form" in o, false);
+});
+
+test("fill {fields}: fields outside any form carry no form census", async () => {
+  onPage(`<label>Name <input name=nm required></label><label>Phone <input name=ph required></label>`);
+  const { o } = await fill({ fields: [{ label_pattern: "name", text: "Ada" }] });
+  assert.equal(o.ok, true);
+  assert.equal("form" in o, false);
 });
 
 // ---- fields_path and ordered option preferences ----

@@ -4269,6 +4269,50 @@ function isTypeahead(el) {
   return !!(t.comp && t.pop);
 }
 `;
+// What a form still wants, for the snapshot header and fill {fields}' result.
+const CENSUS_LIB = String.raw`
+// vis(), plus inputs a stylesheet shrinks or fades to nothing while their
+// widget stays on screen: a radio or checkbox behind its visible label, and a
+// combobox input inside a visible select box (hidden after a pick, or a dummy).
+function snapVis(el) {
+  if (vis(el)) return true;
+  if (el.tagName !== "INPUT" || el.hidden) return false;
+  const t = (el.type || "").toLowerCase();
+  const tick = t === "radio" || t === "checkbox";
+  if (!tick && attr(el, "role") !== "combobox") return false;
+  if (getComputedStyle(el).visibility === "hidden") return false;
+  for (let p = el; p; p = p.parentElement) if (getComputedStyle(p).display === "none") return false;
+  if (!tick) { const c = ctlOf(el); return !!c && vis(c); }
+  const ls = el.labels ? Array.from(el.labels) : [];
+  const wrap = el.closest("label");
+  if (wrap) ls.push(wrap);
+  return ls.some(vis);
+}
+// Typed text a typeahead has not taken: the hidden input in its own box, where
+// a pick lands, is still empty.
+function unpicked(el) {
+  if (el.readOnly || !isTypeahead(el) || !el.value.trim() || !snapVis(el)) return false;
+  const c = taParts(el).comp;
+  return !!c && !c.value;
+}
+const FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
+function reqEmpty(el) {
+  if (!el.required && attr(el, "aria-required") !== "true") return false;
+  if (String(el.value || el.textContent || "").trim()) return unpicked(el);
+  return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
+}
+// A file input is a field to fill too (through file_upload). An input that is
+// both aria-hidden and out of the tab order is a widget's stand-in for native
+// validation (react-select's required input), not a field of its own.
+function census(f) {
+  const fields = Array.from(f.querySelectorAll(FIELDS)).filter(function (el) {
+    const t = (el.type || "text").toLowerCase();
+    if (el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0) return false;
+    return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
+  });
+  return { fields: fields, loose: fields.filter(unpicked), empty: fields.filter(reqEmpty) };
+}
+`;
 const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
 // Typed with input events and no blur, so the widget runs its own lookup.
 function taType(el, text) {
@@ -5111,7 +5155,7 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
 `,
 
   // Line format: "# {header json}", then "<ref> <role> <json name> key=<json>... flags".
-  snapshot: INVALID_LIB + STEP_LIB + TA_BOX_LIB + EMBED_LIB + String.raw`
+  snapshot: INVALID_LIB + STEP_LIB + TA_BOX_LIB + CENSUS_LIB + EMBED_LIB + String.raw`
 const refs = {};
 window.__perch_refs = refs;
 const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
@@ -5121,36 +5165,6 @@ const origin = location.origin;
 // A query tests each line without its ref and keeps counting matches past max.
 const re = A.query == null ? null : new RegExp(A.query, "i");
 const lines = [];
-// vis(), plus inputs a stylesheet shrinks or fades to nothing while their
-// widget stays on screen: a radio or checkbox behind its visible label, and a
-// combobox input inside a visible select box (hidden after a pick, or a dummy).
-function snapVis(el) {
-  if (vis(el)) return true;
-  if (el.tagName !== "INPUT" || el.hidden) return false;
-  const t = (el.type || "").toLowerCase();
-  const tick = t === "radio" || t === "checkbox";
-  if (!tick && attr(el, "role") !== "combobox") return false;
-  if (getComputedStyle(el).visibility === "hidden") return false;
-  for (let p = el; p; p = p.parentElement) if (getComputedStyle(p).display === "none") return false;
-  if (!tick) { const c = ctlOf(el); return !!c && vis(c); }
-  const ls = el.labels ? Array.from(el.labels) : [];
-  const wrap = el.closest("label");
-  if (wrap) ls.push(wrap);
-  return ls.some(vis);
-}
-// Typed text a typeahead has not taken: the hidden input in its own box, where
-// a pick lands, is still empty.
-function unpicked(el) {
-  if (el.readOnly || !isTypeahead(el) || !el.value.trim() || !snapVis(el)) return false;
-  const c = taParts(el).comp;
-  return !!c && !c.value;
-}
-const FIELDS = "input, textarea, select, [contenteditable]:not([contenteditable=false])";
-function reqEmpty(el) {
-  if (!el.required && attr(el, "aria-required") !== "true") return false;
-  if (String(el.value || el.textContent || "").trim()) return unpicked(el);
-  return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
-}
 // Judged as fill judges it: visible text excuses sr-only styling only on a
 // field the form wants filled.
 function decoy(el) { return trapLike(el, wanted(el)); }
@@ -5278,17 +5292,8 @@ forms = forms.filter(vis);
 if (forms.length) {
   let big = forms[0];
   forms.forEach(function (f) { if (f.querySelectorAll(FIELDS).length > big.querySelectorAll(FIELDS).length) big = f; });
-  // A file input is a field to fill too (through file_upload). An input that is
-  // both aria-hidden and out of the tab order is a widget's stand-in for native
-  // validation (react-select's required input), not a field of its own.
-  const fields = Array.from(big.querySelectorAll(FIELDS)).filter(function (el) {
-    const t = (el.type || "text").toLowerCase();
-    if (el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0) return false;
-    return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
-  });
-  const loose = fields.filter(unpicked);
-  const empty = fields.filter(reqEmpty);
-  form = { fields: fields.length, requiredEmpty: empty.length };
+  const c = census(big), loose = c.loose, empty = c.empty;
+  form = { fields: c.fields.length, requiredEmpty: empty.length };
   if (loose.length) form.unpicked = loose.length;
   const inv = invalidSet(big.ownerDocument).filter(function (c) { return big.contains(c.el); }).length;
   if (inv) form.invalid = inv;
@@ -5444,7 +5449,7 @@ return { pending: true };
   // One pass over A.fields from A.from. A custom combobox needs select's
   // JXA-polled phases, so the pass stops there with {defer: index} and Node
   // resumes after it.
-  fill_fields: FILL_LIB + SELECT_LIB + CHECK_LIB + String.raw`
+  fill_fields: FILL_LIB + SELECT_LIB + CHECK_LIB + CENSUS_LIB + String.raw`
 // What a select, combobox or radio group already shows as chosen, or "" for
 // nothing or a placeholder ("Select...", a disabled or valueless option).
 const PLACEHOLDERISH = /^[\s\-\u2013\u2014]*((please )?(select|choose|pick)\b.*)?$/i;
@@ -5614,7 +5619,20 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
 }
 const recheck = {};
 if (ff) Object.keys(ff.items).forEach(function (k) { const d = drift(ff.items[k]); if (d) recheck[k] = d; });
-return Object.keys(recheck).length ? { results: results, recheck: recheck } : { results: results };
+const out = { results: results };
+if (Object.keys(recheck).length) out.recheck = recheck;
+if (ff && ff.form && ff.form.isConnected) {
+  const c = census(ff.form), form = out.form = { requiredEmpty: c.empty.length };
+  if (c.loose.length) form.unpicked = c.loose.length;
+  const left = c.fields.filter(function (el) { return c.empty.indexOf(el) >= 0 || c.loose.indexOf(el) >= 0; }).slice(0, 10).map(function (el) {
+    const o = {}, name = clip(el.name, 120), label = accName(el);
+    if (name) o.name = name;
+    if (label) o.label = label;
+    return o;
+  });
+  if (left.length) form.left = left;
+}
+return out;
 `,
 
   // select runs in phases polled from JXA (runtime `select`), never with page
@@ -6836,7 +6854,7 @@ async function fillFields(fields, target, only) {
     }
   };
   const recheck = (r) => { for (const [i, x] of Object.entries(r.recheck || {})) if (results[i]) results[i] = x; };
-  let watch = false, warning = null;
+  let watch = false, warning = null, form;
   // The document the earlier fields landed in is gone, so nothing proves they
   // survived; the ones that landed are flagged rather than failed.
   const changedAfter = (i) => {
@@ -6861,6 +6879,7 @@ async function fillFields(fields, target, only) {
     results.push(...r.results);
     recheck(r);
     watch = !!r.watch;
+    form = r.form;
     if (r.defer == null) break;
     const f = A[r.defer];
     // A trusted entry types into the field this pass resolved and held, never
@@ -6886,10 +6905,10 @@ async function fillFields(fields, target, only) {
         for (let i = 0; i < A.length - 1; i++) if (results[i].ok === true && !results[i].skipped) results[i].unverified = true;
         warning = `the final re-read did not run (${why}); earlier fields are unverified`;
       } else if (x.gone) changedAfter(A.length - 1);
-      else recheck(x);
+      else { recheck(x); form = x.form; }
     }
   }
-  return { ok: results.every((x) => x.ok === true), results, ...counts(), ...(warning ? { warning } : {}) };
+  return { ok: results.every((x) => x.ok === true), results, ...counts(), ...(warning ? { warning } : {}), ...(form ? { form } : {}) };
 }
 
 // A custom combobox given a preference list: the open list is matched against
