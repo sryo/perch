@@ -1586,3 +1586,45 @@ test("the standalone select tool keeps a string text", () => {
   const f = TOOLS.find((x) => x.name === "fill").inputSchema.properties;
   assert.equal(f.fields_path.type, "string");
 });
+
+// A typeahead whose lookup lands a few executes later (window.__q, ticked per
+// execute), so a batch with it spans several page calls.
+const TA_FORM = `<form>
+  <label>Name <input name=name></label>
+  <div><label for=city>City</label><input id=city name=city autocomplete=off><input type=hidden id=city-id name=cityId><div class=dropdown-container id=city-dd></div></div>
+  <label>Email <input type=email name=email></label>
+  <label>Phone <input type=tel name=phone></label>
+</form>`;
+const TA_FORM_JS = `
+  window.__q = [];
+  window.later = (fn, n) => { window.__q.push({ fn, n }); };
+  window.__tick = () => { const due = window.__q.filter((j) => --j.n <= 0); window.__q = window.__q.filter((j) => j.n > 0); due.forEach((j) => j.fn()); };
+  const cities = ['Lisbon, Portugal', 'Lyon, France'];
+  const inp = document.getElementById('city'), hid = document.getElementById('city-id'), dd = document.getElementById('city-dd');
+  inp.addEventListener('input', () => {
+    hid.value = '';
+    const q = inp.value.toLowerCase();
+    later(() => {
+      dd.innerHTML = cities.filter((c) => q && c.toLowerCase().startsWith(q)).map((c) => '<div class=dropdown-item data-id=' + cities.indexOf(c) + '>' + c + '</div>').join('');
+      dd.querySelectorAll('.dropdown-item').forEach((o) => o.addEventListener('mousedown', () => { inp.value = o.textContent; hid.value = 'c' + o.dataset.id; dd.innerHTML = ''; }));
+    }, 3);
+  });
+  inp.addEventListener('blur', () => { dd.innerHTML = ''; if (!hid.value) inp.value = ''; });`;
+
+test("fill {fields}: a concurrent fill on the same tab neither breaks the batch nor reads its record", async () => {
+  const { dom } = onPage(TA_FORM, TA_FORM_JS);
+  const ev = dom.eval.bind(dom);
+  dom.eval = (js) => { dom.__tick(); return ev(js); };
+  const [a, b] = await Promise.all([
+    fill({ fields: [{ label_pattern: "name", text: "Ada" }, { label_pattern: "city", text: "Lisbon" }, { label_pattern: "email", text: "ada@example.test" }] }),
+    fill({ fields: [{ label_pattern: "phone", text: "5551234" }] }),
+  ]);
+  assert.equal(a.o.ok, true, JSON.stringify(a.o));
+  assert.equal(a.o.warning, undefined, JSON.stringify(a.o));
+  assert.deepEqual(a.o.results.map((x) => [x.ok, x.unverified]), [[true, undefined], [true, undefined], [true, undefined]]);
+  assert.equal(a.o.results[1].selected, "Lisbon, Portugal");
+  assert.equal(b.o.ok, true, JSON.stringify(b.o));
+  assert.equal(val(dom, "[name=email]").value, "ada@example.test");
+  assert.equal(val(dom, "[name=phone]").value, "5551234");
+  assert.equal(val(dom, "#city-id").value, "c0");
+});
