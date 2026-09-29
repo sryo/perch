@@ -101,6 +101,21 @@ test("a tab dragged out to another window, the only one at its URL, still resolv
   assert.equal(f.o.ok, true, f.t);
 });
 
+test("a tab dragged out to a window whose id can't be read keeps its handle and reports no move", async () => {
+  install([{ id: 3, active: 1, tabs: [other("a0"), at("agent")] }, { id: 4, active: 0, tabs: [other("b0")] }]);
+  const h = await handleIn(3, U);
+  dragOut(0, 1, 1);
+  world.winSpec("Safari", 0).active = 0;
+  world.winSpec("Safari", 1).idFails = true;
+  const e = await call("eval_js", { script: HIT, target: { tabId: h } });
+  assert.notEqual(e.r.isError, true, e.t);
+  assert.equal(hits(1, 1), 1);
+  const m = meta(e.r);
+  assert.equal(m.tabId ?? h, h, e.t);
+  assert.equal(m.moved, undefined, e.t);
+  assert.doesNotMatch(JSON.stringify(e.r.content), /safari:null/);
+});
+
 test("close_tab refuses when its index moved, even with its URL unique in the window", async () => {
   install([{ id: 3, active: 0, tabs: [other("a0"), other("a1"), at("agent")] }, { id: 4, active: 0, tabs: [other("b0")] }]);
   const h = await handleIn(3, U);

@@ -521,8 +521,10 @@ function jxaRuntime(BROWSERS, HANG) {
   function pickRun(t, js) {
     const P = t.pick, c = P.cands;
     t.pick = null;
+    if (P.winId == null) { try { P.winId = String(t.win.id()); } catch (e) {} }
     const run = function (i, mode) {
-      const set = P.winId + "." + i + "." + P.hash;
+      // A window whose id can't be read has no handle to refresh to; the page keeps the one the call came with.
+      const set = P.winId == null ? P.raw : P.winId + "." + i + "." + P.hash;
       t.idx = i;
       t.tab = t.win.tabs[i];
       const r = safariJs(t, stampGuard(js, P.hash, P.mine, set, mode));

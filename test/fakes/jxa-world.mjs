@@ -249,7 +249,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     });
     const win = {};
     Object.defineProperty(win, "tabs", { get: () => { bump("win.tabs", b.name); return coll; } });
-    Object.defineProperty(win, "id", { get: () => () => { bump("win.id()", b.name); return spec.id; } });
+    Object.defineProperty(win, "id", { get: () => () => { bump("win.id()", b.name); if (spec.idFails) throw new Error("Can't get object."); return spec.id; } });
     win.name = () => { bump("win.name()", b.name); return spec.name ?? (w.tabs[spec.active]?.spec.title || ""); };
     // Arc: the sidebar order of the active space (spec.sidebar ids), Favorites excluded.
     Object.defineProperty(win, "activeSpace", { get: () => {
