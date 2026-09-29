@@ -5,7 +5,7 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { readdirSync } from "node:fs";
-import { BOUND, RAW, ownTmp, clean, hung } from "./helpers/shot.mjs";
+import { NO_GRANT, BOUND, RAW, ownTmp, clean, hung } from "./helpers/shot.mjs";
 import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
@@ -316,10 +316,10 @@ test("the crop comes before the downscale", async () => {
   assert.equal(meta.clipped, undefined);
 });
 
-test("without the capture grant, an element already in view is cropped by sips before any resample", async () => {
+test("a granted capture that gave no image leaves an element already in view to screencapture and sips, cropped before any resample", async () => {
   const p = still();
   install(p);
-  world.state.capture = false;
+  world.state.captureExit = 1;
   const calls = spawns(2000);
   const { meta } = await shoot({ selector: "#t", maxWidth: 400 });
   assert.deepEqual(calls.map((c) => c.slice(0, 7)), [
@@ -333,16 +333,19 @@ test("without the capture grant, an element already in view is cropped by sips b
   assert.deepEqual(where(p), [0, 40, 37]);
 });
 
-test("without the capture grant, an element that had to be scrolled into view is refused, not cropped from the restored page", async () => {
-  const p = scrolled();
-  install(p);
-  world.state.capture = false;
-  const calls = spawns(2000);
-  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
-  assert.equal(r.content.length, 1, "no image");
-  assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: "screenshot: cropping an element that had to be scrolled into view needs the Screen Recording grant for in-process capture; grant it, or scroll it into view and call again" });
-  assert.deepEqual(calls, [], "no screencapture");
-  assert.deepEqual(where(p), [0, 40, 37]);
+test("without the capture grant, an element crop is refused whether or not it had to be scrolled into view, nothing spawned", async () => {
+  for (const make of [still, scrolled]) {
+    const p = make();
+    install(p);
+    world.state.capture = false;
+    const calls = spawns(2000);
+    const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+    assert.equal(r.content.length, 1, "no image");
+    assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: NO_GRANT }, make.name);
+    clean(r.content[0].text);
+    assert.deepEqual([calls, world.state.shots, world.state.files], [[], [], {}], make.name);
+    assert.deepEqual(where(p), [0, 40, 37], make.name);
+  }
 });
 
 // ---- the paint proof: a scrolled crop captures only a frame painted after the scroll ----
@@ -438,7 +441,7 @@ test("an element that did not move is captured with no paint poll", async () => 
 test("scroll positions are restored even when the capture fails", async () => {
   const p = still();
   install(p);
-  world.state.capture = false;
+  world.state.captureExit = 1;
   deps.exec = async () => { throw new Error("screencapture failed"); };
   const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
   assert.equal(r.isError, true);
@@ -479,7 +482,7 @@ test("a capture timeout keeps the restore's outcome when the restore goes unansw
 });
 
 // With the grant, a run that gives no image is its own refusal, never the
-// grant advice of SHOT_MOVED.
+// grant refusal.
 const NO_CAPTURE = "screenshot: the window capture gave no image; nothing was captured";
 for (const [name, set] of [
   ["exits nonzero", () => { world.state.captureExit = 1; }],
@@ -578,7 +581,7 @@ test("a Node crop whose sips fails or hangs is a coded refusal, bounded, never s
   for (const [name, make, code] of [["exit", fail, "window_offscreen"], ["nofile", nofile, "window_offscreen"], ["hung", (rest) => hung("sips", [], rest), "timeout"]]) {
     const p = still();
     install(p);
-    world.state.capture = false;
+    world.state.captureExit = 1;
     spawns(2000);
     const rest = deps.exec;
     const opts = [];

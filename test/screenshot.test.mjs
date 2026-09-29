@@ -6,7 +6,7 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { readdirSync } from "node:fs";
-import { SHOT_NO_IMAGE, BOUND, RAW, ownTmp, clean, hung } from "./helpers/shot.mjs";
+import { SHOT_NO_IMAGE, NO_GRANT, BOUND, RAW, ownTmp, clean, hung } from "./helpers/shot.mjs";
 import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 
@@ -145,15 +145,18 @@ test("screenshot jpeg is encoded at 0.8 and sent as image/jpeg", async () => {
   assert.deepEqual(meta.image, { w: 1600, h: 1240 });
 });
 
-test("without the Screen Recording grant the runtime never captures, and screencapture takes over", async () => {
+// Node's screencapture would have the same responsible process and no grant
+// either, and its grant prompt would take the user's key focus mid-call.
+test("without the Screen Recording grant a screenshot is refused, nothing spawned and no grant prompt", async () => {
   canary();
   world.state.capture = false;
   const calls = spawns();
-  const { meta } = await shoot({});
-  assert.equal(world.counts.screencapture, undefined);
-  assert.deepEqual(calls.map((c) => c[0]), ["screencapture", "sips"]);
-  assert.deepEqual(calls[0].slice(1, 3), ["-l", "77"]);
-  assert.deepEqual(meta, { window: { x: 10, y: 0, w: 800, h: 620 }, image: { w: 1568, h: 1000 } });
+  const r = await handleCall("screenshot", {});
+  assert.equal(r.content.length, 1, "no image");
+  assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: NO_GRANT });
+  clean(r.content[0].text);
+  assert.doesNotMatch(r.content[0].text, /screencapture|"window"|"x"/);
+  assert.deepEqual([calls, world.state.shots, world.state.files], [[], [], {}]);
 });
 
 // Another long-lived osascript that has captured makes CGWindowListCreateImage
@@ -247,7 +250,7 @@ test("two empty captures fall back to screencapture", async () => {
 test("a screencapture fallback that hangs is killed at 3s and is a coded timeout, its file removed", { timeout: 2000 }, async (t) => {
   const dir = ownTmp(t);
   canary();
-  world.state.capture = false;
+  world.state.captureExit = 1;
   const seen = [];
   deps.exec = hung("screencapture", seen);
   const r = await handleCall("screenshot", {});
@@ -266,7 +269,7 @@ test("a screencapture fallback that exits nonzero, writes nothing or writes no i
   };
   for (const [name, fake] of Object.entries(cases)) {
     canary();
-    world.state.capture = false;
+    world.state.captureExit = 1;
     deps.exec = fake;
     const r = await handleCall("screenshot", {});
     assert.equal(r.isError, true, name);
@@ -279,7 +282,7 @@ test("a screencapture fallback that exits nonzero, writes nothing or writes no i
 test("the fallback's resample sips is bounded and stays best effort", async (t) => {
   const dir = ownTmp(t);
   canary();
-  world.state.capture = false;
+  world.state.captureExit = 1;
   spawns();
   const capture = deps.exec;
   const opts = [];
@@ -442,4 +445,40 @@ test("a window no other entry ties with reads no Accessibility for a screenshot"
   spawns();
   await shoot({});
   assert.equal(world.counts.AX, undefined);
+});
+
+test("two fallback screenshots started in the same millisecond each get their own temp files and their own window's image", async (t) => {
+  const dir = ownTmp(t);
+  const win = (id, x, p) => ({ id, active: 0, x, y: 25, w: 600, h: 400, tabs: tabs(1, p) });
+  install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [win(1, 0, "a"), win(2, 700, "b")] }],
+    cg: [{ owner: "Google Chrome", pid: 50, wid: 80, x: 0, y: 25, w: 600, h: 420 }, { owner: "Google Chrome", pid: 50, wid: 81, x: 700, y: 25, w: 600, h: 420 }],
+  });
+  world.state.captureExit = 1;
+  const paths = [];
+  let started = 0, go;
+  const both = new Promise((r) => { go = r; });
+  deps.exec = async (cmd, a) => {
+    assert.equal(cmd, "screencapture");
+    paths.push(a[a.length - 1]);
+    if (++started === 2) go();
+    await both;
+    // Each window's PNG carries its CGWindowID in its width.
+    const png = Buffer.alloc(33);
+    png.writeUInt32BE(0x89504e47, 0); png.writeUInt32BE(1000 + Number(a[1]), 16); png.writeUInt32BE(100, 20);
+    await writeFile(a[a.length - 1], png);
+    await new Promise((r) => setImmediate(r));
+    return { stdout: "" };
+  };
+  const now = Date.now;
+  Date.now = () => 1_700_000_000_000;
+  t.after(() => { Date.now = now; });
+  const [ra, rb] = await Promise.all([
+    handleCall("screenshot", { target: { tabId: "chrome:a0" }, maxWidth: 0 }),
+    handleCall("screenshot", { target: { tabId: "chrome:b0" }, maxWidth: 0 }),
+  ]);
+  Date.now = now;
+  assert.equal(new Set(paths).size, 2, paths.join(" "));
+  assert.deepEqual([JSON.parse(ra.content[1].text).image.w, JSON.parse(rb.content[1].text).image.w], [1080, 1081]);
+  assert.deepEqual(readdirSync(dir), []);
 });

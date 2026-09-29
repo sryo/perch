@@ -132,10 +132,10 @@ async function shoot(args, width = 3000) {
 
 test("screenshot: image block then {window,image} meta; 1568 default, maxWidth:0 keeps full size, jpeg (form agent vision)", async () => {
   // The runtime's own capture (a 2x Retina image of the 800x620 CG frame), then
-  // the screencapture fallback without the Screen Recording grant.
+  // the screencapture fallback when both of the runtime's runs exit nonzero.
   for (const capture of [true, false]) {
     const world = canary(tabs(1));
-    world.state.capture = capture;
+    if (!capture) world.state.captureExit = 1;
     const full = capture ? { w: 1600, h: 1240 } : { w: 3000, h: 1000 };
     let { r, calls } = await shoot({});
     assert.equal(r.content.length, 2);

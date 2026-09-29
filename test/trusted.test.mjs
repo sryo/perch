@@ -573,8 +573,8 @@ test("foreground aim still prefers the mouse move, and falls back to Accessibili
 test("screenshot: a failed downscale still returns the full-size capture", async () => {
   const { deps } = await import("../server.js");
   const { writeFile } = await import("node:fs/promises");
-  // Without the Screen Recording grant the runtime leaves the capture to screencapture.
-  chromeFront().state.capture = false;
+  // Two runtime runs that exit nonzero leave the capture to screencapture.
+  chromeFront().state.captureExit = 1;
   const png = Buffer.alloc(33);
   png.writeUInt32BE(0x89504e47, 0); png.writeUInt32BE(3000, 16); png.writeUInt32BE(2000, 20);
   const real = deps.exec;
