@@ -4370,14 +4370,15 @@ function taBlur(el) {
   if (!had || !el.ownerDocument.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
 }
 // After a refusal's Escape, a popup select opened that open() still calls open
-// has no Escape handler: the control or popup element holding focus loses it,
-// then, if still open, the page outside is pressed, as a person clicks away.
-// Never that press inside a dialog, whose own outside press would close it.
-function unstick(s, open) {
-  if (!open()) return;
+// has no Escape handler: the control or popup element holding focus loses it.
+// Nothing is pressed outside, since that fires every outside-click handler on
+// the page (a drawer the form sits in). -> o, marked open if it still is.
+function unstick(s, open, o) {
+  if (!open()) return o;
   const a = document.activeElement;
   if (a && (mine(s, a) || inPop(s, a))) taBlur(a);
-  if (open() && !(s.input || s.ctl).closest("[role=dialog], [role=alertdialog], dialog, [aria-modal=true]")) press(document.body);
+  if (open()) { o.open = true; o.note = (o.note ? o.note + "; " : "") + "its popup is still open"; }
+  return o;
 }
 // The lists a control names as its own: aria-controls/aria-owns targets, and
 // react-select's listbox, whose id derives from its input id.
@@ -6557,14 +6558,16 @@ else if (s.typed) { setNativeValue(s.typed, ""); fire(s.typed, ["input"]); }
 if (s.prior != null && s.input.value !== s.prior) { setNativeValue(s.input, s.prior); fire(s.input, ["input", "change"]); }
 if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
 // Escape on a closed Downshift menu clears its selection, so only an open one gets it.
-if (s.opened && stillOpen(s)) { escapeOwn(s); unstick(s, function () { return stillOpen(s); }); }
+const shut = s.opened && stillOpen(s);
+if (shut) escapeOwn(s);
 scrollHome(s);
-if (s.disabled) return { ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands, tok: s.tok };
-if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [], tok: s.tok };
+const told = function (o) { return shut ? unstick(s, function () { return stillOpen(s); }, o) : o; };
+if (s.disabled) return told({ ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands, tok: s.tok });
+if (!cands.length) return told({ ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [], tok: s.tok });
 const out = { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands, tok: s.tok };
 // For fill's preference list: a typed filter missed, so a later preference may still turn up.
 if (s.typed && Array.isArray(A.text)) out.filtered = true;
-return out;
+return told(out);
 `,
 
   // select {trusted}: whether the synthetic open showed the control's own list.
@@ -6650,7 +6653,7 @@ const escOwn = function () {
 // A refusal leaves nothing open that select opened; any answer puts back the
 // scroll select made to press the control.
 const answer = function (o) {
-  if (o.ok === false && s.opened && !s.shut && !A.keep) unstick(s, openNow);
+  if (o.ok === false && s.opened && !s.shut && !A.keep) unstick(s, openNow, o);
   scrollHome(s);
   return o;
 };

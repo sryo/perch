@@ -658,11 +658,11 @@ test("custom combobox: a bare input's pre-rendered neighbour listbox in a page-w
 });
 
 // A refusal closes what select opened. Escape goes first; a popup still open
-// after it (a widget with no Escape handler) is closed as a person would: the
-// control select focused loses focus, then a press on the page outside it.
-// A popup that closes on Escape gets neither, and one in a dialog never gets
-// the outside press, which would close the dialog too.
-test("custom combobox: a refused select closes the popup it opened, however the widget closes", async () => {
+// after it (a widget with no Escape handler) gets a blur on the control select
+// focused. One still open after that is left open and the refusal says so
+// (open, note): a synthetic press on the page outside would fire every
+// outside-click handler there, closing a drawer or panel the form sits in.
+test("custom combobox: a refused select closes the popup it opened by Escape or blur, else says it is open", async () => {
   const list = `<ul id=cl role=listbox><li role=option>Rosario</li><li role=option>Cordoba</li></ul>`;
   const input = `<input id=city role=combobox aria-expanded=false autocomplete=off>`, hid = list.replace("listbox>", "listbox hidden>");
   const pageWide = (inner) => `<form><label>Name <input name=n></label><label>Email <input name=e></label><label for=city>City</label>${inner}<button type=button>Send</button></form>`;
@@ -673,10 +673,10 @@ test("custom combobox: a refused select closes the popup it opened, however the 
     i.addEventListener('blur', () => { window.blurs++; });
     document.addEventListener('mousedown', (e) => { if (!i.contains(e.target) && !l.contains(e.target)) window.outside++; });
     i.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.escs++; });`;
-  for (const [name, closes, want] of [
-    ["on Escape", "i.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });", { blurs: 0, outside: 0 }],
-    ["on blur", "i.addEventListener('blur', shut);", { blurs: 1, outside: 0 }],
-    ["on an outside press", "document.addEventListener('mousedown', (e) => { if (!i.contains(e.target) && !l.contains(e.target)) shut(); });", { blurs: 1, outside: 1 }],
+  for (const [name, closes, blurs, open] of [
+    ["on Escape", "i.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });", 0, false],
+    ["on blur", "i.addEventListener('blur', shut);", 1, false],
+    ["on an outside press", "document.addEventListener('mousedown', (e) => { if (!i.contains(e.target) && !l.contains(e.target)) shut(); });", 1, true],
   ]) {
     for (const [shape, html, text, error] of [
       ["pre-rendered list, no aria-controls", pageWide(input + list), "Cordoba", /^the control's option list did not open or is empty/],
@@ -688,20 +688,36 @@ test("custom combobox: a refused select closes the popup it opened, however the 
       const at = `${name}, ${shape}`;
       assert.equal(o.ok, false, at + " " + JSON.stringify(o));
       assert.match(o.error, error, at);
-      assert.equal(dom.document.getElementById("city").getAttribute("aria-expanded"), "false", at);
-      assert.deepEqual([dom.escs, dom.blurs, dom.outside], [1, want.blurs, want.outside], at);
+      assert.equal(dom.document.getElementById("city").getAttribute("aria-expanded"), String(open), at);
+      assert.deepEqual([dom.escs, dom.blurs, dom.outside], [1, blurs, 0], at);
+      assert.equal(o.open, open || undefined, at);
+      assert.equal(o.note, open ? "its popup is still open" : undefined, at);
     }
   }
-  // In a dialog, an outside press would close the dialog: the popup is left
-  // open rather than risk it.
-  const { dom } = onPage(`<div role=dialog aria-modal=true>${pageWide(input + list)}</div>`, base);
-  assert.equal((await select({ label_pattern: "city", text: "Cordoba" })).o.ok, false);
-  assert.deepEqual([dom.escs, dom.blurs, dom.outside], [1, 1, 0]);
   // A popup that was open before select pressed anything is the page's: left open.
-  const { dom: d2 } = onPage(pageWide(input.replace("aria-expanded=false", "aria-expanded=true") + list), base);
-  assert.equal((await select({ label_pattern: "city", text: "Cordoba" })).o.ok, false);
+  const { dom: d2, } = onPage(pageWide(input.replace("aria-expanded=false", "aria-expanded=true") + list), base);
+  const kept = (await select({ label_pattern: "city", text: "Cordoba" })).o;
+  assert.equal(kept.ok, false);
+  assert.equal(kept.open, undefined);
   assert.equal(d2.document.getElementById("city").getAttribute("aria-expanded"), "true");
   assert.deepEqual([d2.escs, d2.blurs, d2.outside], [0, 0, 0]);
+});
+
+// The form in a drawer (no dialog role) that closes on any mousedown outside
+// it: a refusal leaves the drawer open, and nothing on the page is clicked.
+test("custom combobox: a refused select in a drawer never presses the page outside it", async () => {
+  const { dom } = onPage(`<aside id=drawer class=open><form><label>Name <input name=n></label><label>Email <input name=e></label><label for=city>City</label>
+    <input id=city role=combobox aria-expanded=false autocomplete=off><ul id=cl role=listbox><li role=option>Rosario</li></ul></form></aside>`, `
+    const i = document.getElementById('city'), d = document.getElementById('drawer');
+    window.bodyClicks = 0;
+    i.addEventListener('click', () => { i.setAttribute('aria-expanded', 'true'); });
+    document.addEventListener('mousedown', (e) => { if (!d.contains(e.target)) d.className = ''; });
+    document.body.addEventListener('click', (e) => { if (e.target === document.body) window.bodyClicks++; });`);
+  const { o } = await select({ label_pattern: "city", text: "Cordoba" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.open, true);
+  assert.equal(dom.document.getElementById("drawer").className, "open");
+  assert.equal(dom.bodyClicks, 0);
 });
 
 // A bare input whose real list is a portal appended to body on open, followed
