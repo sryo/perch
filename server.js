@@ -6439,9 +6439,13 @@ if (!open) {
   // An offscreen control is centered first, as a person would scroll to it:
   // focus() scrolls only when focus moves, so a control still focused from an
   // earlier select would otherwise stay offscreen on an identical call.
+  // Only above or below the viewport: one wider than it, or a slide off to the
+  // side, is where the page put it, and so is one an ancestor clips.
   const at = (wrap || ctl).getBoundingClientRect();
-  if (at.top < 0 || at.left < 0 || at.bottom > window.innerHeight || at.right > window.innerWidth) {
-    try { (wrap || ctl).scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
+  let clipped = false;
+  for (let p = (wrap || ctl).parentElement; p && p !== document.body && !clipped; p = p.parentElement) { const cs = getComputedStyle(p); clipped = /^(hidden|clip)$/.test(cs.overflowY || cs.overflow); }
+  if ((at.top < 0 || at.bottom > window.innerHeight) && !clipped) {
+    try { (wrap || ctl).scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" }); } catch (e) {}
   }
   pressFocus(wrap || ctl, input || ctl);
   s.opened = true;

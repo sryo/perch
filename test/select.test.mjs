@@ -565,6 +565,24 @@ test("custom combobox: two identical selects on an offscreen control leave the p
   assert.deepEqual([...dom.intoView], ["center", "center"]);
 });
 
+// Only a control above or below the viewport is scrolled to: one wider than
+// the viewport, a carousel slide off to the side, or one an ancestor clips
+// (overflow:hidden) is left where the page put it.
+test("custom combobox: select scrolls to a control only when it is above or below the viewport and unclipped", async () => {
+  const at = (html, rect) => html.replace("tabindex=0", `tabindex=0 data-rect=${rect}`).replace('<div class="select__control">', `<div class="select__control" data-rect="${rect}">`);
+  for (const [name, html] of [
+    ["wider than the viewport", at(CUSTOM, "-50,100,2000,20")],
+    ["carousel slide", `<div style="overflow:hidden">${at(CUSTOM, "1500,100,100,20")}</div>`],
+    ["clipped below", `<div style="overflow:hidden">${at(CUSTOM, "0,3000,100,20")}</div>`],
+  ]) {
+    const { dom } = onPage(html, CUSTOM_JS + `
+      window.intoView = 0;
+      HTMLElement.prototype.scrollIntoView = function () { window.intoView++; };`);
+    assert.equal((await select({ label_pattern: "level", text: "senior" })).o.ok, true, name);
+    assert.equal(dom.intoView, 0, name);
+  }
+});
+
 test("custom combobox: a control already in view is not scrolled by select", async () => {
   const { dom } = onPage(CUSTOM, CUSTOM_JS + `
     window.intoView = 0;
