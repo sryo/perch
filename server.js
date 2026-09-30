@@ -6113,7 +6113,12 @@ try { el.scrollIntoView({ block: "center", inline: "center", behavior: "instant"
 const r = el.getBoundingClientRect();
 if (!r.width || !r.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
 const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-if (inFrame(document.elementFromPoint && document.elementFromPoint(cx, cy))) return { ok: false, error: ident(el) + FRAMED };
+const atPt = document.elementFromPoint && document.elementFromPoint(cx, cy);
+if (inFrame(atPt)) return { ok: false, error: ident(el) + FRAMED };
+// select's own control or option under another element (a menu left open over
+// its popup, as in a modal where select sends other menus no Escape): the
+// click would land on that element, so nothing is posted.
+if (A.select && atPt && atPt !== el && !el.contains(atPt) && !atPt.contains(el)) return { ok: false, covered: true, error: ident(el) + " is covered by " + ident(atPt) + "; nothing was clicked or picked" };
 `;
 // A click that opens a new tab also records whether the page cancelled it.
 const TRUSTED_PROBE_TAIL = BLANK_LIB + String.raw`if (A.forFill && !A.background) { setNativeValue(el, ""); fire(el, ["input"]); }

@@ -317,3 +317,44 @@ test("select_type's filter is the option text up to its first punctuation, or th
     assert.deepEqual(edits[0], ["insertText", typed], text);
   }
 });
+
+// In a modal select leaves other open menus alone (no Escape the dialog hears),
+// so one may cover the popup: a trusted click aimed at the option would land on
+// the covering menu's item. The probe's hit test refuses before anything is posted.
+test("trusted, in a modal: an option another open menu covers is refused, never clicking the covering menu", async () => {
+  const w = world();
+  const d = w.dom.document;
+  const field = d.getElementById("city").parentElement;
+  const dlg = d.createElement("div");
+  dlg.id = "dlg"; dlg.setAttribute("role", "dialog"); dlg.setAttribute("aria-modal", "true");
+  field.replaceWith(dlg);
+  dlg.appendChild(field);
+  dlg.insertAdjacentHTML("beforeend", `<input id=other role=combobox aria-expanded=true aria-controls=cover aria-label=Other><ul id=cover role=listbox><li role=option id=cov>Covering item</li></ul>`);
+  w.dom.eval(`window.covered = 0; window.dlgCloses = 0;
+    document.getElementById('cov').addEventListener('mousedown', () => { window.covered++; });
+    document.getElementById('cov').addEventListener('click', () => { window.covered++; });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { window.dlgCloses++; document.getElementById('dlg').hidden = true; } });`);
+  // The covering menu is on top of city's list once it shows; elsewhere the aimed element is hit.
+  d.elementFromPoint = () => (d.getElementById("city-list").hidden ? d.getElementById("city") : d.getElementById("cov"));
+  const fire = (el, types, C) => types.forEach((type) => {
+    const e = new C(type, { bubbles: true, cancelable: true, button: 0 });
+    Object.defineProperty(e, "isTrusted", { value: true });
+    el.dispatchEvent(e);
+  });
+  let target = null;
+  w.state.onPost = (e) => {
+    if (e.kind !== "mouse" || e.pt.x < 0 || (e.type !== 1 && e.type !== 2)) return;
+    if (e.type === 1) target = d.elementFromPoint(0, 0);
+    const P = w.dom.PointerEvent || w.dom.MouseEvent;
+    if (e.type === 1) { fire(target, ["pointerdown"], P); fire(target, ["mousedown"], w.dom.MouseEvent); }
+    else { fire(target, ["pointerup"], P); fire(target, ["mouseup", "click"], w.dom.MouseEvent); }
+  };
+  const o = await select({ label_pattern: "^city$", text: "Quito", trusted: true });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /covered by option "Covering item"/);
+  assert.equal(w.dom.covered, 0);
+  assert.equal(presses(w).length, 1);
+  assert.deepEqual([...w.dom.pickerLog], []);
+  assert.equal(d.getElementById("dlg").hidden, false);
+  assert.equal(w.dom.dlgCloses, 0);
+});
