@@ -187,3 +187,14 @@ test("check: only_empty skips a disabled box", () => {
   }
   assert.equal(on(w, "#d"), false);
 });
+
+// A role=checkbox box that toggles on its own click is clicked once: a click on
+// its inner label would reach it twice (the label, then the label's input).
+test("fill {checked}: a role=checkbox box with an inner label toggles once", () => {
+  const w = page(`<div id=b role=checkbox aria-checked=false tabindex=0 aria-label="Subscribe"><input type=checkbox id=i hidden><label for=i>Subscribe</label></div>`);
+  w.eval(`window.n = 0; const b = document.getElementById("b"); b.addEventListener("click", () => { window.n++; b.setAttribute("aria-checked", b.getAttribute("aria-checked") === "true" ? "false" : "true"); });`);
+  const o = check(w, { selector: "#b", checked: true });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(w.n, 1);
+  assert.equal(w.document.getElementById("b").getAttribute("aria-checked"), "true");
+});

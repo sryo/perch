@@ -4819,7 +4819,7 @@ function radioMates(el) {
 // <label> for its own input gets it on that label, which activates the input
 // its framework listens to; a click on the box itself may reach no handler.
 function boxClick(el) {
-  const l = el.tagName !== "INPUT" && el.querySelector("label"), c = l && (l.control || l.querySelector("input"));
+  const l = el.tagName !== "INPUT" && attr(el, "role") === "radio" && el.querySelector("label"), c = l && (l.control || l.querySelector("input"));
   (c && el.contains(c) ? l : el).click();
 }
 // onLand(el, was, prev) hears of a box that ends in the wanted state, whether
