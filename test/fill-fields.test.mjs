@@ -1334,6 +1334,29 @@ test("fill {fields}: the same batch twice sends the same page script", async () 
   assert.equal(sent[0], sent[1]);
 });
 
+// A pick that starts a navigation: the page fires pagehide but its document
+// still answers, at the same URL, until the new one commits. The next pass
+// writes nothing into the leaving document.
+test("fill {fields}: a pass after the page fired pagehide writes nothing and reports the page changed", async () => {
+  const { dom } = onPage(CUSTOM_CLEARS, CUSTOM_JS);
+  dom.document.getElementById("menu").addEventListener("click", () => { dom.dispatchEvent(new dom.Event("pagehide")); });
+  const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }, { label_pattern: "city", text: "Rio" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(val(dom, "#ci").value, "", "nothing is written after pagehide");
+  assert.deepEqual(o.results.map((x) => x.ok), [true, true, false]);
+  assert.equal(o.results[0].unverified, true);
+  assert.equal(o.results[2].error, "the page changed after fields[1]; not filled");
+  assert.equal(o.warning, "the page changed after fields[1]; earlier fields may have been cleared, check them");
+});
+
+test("fill {fields}: a batch ending on the pick that fired pagehide flags the earlier fields instead of re-reading them", async () => {
+  const { dom } = onPage(CUSTOM_CLEARS, CUSTOM_JS);
+  dom.document.getElementById("menu").addEventListener("click", () => { dom.dispatchEvent(new dom.Event("pagehide")); });
+  const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }] });
+  assert.deepEqual(o.results.map((x) => [x.ok, x.unverified]), [[true, true], [true, undefined]]);
+  assert.equal(o.warning, "the page changed after fields[1]; earlier fields may have been cleared, check them");
+});
+
 test("fill {fields}: a page that navigated before the extra pass is not failed, but its earlier fields are flagged", async () => {
   const { world, dom } = onPage(CUSTOM_CLEARS, CUSTOM_CLEARS_JS);
   const sent = passes(world);

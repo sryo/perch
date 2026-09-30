@@ -6082,8 +6082,17 @@ function chosen(c) {
 const fp = (function (s) { let h = 5381; for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + s.length; })(JSON.stringify(A.fields));
 const href = location.href.split("#")[0];
 let ff = window.__perch_ff;
-if (!A.from) ff = window.__perch_ff = { fp: fp, items: {}, href: href };
-else if (!ff || ff.fp !== fp || ff.href !== href || (ff.form && !ff.form.isConnected && !Object.keys(ff.items).some(function (k) { return ff.items[k].el.isConnected || twin(ff.items[k]); }))) return { gone: true, results: [] };
+// A document that fired pagehide is leaving (a pick started a navigation) but
+// answers at the same URL until the next one commits: a later pass must not
+// write into it. One listener a document marks the batch record it finds.
+if (!A.from) {
+  ff = window.__perch_ff = { fp: fp, items: {}, href: href };
+  if (!window.__perch_ff_hide) {
+    window.__perch_ff_hide = true;
+    window.addEventListener("pagehide", function () { if (window.__perch_ff) window.__perch_ff.left = true; });
+  }
+}
+else if (!ff || ff.left || ff.fp !== fp || ff.href !== href || (ff.form && !ff.form.isConnected && !Object.keys(ff.items).some(function (k) { return ff.items[k].el.isConnected || twin(ff.items[k]); }))) return { gone: true, results: [] };
 // A write pass after a deferred pick, which may have moved a single-page wizard
 // to its next step. Not the re-read-only last pass: a batch ending on a step's
 // last pick expects exactly that. A typeahead state under another call's key
