@@ -6475,6 +6475,9 @@ if (opt) {
   s.pickedN = keys.get(opt);
   s.optEl = opt;
   s.multi = isMulti(s, opt);
+  // What the press may move, for select_read's check on a typed filter.
+  s.selBefore = attr(opt, "aria-selected") === "true";
+  s.compAtPick = s.comp ? s.comp.value : null;
   if (chosenAlready(s, opt, s.pickedN)) s.already = true;
   else press(opt);
   return { picked: s.picked, tok: tok };
@@ -6516,6 +6519,7 @@ if (!s.typed && wantN && box && s.polls >= 4) {
   setNativeValue(box, q);
   fire(box, ["input"]);
   s.typed = box;
+  s.typedQ = q;
   s.typedSig = sig;
 }
 return wait;
@@ -6577,6 +6581,7 @@ if (!e.ok) {
   return { ok: false, error: "the picker ignored background typing", trusted: [], tok: s.tok };
 }
 s.typed = el;
+s.typedQ = el.value;
 s.typedSig = null;
 s.typedTrusted = true;
 return { ok: true, tok: s.tok };
@@ -6602,6 +6607,8 @@ if (!s.ctl.isConnected) {
     s.box = own ? again : ctlBox(again, s.input).box;
   }
 }
+// Whether the list closed on the pick, read before this call's own Escape.
+if (!s.closed) s.shut = !stillOpen(s);
 // A popup select opened and a pick left open (a multi-select) closes again.
 if (s.opened && !s.closed && !A.keep) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
 // An input's own value first: its wrapper may hold only its label.
@@ -6614,11 +6621,17 @@ const shown = clip(parts.length > 1 && !/[,;\n]/.test(full) ? parts.join(", ") :
 // multi-select without chips, so its newest element or comma part counts.
 const now = norm(full);
 const grew = !s.multi && s.whole && now !== s.whole && now.indexOf(s.whole) === 0;
-const seen = has(full) || (!s.multi && parts.some(function (t) { return norm(t) === s.pickedN; })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; })));
+// The text select typed into the input as a filter shows whatever the press
+// did, so it counts only once something else moved: the list closed, the
+// hidden companion changed, or the option became selected (as fill's
+// typeahead requires).
+const typedOnly = s.typed === s.input && s.typedQ != null && full === iv && norm(iv) === norm(s.typedQ) &&
+  !(s.shut || (s.comp && s.comp.value !== s.compAtPick) || (s.optEl && !s.selBefore && attr(s.optEl, "aria-selected") === "true"));
+const seen = !typedOnly && (has(full) || (!s.multi && parts.some(function (t) { return norm(t) === s.pickedN; })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; }))));
 if (!seen && !A.final) return { pending: true, tok: s.tok };
 const out = seen
   ? { ok: true, selected: s.picked, el: ident(s.ctl), value: shown, tok: s.tok }
-  : { ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control shows ' + (shown ? '"' + shown + '"' : "nothing") + "; not verified", pressed: s.picked, el: ident(s.ctl), value: shown, tok: s.tok };
+  : { ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control shows ' + (typedOnly ? "only the text select typed" : shown ? '"' + shown + '"' : "nothing") + "; not verified", pressed: s.picked, el: ident(s.ctl), value: shown, tok: s.tok };
 if (s.pref) out.pref = s.pref;
 if (s.already) out.note = "already chosen; not pressed again, since a press would toggle it off";
 return out;

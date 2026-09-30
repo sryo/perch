@@ -305,7 +305,11 @@ test("a custom list with nothing to type into and no match settles once it holds
 const SUGGEST = `<label id=sl>Office</label><input id=so role=combobox aria-labelledby=sl aria-controls=sm aria-expanded=false><ul id=sm role=listbox></ul>`;
 const SUGGEST_JS = (render) => `
   const inp = document.getElementById('so'), ul = document.getElementById('sm');
-  const show = (xs) => { ul.innerHTML = xs.map((x) => '<li role=option>' + x + '</li>').join(''); inp.setAttribute('aria-expanded', 'true'); };
+  // A pick fills the input and closes the list, as a real combobox does.
+  const show = (xs) => {
+    ul.innerHTML = xs.map((x) => '<li role=option>' + x + '</li>').join(''); inp.setAttribute('aria-expanded', 'true');
+    ul.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => { inp.value = o.textContent; ul.innerHTML = ''; inp.setAttribute('aria-expanded', 'false'); }));
+  };
   inp.addEventListener('focus', () => { if (!ul.children.length) show(['Berlin', 'Madrid']); });
   inp.addEventListener('mousedown', () => { if (!ul.children.length) show(['Berlin', 'Madrid']); });
   window.show = show; window.q = () => inp.value;
@@ -423,7 +427,10 @@ test("a loading signal inside a list the control does not name keeps it waited o
   const { dom, world } = onPage(html, `
     const inp = document.getElementById('po');
     let ul = null;
-    const show = (xs) => { ul.innerHTML = xs.map((x) => '<li role=option>' + x + '</li>').join(''); };
+    const show = (xs) => {
+      ul.innerHTML = xs.map((x) => '<li role=option>' + x + '</li>').join('');
+      ul.querySelectorAll('[role=option]').forEach((o) => o.addEventListener('click', () => { inp.value = o.textContent; ul.remove(); inp.setAttribute('aria-expanded', 'false'); }));
+    };
     const open = () => { if (ul) return; ul = document.createElement('ul'); document.body.append(ul); inp.setAttribute('aria-expanded', 'true'); show(['Berlin', 'Madrid']); };
     inp.addEventListener('focus', open); inp.addEventListener('mousedown', open);
     inp.addEventListener('input', () => { window.typed = true; ul.innerHTML = '<li><span class=spinner></span></li>'; });
@@ -473,7 +480,10 @@ test("a list empty before the filter was typed is waited on past 0.5s (an async 
   const html = `<label id=al>Office</label><input id=ao role=combobox aria-labelledby=al aria-controls=am aria-expanded=false><ul id=am role=listbox></ul>`;
   const { dom, world } = onPage(html, `
     const inp = document.getElementById('ao'), ul = document.getElementById('am');
-    window.show = (xs) => { ul.innerHTML = xs.map((x) => '<li role=option>' + x + '</li>').join(''); inp.setAttribute('aria-expanded', 'true'); };
+    window.show = (xs) => {
+      ul.innerHTML = xs.map((x) => '<li role=option>' + x + '</li>').join(''); inp.setAttribute('aria-expanded', 'true');
+      ul.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => { inp.value = o.textContent; ul.innerHTML = ''; inp.setAttribute('aria-expanded', 'false'); }));
+    };
     inp.addEventListener('input', () => { window.typed = true; });`);
   afterTyping(dom, world, 800, () => dom.show(["Oslo", "Porto"]));
   const { o, ms } = await spent(world, { label_pattern: "office", text: "Oslo" });
@@ -668,6 +678,43 @@ test("custom combobox: a portal list that renders tasks after the press wins; a 
     assert.equal(o.ok, true, `${n} ticks ${JSON.stringify(o)}`);
     assert.equal(dom.document.getElementById("t").value, "Bravo");
     assert.equal(dom.recentHits, 0, `${n} ticks`);
+  }
+});
+
+// A search-as-you-type combobox: its portal list opens on input, so select types
+// the pick's text as a filter. The input then shows that typed text whatever
+// the option press did, so it proves nothing on its own: something else must
+// move (the list closing, a hidden companion, the option marked selected).
+const SEARCH = `<form><label>Name <input name=n></label><div class=team><label for=t>Team</label><input id=t role=combobox autocomplete=off><input type=hidden id=tid name=team_id></div><label>Email <input name=e></label></form>`;
+const SEARCH_JS = (onPick) => `const t = document.getElementById('t'), hid = document.getElementById('tid');
+  let ul = null;
+  t.addEventListener('input', () => {
+    if (!ul) { ul = document.createElement('ul'); ul.setAttribute('role', 'listbox'); document.body.appendChild(ul); }
+    t.setAttribute('aria-expanded', 'true');
+    ul.innerHTML = ['Alpha', 'Bravo'].filter((x) => x.toLowerCase().startsWith(t.value.toLowerCase())).map((x) => '<li role=option>' + x + '</li>').join('');
+    ul.querySelectorAll('li').forEach((o) => o.addEventListener('click', (e) => { ${onPick} }));
+  });`;
+
+test("custom combobox: the typed filter showing in the input is not the pick", async () => {
+  // Options that ignore a synthetic click: only the typed text shows.
+  const { dom } = onPage(SEARCH, SEARCH_JS("if (!e.isTrusted) return; t.value = o.textContent;"));
+  const { o } = await select({ label_pattern: "team", text: "Bravo" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.selected, undefined);
+  assert.match(o.error, /^pressed "Bravo" but the control shows only the text select typed; not verified$/);
+  assert.equal(dom.document.getElementById("t").value, "Bravo");
+});
+
+test("custom combobox: a pick equal to the typed text holds once the list closes, the companion fills or the option is selected", async () => {
+  for (const [what, onPick] of [
+    ["list closes", "t.value = o.textContent; t.setAttribute('aria-expanded', 'false'); ul.remove(); ul = null;"],
+    ["companion fills", "t.value = o.textContent; hid.value = 'id-' + o.textContent;"],
+    ["option selected", "t.value = o.textContent; o.setAttribute('aria-selected', 'true');"],
+  ]) {
+    onPage(SEARCH, SEARCH_JS(onPick));
+    const { o } = await select({ label_pattern: "team", text: "Bravo" });
+    assert.equal(o.ok, true, what + " " + JSON.stringify(o));
+    assert.equal(o.selected, "Bravo", what);
   }
 });
 
