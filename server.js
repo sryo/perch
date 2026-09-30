@@ -4369,14 +4369,12 @@ function taBlur(el) {
   if (had) el.blur();
   if (!had || !el.ownerDocument.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
 }
-// After a refusal's Escape, a popup select opened that open() still calls open
-// has no Escape handler: the control or popup element holding focus loses it.
-// Nothing is pressed outside, since that fires every outside-click handler on
-// the page (a drawer the form sits in). -> o, marked open if it still is.
-function unstick(s, open, o) {
-  if (!open()) return o;
-  const a = document.activeElement;
-  if (a && (mine(s, a) || inPop(s, a)) && !(a === s.typed && a.value && a.value === s.typedQ)) taBlur(a);
+// A popup select opened that open() still calls open after a refusal's Escape
+// (a widget with no Escape handler) is left open, and the refusal says so. A
+// refusal changes nothing else: a blur lets a widget commit its first option,
+// and a press outside fires every outside-click handler on the page (a drawer
+// the form sits in). -> o.
+function saysOpen(open, o) {
   if (open()) { o.open = true; o.note = (o.note ? o.note + "; " : "") + "its popup is still open"; }
   return o;
 }
@@ -5434,14 +5432,20 @@ function editClear(el) {
 `;
 
 // A refused select takes its typed filter back out and puts the input's prior
-// value and its companion's back, before anything blurs the control: a widget
-// that commits its first match on blur would pick from select's own typing.
+// value and its companion's back. own (a refused read, after a press): only
+// select's own typing, while the box still holds exactly what select typed and
+// the companion what it held right after; a value the page wrote after the
+// press (its pick, in its own format) stays. A miss pressed no option, so it
+// also restores what opening the control cleared.
 const UNTYPE_LIB = EDIT_LIB + String.raw`
-function untype(s) {
-  if (s.typedTrusted) { editClear(s.typed); taBlur(s.typed); }
-  else if (s.typed) { setNativeValue(s.typed, ""); fire(s.typed, ["input"]); }
-  if (s.prior != null && s.input.value !== s.prior) { setNativeValue(s.input, s.prior); fire(s.input, ["input", "change"]); }
-  if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
+function untype(s, own) {
+  const t = s.typed;
+  if (own && !(t && t.value === s.typedQ)) return;
+  const comp = !own || (s.comp && s.comp.value === s.compTyped);
+  if (s.typedTrusted) editClear(t);
+  else if (t) { setNativeValue(t, ""); fire(t, ["input"]); }
+  if (s.prior != null && s.input.value !== s.prior && (!own || t === s.input)) { setNativeValue(s.input, s.prior); fire(s.input, ["input", "change"]); }
+  if (s.comp && s.comp.value !== s.priorComp && comp) setNativeValue(s.comp, s.priorComp);
 }
 `;
 
@@ -6553,6 +6557,7 @@ if (!s.typed && wantN && box && s.polls >= 4) {
   fire(box, ["input"]);
   s.typed = box;
   s.typedQ = q;
+  s.compTyped = s.comp ? s.comp.value : null;
   s.typedSig = sig;
 }
 return wait;
@@ -6571,7 +6576,7 @@ untype(s);
 const shut = s.opened && stillOpen(s);
 if (shut) escapeOwn(s);
 scrollHome(s);
-const told = function (o) { return shut ? unstick(s, function () { return stillOpen(s); }, o) : o; };
+const told = function (o) { return shut ? saysOpen(function () { return stillOpen(s); }, o) : o; };
 if (s.disabled) return told({ ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands, tok: s.tok });
 if (!cands.length) return told({ ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [], tok: s.tok });
 const out = { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands, tok: s.tok };
@@ -6610,11 +6615,11 @@ const t = wantT.trim(), cut = t.split(/[,;(\/-]/)[0].trim().slice(0, 30);
 const e = editType(el, cut.length >= 2 ? cut : t.slice(0, 30));
 if (!e.ok) {
   editClear(el);
-  taBlur(el);
   return { ok: false, error: "the picker ignored background typing", trusted: [], tok: s.tok };
 }
 s.typed = el;
 s.typedQ = el.value;
+s.compTyped = s.comp ? s.comp.value : null;
 s.typedSig = null;
 s.typedTrusted = true;
 return { ok: true, tok: s.tok };
@@ -6667,10 +6672,10 @@ const escOwn = function () {
 const answer = function (o) {
   if (o.ok === false && !A.keep) {
     const was = openNow();
-    untype(s);
+    untype(s, true);
     if (s.opened && !s.shut) {
       if (!was && openNow()) escapeOwn(s);
-      unstick(s, openNow, o);
+      saysOpen(openNow, o);
     }
   }
   scrollHome(s);

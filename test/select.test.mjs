@@ -657,12 +657,12 @@ test("custom combobox: a bare input's pre-rendered neighbour listbox in a page-w
   }
 });
 
-// A refusal closes what select opened. Escape goes first; a popup still open
-// after it (a widget with no Escape handler) gets a blur on the control select
-// focused. One still open after that is left open and the refusal says so
-// (open, note): a synthetic press on the page outside would fire every
-// outside-click handler there, closing a drawer or panel the form sits in.
-test("custom combobox: a refused select closes the popup it opened by Escape or blur, else says it is open", async () => {
+// A refusal closes what select opened with Escape and nothing else. A popup
+// still open after it (a widget with no Escape handler) is left open and the
+// refusal says so (open, note): a blur lets a widget commit its first option,
+// and a synthetic press on the page outside would fire every outside-click
+// handler there, closing a drawer or panel the form sits in.
+test("custom combobox: a refused select closes the popup it opened by Escape, else says it is open", async () => {
   const list = `<ul id=cl role=listbox><li role=option>Rosario</li><li role=option>Cordoba</li></ul>`;
   const input = `<input id=city role=combobox aria-expanded=false autocomplete=off>`, hid = list.replace("listbox>", "listbox hidden>");
   const pageWide = (inner) => `<form><label>Name <input name=n></label><label>Email <input name=e></label><label for=city>City</label>${inner}<button type=button>Send</button></form>`;
@@ -675,8 +675,8 @@ test("custom combobox: a refused select closes the popup it opened by Escape or 
     i.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.escs++; });`;
   for (const [name, closes, blurs, open] of [
     ["on Escape", "i.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });", 0, false],
-    ["on blur", "i.addEventListener('blur', shut);", 1, false],
-    ["on an outside press", "document.addEventListener('mousedown', (e) => { if (!i.contains(e.target) && !l.contains(e.target)) shut(); });", 1, true],
+    ["on blur", "i.addEventListener('blur', shut);", 0, true],
+    ["on an outside press", "document.addEventListener('mousedown', (e) => { if (!i.contains(e.target) && !l.contains(e.target)) shut(); });", 0, true],
   ]) {
     for (const [shape, html, text, error] of [
       ["pre-rendered list, no aria-controls", pageWide(input + list), "Cordoba", /^the control's option list did not open or is empty/],
@@ -818,6 +818,31 @@ test("custom combobox: a refused read leaves the field at its prior value though
       assert.equal(dom.document.getElementById("tid").value, prior && "id-" + prior, at);
     }
   }
+});
+
+// A refusal blurs nothing: a widget that commits its first listed option on
+// blur, whatever the input holds, would pick after ok:false once untype has
+// emptied the input and the list shows everything.
+test("custom combobox: a refusal never blurs the control, so blur's first-option commit never runs", async () => {
+  const { dom } = onPage(SEARCH, SEARCH_JS("if (!e.isTrusted) return; t.value = o.textContent;").replace("['Alpha', 'Bravo']", '["Bravo Team", "Bravo"]') + `
+    window.blurs = 0;
+    t.addEventListener('blur', () => { window.blurs++; const f = ul && ul.querySelector('li'); if (f) { t.value = f.textContent; hid.value = 'id-' + f.textContent; } });`);
+  const { o } = await select({ label_pattern: "team", text: "Bravo" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.open, true);
+  assert.equal(dom.blurs, 0);
+  assert.equal(dom.document.getElementById("t").value, "");
+  assert.equal(dom.document.getElementById("tid").value, "");
+});
+
+// Only select's own typing is undone: a value the page wrote after the press
+// (its pick, shown in its own format) stays, companion and all.
+test("custom combobox: a refusal leaves a value the page's pick wrote", async () => {
+  const { dom } = onPage(SEARCH, SEARCH_JS("t.value = 'BRV-5'; hid.value = 'id-Bravo'; t.setAttribute('aria-expanded', 'false'); ul.remove(); ul = null;"));
+  const { o } = await select({ label_pattern: "team", text: "Bravo" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(dom.document.getElementById("t").value, "BRV-5");
+  assert.equal(dom.document.getElementById("tid").value, "id-Bravo");
 });
 
 test("custom combobox: a pick equal to the typed text holds once the list closes, the companion fills or the option is selected", async () => {

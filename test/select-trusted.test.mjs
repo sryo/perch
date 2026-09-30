@@ -198,6 +198,8 @@ test("trusted, shown tab: a picker the trusted click leaves shut is typed into w
 test("trusted, background tab: no option matching after typing withdraws the typed text and lists the candidates", async () => {
   const w = world({ shown: false });
   const edits = editing(w.dom);
+  let blurs = 0;
+  $(w, "#loc-input").addEventListener("blur", () => blurs++);
   const o = await select({ selector: "#loc", text: "Córdoba, Mexico", trusted: true });
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.error, "no option of this control matched");
@@ -207,14 +209,18 @@ test("trusted, background tab: no option matching after typing withdraws the typ
   assert.equal($(w, "#loc-input").value, "");
   assert.deepEqual([...w.dom.pickerLog], []);
   assert.deepEqual(w.posted, []);
+  assert.equal(blurs, 0, "a refusal never blurs the box select typed in");
   noFocusTaken(w);
 });
 
 test("trusted, background tab: an editing command that gives no trusted input picks nothing and restores the empty box", async () => {
   const w = world({ shown: false });
   const edits = editing(w.dom, { trusted: false });
+  let blurs = 0;
+  $(w, "#loc-input").addEventListener("blur", () => blurs++);
   const o = await select({ selector: "#loc", text: "Córdoba, Argentina", trusted: true });
   assert.deepEqual(o, { ok: false, error: "the picker ignored background typing", trusted: [] });
+  assert.equal(blurs, 0, "a refusal never blurs the box select typed in");
   assert.deepEqual(edits.map((e) => e[0]), ["insertText", "delete"]);
   assert.equal($(w, "#loc-input").value, "");
   assert.deepEqual([...w.dom.pickerLog], []);
