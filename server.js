@@ -665,6 +665,8 @@ function jxaRuntime(BROWSERS, HANG) {
   // A poll's page JS answers in tens of ms, or seconds on a loaded machine; a reply
   // dropped mid-navigation costs at most this.
   const POLL_EXEC_SECS = 2;
+  // Where select's re-read script takes the token its pick answered with.
+  const FR_TOK = '"@perch_fr_tok@"';
   const asQuote = function (s) { return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; };
   const NO_REPLY = "timeout: " + HANG.noReply;
   const isNoReply = function (e) { return !!e && e.message.indexOf(NO_REPLY) === 0; };
@@ -2330,6 +2332,14 @@ function jxaRuntime(BROWSERS, HANG) {
       visibleGuard(t, a.tool || "eval_js");
       return exec(t, a.js);
     },
+    // fill_reread, a task after a write: one bounded read. A write whose change
+    // handler navigates leaves an execute Chrome never answers, so a dropped
+    // reply is {dropped}, the write's answer standing, never the 2-minute default.
+    reread(a) {
+      const t = pageTarget(a.target, a.tool);
+      try { return pollExec(t, a.js, POLL_EXEC_SECS); }
+      catch (e) { if (isNoReply(e)) return JSON.stringify({ dropped: true }); throw e; }
+    },
     evalAsync(a) {
       const t = pageTarget(a.target, "eval_js"), start = Date.now();
       // The kick is never sent twice. It sets its result slot before the user's
@@ -2721,7 +2731,18 @@ function jxaRuntime(BROWSERS, HANG) {
       const t = pageTarget(a.target, a.tool || "select");
       // No start: the caller's own page call already opened the control.
       const r = a.start ? stepRead(t, a.start) : { pending: true };
-      if (!r || !r.pending) return r;
+      if (!r || !r.pending) {
+        // A native pick that landed (fr) is read again here, bounded, on the same
+        // tab: its change handler may have queued a move, or a navigation that
+        // drops the reply ({dropped}). null: the read could not run.
+        if (r && r.fr && a.reread) {
+          let x = null;
+          try { x = JSON.parse(String(pollExec(t, a.reread.split(FR_TOK).join(JSON.stringify(r.fr)), POLL_EXEC_SECS))); }
+          catch (e) { if (isNoReply(e)) x = { dropped: true }; }
+          r.rr = x;
+        }
+        return r;
+      }
       // r.tok (a typeahead's: a.tok, from fill's own page call): the owner token of
       // this call's page state. An answer from another call's state (another perch
       // server's select or fill on this tab) ends the call, with nothing more
@@ -7913,7 +7934,8 @@ async function fillFields(fields, target, only) {
     // page call reads the landed fields again. One that can't run, or finds a
     // new document, leaves the pass's answer.
     const x = await rereadPass(fr, target);
-    if (x) recheck(x, true);
+    if (x && x.dropped) results.forEach((y, i) => { if (y.ok === true && !y.skipped) results[i] = addNote(y, NO_REREAD); });
+    else if (x) recheck(x, true);
   } else if (from === A.length && watch) {
     // The combobox ended the batch, so no page pass has re-read the fields
     // before it. A navigated page has nothing to re-read; a re-read that failed
@@ -8009,20 +8031,24 @@ async function fill(args = {}) {
 // that put its old value back a task after the write reverted it, and one that
 // shows another value adds a note. A re-read that can't run or finds no record
 // leaves the fill's own answer.
+// rr: the runtime's own re-read result, when it already ran one.
 async function reread(r, target, tool = "fill") {
-  const { fr, ...out } = r;
-  const x = await rereadPass(fr, target, tool);
+  const { fr, rr, ...out } = r;
+  const x = rr !== undefined ? (rr && typeof rr === "object" && rr.__perch_error == null ? rr : null) : await rereadPass(fr, target, tool);
+  if (x && x.dropped) return addNote(out, NO_REREAD);
   if (x && x.recheck && x.recheck[0] && x.recheck[0].ok === false) return x.recheck[0];
   return x && x.notes && x.notes[0] ? addNote(out, x.notes[0]) : out;
 }
 const addNote = (o, n) => ({ ...o, note: o.note ? `${o.note}; ${n}` : n });
-// fill_reread, or null when it could not run.
+// fill_reread, {dropped} when its reply never came (the page may be leaving),
+// or null when it could not run.
 async function rereadPass(tok, target, tool = "fill") {
   try {
-    const x = await runPage(tool, "fill_reread", { tok }, target);
+    const x = parsePage(await rt("reread", { target, js: buildEvalWrapper(pageScript("fill_reread", { tok })), tool }, { raw: true, lane: "slow" }));
     return x && typeof x === "object" && x.__perch_error == null ? x : null;
   } catch { return null; }
 }
+const NO_REREAD = "not read again after the write: the page gave no reply (it may be navigating); check it";
 
 // A perch page script that threw, by error name only: its message and stack
 // are page internals the agent can't act on. eval_js's own errors never come here.
@@ -8121,7 +8147,7 @@ async function select(args = {}, prefs = null) {
   // fill does. fill's own combobox passes (prefs) never reach a native select.
   const r = pageFault(await rt("select", {
     target,
-    start: step("select_start", prefs ? {} : { fr: true }), pick: step("select_pick"), miss: step("select_miss"),
+    start: step("select_start", prefs ? {} : { fr: true }), ...(prefs ? {} : { reread: pageFn("fill_reread", { tok: "@perch_fr_tok@" }) }), pick: step("select_pick"), miss: step("select_miss"),
     read: step("select_read"), readFinal: step("select_read", { final: true }),
     ...(trusted ? { trusted: {
       open: step("select_open"), type: step("select_type"), keep: step("select_read", { keep: true }), check: pageFn("trusted_check", {}),

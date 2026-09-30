@@ -796,6 +796,37 @@ test("fill {fields}: a radio checked by label that the page moves back a task la
   }
 });
 
+// A write whose change handler navigates (a jump menu, a form.submit()) leaves
+// the re-read unanswered: Chrome drops an execute that lands while a new
+// document replaces the old. The re-read is bounded like select's reads, and a
+// dropped one keeps the write's answer with a note, never a two-minute wait.
+const isReread = (js) => js.includes("items = m && m[A.tok]");
+const NO_REREAD = "not read again after the write: the page gave no reply (it may be navigating); check it";
+for (const [name, html, args, check] of [
+  ["select", `<label>Sort <select id=so><option>Name</option><option>Price</option></select></label>`, ["select", { label_pattern: "sort", text: "Price" }],
+    (o) => assert.deepEqual(o, { ok: true, selected: "Price", el: `combobox "Sort"`, note: NO_REREAD })],
+  ["fill", `<form><label>Search <input id=q></label></form>`, ["fill", { label_pattern: "search", text: "shoes" }],
+    (o) => assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "Search"`, len: 5, note: NO_REREAD })],
+  ["fill {fields}", `<form><label>Search <input id=q></label><label>Sort <select id=so><option>Name</option><option>Price</option></select></label></form>`,
+    ["fill", { fields: [{ label_pattern: "search", text: "shoes" }, { label_pattern: "sort", option: "Price" }] }],
+    (o) => { assert.equal(o.ok, true, JSON.stringify(o)); assert.deepEqual(o.results.map((r) => r.note), [NO_REREAD, NO_REREAD]); }],
+]) {
+  test(`${name}: a re-read whose reply the page drops returns within the poll bound, keeping the write's answer`, async () => {
+    for (const target of [undefined, { tabId: "chrome:x" }]) {
+      const { world } = onPage(html);
+      if (target) await handleCall("list_tabs", {});
+      world.state.hangIf = isReread;
+      const t0 = world.clock.t;
+      const r = await handleCall(args[0], { ...args[1], target });
+      const o = JSON.parse(r.content[0].text);
+      check(o);
+      const took = world.clock.t - t0;
+      assert.ok(took <= 2 * 2000 + 500, `${name} ${target ? "targeted" : "untargeted"} took ${took}ms of virtual time`);
+      console.log(`# ${name} ${target ? "targeted" : "untargeted"}: ${took}ms virtual`);
+    }
+  });
+}
+
 test("fill: a re-read that finds no record (a new document) keeps the write's answer", async () => {
   const { dom } = onPage(LATE_REVERT, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
   const o = await fill({ label_pattern: "city", text: "Rosario" });

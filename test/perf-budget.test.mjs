@@ -553,6 +553,13 @@ test("navigate from a file: page to a file: url costs the same Apple Events as a
   assert.equal(appleEvents(), 2 + 2 + 2 + 1 + 2, breakdown());
 });
 
+// The re-read a task after an untargeted write: the resolve's read of the shown
+// tab's id, then one bounded execute (so a page the write sent away costs at
+// most POLL_EXEC_SECS), which the fake counts twice (NSAppleScript and
+// tab.execute). Live that is 2 Apple Events; a tabId the server has listed
+// needs no id read.
+const REREAD = 1 + 2;
+
 // fill {fields} on native fields is one page pass, whatever the order-dependent
 // recheck finds, plus one short re-read a task later for a page that undoes a
 // write. A batch ending on a custom combobox pays select's own polls, plus one
@@ -579,7 +586,7 @@ test("fill {fields}: native fields cost a pass and a re-read; a batch ending on 
     assert.equal(o.ok, true, JSON.stringify(o));
     cost[label] = appleEvents();
   }
-  assert.deepEqual(cost, { native: 1 + 1, "ends on combobox": 8 + 1 });
+  assert.deepEqual(cost, { native: 1 + REREAD, "ends on combobox": 8 + 1 });
 });
 
 // A native form is one page pass and its re-read whether its fields come inline or from a file.
@@ -596,7 +603,7 @@ test("fill {fields} costs the same Apple Events inline and from fields_path", as
     assert.equal(o.ok, true, JSON.stringify(o));
     cost[form] = appleEvents();
   }
-  assert.deepEqual(cost, { inline: 2, path: 2 }, breakdown());
+  assert.deepEqual(cost, { inline: 1 + REREAD, path: 1 + REREAD }, breakdown());
 });
 
 // A box or radio already in the wanted state is not clicked, so the page heard
@@ -611,30 +618,34 @@ test("fill {fields} whose boxes and radios are already set costs one Apple Event
   world.reset();
   const { o: flip } = await call("fill", { fields: [{ label_pattern: "agree", checked: false }, { label_pattern: "size", option: "Small" }] });
   assert.equal(flip.ok, true, JSON.stringify(flip));
-  assert.equal(appleEvents(), 2, breakdown());
+  assert.equal(appleEvents(), 1 + REREAD, breakdown());
 });
 
 // A plain field is the write and one re-read a task later; a miss (nothing
 // landed) has nothing to re-read.
-test("fill on a plain field costs two Apple Events, a miss one", async () => {
+test("fill on a plain field costs a write and a bounded re-read, a miss one Apple Event", async () => {
   const dom = page(`<label>City <input id=c></label>`, { url: "https://c0.test/" });
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
   const seen = evalsOf(dom);
   const { o } = await call("fill", { label_pattern: "city", text: "Rosario" });
   assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "City"`, len: 7 });
-  assert.equal(appleEvents(), 2, breakdown());
+  assert.equal(appleEvents(), 1 + REREAD, breakdown());
   assert.ok(seen[1].length < 16000, `re-read eval'd ${seen[1].length} bytes`);
   world.reset();
   const miss = await call("fill", { label_pattern: "zzz", text: "x" });
   assert.equal(miss.o.ok, false);
-  assert.equal(appleEvents(), 1, breakdown());
+  assert.equal(appleEvents(), 1, breakdown());  // A listed tabId needs no id read for the re-read.
+  const h = (await listed("Google Chrome"))[0].tabId;
+  world.reset();
+  assert.equal((await call("fill", { label_pattern: "city", text: "Lima", target: { tabId: h } })).o.ok, true);
+  assert.equal(appleEvents(), 1 + 2, breakdown());
 });
 
 // A native select is the pick and one re-read a task later, as a plain fill;
-// a miss or a tie sets nothing and has nothing to re-read. The pick runs on the
-// runtime's bounded execute, which the fake counts twice (NSAppleScript and
-// tab.execute), so page runs are read off tab.execute; untargeted, the resolve
-// adds the shown tab's id read.
+// a miss or a tie sets nothing and has nothing to re-read. Both run in the same
+// runtime call on its bounded execute, which the fake counts twice
+// (NSAppleScript and tab.execute), so page runs are read off tab.execute;
+// untargeted, the resolve adds the shown tab's id read once.
 test("select on a native <select> costs two page runs, a miss or a tie one", async () => {
   const dom = page(`<label>Plan <select id=plan><option value="">Select...</option><option>Basic plan</option><option>Basic support</option><option>Pro</option></select></label>`, { url: "https://c0.test/" });
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
@@ -642,7 +653,7 @@ test("select on a native <select> costs two page runs, a miss or a tie one", asy
   const { o } = await call("select", { label_pattern: "^plan", text: "Pro" });
   assert.deepEqual(o, { ok: true, selected: "Pro", el: `combobox "Plan"` });
   assert.equal(world.counts["tab.execute"], 2, breakdown());
-  assert.equal(appleEvents(), 1 + 1 + 2, breakdown());
+  assert.equal(appleEvents(), 1 + 2 + 2, breakdown());
   assert.ok(seen[1].length < 16000, `re-read eval'd ${seen[1].length} bytes`);
   for (const text of ["Enterprise", "basic"]) {
     world.reset();
