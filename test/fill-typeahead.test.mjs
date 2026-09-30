@@ -833,6 +833,36 @@ for (const [name, html, args, check] of [
   });
 }
 
+// Arc and Safari have no bounded page call, so a re-read there could wait out
+// the 2-minute Apple Event default behind a navigating change handler: it is
+// skipped, with a note, and the write's answer stands.
+const NO_BOUND = "not read again after the write: this browser has no bounded page call; check it if the page may undo it";
+for (const [name, browser] of [
+  ["Arc", { name: "Arc", kind: "arc", windows: [{ id: "W1", active: 0, tabs: [{ url: "https://a.test/", id: "x" }] }] }],
+  ["Safari", { name: "Safari", kind: "safari", windows: [{ id: 1, active: 0, tabs: [{ url: "https://a.test/", id: "x" }] }] }],
+]) {
+  test(`${name}: fill and select skip the re-read with a note, never waiting on a dropped reply`, async () => {
+    for (const [tool, html, args, want] of [
+      ["fill", `<label>Search <input id=q></label>`, { label_pattern: "search", text: "shoes" }, { ok: true, kind: "plain", el: `textbox "Search"`, len: 5, note: NO_BOUND }],
+      ["select", `<label>Sort <select><option>Name</option><option>Price</option></select></label>`, { label_pattern: "sort", text: "Price" }, { ok: true, selected: "Price", el: `combobox "Sort"`, note: NO_BOUND }],
+    ]) {
+      const dom = page(html);
+      const spec = structuredClone(browser);
+      spec.windows[0].tabs[0].dom = dom;
+      const world = makeWorld({ browsers: [spec], cg: [{ owner: name }] });
+      world.run(JXA_PRELUDE);
+      DAEMONS.fast = world.daemon;
+      DAEMONS.slow = world.daemon;
+      world.state.hangIf = isReread;
+      const t0 = world.clock.t;
+      const r = await handleCall(tool, args);
+      assert.deepEqual(JSON.parse(r.content[0].text), want, `${name} ${tool}`);
+      console.log(`# ${name} ${tool}: ${world.clock.t - t0}ms virtual`);
+      assert.ok(world.clock.t - t0 < 1000, `${name} ${tool} took ${world.clock.t - t0}ms`);
+    }
+  });
+}
+
 test("fill: a re-read that finds no record (a new document) keeps the write's answer", async () => {
   const { dom } = onPage(LATE_REVERT, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
   const o = await fill({ label_pattern: "city", text: "Rosario" });

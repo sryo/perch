@@ -738,14 +738,11 @@ function jxaRuntime(BROWSERS, HANG) {
     catch (e) { if (isNoReply(e)) throw e; }
     return exec(t, js);
   }
-  // pollExec for quickExec's tab (`at`): a Chromium tab by id, or the window's
-  // active tab when untargeted. A fast failure takes the plain path; Safari
-  // has no bounded path.
+  // pollExec for quickExec's Chromium tab (`at`, sole instance): by id, or the
+  // window's active tab when untargeted. A fast failure takes the plain path.
   function boundedAt(at, js) {
-    if (at.kind === "chrome" && soleInstance(at)) {
-      try { return asExecute(at, js, POLL_EXEC_SECS, "window " + (at.w + 1)); }
-      catch (e) { if (isNoReply(e)) throw e; }
-    }
+    try { return asExecute(at, js, POLL_EXEC_SECS, "window " + (at.w + 1)); }
+    catch (e) { if (isNoReply(e)) throw e; }
     return at.run(js);
   }
   // A one-shot read, sent once more with twice the cap after a dropped reply: it
@@ -2355,10 +2352,15 @@ function jxaRuntime(BROWSERS, HANG) {
       let o = null;
       try { o = JSON.parse(String(v)); } catch (e) {}
       if (!o || typeof o !== "object" || o.fr == null) return v;
+      // Arc and Safari (and a Chromium app with a second instance running) have
+      // no bounded page call, and an unbounded re-read behind a navigating change
+      // handler waits out the 2-minute default: none is sent there ({unbounded}).
       const js = a.reread.split(FR_TOK).join(JSON.stringify(o.fr));
-      let x = null;
-      try { x = JSON.parse(String(t ? pollExec(t, js, POLL_EXEC_SECS) : boundedAt(at, js))); }
-      catch (e) { if (isNoReply(e)) x = { dropped: true }; }
+      let x = { unbounded: true };
+      if (t ? pinned(t) : at.kind === "chrome" && soleInstance(at)) {
+        try { x = JSON.parse(String(t ? pollExec(t, js, POLL_EXEC_SECS) : boundedAt(at, js))); }
+        catch (e) { x = isNoReply(e) ? { dropped: true } : null; }
+      }
       o.rr = x;
       return JSON.stringify(o);
     },
@@ -2758,9 +2760,11 @@ function jxaRuntime(BROWSERS, HANG) {
         // tab: its change handler may have queued a move, or a navigation that
         // drops the reply ({dropped}). null: the read could not run.
         if (r && r.fr && a.reread) {
-          let x = null;
-          try { x = JSON.parse(String(pollExec(t, a.reread.split(FR_TOK).join(JSON.stringify(r.fr)), POLL_EXEC_SECS))); }
-          catch (e) { if (isNoReply(e)) x = { dropped: true }; }
+          let x = { unbounded: true };
+          if (pinned(t)) {
+            try { x = JSON.parse(String(pollExec(t, a.reread.split(FR_TOK).join(JSON.stringify(r.fr)), POLL_EXEC_SECS))); }
+            catch (e) { x = isNoReply(e) ? { dropped: true } : null; }
+          }
           r.rr = x;
         }
         return r;
@@ -7965,7 +7969,7 @@ async function fillFields(fields, target, only) {
     // page call reads the landed fields again. One that can't run, or finds a
     // new document, leaves the pass's answer.
     const x = rereadOf(fr.rr);
-    if (x && x.dropped) results.forEach((y, i) => { if (y.ok === true && !y.skipped) results[i] = addNote(y, NO_REREAD); });
+    if (x && (x.dropped || x.unbounded)) results.forEach((y, i) => { if (y.ok === true && !y.skipped) results[i] = addNote(y, x.dropped ? NO_REREAD : NO_BOUND); });
     else if (x) recheck(x, true);
   } else if (from === A.length && watch) {
     // The combobox ended the batch, so no page pass has re-read the fields
@@ -8066,7 +8070,7 @@ async function fill(args = {}) {
 function reread(r) {
   const { fr, rr, ...out } = r;
   const x = rereadOf(rr);
-  if (x && x.dropped) return addNote(out, NO_REREAD);
+  if (x && (x.dropped || x.unbounded)) return addNote(out, x.dropped ? NO_REREAD : NO_BOUND);
   if (x && x.recheck && x.recheck[0] && x.recheck[0].ok === false) return x.recheck[0];
   return x && x.notes && x.notes[0] ? addNote(out, x.notes[0]) : out;
 }
@@ -8078,6 +8082,7 @@ const rereadOf = (x) => x && typeof x === "object" && x.__perch_error == null ? 
 let rereadJs = null;
 const REREAD_JS = () => rereadJs || (rereadJs = buildEvalWrapper(pageScript("fill_reread", { tok: "@perch_fr_tok@" })));
 const NO_REREAD = "not read again after the write: the page gave no reply (it may be navigating); check it";
+const NO_BOUND = "not read again after the write: this browser has no bounded page call; check it if the page may undo it";
 
 // A perch page script that threw, by error name only: its message and stack
 // are page internals the agent can't act on. eval_js's own errors never come here.
