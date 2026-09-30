@@ -282,6 +282,28 @@ test("fill by label never lands in a honeypot input faded inside a visible box",
   assert.equal(lone.document.querySelector("input").value, "");
 });
 
+// A visible, sized trap (untabbable with autofill off, or a name saying to leave
+// it blank) ties a real field on its label; the real field takes the text.
+test("fill by label passes over a visible trap-like field tied with a normal one", () => {
+  for (const trap of [`name=email_c tabindex=-1 autocomplete=off`, `name=email_confirm aria-label="Email, leave this field blank"`]) {
+    const w = page(`<form onsubmit="return false"><div><label for=t3>Email</label><input id=t3 ${trap}></div><div><label for=email>Email</label><input id=email name=email type=email></div></form>`);
+    const o = run(w, "fill", { label_pattern: "email", text: "real@x.test" });
+    assert.equal(o.ok, true, trap + " " + JSON.stringify(o));
+    assert.equal(w.document.getElementById("t3").value, "", trap);
+    assert.equal(w.document.getElementById("email").value, "real@x.test", trap);
+    assert.equal(o.warning, undefined, trap);
+    assert.equal(o.ambiguous, undefined, trap + " " + JSON.stringify(o));
+  }
+});
+
+test("fill by label into the only, visible trap-like match keeps filling it but warns", () => {
+  const w = page(`<form><div><label for=t>Website</label><input id=t name=website tabindex=-1 autocomplete=off></div></form>`);
+  const o = run(w, "fill", { label_pattern: "website", text: "https://x.test" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(w.document.getElementById("t").value, "https://x.test");
+  assert.match(o.warning, /bot trap/);
+});
+
 test("fill by label prefers a plainly visible field over a faded combobox decoy before it", () => {
   const w = page(`<div class=ctl><label for=d>Email</label><input id=d aria-autocomplete=list style=opacity:0></div><label for=e>Email</label><input id=e>`);
   const o = run(w, "fill", { label_pattern: "email", text: "ada@x.test" });

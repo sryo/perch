@@ -3786,6 +3786,11 @@ function trapLike(el, labelled) {
   return honeypot(el, labelled) || (attr(el, "tabindex") === "-1" && attr(el, "autocomplete") === "off")
     || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"));
 }
+// fill's note on text it put in a field that looks like a bot trap.
+function trapWarning(el) {
+  return ident(el) + " looks like a bot trap (" + (LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name")) ? "its label or name says to leave it blank" : "it is out of the tab order with autofill off")
+    + ") and was filled anyway; clear it with text \"\" if the form should leave it empty";
+}
 // A required field named by visible text (a <label>, or aria-labelledby) is one
 // the form wants filled, so fill takes a pixel or clip on it for sr-only styling,
 // unless it is untabbable or its label says to leave it blank.
@@ -5108,7 +5113,7 @@ function fillOne(a, only, onLand) {
     }
     return out;
   }
-  const shown = scored.filter(function (c) { return fieldVis(c.el); });
+  let shown = scored.filter(function (c) { return fieldVis(c.el); });
   if (!shown.length) {
     const el = ident(scored[0].el);
     if (scored.every(function (c) { return trapLike(c.el); })) return only ? { ok: true, skipped: "trap", el: el } : { ok: false, el: el, error: el + " matched /" + a.label_pattern + "/i but it looks like a bot trap; leave it empty" };
@@ -5119,6 +5124,12 @@ function fillOne(a, only, onLand) {
     return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button, or pass its ref or selector to fill it anyway" }
       : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
   }
+  // A shown field that still looks like a trap (untabbable with autofill off, or
+  // named to be left blank) never takes the text over a normal one; alone, it
+  // does, with a warning.
+  const normal = shown.filter(function (c) { return !trapLike(c.el, wanted(c.el)); });
+  const trapOnly = !normal.length;
+  if (!trapOnly) shown = normal;
   // A disabled winner refuses the fill; only an enabled field of equal score stands in.
   const best = shown.find(function (c) { return c.s === shown[0].s && !unsent(c.el); }) || shown[0];
   if (unsent(best.el)) return refuse(best.el);
@@ -5135,6 +5146,7 @@ function fillOne(a, only, onLand) {
   if (out.ok === false) return out;
   const rivals = shown.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
   if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
+  if (trapOnly) out.warning = trapWarning(best.el);
   return out;
 }
 `;
