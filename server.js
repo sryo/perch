@@ -4368,12 +4368,6 @@ function ownOptions(s) {
     const byId = within(document).filter(function (o) { return o.id.indexOf(rs[1] + "-option-") === 0; });
     if (byId.length) return byId;
   }
-  // A bare input's box is itself or a label-like parent, with no list inside;
-  // once pressed, or not saying it is shut, its list is the one after it.
-  if (s.input && s.ctl === s.input && (s.opened || attr(s.input, "aria-expanded") !== "false")) {
-    const l = nextList(s.input), o = l ? within(l) : [];
-    if (o.length) return o;
-  }
   for (let p = s.box.parentElement, i = 0; p && p !== document.body && i < 3; p = p.parentElement, i++) {
     const others = Array.from(p.querySelectorAll("select, input:not([type=hidden]), [role=combobox], [aria-haspopup]")).some(function (c) { return !mine(s, c) && !c.closest(OPT); });
     if (others) break;
@@ -4382,6 +4376,13 @@ function ownOptions(s) {
   }
   if (!s.opened) return [];
   const fresh = within(document).filter(function (o) { return s.before.indexOf(o) < 0; });
+  // A bare input pressed with nothing new showing: a list the page rendered
+  // before the press (collapsed by CSS) is the one that follows it. Never before
+  // the press, so it never makes the control read as open.
+  if (!fresh.length && s.input && s.ctl === s.input) {
+    const l = nextList(s.input), o = l ? within(l) : [];
+    if (o.length) return o;
+  }
   if (fresh.length && !s.pop) s.pop = fresh[0].closest("[data-radix-popper-content-wrapper], [cmdk-root], [role=dialog]");
   if (s.pop && !s.input && !s.filter) s.filter = popSearch(s.pop, [], fresh);
   return fresh;
@@ -4389,7 +4390,7 @@ function ownOptions(s) {
 // The listbox that follows input before any other field: a sibling, or one inside
 // a sibling, climbing out of up to two wrappers (a label) that hold no other
 // field, never out of a form, main or body. A list another control names by
-// aria-controls is that control's.
+// aria-controls is that control's; a chips list is passed over.
 function nextList(input) {
   const F = "input:not([type=hidden]), select, textarea, [role=combobox]";
   const field = function (n) { return n.matches(F) || !!n.querySelector(F); };
@@ -4398,7 +4399,9 @@ function nextList(input) {
     for (let n = e.nextElementSibling; n; n = n.nextElementSibling) {
       const l = n.matches("[role=listbox]") ? n : field(n) ? null : n.querySelector("[role=listbox]");
       if (!l && field(n)) return null;
-      if (!l) continue;
+      // A multi-select list, or one holding only chosen options, shows what was
+      // picked (chips), never what can be.
+      if (!l || attr(l, "aria-multiselectable") === "true" || !l.querySelector(OPT + ":not([aria-selected=true])")) continue;
       const by = l.id ? document.querySelectorAll("[aria-controls]") : [];
       return Array.prototype.some.call(by, function (c) { return c !== input && attr(c, "aria-controls").split(/\s+/).indexOf(l.id) >= 0; }) ? null : l;
     }

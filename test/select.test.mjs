@@ -601,6 +601,37 @@ test("custom combobox: a bare input's following listbox in a page-wide form is i
   assert.equal(dom.document.getElementById("city").value, "");
 });
 
+// A bare input whose real list is a portal appended to body on open, followed
+// by a neighbour listbox of its own form (a chips list of what is chosen, a
+// "Recent" list): the portal's options are the ones that appeared, so the
+// neighbour is never read or pressed.
+test("custom combobox: a bare input's portal list wins over a neighbour listbox", async () => {
+  const portal = `const t = document.getElementById('t');
+    t.addEventListener('click', () => {
+      if (document.getElementById('pl')) return;
+      t.setAttribute('aria-expanded', 'true');
+      const ul = document.createElement('ul'); ul.id = 'pl'; ul.setAttribute('role', 'listbox');
+      ul.innerHTML = '<li role=option>Alpha</li><li role=option>Bravo</li>';
+      ul.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => { t.value = o.textContent; t.setAttribute('aria-expanded', 'false'); ul.remove(); }));
+      document.body.appendChild(ul);
+    });
+    window.recentHits = 0;
+    document.querySelectorAll('#rec li').forEach((o) => o.addEventListener('click', () => { window.recentHits++; }));`;
+  const head = `<form><label>Name <input name=n></label><label>Email <input name=e></label><label for=t>Team</label>`;
+  for (const exp of ["", " aria-expanded=false"]) {
+    for (const [what, next] of [
+      ["chips", `<div role=listbox aria-label=Selected><div role=option aria-selected=true>Alpha</div></div>`],
+      ["recent", `<ul id=rec role=listbox aria-label=Recent><li role=option>Bravo</li><li role=option>Charlie</li></ul>`],
+    ]) {
+      const { dom } = onPage(`${head}<input id=t role=combobox${exp}>${next}</form>`, portal);
+      const { o } = await select({ label_pattern: "team", text: "Bravo" });
+      assert.equal(o.ok, true, `${what}${exp} ${JSON.stringify(o)}`);
+      assert.equal(dom.document.getElementById("t").value, "Bravo", what + exp);
+      assert.equal(dom.recentHits, 0, what + exp);
+    }
+  }
+});
+
 test("custom combobox: a bare input re-rendered empty on pick in a form or body is ok:false", async () => {
   const input = `<label for=dest>Destination</label><input id=dest role=combobox aria-controls=l aria-expanded=true>`;
   const list = `<ul id=l role=listbox><li role=option>Alpha</li><li role=option>Bravo</li></ul>`;
