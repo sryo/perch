@@ -10,9 +10,10 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../scripts/temp.mjs";
-import { JXA_PRELUDE, DAEMONS, handleCall, buildEvalWrapper, pageScript, CLICK_BLANK_GO, TA_TAKEN, UPLOAD_TAKEN } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, buildEvalWrapper, pageScript, CLICK_BLANK_GO, TA_TAKEN, UPLOAD_TAKEN, SHOT_BUSY } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
+import { scrolled, where } from "./helpers/shot.mjs";
 
 function onPage(html, setup) {
   const dom = page(html);
@@ -888,4 +889,107 @@ test("fill typeahead: a shorter lookup after another server took over types noth
   assert.deepEqual(o, { ok: false, kind: "typeahead", error: TA_TAKEN_MSG, query: "zzz" });
   assert.equal(val(dom, "country"), "Spain");
   assert.equal(val(dom, "city"), "", "the first text was withdrawn and nothing retyped");
+});
+
+// ---- screenshot {ref|selector} ----
+// A crop keeps the scroll positions it moved on window.__perch_shot until its
+// restore. Only one crop per tab may hold that record, so another server's
+// restore never puts back positions A had already moved, and never mid-capture.
+
+const isShotPoll = (js) => /\{ painted: /.test(js);
+const isShotRestore = (js) => js.includes("if (!s) return { ok: false };");
+function onShot(p) {
+  const world = makeWorld({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 100, y: 50, w: 1000, h: 700, tabs: [{ url: "https://a.test/", id: "c0", dom: p.dom }] }] }],
+    cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 100, y: 50, w: 1000, h: 700, ax: { web: [{ x: 300, y: 130, w: 800, h: 620 }] } }],
+  });
+  world.state.shotScale = 1;
+  world.state.scripts = [];
+  world.state.onExecute = (spec, js) => {
+    world.state.scripts.push(js);
+    const frames = p.dom.rafs.splice(0);
+    frames.forEach((cb) => cb(0));
+    if (!frames.length) p.dom.timers.splice(0).forEach((cb) => cb());
+  };
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  world.reset();
+  return world;
+}
+const shotArgs = { target: { tabId: "chrome:c0" }, selector: "#t" };
+const shotA = async () => {
+  const r = await handleCall("screenshot", shotArgs);
+  const image = r.content[0].type === "image";
+  return { r, o: image ? JSON.parse(r.content[1].text) : parse(text(r)), image };
+};
+// B's whole crop, as its server's runtime runs it.
+const shotB = (world) => parse(world.run(`JSON.stringify(__perch.shot(${JSON.stringify({
+  ...shotArgs, format: "png", maxWidth: 1568, raise: false,
+  clip: w("shot_clip", { ref: null, selector: "#t" }), painted: w("shot_painted", {}), restore: w("shot_restore", {}),
+})}))`));
+
+test("screenshot: another server's crop inside A's is refused before it scrolls; A captures and every scroll comes back", async () => {
+  const p = scrolled();
+  const world = onShot(p);
+  let b = null, before = null;
+  beforeEvals(p.dom, (n, js) => {
+    if (b || !isShotPoll(js)) return;
+    before = where(p);
+    b = shotB(world);
+    assert.deepEqual(where(p), before, "B scrolled nothing");
+  });
+  const { o, image } = await shotA();
+  assert.deepEqual(before, [0, 900, 0], "B ran while A held its scroll");
+  assert.deepEqual(b, { ok: false, error: SHOT_BUSY });
+  assert.equal(image, true, JSON.stringify(o));
+  assert.equal(o.warning, undefined);
+  assert.equal(world.state.shots.length, 1, "only A captured");
+  assert.deepEqual(where(p), [0, 40, 37], "the user's scroll is back");
+  assert.equal(p.dom.__perch_shot, null);
+  assert.equal(world.log.filter((e) => e[0] === "activate").length, 0);
+});
+
+test("screenshot: a record left 10s ago is put back, then replaced; a newer one refuses", async () => {
+  const p = scrolled();
+  const world = onShot(p);
+  // A crop whose server died after its clip: the page sits scrolled, the record kept.
+  assert.equal(run(p.dom, "shot_clip", { selector: "#t" }).ok, true);
+  assert.deepEqual(where(p), [0, 900, 0]);
+  p.dom.__perch_shot.at -= 9000;
+  const { o } = await shotA();
+  assert.deepEqual(o, { ok: false, error: SHOT_BUSY });
+  assert.deepEqual(where(p), [0, 900, 0], "a live record is left alone");
+  assert.equal(world.state.shots.length, 0);
+  p.dom.__perch_shot.at -= 1000;
+  const a = await shotA();
+  assert.equal(a.image, true, JSON.stringify(a.o));
+  assert.equal(a.o.warning, undefined);
+  assert.deepEqual(where(p), [0, 40, 37], "the scroll from before the dead crop is back");
+  assert.equal(p.dom.__perch_shot, null);
+});
+
+test("screenshot: a capture whose restore finds another call's record is refused, not an image with a warning", async () => {
+  const p = scrolled();
+  const world = onShot(p);
+  beforeEvals(p.dom, (n, js) => { if (isShotRestore(js) && p.dom.__perch_shot) p.dom.__perch_shot.token = "9.other"; });
+  const { r, o } = await shotA();
+  assert.equal(r.content.length, 1, "no image");
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /^screenshot: another perch call on this tab took over this screenshot's scroll record/);
+  assert.match(o.error, /the scroll may be left moved/);
+  assert.equal(world.state.shots.length, 1, "the capture ran, its image dropped");
+});
+
+test("screenshot scripts are byte-identical across calls, with no token in A", async () => {
+  const runs = [];
+  for (let i = 0; i < 2; i++) {
+    const p = scrolled();
+    const world = onShot(p);
+    await shotA();
+    runs.push(new Set(world.state.scripts.filter((js) => js.includes("__perch_shot"))));
+  }
+  assert.deepEqual([...runs[1]], [...runs[0]]);
+  assert.equal(runs[0].size, 3, "clip, paint poll and restore");
+  for (const js of runs[0]) assert.ok(!/\d+\.[a-z0-9]{8}/.test(js.match(/\nconst A = (.*);\n/)[1]), "no token in A");
 });

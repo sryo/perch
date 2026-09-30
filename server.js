@@ -935,6 +935,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // the lane's timeout, and the restore still runs.
   const SHOT_BUDGET_MS = 3000, SHOT_STEP_SECS = 1, SHOT_READ_SECS = 0.5;
   const SHOT_LEFT = "; the scroll may be left moved (its restore got no answer)";
+  const SHOT_TAKEN = "screenshot: another perch call on this tab took over this screenshot's scroll record, so the image may not show the element; nothing was captured";
   const shotTimeout = function (secs, note) { return new Error("timeout: screenshot: " + HANG.noReply + secs + "s; nothing was captured" + note); };
   // After a scroll, a.painted is polled until the page has run two animation
   // frames, the second after the scroll's frame was painted, on this call's own
@@ -961,10 +962,11 @@ function jxaRuntime(BROWSERS, HANG) {
   }
   // Runs a.restore, bounded, and says what the caller must add: nothing when
   // this call's record (or, with no token, whatever was recorded) was put back
-  // or there was none to put back, else SHOT_LEFT.
-  function shotRestore(t, fn, token) {
+  // or there was none to put back, else SHOT_LEFT. `seen` gets the reply.
+  function shotRestore(t, fn, token, seen) {
     let back = null;
     try { back = JSON.parse(String(pollExec(t, fn, SHOT_STEP_SECS))); } catch (e) {}
+    if (seen) seen.back = back;
     if (!back) return SHOT_LEFT;
     if (back.ok !== true) return token == null ? "" : SHOT_LEFT;
     return token == null || back.token === token ? "" : SHOT_LEFT;
@@ -1016,11 +1018,14 @@ function jxaRuntime(BROWSERS, HANG) {
       }
     } catch (e) { err = e; }
     if (early) dropShot(early);
-    const left = shotRestore(t, a.restore, c.token);
+    const seen = {}, left = shotRestore(t, a.restore, c.token, seen);
     if (err && err.message === SHOT_NO_IMAGE) throw new Error(SHOT_NO_IMAGE + left);
     if (err) throw err;
     if (silent) throw shotTimeout(Math.round(SHOT_BUDGET_MS / 1000), left);
     if (refused) return { ok: false, error: refused + left };
+    // Another call's record where this one's should be: the scroll under the
+    // capture was not provably this call's.
+    if (seen.back && seen.back.ok === true && seen.back.token !== c.token) return { ok: false, error: SHOT_TAKEN + left };
     if (left) I.warning = left.slice(2);
     return I;
   }
@@ -5603,6 +5608,7 @@ return {
   tok: selTok,
 };`;
 
+export const SHOT_BUSY = "screenshot: another perch call on this tab is mid-screenshot; nothing was scrolled or captured, retry";
 // Puts back the scroll positions a shot_clip record kept, instantly even under
 // scroll-behavior: smooth.
 const SHOT_LIB = String.raw`
@@ -6963,12 +6969,16 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
   // and the window's) is kept on window.__perch_shot for shot_restore, once the
   // element is known to have a box, under a token made here and returned, so a
   // record another call left (another perch server's, cut off before its
-  // restore) is never read as this one's. Every exit that captures nothing puts
+  // restore) is never read as this one's. A record under 10s old is another
+  // call's crop in progress: refused before anything resolves or scrolls. An
+  // older one is put back, then replaced. Every exit that captures nothing puts
   // the scroll back here: one still clipped by a scrolling ancestor, a hidden
   // document after a scroll (a covered or minimized window paints nothing), a
   // throw. A visible one counts two animation frames for shot_painted, and a
   // timer marks the record late if they have not come by then.
   shot_clip: SHOT_LIB + String.raw`
+const held = window.__perch_shot;
+if (held && Date.now() - held.at < 10000) return { ok: false, error: ${JSON.stringify(SHOT_BUSY)} };
 const r = resolveEl(A);
 if (r.out) return r.out;
 const el = r.el;
@@ -6977,10 +6987,11 @@ const b = el.getBoundingClientRect();
 if (!b.width || !b.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
 const iw = innerWidth, ih = innerHeight;
 if (b.width > iw || b.height > ih) return { ok: false, error: "screenshot: the element is larger than the viewport (" + Math.round(b.width) + "x" + Math.round(b.height) + " CSS px in " + iw + "x" + ih + "); nothing was captured; screenshot without ref or selector" };
+if (held) shotBack(held);
 const els = [];
 for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
 window.__perch_shot_n = (window.__perch_shot_n || 0) + 1;
-const st = window.__perch_shot = { els: els, x: window.scrollX, y: window.scrollY, token: window.__perch_shot_n + "." + Math.random().toString(36).slice(2, 10) };
+const st = window.__perch_shot = { els: els, x: window.scrollX, y: window.scrollY, at: Date.now(), token: window.__perch_shot_n + "." + Math.random().toString(36).slice(2, 10) };
 const undo = function () { shotBack(st); if (window.__perch_shot === st) window.__perch_shot = null; };
 try {
   try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); } catch (e) {}

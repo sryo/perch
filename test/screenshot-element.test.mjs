@@ -5,54 +5,16 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { readdirSync } from "node:fs";
-import { NO_GRANT, BOUND, RAW, ownTmp, clean, hung } from "./helpers/shot.mjs";
+import { NO_GRANT, BOUND, RAW, ownTmp, clean, hung, scrolled, where, still } from "./helpers/shot.mjs";
 import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { page, run } from "./helpers/page.mjs";
+import { run } from "./helpers/page.mjs";
 import { throwAt, noRaw } from "./helpers/fault.mjs";
 import { mapRefs } from "./helpers/refs.mjs";
 
 const saved = { fast: DAEMONS.fast, slow: DAEMONS.slow, exec: deps.exec };
 afterEach(() => Object.assign(DAEMONS, { fast: saved.fast, slow: saved.slow }) && Object.assign(deps, { exec: saved.exec }));
 
-// A page whose #t sits at `from` (client CSS px, below the viewport by default)
-// and at `rect` once scrolled into view, inside #box, scrolled to 37; the
-// window is scrolled to (0, 40). scrollIntoView scrolls both, as a browser
-// would, unless #t already sits at `rect` (fully visible: a no-op), and
-// records how it was asked. `boxRect` makes #box an overflow:auto scroller
-// with that rect as its client area.
-function scrolled({ rect = "100,200,300,50", from = "100,1200,300,50", iw = 800, ih = 620, boxRect = null } = {}) {
-  const dom = page(`<div id=box${boxRect ? ` style="overflow:auto" data-rect="${boxRect}"` : ""}><p id=t data-rect="${from}">x</p></div><p id=u>u</p>`);
-  for (const [k, v] of Object.entries({ innerWidth: iw, innerHeight: ih })) {
-    Object.defineProperty(dom, k, { value: v, configurable: true });
-  }
-  const box = dom.document.getElementById("box"), t = dom.document.getElementById("t");
-  if (boxRect) {
-    const [, , w, h] = boxRect.split(",").map(Number);
-    Object.defineProperty(box, "clientWidth", { value: w });
-    Object.defineProperty(box, "clientHeight", { value: h });
-  }
-  dom.scrollTo({ left: 0, top: 40, behavior: "instant" });
-  box.scrollTop = 37;
-  // Animation frames run one per page script the world sends (see install).
-  dom.rafs = [];
-  dom.requestAnimationFrame = (cb) => dom.rafs.push(cb);
-  // Timers fire only on a page script that finds no frame pending (see install).
-  dom.timers = [];
-  dom.setTimeout = (cb) => dom.timers.push(cb);
-  dom.intoView = [];
-  t.scrollIntoView = function (o) {
-    dom.intoView.push(o);
-    if (t.getAttribute("data-rect") === rect) return;
-    t.setAttribute("data-rect", rect);
-    dom.scrollTo({ left: 0, top: 900, behavior: "instant" });
-    box.scrollTop = 0;
-  };
-  return { dom, box, t };
-}
-const where = ({ dom, box }) => [dom.scrollX, dom.scrollY, box.scrollTop];
-// An element already fully visible, which scrollIntoView leaves in place.
-const still = (opts = {}) => scrolled({ ...opts, from: opts.rect || "100,200,300,50" });
 
 
 // ---- the page scripts ----
@@ -707,8 +669,9 @@ function quietDialogs() {
   deps.dialogs = async () => [];
   return () => { deps.dialogs = d; };
 }
-// Another perch server's record: its crop was cut off before its restore ran.
-const staleRecord = (p) => ({ els: [[p.box, 0, 5]], x: 0, y: 3000, painted: true, late: false, token: "other" });
+// Another perch server's record: its crop was cut off before its restore ran,
+// over 10s ago.
+const staleRecord = (p) => ({ els: [[p.box, 0, 5]], x: 0, y: 3000, painted: true, late: false, at: Date.now() - 60000, token: "other" });
 
 test("a scroll record another perch left on the page is never restored for this crop's page fault", async () => {
   const p = scrolled();
@@ -723,7 +686,7 @@ test("a scroll record another perch left on the page is never restored for this 
   assert.ok(ms < BOUND_MS, String(ms));
 });
 
-test("a stale painted record is not this crop's paint proof: the crop waits for its own frames, then restores its own scroll", async () => {
+test("a stale painted record is put back first, never this crop's paint proof: the crop waits for its own frames, then restores", async () => {
   const p = scrolled();
   install(p);
   spawns(2000);
@@ -732,7 +695,7 @@ test("a stale painted record is not this crop's paint proof: the crop waits for 
   assert.equal(world.state.shots.length, 1);
   assert.equal(polls().length, 2, "its own double requestAnimationFrame");
   assert.equal(meta.warning, undefined);
-  assert.deepEqual(where(p), [0, 40, 37]);
+  assert.deepEqual(where(p), [0, 3000, 5], "the scroll from before the dead crop");
   assert.equal(p.dom.__perch_shot, null);
 });
 
