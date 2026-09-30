@@ -458,9 +458,12 @@ test("fill {fields}: a 5-field form's page script has no comment lines and stays
   ];
   const { o } = await call("fill", { fields });
   assert.deepEqual(o.results.map((r) => r.ok), [true, true, true, true, true], JSON.stringify(o));
-  // The form census rides the same page pass: no extra Apple Event.
+  // The form census rides the same page pass; the only other call is the
+  // short re-read a task later.
   assert.deepEqual(o.form, { requiredEmpty: 0 });
-  assert.equal(seen.length, 1);
+  assert.equal(seen.length, 2);
+  assert.ok(seen[1].length < 16000, `re-read eval'd ${seen[1].length} bytes`);
+  assert.ok(!seen[1].includes("function fillOne"), "the re-read ships none of fill's matching");
   assert.equal(commentLines(seen[0]), 0);
   assert.ok(seen[0].length < 60000, `eval'd ${seen[0].length} bytes`);
   // Click and select-picker helpers ship only with the scripts that call them.
@@ -550,10 +553,11 @@ test("navigate from a file: page to a file: url costs the same Apple Events as a
   assert.equal(appleEvents(), 2 + 2 + 2 + 1 + 2, breakdown());
 });
 
-// fill {fields} on native fields is one page call, whatever the order-dependent
-// recheck finds. A batch ending on a custom combobox pays select's own polls,
-// plus one recheck pass for the fields an earlier pass landed.
-test("fill {fields}: native fields cost one Apple Event; a batch ending on a custom combobox adds one recheck pass", async () => {
+// fill {fields} on native fields is one page pass, whatever the order-dependent
+// recheck finds, plus one short re-read a task later for a page that undoes a
+// write. A batch ending on a custom combobox pays select's own polls, plus one
+// recheck pass for the fields an earlier pass landed, which is that re-read.
+test("fill {fields}: native fields cost a pass and a re-read; a batch ending on a custom combobox adds one recheck pass", async () => {
   const html = `<label>State <input id=st></label><label>Country <select id=co><option value="">Select...</option><option>Chile</option></select></label>
     <label><input type=checkbox id=ag> I agree</label>
     <label id=lab>Level</label><div class="select__control"><div role=combobox aria-labelledby=lab aria-expanded=false tabindex=0><span class=v>Choose</span></div></div><div id=menu></div>`;
@@ -575,10 +579,10 @@ test("fill {fields}: native fields cost one Apple Event; a batch ending on a cus
     assert.equal(o.ok, true, JSON.stringify(o));
     cost[label] = appleEvents();
   }
-  assert.deepEqual(cost, { native: 1, "ends on combobox": 8 + 1 });
+  assert.deepEqual(cost, { native: 1 + 1, "ends on combobox": 8 + 1 });
 });
 
-// A native form is one page pass whether its fields come inline or from a file.
+// A native form is one page pass and its re-read whether its fields come inline or from a file.
 test("fill {fields} costs the same Apple Events inline and from fields_path", async (t) => {
   const html = `<label>Name <input name=n></label><label>Country <select name=c><option value="">Pick</option><option value=ar>Argentina</option></select></label>`;
   const fields = [{ label_pattern: "name", text: "Ada" }, { label_pattern: "country", option: ["Nope", "Argentina"] }];
@@ -592,7 +596,23 @@ test("fill {fields} costs the same Apple Events inline and from fields_path", as
     assert.equal(o.ok, true, JSON.stringify(o));
     cost[form] = appleEvents();
   }
-  assert.deepEqual(cost, { inline: 1, path: 1 }, breakdown());
+  assert.deepEqual(cost, { inline: 2, path: 2 }, breakdown());
+});
+
+// A plain field is the write and one re-read a task later; a miss (nothing
+// landed) has nothing to re-read.
+test("fill on a plain field costs two Apple Events, a miss one", async () => {
+  const dom = page(`<label>City <input id=c></label>`, { url: "https://c0.test/" });
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  const seen = evalsOf(dom);
+  const { o } = await call("fill", { label_pattern: "city", text: "Rosario" });
+  assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "City"`, len: 7 });
+  assert.equal(appleEvents(), 2, breakdown());
+  assert.ok(seen[1].length < 16000, `re-read eval'd ${seen[1].length} bytes`);
+  world.reset();
+  const miss = await call("fill", { label_pattern: "zzz", text: "x" });
+  assert.equal(miss.o.ok, false);
+  assert.equal(appleEvents(), 1, breakdown());
 });
 
 // A typeahead whose lookup answers the full text: the typing, the probe, the

@@ -603,6 +603,69 @@ test("fill: a write the page reverts names the trusted retry, but not after a tr
   assert.doesNotMatch(t.error, /retry with fill/);
 });
 
+// A page that empties the field one task after the write: fill's re-read on the
+// next page call sees it, alone or in a batch.
+const LATE_REVERT = `<form><label>Zip <input id=zip name=zip></label><label>City <input id=city name=city></label></form>`;
+const LATE_REVERT_JS = `const z = document.getElementById('zip');
+  z.addEventListener('input', () => { later(() => { z.value = ''; }, 1); });`;
+
+test("fill: a write the page undoes a task later is ok:false reverted, not ok", async () => {
+  const { dom } = onPage(LATE_REVERT, LATE_REVERT_JS);
+  const o = await fill({ label_pattern: "zip", text: "2000" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.reverted, true);
+  assert.equal(o.kind, "plain");
+  assert.equal(o.el, `textbox "Zip"`);
+  assert.equal(o.kept, "");
+  assert.ok(o.error.endsWith("the page reverted the write; retry with fill {trusted:true}"), o.error);
+  assert.equal($(dom, "#zip").value, "");
+  assert.equal(dom.__perch_fr && Object.keys(dom.__perch_fr).length, 0, "the re-read drops its record");
+});
+
+test("fill: a write that holds past the re-read stays ok, and a clear the page refills is reverted", async () => {
+  const { dom } = onPage(LATE_REVERT, LATE_REVERT_JS);
+  const o = await fill({ label_pattern: "city", text: "Rosario" });
+  assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "City"`, len: 7 });
+  assert.equal($(dom, "#city").value, "Rosario");
+  const refill = onPage(`<label>Code <input id=code value=A1></label>`, `const c = document.getElementById('code');
+    c.addEventListener('input', () => { later(() => { c.value = 'A1'; }, 1); });`);
+  const c = await fill({ label_pattern: "code", text: "" });
+  assert.equal(c.ok, false, JSON.stringify(c));
+  assert.equal(c.reverted, true);
+  assert.equal(c.kept, "A1");
+  assert.equal($(refill.dom, "#code").value, "A1");
+});
+
+test("fill {fields}: a field the page undoes a task after the batch is reverted; the others stay ok", async () => {
+  const { dom } = onPage(LATE_REVERT, LATE_REVERT_JS);
+  const o = await fill({ fields: [{ label_pattern: "zip", text: "2000" }, { label_pattern: "city", text: "Rosario" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results[0].ok, false);
+  assert.equal(o.results[0].reverted, true);
+  assert.match(o.results[0].error, /^textbox "Zip" was cleared after it was filled; the page reverted the write/);
+  assert.equal(o.results[1].ok, true);
+  assert.equal($(dom, "#city").value, "Rosario");
+});
+
+test("fill {fields}: a box or select the page flips back a task later is reverted too", async () => {
+  const { dom } = onPage(`<label><input type=checkbox id=ag> I agree</label><label>Country <select id=co><option value="">Pick</option><option>Chile</option></select></label>`,
+    `const ag = document.getElementById('ag'), co = document.getElementById('co');
+    ag.addEventListener('change', () => { later(() => { ag.checked = false; }, 1); });
+    co.addEventListener('change', () => { later(() => { co.selectedIndex = 0; }, 1); });`);
+  const o = await fill({ fields: [{ label_pattern: "agree", checked: true }, { label_pattern: "country", option: "Chile" }] });
+  assert.deepEqual(o.results.map((x) => [x.ok, x.reverted]), [[false, true], [false, true]], JSON.stringify(o));
+  assert.match(o.results[0].error, /was cleared after it was filled; the page reverted the write$/);
+  assert.match(o.results[1].error, /changed to "Pick" after it was filled; the page reverted the write$/);
+  assert.equal(dom.document.getElementById("ag").checked, false);
+});
+
+test("fill: a re-read that finds no record (a new document) keeps the write's answer", async () => {
+  const { dom } = onPage(LATE_REVERT, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
+  const o = await fill({ label_pattern: "city", text: "Rosario" });
+  assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "City"`, len: 7 });
+  assert.equal($(dom, "#city").value, "Rosario");
+});
+
 test("typeahead: a trusted fill types through the editing command and picks the suggestion", async () => {
   const { dom, world } = onPage(LOCATION, TRUSTED_ONLY_JS());
   const o = await fill({ label_pattern: "location", text: "Rosario", trusted: true });

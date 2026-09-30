@@ -4855,7 +4855,29 @@ function frameHint(hasField) {
 }
 `;
 
-const FILL_LIB = TOK_LIB + TYPEAHEAD_LIB + EMBED_LIB + String.raw`
+// Whether a field still holds the text fill wrote, for the later re-reads.
+const HOLDS_LIB = String.raw`
+// Masks reformat or drop a country code, so digits also count when one ends the other.
+function sameNumber(s, text) {
+  const d = String(s || "").replace(/\D/g, ""), t = String(text || "").replace(/\D/g, "");
+  return d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t);
+}
+// Whether v still holds text as setPlain accepts it on the first read.
+function holdsText(v, text) {
+  const norm = function (s) { return String(s || "").trim().replace(/\s+/g, " "); };
+  return norm(v).indexOf(norm(text)) >= 0 || sameNumber(v, text);
+}
+`;
+
+const FILL_LIB = TOK_LIB + TYPEAHEAD_LIB + EMBED_LIB + HOLDS_LIB + String.raw`
+// Keeps fields that landed for fill_reread under a fresh owner token, at most
+// 20 records a document, and returns the token.
+function frRecord(items) {
+  const m = window.__perch_fr = window.__perch_fr || {}, tok = rbTok(), keys = Object.keys(m);
+  if (keys.length >= 20) delete m[keys[0]];
+  m[tok] = items;
+  return tok;
+}
 // Up to 2 visible, enabled buttons that may reveal a field fill found no match
 // for, as ident-style lines under the name click {label_pattern} matches: named
 // by re themselves, else sitting in a section whose question text matches
@@ -4886,16 +4908,6 @@ function revealers(re, nearHit) {
   found.sort(function (x, y) { return x.rank[0] - y.rank[0] || x.rank[1] - y.rank[1] || x.rank[2] - y.rank[2]; });
   return found.slice(0, 2).map(function (f) { return f.line; });
 }
-// Masks reformat or drop a country code, so digits also count when one ends the other.
-function sameNumber(s, text) {
-  const d = String(s || "").replace(/\D/g, ""), t = String(text || "").replace(/\D/g, "");
-  return d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t);
-}
-// Whether v still holds text as setPlain accepts it on the first read.
-function holdsText(v, text) {
-  const norm = function (s) { return String(s || "").trim().replace(/\s+/g, " "); };
-  return norm(v).indexOf(norm(text)) >= 0 || sameNumber(v, text);
-}
 // WHATWG autofill field names, minus payment (cc-*) and credential ones.
 const AC_TOKENS = /^(name|honorific-(prefix|suffix)|(given|additional|family)-name|nickname|username|organization(-title)?|street-address|address-line[1-3]|address-level[1-4]|country(-name)?|postal-code|transaction-(currency|amount)|language|bday(-(day|month|year))?|sex|url|photo|tel(-(country-code|national|area-code|local|extension))?|email|impp)$/;
 // The last field name in el's autocomplete, skipping section-*, shipping,
@@ -4909,6 +4921,15 @@ function acToken(el) {
 // write nothing to a field that is absent, a trap, ambiguous or already set.
 // onLand(el, rich) hears of each field or editor root that took the text.
 function fillOne(a, only, onLand) {
+  // A page may undo a write a task later (a timer or a promise its input
+  // handler queued), after this script returns. a.fr asks to keep what landed
+  // for fill_reread, the next page call, under the token returned as fr.
+  if (a.fr && !onLand) {
+    let got = null;
+    const out = fillOne(a, only, function (el, rich) { got = { el: el, rich: rich }; });
+    if (got && out.ok === true) out.fr = frRecord([{ i: 0, el: got.el, id: out.el, kind: out.kind, rich: got.rich, text: a.text, want: got.rich ? textOf(got.el) : got.el.value }]);
+    return out;
+  }
   const text = a.text;
   // Compare non-whitespace counts: rich editors normalize whitespace on the way in.
   const want = Math.floor(text.replace(/\s/g, "").length * 0.9);
@@ -5839,6 +5860,39 @@ return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "
 
   fill: FILL_LIB + "return fillOne(A);",
 
+  // The fields a fill or fill {fields} write pass landed (frRecord, under
+  // A.tok), read again one page call later. -> {recheck: {index: miss}}, {} when
+  // all hold, or {lost} (no record: a new document). A field that left the
+  // document can't be judged here and is left as it was.
+  fill_reread: HOLDS_LIB + String.raw`
+const m = window.__perch_fr, items = m && m[A.tok];
+if (!items) return { lost: true };
+delete m[A.tok];
+const LATER = " after it was filled; the page reverted the write";
+const recheck = {};
+items.forEach(function (it) {
+  const el = it.el;
+  if (!el.isConnected) return;
+  let o;
+  if ("on" in it) {
+    const on = el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true";
+    if (on === it.on) return;
+    o = { checked: on, error: it.id + (!it.on ? ' changed to "checked"' : it.kind === "radio" ? " is no longer selected" : " was cleared") + LATER };
+  } else if ("sel" in it) {
+    if (el.selectedIndex === it.sel) return;
+    const kept = clip(el.selectedIndex >= 0 ? el.options[el.selectedIndex].text : "", 60);
+    o = { kept: kept, error: it.id + (kept ? " changed to " + JSON.stringify(kept) : " was cleared") + LATER };
+  } else {
+    const now = it.rich ? textOf(el) : el.value;
+    if (it.text === "" ? !now.trim() : !!now.trim() && (now === it.want || holdsText(now, it.text))) return;
+    const kept = clip(now, 60);
+    o = { kept: kept, error: it.id + (kept ? " changed to " + JSON.stringify(kept) : " was cleared") + LATER };
+  }
+  recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o);
+});
+return { recheck: recheck };
+`,
+
   // {pending} = keep polling; the best tier of taMatch. A.probe: is a pick worth
   // waiting longer for (a hidden companion, an open or non-empty list)?
   fill_ta_pick: TA_PICK_LIB + TA_OWN_LIB + String.raw`
@@ -6154,6 +6208,17 @@ const recheck = {};
 if (ff) Object.keys(ff.items).forEach(function (k) { const d = drift(ff.items[k]); if (d) recheck[k] = d; });
 const out = { results: results };
 if (Object.keys(recheck).length) out.recheck = recheck;
+// A write pass hands what landed to fill_reread; a re-read-only pass wrote nothing.
+if (ff && A.from !== A.fields.length && Object.keys(ff.items).length) {
+  out.fr = frRecord(Object.keys(ff.items).map(function (k) {
+    const g = ff.items[k], it = { i: +k, el: g.el, id: g.id, kind: g.kind };
+    if ("checked" in g) it.on = g.checked;
+    else if (g.group) it.on = true;
+    else if ("sel" in g) it.sel = g.sel;
+    else { it.text = g.text; it.want = g.want; it.rich = g.rich; }
+    return it;
+  }));
+}
 if (ff && ff.form && ff.form.isConnected) {
   const c = census(ff.form), form = out.form = { requiredEmpty: c.empty.length };
   if (c.loose.length) form.unpicked = c.loose.length;
@@ -7627,8 +7692,9 @@ async function fillFields(fields, target, only) {
       halt(e && e.message);
     }
   };
-  const recheck = (r) => { for (const [i, x] of Object.entries(r.recheck || {})) if (results[i]) results[i] = x; };
-  let watch = false, warning = null, form;
+  // A late re-read only speaks for fields the pass before it still found landed.
+  const recheck = (r, late) => { for (const [i, x] of Object.entries(r.recheck || {})) if (results[i] && (!late || results[i].ok === true)) results[i] = x; };
+  let watch = false, warning = null, form, fr = null;
   // The document the earlier fields landed in is gone, so nothing proves they
   // survived; the ones that landed are flagged rather than failed.
   const changedAfter = (i) => {
@@ -7663,7 +7729,7 @@ async function fillFields(fields, target, only) {
     recheck(r);
     watch = !!r.watch;
     form = r.form;
-    if (r.defer == null) break;
+    if (r.defer == null) { fr = r.fr || null; break; }
     const f = A[r.defer];
     // A trusted entry types into the field this pass resolved and held, never
     // one trusted_fill_background finds by its own looser label match.
@@ -7679,19 +7745,25 @@ async function fillFields(fields, target, only) {
       : s && s.__perch_ref_miss ? { ok: false, kind: "select", error: `ref ${s.ref} is stale or unknown; call accessibility_snapshot again` }
       : { kind: "select", ...pageFault(s, "select") });
     from = r.defer + 1;
+  }
+  if (fr) {
+    // A page may undo a write a task after the pass that made it; one light
+    // page call reads the landed fields again. One that can't run, or finds a
+    // new document, leaves the pass's answer.
+    const x = await rereadPass(fr, target);
+    if (x) recheck(x, true);
+  } else if (watch) {
     // The combobox ended the batch, so no page pass has re-read the fields
     // before it. A navigated page has nothing to re-read; a re-read that failed
     // leaves the fields before the combobox unproven, and says so.
-    if (from === A.length && watch) {
-      let x, why = null;
-      try { x = await runPage("fill", "fill_fields", { fields: A, from }, target); } catch (e) { why = (/^([a-z_]+):/.exec(codeOsaError(String(e && e.message))) || [0, "error"])[1]; }
-      if (!why && (!x || typeof x !== "object" || x.__perch_error != null)) why = "page error";
-      if (why) {
-        for (let i = 0; i < A.length - 1; i++) if (results[i].ok === true && !results[i].skipped) results[i].unverified = true;
-        warning = `the final re-read did not run (${why}); earlier fields are unverified`;
-      } else if (x.gone) changedAfter(A.length - 1);
-      else { recheck(x); form = x.form; }
-    }
+    let x, why = null;
+    try { x = await runPage("fill", "fill_fields", { fields: A, from: A.length }, target); } catch (e) { why = (/^([a-z_]+):/.exec(codeOsaError(String(e && e.message))) || [0, "error"])[1]; }
+    if (!why && (!x || typeof x !== "object" || x.__perch_error != null)) why = "page error";
+    if (why) {
+      for (let i = 0; i < A.length - 1; i++) if (results[i].ok === true && !results[i].skipped) results[i].unverified = true;
+      warning = `the final re-read did not run (${why}); earlier fields are unverified`;
+    } else if (x.gone) changedAfter(A.length - 1);
+    else { recheck(x); form = x.form; }
   }
   return { ok: results.every((x) => x.ok === true), results, ...counts(), ...(warning ? { warning } : {}), ...(form ? { form } : {}) };
 }
@@ -7764,10 +7836,27 @@ async function fill(args = {}) {
   const key = taArgs({ ref, selector, label_pattern, text: body }, trusted);
   const r = trusted
     ? await trustedFill({ ...key, raise, target })
-    : await runPage("fill", "fill", key, target);
+    : await runPage("fill", "fill", { ...key, fr: true }, target);
+  if (!trusted && r && r.fr) return hintTrusted(await reread(r, target));
   if (!r || !r.pending) return trusted ? noTok(r) : hintTrusted(r);
   const out = { ...await (r.trusted ? pickSuggestion(target, r.tok, key) : pickTypeahead(key, target, r.tok).then(hintTrusted)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
+}
+
+// A plain or rich fill that landed, read again on the next page call: a page
+// that put its old value back a task after the write reverted it. A re-read
+// that can't run or finds no record leaves the fill's own answer.
+async function reread(r, target) {
+  const { fr, ...out } = r;
+  const x = await rereadPass(fr, target);
+  return x && x.recheck && x.recheck[0] && x.recheck[0].ok === false ? x.recheck[0] : out;
+}
+// fill_reread, or null when it could not run.
+async function rereadPass(tok, target) {
+  try {
+    const x = await runPage("fill", "fill_reread", { tok }, target);
+    return x && typeof x === "object" && x.__perch_error == null ? x : null;
+  } catch { return null; }
 }
 
 // A perch page script that threw, by error name only: its message and stack
