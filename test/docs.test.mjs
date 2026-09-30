@@ -12,6 +12,11 @@ test("SKILL.md covers every tool and stays short", async () => {
   assert.ok(skill.includes("Refs die on re-snapshot or navigation."), "SKILL.md says when refs die");
 });
 
+test("AGENTS.md stays a lean reference: rules, contracts and test pointers, not per-case narration", async () => {
+  const agents = await read("AGENTS.md");
+  assert.ok(agents.length < 60000, `AGENTS.md is ${agents.length} bytes; move per-case detail into a test or a commit message`);
+});
+
 test("SKILL.md adds to the schema and server instructions rather than repeating them", async () => {
   const skill = await read("SKILL.md");
   const norm = (s) => s.toLowerCase().replace(/\s+/g, " ");
