@@ -5165,11 +5165,25 @@ function fillOne(a, only, onLand) {
       : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
   }
   // A shown field that still looks like a trap (untabbable with autofill off, or
-  // named to be left blank) never takes the text over a normal one; alone, it
-  // does, with a warning.
-  const normal = shown.filter(function (c) { return !trapLike(c.el, wanted(c.el)); });
-  const trapOnly = !normal.length;
-  if (!trapOnly) shown = normal;
+  // named to be left blank) yields to a normal match scoring within 10 of it;
+  // one outscoring every normal match by more, or alone, takes the text with a
+  // warning. Untabbable with autofill off alone is also how date pickers and
+  // masks look, so that pair is no trap on a required field, or on one whose
+  // own label is the whole pattern while the normal matches it ties with only
+  // contain it.
+  const whole = function (el) { return acWhole.test(labelText(el).replace(/[\s*:]+$/, "").trim()); };
+  const pairOnly = function (el) { return !honeypot(el, wanted(el)) && !LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name")); };
+  const flagged = shown.filter(function (c) { return trapLike(c.el, wanted(c.el)); });
+  const normal = shown.filter(function (c) { return flagged.indexOf(c) < 0; });
+  const betterLabel = function (c) {
+    const tied = normal.filter(function (n) { return Math.abs(n.s - c.s) <= 10; });
+    return tied.length > 0 && whole(c.el) && !tied.some(function (n) { return whole(n.el); });
+  };
+  const trap = function (c) {
+    return flagged.indexOf(c) >= 0 && !(pairOnly(c.el) && (c.el.required || attr(c.el, "aria-required") === "true" || betterLabel(c)));
+  };
+  const firstNormal = shown.find(function (c) { return !trap(c); });
+  if (firstNormal) shown = shown.filter(function (c) { return !trap(c) || c.s - firstNormal.s > 10; });
   // A disabled winner refuses the fill; only an enabled field of equal score stands in.
   const best = shown.find(function (c) { return c.s === shown[0].s && !unsent(c.el); }) || shown[0];
   if (unsent(best.el)) return refuse(best.el);
@@ -5186,7 +5200,7 @@ function fillOne(a, only, onLand) {
   if (out.ok === false) return out;
   const rivals = shown.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
   if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
-  if (trapOnly) out.warning = trapWarning(best.el);
+  if (trap(best)) out.warning = trapWarning(best.el);
   return out;
 }
 `;
