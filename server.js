@@ -1380,6 +1380,7 @@ function jxaRuntime(BROWSERS, HANG) {
     return v;
   }
   const SELECT_TAKEN = "another perch call on this tab took over this select; not verified";
+  const TA_TAKEN = "another perch call on this tab took over this fill's suggestions; not verified";
   const RB_REPLACED = "timeout: click sent, but another perch call on this tab took over its readback state; the outcome is not verified";
 
   // A click that opens a new tab is found by the app's tab lists, one bulk read
@@ -1682,7 +1683,7 @@ function jxaRuntime(BROWSERS, HANG) {
 
     function aimed() {
       const off = offPage(T, probe, pt, area);
-      return off ? { out: off } : { pt: pt, el: probe.el, blank: probe.blank, calibrated: true, calibration: trace, aim: via };
+      return off ? { out: off } : { pt: pt, el: probe.el, blank: probe.blank, tok: probe.tok, calibrated: true, calibration: trace, aim: via };
     }
   }
 
@@ -2713,10 +2714,11 @@ function jxaRuntime(BROWSERS, HANG) {
       // No start: the caller's own page call already opened the control.
       const r = a.start ? stepRead(t, a.start) : { pending: true };
       if (!r || !r.pending) return r;
-      // r.tok: the owner token of this call's page state. An answer from another
-      // call's state (another perch server's select on this tab) ends the call,
-      // with nothing more pressed or posted. No token (typeahead phases): no check.
-      const tok = r.tok;
+      // r.tok (a typeahead's: a.tok, from fill's own page call): the owner token of
+      // this call's page state. An answer from another call's state (another perch
+      // server's select or fill on this tab) ends the call, with nothing more
+      // pressed or posted.
+      const tok = r.tok != null ? r.tok : a.tok;
       let lost = false;
       const own = function (v) { if (tok != null && v && typeof v === "object" && (v.lost || (v.tok != null && v.tok !== tok))) lost = true; return !lost; };
       const until = function (js, ms, step) { return poll(t, js, ms, 50, step, function (v) { return !own(v) || (v != null && v !== false && !v.pending); }); };
@@ -2727,7 +2729,7 @@ function jxaRuntime(BROWSERS, HANG) {
         // missed click fails closed.
         const X = a.trusted, used = [];
         const done = function (o) {
-          if (lost) o = { ok: false, error: SELECT_TAKEN };
+          if (lost) o = a.tool === "fill" ? { ok: false, kind: "typeahead", error: TA_TAKEN } : { ok: false, error: SELECT_TAKEN };
           if (used.length && o) o.trusted = used;
           if (o && typeof o === "object") delete o.tok;
           return o;
@@ -2765,11 +2767,15 @@ function jxaRuntime(BROWSERS, HANG) {
         // a.short: give up early unless a.probe says a list or companion is there.
         // A pick step answering {settled} has found nothing more worth waiting for.
         let picked = until(a.pick, a.short || a.wait || 2500, true);
-        if (!picked && !lost && a.short && readExec(t, a.probe) === true) picked = until(a.pick, a.wait - a.short, true);
+        if (!picked && !lost && a.short && once(readExec(t, a.probe)) === true) picked = until(a.pick, a.wait - a.short, true);
         if (lost) return done(null);
         if (picked && picked.value.settled) picked = null;
         if (!picked && !a.missFinal) return done(once(readExec(t, a.miss)));
-        if (!picked) { const m = poll(t, a.miss, a.settle, 50); return m ? m.value : readExec(t, a.missFinal); }
+        if (!picked) {
+          const m = until(a.miss, a.settle);
+          if (lost) return done(null);
+          return done(m ? m.value : once(readExec(t, a.missFinal)));
+        }
         // A thrown pick never reaches the option click or the read: Node codes it.
         if (picked.value.ok === false || picked.value.__perch_error != null) return done(picked.value);
         const pressed = picked.value.picked;
@@ -2923,7 +2929,12 @@ function jxaRuntime(BROWSERS, HANG) {
         delay(0.05); // let focus settle before typing
         typeChunks(a.chunks);
         delay(0.05);
-        return Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: "hid" }, parseExec(T.t, a.check));
+        const out = Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: "hid" }, parseExec(T.t, a.check));
+        // The probe's typeahead state (A.tok) must be the one the check hands on.
+        if (!threw(out) && out.ok !== false && (A.tok != null || out.pending) && !(out.pending && out.tok === A.tok)) {
+          return { ok: false, kind: "typeahead", el: A.el, hit: out.hit, delivery: "hid", error: TA_TAKEN };
+        }
+        return out;
       } finally {
         $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
       }
@@ -4132,6 +4143,23 @@ const selNow = window.__perch_select;
 const selLost = selNow && selNow.key !== selKey ? { lost: true, tok: selNow.tok } : null;
 `;
 
+// The same for fill's typeahead state, window.__perch_ta. Its key (fillOne's
+// taKey) is the call's own args, which every phase of one call passes alike.
+const TA_OWN_LIB = String.raw`
+const taKey = JSON.stringify([A.ref, A.selector, A.label_pattern, A.text, !!A.trusted]);
+const taNow = window.__perch_ta;
+const taLost = taNow && taNow.key !== taKey ? { lost: true, tok: taNow.tok } : null;
+`;
+
+// An owner token: a per-document counter plus a random suffix, made in the page
+// so no per-call value enters script source.
+const TOK_LIB = String.raw`
+function rbTok() {
+  window.__perch_tok_n = (window.__perch_tok_n | 0) + 1;
+  return window.__perch_tok_n + "." + Math.random().toString(36).slice(2, 10);
+}
+`;
+
 // What select's picker steps use beyond the matching that fill_fields shares.
 const SELECT_PICK_LIB = String.raw`
 // fill may pass an ordered preference list; the first is the one typed as a filter.
@@ -4814,7 +4842,7 @@ function frameHint(hasField) {
 }
 `;
 
-const FILL_LIB = TYPEAHEAD_LIB + EMBED_LIB + String.raw`
+const FILL_LIB = TOK_LIB + TYPEAHEAD_LIB + EMBED_LIB + String.raw`
 // Up to 2 visible, enabled buttons that may reveal a field fill found no match
 // for, as ident-style lines under the name click {label_pattern} matches: named
 // by re themselves, else sitting in a section whose question text matches
@@ -4922,11 +4950,12 @@ function fillOne(a, only, onLand) {
     const kept = clip(el.value, 60);
     return { ok: false, el: ident(el), kept: kept, error: ident(el) + " expects " + format(el, t) + "; the page kept " + JSON.stringify(kept) };
   }
+  const taKey = JSON.stringify([a.ref, a.selector, a.label_pattern, text, !!a.trusted]);
   function startTypeahead(el) {
-    const t = taParts(el);
-    window.__perch_ta = { el: el, comp: t.comp, pop: t.pop, text: text, prior: el.value, priorComp: t.comp && t.comp.value };
+    const t = taParts(el), tok = rbTok();
+    window.__perch_ta = { key: taKey, tok: tok, el: el, comp: t.comp, pop: t.pop, text: text, prior: el.value, priorComp: t.comp && t.comp.value };
     taType(el, text);
-    return { pending: true };
+    return { pending: true, tok: tok };
   }
   function setRich(root) {
     root.focus();
@@ -4947,7 +4976,7 @@ function fillOne(a, only, onLand) {
     return landed(textOf(root));
   }
   function tryFill(el, host) {
-    if (a.trusted) { window.__perch_ta = { el: el, held: true }; return { pending: true }; }
+    if (a.trusted) { const tok = rbTok(); window.__perch_ta = { key: taKey, tok: tok, el: el, held: true }; return { pending: true, tok: tok }; }
     if (isField(el) && text !== "" && isTypeahead(el)) return startTypeahead(el);
     if (isField(el)) {
       const r = setPlain(el);
@@ -5215,14 +5244,6 @@ function editClear(el) {
 // own state from one another perch server's call put there; one that is never
 // read again stops its observer at the first mutation after `life` ms and marks
 // itself dead.
-// An owner token: a per-document counter plus a random suffix, made in the page
-// so no per-call value enters script source.
-const TOK_LIB = String.raw`
-function rbTok() {
-  window.__perch_tok_n = (window.__perch_tok_n | 0) + 1;
-  return window.__perch_tok_n + "." + Math.random().toString(36).slice(2, 10);
-}
-`;
 const QUIET_LIB = TOK_LIB + String.raw`
 function rbNet() {
   try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }).length; }
@@ -5786,11 +5807,12 @@ return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "
 
   fill: FILL_LIB + "return fillOne(A);",
 
-  // null = keep polling; the best tier of taMatch. A.probe: is a pick worth
+  // {pending} = keep polling; the best tier of taMatch. A.probe: is a pick worth
   // waiting longer for (a hidden companion, an open or non-empty list)?
-  fill_ta_pick: TA_PICK_LIB + String.raw`
+  fill_ta_pick: TA_PICK_LIB + TA_OWN_LIB + String.raw`
 const s = window.__perch_ta;
 if (!s) return { ok: false, kind: "typeahead", error: "fill state lost (did the page navigate?)" };
+if (taLost) return taLost;
 if (A.probe) return !!(s.comp || attr(s.el, "aria-expanded") === "true" || taScopes(s).some(function (r) { return vis(r) && taNorm(r.textContent); }));
 const opts = taOptions(s);
 const m = taMatch(opts, s.text);
@@ -5807,7 +5829,7 @@ if (!opt) {
   if (sig !== s.sig0) s.answered = true;
   s.same = sig && sig === s.sig ? s.same + 1 : 0;
   s.sig = sig;
-  return sig && s.same >= 8 && (s.tied || s.answered) ? { settled: true } : null;
+  return sig && s.same >= 8 && (s.tied || s.answered) ? { settled: true, tok: s.tok } : { pending: true, tok: s.tok };
 }
 s.picked = clip(textOf(opt), 80);
 s.pickedN = fold(taNorm(textOf(opt)));
@@ -5837,26 +5859,27 @@ s.cuts = [];
 s.compBefore = s.comp ? s.comp.value : null;
 s.openBefore = attr(s.el, "aria-expanded") === "true";
 press(opt);
-return { picked: s.picked };
+return { picked: s.picked, tok: s.tok };
 `,
 
   // No pick. A widget that expects one (a hidden companion, its own suggestions
   // shown, or text cleared on blur) gets its prior value back; any other
   // combobox keeps the typed text. React clears on blur only after the blurring
   // script ends, so the blur and the read of the settled value are separate
-  // polls; null = keep polling, and A.final keeps text that survived.
-  fill_ta_miss: TA_PICK_LIB + String.raw`
+  // polls; {pending} = keep polling, and A.final keeps text that survived.
+  fill_ta_miss: TA_PICK_LIB + TA_OWN_LIB + String.raw`
 const s = window.__perch_ta;
 if (!s) return { ok: false, kind: "typeahead", error: "the page changed while the suggestions were read; not verified" };
+if (taLost) return taLost;
 const el = s.el;
 if (!s.missed) {
   s.missed = true;
   const c = taOptions(s).slice(0, 8).map(function (o) { return clip(o.textContent, 60); });
   if (c.length) s.cands = c;
-  if (!s.comp && !s.cands) { taBlur(el); return null; }
+  if (!s.comp && !s.cands) { taBlur(el); return { pending: true, tok: s.tok }; }
 }
 const kept = !s.comp && !s.cands && taNorm(el.value) === taNorm(s.text);
-if (kept && !A.final) return null;
+if (kept && !A.final) return { pending: true, tok: s.tok };
 let out;
 if (kept) out = { ok: true, kind: "plain", el: ident(el), len: el.value.length, note: "no suggestion was picked; the typed text stays" };
 else {
@@ -5869,14 +5892,16 @@ else {
 }
 if (s.cands) out.candidates = s.cands;
 if (s.tied && !out.ok) out.ambiguous = true;
+out.tok = s.tok;
 return out;
 `,
 
   // Once the pick shows (and any hidden companion holds it), blur once and
   // re-check, since these widgets clear unpicked text on blur. A.final reports.
-  fill_ta_read: TA_PICK_LIB + String.raw`
+  fill_ta_read: TA_PICK_LIB + TA_OWN_LIB + String.raw`
 const s = window.__perch_ta;
 if (!s) return { ok: false, kind: "typeahead", error: "the page changed after the pick was pressed; not verified" };
+if (taLost) return taLost;
 const el = s.el;
 const shown = taShown(el);
 const v = taNorm(shown);
@@ -5903,22 +5928,23 @@ const good = seen && moved && filled;
 if (!A.final && good && !s.blurred) {
   s.blurred = true;
   taBlur(el);
-  return null;
+  return { pending: true, tok: s.tok };
 }
-if (!A.final && !good) return null;
-const out = { ok: good, kind: "typeahead", el: ident(el), selected: s.picked, value: clip(shown, 120) };
+if (!A.final && !good) return { pending: true, tok: s.tok };
+const out = { ok: good, kind: "typeahead", el: ident(el), selected: s.picked, value: clip(shown, 120), tok: s.tok };
 if (!good) out.error = "picked " + JSON.stringify(s.picked) + " but " + (!seen ? "the field doesn't show it" : !filled ? (s.comp.value ? "the hidden field didn't change" : "the hidden field stayed empty") : "the field still shows only the typed text");
 return out;
 `,
 
   // A lookup that showed nothing for the full text gets A.query typed instead.
   // Matching still uses s.text, and a miss still puts back the first prior.
-  fill_ta_retype: TYPEAHEAD_LIB + String.raw`
+  fill_ta_retype: TYPEAHEAD_LIB + TA_OWN_LIB + String.raw`
 const s = window.__perch_ta;
 if (!s) return { ok: false, kind: "typeahead", error: "fill state lost (did the page navigate?)" };
+if (taLost) return taLost;
 ["missed", "cands", "tied", "sig0", "sig", "same", "answered", "blurred"].forEach(function (k) { delete s[k]; });
 taType(s.el, A.query);
-return { pending: true };
+return { pending: true, tok: s.tok };
 `,
 
   // One pass over A.fields from A.from. A custom combobox needs select's
@@ -5957,8 +5983,13 @@ if (!A.from) ff = window.__perch_ff = { fp: fp, items: {}, href: href };
 else if (!ff || ff.fp !== fp || ff.href !== href || (ff.form && !ff.form.isConnected && !Object.keys(ff.items).some(function (k) { return ff.items[k].el.isConnected || twin(ff.items[k]); }))) return { gone: true, results: [] };
 // A write pass after a deferred pick, which may have moved a single-page wizard
 // to its next step. Not the re-read-only last pass: a batch ending on a step's
-// last pick expects exactly that.
-else if (A.from < A.fields.length && stepMoved((A.fields[A.from - 1].text != null ? window.__perch_ta : window.__perch_select) || {})) return { gone: true, results: [] };
+// last pick expects exactly that. A typeahead state under another call's key
+// (another perch server's fill on this tab) is not this entry's to judge by.
+else if (A.from < A.fields.length) {
+  const pf = A.fields[A.from - 1], prev = (pf.text != null ? window.__perch_ta : window.__perch_select) || {};
+  if (pf.text != null && prev.key != null && prev.key !== JSON.stringify([pf.ref, pf.selector, pf.label_pattern, pf.text, !!pf.trusted])) return { lost: true, results: [] };
+  if (stepMoved(prev)) return { gone: true, results: [] };
+}
 const AFTER = " after a later field changed; fill it again";
 // A framework re-render replaces a node but keeps its value: a disconnected
 // field is looked up again by id, then by name in its form, then by the call's
@@ -6037,8 +6068,9 @@ function drift(it, again) {
   return { ok: false, kind: it.kind, el: it.id, kept: kept, error: it.id + (kept ? " changed to " + JSON.stringify(kept) : " was cleared") + AFTER };
 }
 const results = [];
-const stop = function (i) {
+const stop = function (i, tok) {
   const out = { results: results, defer: i };
+  if (tok) out.tok = tok;
   if (ff && Object.keys(ff.items).length) out.watch = true;
   return out;
 };
@@ -6066,7 +6098,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
   } else {
     kind = "text";
     o = fillOne(f, A.only, function (el, rich) { if (f.text !== "") got = { el: el, rich: rich, want: rich ? textOf(el) : el.value, text: f.text }; });
-    if (o.pending) return stop(i);
+    if (o.pending) return stop(i, o.tok);
   }
   if (o.__perch_ref_miss) o = { ok: false, error: "ref " + o.ref + " is stale or unknown; call accessibility_snapshot again" };
   if (!o.kind) o.kind = kind;
@@ -6725,10 +6757,14 @@ return out;
   trusted_probe: TRUSTED_PROBE_HEAD + TRUSTED_PROBE_TAIL,
   // fill's probe also records a typeahead (as trusted_fill_background does)
   // before the field is cleared, so the check can hand it to the pick.
-  trusted_fill_probe: TYPEAHEAD_LIB + TRUSTED_PROBE_HEAD + String.raw`
+  // Its answer's tok is that state's owner token.
+  trusted_fill_probe: TOK_LIB + TYPEAHEAD_LIB + TA_OWN_LIB + TRUSTED_PROBE_HEAD + String.raw`
 if (A.forFill) {
   const ta = isTypeahead(el) && taParts(el);
-  window.__perch_ta = ta ? { el: el, comp: ta.comp, pop: ta.pop, prior: el.value, priorComp: ta.comp && ta.comp.value } : null;
+  if (ta) {
+    selTok = rbTok();
+    window.__perch_ta = { key: taKey, tok: selTok, el: el, comp: ta.comp, pop: ta.pop, prior: el.value, priorComp: ta.comp && ta.comp.value };
+  } else if (taNow && !taLost) window.__perch_ta = null;
 }
 ` + TRUSTED_PROBE_TAIL,
 
@@ -6769,10 +6805,13 @@ return A.reset || !moves.length ? null : { moves: moves };
   // A.held: the field a fill_fields pass resolved for a trusted entry and
   // held on __perch_ta, taken once. A plain one that lands joins that batch's
   // __perch_ff at A.at, so later passes recheck it as they do their own.
-  trusted_fill_background: TYPEAHEAD_LIB + EDIT_LIB + String.raw`
+  // A held entry's answers carry the held state's owner token, which a
+  // typeahead's own state keeps.
+  trusted_fill_background: TOK_LIB + TYPEAHEAD_LIB + EDIT_LIB + TA_OWN_LIB + String.raw`
 let el;
+const h = A.held ? taNow : null;
 if (A.held) {
-  const h = window.__perch_ta;
+  if (taLost) return taLost;
   el = h && h.held && h.el;
   if (!el || !el.isConnected) return { ok: false, error: "the page changed before the trusted entry; not filled" };
   h.held = false;
@@ -6793,12 +6832,13 @@ if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, el:
 if (el.disabled || el.readOnly) return { ok: false, error: ident(el) + " is disabled or read-only" };
 // A typeahead keeps only a picked suggestion: Node picks after the lookup.
 const ta = isTypeahead(el) && taParts(el);
-if (ta) window.__perch_ta = { el: el, comp: ta.comp, pop: ta.pop, text: A.text, prior: el.value, priorComp: ta.comp && ta.comp.value };
+const tok = h ? h.tok : ta ? rbTok() : undefined;
+if (ta) window.__perch_ta = { key: taKey, tok: tok, el: el, comp: ta.comp, pop: ta.pop, text: A.text, prior: el.value, priorComp: ta.comp && ta.comp.value };
 const e = editType(el, A.text);
 if (!e.focused) return { ok: false, error: ident(el) + " did not accept focus" };
 if (e.ok && ta) {
   el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: A.text.slice(-1) }));
-  return { pending: true, trusted: true };
+  return { pending: true, trusted: true, tok: tok };
 }
 const ff = A.held && e.ok && window.__perch_ff;
 if (ff) {
@@ -6806,12 +6846,12 @@ if (ff) {
   ff.items[A.at] = { el: el, want: el.value, text: A.text, id: ident(el), kind: "plain", f: A.f, key: { id: el.id, name: el.name, form: el.form }, shown: vis(el) };
   if (!("form" in ff)) ff.form = el.form || el.closest("form");
 }
-return { ok: e.ok, trusted: e.trusted, value: e.value, el: ident(el), ...(e.ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
+return { ok: e.ok, trusted: e.trusted, value: e.value, el: ident(el), ...(h ? { tok: tok } : {}), ...(e.ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
 `,
 
   // hit: the mousedown landed on the element (a click by point: on the page, at
   // `el`); null: no mousedown reached the page; missing: no recorder, a new document.
-  trusted_check: String.raw`
+  trusted_check: TA_OWN_LIB + String.raw`
 const st = window.__perch_trusted || {};
 if (st.off) st.off();
 const out = { hit: st.down };
@@ -6827,10 +6867,11 @@ if (A.forFill && st.el) {
   out.ok = got === text || norm(got) === norm(text) || masked;
   if (!out.ok) out.error = "trusted typing left a different value (" + got.length + " chars: " + JSON.stringify(clip(got, 40)) + ")";
   // A typeahead keeps only a picked suggestion: Node picks next.
-  const ta = window.__perch_ta;
-  if (out.ok && ta && ta.el === st.el) {
+  // Another call's typeahead state is left alone; the runtime compares tokens.
+  const ta = taNow;
+  if (out.ok && ta && !taLost && ta.el === st.el) {
     if (out.hit !== true) { out.ok = false; out.error = "the click did not reach " + ident(st.el) + ", so no suggestion can be picked"; }
-    else { ta.text = text; return { hit: true, pending: true, trusted: true }; }
+    else { ta.text = text; return { hit: true, pending: true, trusted: true, tok: ta.tok }; }
   }
 }
 return out;
@@ -7305,14 +7346,15 @@ async function trustedClick({ ref, selector, label_pattern, x, y, raise, target,
 
 // Background fields use the browser's trusted editing command; the explicit
 // foreground route keeps the hardware-style keystrokes. Both verify the value.
-async function trustedFill({ ref, selector, label_pattern, text, raise, target }) {
-  if (!raise) return runPage("fill", "trusted_fill_background", { ref, selector, label_pattern, text }, target);
+async function trustedFill({ ref, selector, label_pattern, text, trusted, raise, target }) {
+  const key = { ref, selector, label_pattern, text, trusted };
+  if (!raise) return runPage("fill", "trusted_fill_background", key, target);
   return rt("trustedFill", {
     target, raise,
-    probe: pageFn("trusted_fill_probe", { ref, selector, label_pattern, forFill: true, background: !raise }),
+    probe: pageFn("trusted_fill_probe", { ...key, forFill: true, background: !raise }),
     cal: pageFn("trusted_cal", {}),
     calReset: pageFn("trusted_cal", { reset: true }),
-    check: pageFn("trusted_check", { forFill: true, text }),
+    check: pageFn("trusted_check", { ...key, forFill: true }),
     chunks: chunkUtf16(text),
   });
 }
@@ -7520,6 +7562,15 @@ async function fillFields(fields, target, only) {
       halt(r && r.__perch_error != null ? scriptFault("fill", r).error : "fill: the page pass returned no results");
       return halted;
     }
+    // Another server's typeahead fill replaced the state of the one just picked.
+    if (r.lost) {
+      const at = from - 1;
+      results[at] = taTaken();
+      for (let k = 0; k < at; k++) if (results[k] && results[k].ok === true && !results[k].skipped) results[k].unverified = true;
+      warning = `another perch call on this tab filled a typeahead after fields[${at}]; earlier fields may have changed, check them`;
+      for (let i = at + 1; i < A.length; i++) results.push({ ok: false, error: `another perch call on this tab took over after fields[${at}]; not filled` });
+      return { ok: false, results, ...counts(), warning };
+    }
     if (r.gone) {
       const at = r.at != null ? r.at : from - 1;
       results.push(...r.results);
@@ -7536,9 +7587,11 @@ async function fillFields(fields, target, only) {
     // A trusted entry types into the field this pass resolved and held, never
     // one trusted_fill_background finds by its own looser label match.
     const s = await step(async () => {
-      if (!f.trusted) return f.text != null ? pickTypeahead(f.text, target) : selectPrefs(f, target);
-      const t = await runPage("fill", "trusted_fill_background", { held: true, at: r.defer, f, text: f.text }, target);
-      return t && t.pending ? { ...await pickSuggestion(target), trusted: true } : t;
+      if (!f.trusted) return f.text != null ? pickTypeahead(taArgs(f), target, r.tok) : selectPrefs(f, target);
+      const key = taArgs(f, true);
+      const t = await runPage("fill", "trusted_fill_background", { held: true, at: r.defer, f, ...key }, target);
+      if (t && (t.lost || (t.tok !== undefined && t.tok !== r.tok))) return taTaken(t.el ? { el: t.el } : {});
+      return taMine(t, r.tok) ? { ...await pickSuggestion(target, r.tok, key), trusted: true } : noTok(t);
     });
     if (halted) return halted;
     results.push(f.trusted ? { kind: "plain", ...pageFault(s, "plain", "fill") }
@@ -7627,11 +7680,12 @@ async function fill(args = {}) {
   let body = text;
   if (text_path) ({ data: body } = await readUserFile(text_path, "utf8"));
   if (!clear && (!body || !String(body).trim())) throw new Error("fill: empty body");
+  const key = taArgs({ ref, selector, label_pattern, text: body }, trusted);
   const r = trusted
-    ? await trustedFill({ ref, selector, label_pattern, text: body, raise, target })
-    : await runPage("fill", "fill", { ref, selector, label_pattern, text: body }, target);
-  if (!r || !r.pending) return trusted ? r : hintTrusted(r);
-  const out = { ...await (r.trusted ? pickSuggestion(target) : pickTypeahead(body, target).then(hintTrusted)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
+    ? await trustedFill({ ...key, raise, target })
+    : await runPage("fill", "fill", key, target);
+  if (!r || !r.pending) return trusted ? noTok(r) : hintTrusted(r);
+  const out = { ...await (r.trusted ? pickSuggestion(target, r.tok, key) : pickTypeahead(key, target, r.tok).then(hintTrusted)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
 }
 
@@ -7671,12 +7725,22 @@ function pageFault(r, kind, tool = kind === "typeahead" ? "fill" : kind) {
 
 // The page has typed into a typeahead; its suggestions arrive asynchronously,
 // so they are polled JXA-side through select's phases rather than page timers.
-const pickSuggestion = async (target) => pageFault(await rt("select", {
-  target, tool: "fill", wait: 3000,
-  pick: pageFn("fill_ta_pick", {}), miss: pageFn("fill_ta_miss", {}), missFinal: pageFn("fill_ta_miss", { final: true }), settle: 300,
-  read: pageFn("fill_ta_read", {}), readFinal: pageFn("fill_ta_read", { final: true }),
-  short: 1000, probe: pageFn("fill_ta_pick", { probe: true }),
+// tok: the owner token fill's typing stored; key: taArgs, the args it stored
+// under, which every phase passes alike.
+const pickSuggestion = async (target, tok, key) => pageFault(await rt("select", {
+  target, tool: "fill", wait: 3000, tok,
+  pick: pageFn("fill_ta_pick", key), miss: pageFn("fill_ta_miss", key), missFinal: pageFn("fill_ta_miss", { ...key, final: true }), settle: 300,
+  read: pageFn("fill_ta_read", key), readFinal: pageFn("fill_ta_read", { ...key, final: true }),
+  short: 1000, probe: pageFn("fill_ta_pick", { ...key, probe: true }),
 }, { lane: "slow" }), "typeahead");
+export const TA_TAKEN = "another perch call on this tab took over this fill's suggestions; not verified";
+const taTaken = (extra) => ({ ok: false, kind: "typeahead", ...extra, error: TA_TAKEN });
+// The args a fill's typeahead state is keyed by, as the page's taKey reads them.
+const taArgs = ({ ref, selector, label_pattern, text }, trusted) => ({ ref, selector, label_pattern, text, ...(trusted ? { trusted: true } : {}) });
+// A pending answer from a later step of the same fill: another call's state or
+// token means another call took over.
+const taMine = (r, tok) => !!r && r.pending && !r.lost && r.tok === tok;
+const noTok = (r) => { if (r && typeof r === "object" && "tok" in r) { const { tok, ...o } = r; return o; } return r; };
 
 // A shorter lookup query for text a lookup found nothing for: its first comma
 // part, accents folded, cut to two words when long. null when it would type
@@ -7691,12 +7755,13 @@ export function taQuery(text) {
 
 // Only an empty or unopened list retries: suggestions that answered the full
 // text without a hit, or a tie, are the site's answer.
-async function pickTypeahead(text, target) {
-  const r = await pickSuggestion(target);
-  const query = r && r.ok === false && !r.candidates && !r.ambiguous && /^no suggestion matched/.test(r.error) ? taQuery(text) : null;
+async function pickTypeahead(key, target, tok) {
+  const r = await pickSuggestion(target, tok, key);
+  const query = r && r.ok === false && !r.candidates && !r.ambiguous && /^no suggestion matched/.test(r.error) ? taQuery(key.text) : null;
   if (!query) return r;
-  const t = await runPage("fill", "fill_ta_retype", { query }, target);
-  return { ...(t && t.pending ? await pickSuggestion(target) : pageFault(t, "typeahead")), query };
+  const t = await runPage("fill", "fill_ta_retype", { ...key, query }, target);
+  const next = taMine(t, tok) ? await pickSuggestion(target, tok, key) : t && (t.lost || t.pending) ? taTaken() : pageFault(t, "typeahead");
+  return { ...next, query };
 }
 
 // Misses a page makes by ignoring synthetic input: no suggestion list ever

@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { JXA_PRELUDE, DAEMONS, handleCall, buildEvalWrapper, pageScript, CLICK_BLANK_GO } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, buildEvalWrapper, pageScript, CLICK_BLANK_GO, TA_TAKEN } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run } from "./helpers/page.mjs";
 
@@ -570,4 +570,166 @@ test("console_capture scripts are byte-identical across calls", async () => {
   await cc("start"); await cc(); await cc(); await cc("stop");
   await cc("start"); await cc(); await cc("stop");
   assert.equal(new Set(sent.filter((js) => js.includes("__perch_console"))).size, 3);
+});
+
+// ---- fill typeahead ----
+// Two comboboxes with hidden companions: typing shows the matching options at
+// once (or after `lag` page evaluations), and a pressed option sets both fields.
+
+const TA_TAKEN_MSG = "another perch call on this tab took over this fill's suggestions; not verified";
+const TA_PICK = "const m = taMatch(opts, s.text);";
+
+test("fill typeahead: the runtime and Node say the same thing when another call took over", () => {
+  assert.equal(TA_TAKEN, TA_TAKEN_MSG);
+  assert.ok(JXA_PRELUDE.includes(JSON.stringify(TA_TAKEN)), "the runtime's copy");
+});
+const taBox = (id, label) => `<div class="f"><label for="${id}">${label}</label><input id="${id}" type="text" role="combobox" aria-autocomplete="list" aria-controls="${id}-list" aria-expanded="false" autocomplete="off"><input type="hidden" id="${id}-id"><ul id="${id}-list" role="listbox"></ul></div>`;
+const TA_FORM = `<form>${taBox("city", "City")}${taBox("country", "Country")}</form>`;
+const TA_JS = (lag = 0) => `window.tick = []; window.lag = ${lag};
+  const items = { city: ["Paris", "Lima", "Rome"], country: ["Spain", "Peru", "Italy"] };
+  Object.keys(items).forEach(function (id) {
+    const inp = document.getElementById(id), hid = document.getElementById(id + "-id"), list = document.getElementById(id + "-list");
+    const show = function () {
+      const q = inp.value.toLowerCase();
+      list.innerHTML = items[id].filter(function (c) { return q && c.toLowerCase().indexOf(q) === 0; }).map(function (c) { return '<li role="option">' + c + "</li>"; }).join("");
+      inp.setAttribute("aria-expanded", list.children.length ? "true" : "false");
+    };
+    inp.addEventListener("input", function () { hid.value = ""; if (window.lag) window.tick.push({ n: window.lag, fn: show }); else show(); });
+    list.addEventListener("click", function (e) {
+      const o = e.target.closest("[role=option]");
+      if (!o) return;
+      inp.value = o.textContent; hid.value = id + ":" + o.textContent; list.innerHTML = ""; inp.setAttribute("aria-expanded", "false");
+    });
+  });` + COUNT_OPTS;
+// The page's deferred lookups run one evaluation at a time.
+function taTicks(dom) {
+  const orig = dom.eval.bind(dom);
+  dom.eval = (js) => {
+    const due = (dom.tick || []).filter((j) => --j.n <= 0);
+    dom.tick = (dom.tick || []).filter((j) => j.n > 0);
+    due.forEach((j) => j.fn());
+    return orig(js);
+  };
+}
+const val = (dom, id) => dom.document.getElementById(id).value;
+// B's typeahead fill to the end, as its server runs the phases.
+function finishTa(dom, K) {
+  let v = null;
+  for (let i = 0; i < 20 && !(v && !v.pending); i++) v = run(dom, "fill_ta_pick", K);
+  if (!v || v.picked == null) return v;
+  for (let i = 0; i < 10; i++) { const r = run(dom, "fill_ta_read", K); if (r && !r.pending) return r; }
+  return run(dom, "fill_ta_read", { ...K, final: true });
+}
+
+test("fill typeahead: another server's typeahead fill before A's pick is refused; A presses and restores nothing of B's", async () => {
+  const { dom } = onPage(TA_FORM, TA_JS());
+  const KB = { label_pattern: "Country", text: "Spain" };
+  let startB = null;
+  beforeEvals(dom, (n, js) => { if (!startB && js.includes(TA_PICK)) startB = run(dom, "fill", KB); });
+  const { r, o } = await call("fill", { label_pattern: "City", text: "Paris" });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.ok(startB && startB.pending, JSON.stringify(startB));
+  assert.deepEqual(o, { ok: false, kind: "typeahead", error: TA_TAKEN_MSG });
+  assert.deepEqual({ ...dom.optClicks }, {}, "A pressed no option");
+  assert.equal(val(dom, "country"), "Spain", "B's typed text is not put back");
+  assert.equal(val(dom, "country-id"), "");
+  const b = finishTa(dom, KB);
+  assert.equal(b.ok, true, JSON.stringify(b));
+  assert.equal(b.selected, "Spain");
+  assert.match(b.el, /Country/);
+  assert.equal(val(dom, "country-id"), "country:Spain");
+  assert.deepEqual({ ...dom.optClicks }, { "country-list:Spain": 1 });
+});
+
+test("fill typeahead: another server with identical args is caught by its token", async () => {
+  const { dom } = onPage(TA_FORM, TA_JS());
+  let startB = null;
+  beforeEvals(dom, (n, js) => { if (!startB && js.includes(TA_PICK)) startB = run(dom, "fill", { label_pattern: "City", text: "Paris" }); });
+  const { o } = await call("fill", { label_pattern: "City", text: "Paris" });
+  assert.ok(startB && startB.pending && startB.tok, JSON.stringify(startB));
+  assert.deepEqual(o, { ok: false, kind: "typeahead", error: TA_TAKEN_MSG });
+  assert.ok((dom.optClicks["city-list:Paris"] || 0) <= 1);
+});
+
+test("fill typeahead: a fill alone picks its own option, with no token in its result", async () => {
+  const { dom } = onPage(TA_FORM, TA_JS());
+  const { o } = await call("fill", { label_pattern: "City", text: "Paris" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.kind, "typeahead");
+  assert.equal(o.selected, "Paris");
+  assert.equal("tok" in o, false);
+  assert.equal(val(dom, "city-id"), "city:Paris");
+});
+
+test("fill typeahead: a miss after another server took over puts nothing back in B's field", async () => {
+  const { dom } = onPage(TA_FORM, TA_JS());
+  // A finds no match, so its miss phase runs; B types before it.
+  let startB = null;
+  beforeEvals(dom, (n, js) => { if (!startB && js.includes("if (!s.missed) {")) startB = run(dom, "fill", { label_pattern: "Country", text: "Spain" }); });
+  const { o } = await call("fill", { label_pattern: "City", text: "Zzz" });
+  assert.ok(startB && startB.pending, JSON.stringify(startB));
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.error, TA_TAKEN_MSG);
+  assert.equal(val(dom, "country"), "Spain");
+});
+
+test("fill {fields}: another server's typeahead fill during a typeahead entry fails that entry, never ok", async () => {
+  const { dom } = onPage(TA_FORM + `<label>Name <input id="nm"></label>`, TA_JS());
+  let startB = null;
+  beforeEvals(dom, (n, js) => { if (!startB && js.includes(TA_PICK)) startB = run(dom, "fill", { label_pattern: "Country", text: "Spain" }); });
+  const { o } = await call("fill", { fields: [{ label_pattern: "Name", text: "Ann" }, { label_pattern: "City", text: "Paris" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.results[1], { ok: false, kind: "typeahead", error: TA_TAKEN_MSG });
+  assert.deepEqual({ ...dom.optClicks }, {});
+});
+
+test("fill {fields}: a pass after a typeahead whose state another server replaced does not vouch for it", async () => {
+  const { dom } = onPage(TA_FORM + `<label>Name <input id="nm"></label>`, TA_JS());
+  let startB = null;
+  // B types once A's pick is read back, before A's next pass.
+  beforeEvals(dom, (n, js) => { if (!startB && js.includes("function stepMoved(") && js.includes('"from":2')) startB = run(dom, "fill", { label_pattern: "Country", text: "Spain" }); });
+  const { o } = await call("fill", { fields: [{ label_pattern: "Name", text: "Ann" }, { label_pattern: "City", text: "Paris" }, { label_pattern: "Name", text: "Bo" }] });
+  assert.ok(startB && startB.pending, JSON.stringify(startB));
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.results[1], { ok: false, kind: "typeahead", error: TA_TAKEN_MSG });
+  assert.equal(o.results[0].unverified, true, JSON.stringify(o));
+  assert.equal(o.results[2].ok, false);
+  assert.equal(val(dom, "nm"), "Ann", "the entry after it is not written");
+});
+
+test("fill typeahead: phase scripts are byte-identical across one call's polls, with no token in A", async () => {
+  const { dom, world } = onPage(TA_FORM, TA_JS(4));
+  taTicks(dom);
+  const runs = [];
+  for (const [label, text] of [["City", "Paris"], ["Country", "Spain"]]) {
+    const sent = [];
+    world.state.onExecute = (spec, js) => sent.push(js);
+    const { o } = await call("fill", { label_pattern: label, text });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    const ta = sent.filter((js) => js.includes("const s = window.__perch_ta;"));
+    const picks = ta.filter((js) => js.includes(TA_PICK) && !js.includes('"probe":true'));
+    assert.ok(picks.length >= 3, `${picks.length} pick polls`);
+    assert.equal(new Set(picks).size, 1, "every pick poll is the same source");
+    for (const js of ta) assert.ok(!/\d+\.[a-z0-9]{8}/.test(js.match(/\nconst A = (.*);\n/)[1]), "no token in A");
+    runs.push(new Set(ta));
+  }
+  assert.ok([...runs[1]].every((js) => !runs[0].has(js)), "each call's own args");
+});
+
+test("every typeahead script that stores fill state makes its token with one rbTok", () => {
+  for (const name of ["fill", "fill_fields", "trusted_fill_probe", "trusted_fill_background"]) {
+    const src = pageScript(name, { label_pattern: "x", text: "y", fields: [], forFill: true });
+    assert.equal(src.split("function rbTok(").length - 1, 1, name);
+  }
+});
+
+test("fill typeahead: a shorter lookup after another server took over types nothing", async () => {
+  const { dom } = onPage(TA_FORM, TA_JS());
+  let startB = null;
+  beforeEvals(dom, (n, js) => { if (!startB && js.includes("taType(s.el, A.query)")) startB = run(dom, "fill", { label_pattern: "Country", text: "Spain" }); });
+  const { o } = await call("fill", { label_pattern: "City", text: "Zzz, Q" });
+  assert.ok(startB && startB.pending, JSON.stringify(startB));
+  assert.deepEqual(o, { ok: false, kind: "typeahead", error: TA_TAKEN_MSG, query: "zzz" });
+  assert.equal(val(dom, "country"), "Spain");
+  assert.equal(val(dom, "city"), "", "the first text was withdrawn and nothing retyped");
 });
