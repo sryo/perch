@@ -701,7 +701,7 @@ test("custom combobox: the typed filter showing in the input is not the pick", a
   const { o } = await select({ label_pattern: "team", text: "Bravo" });
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.selected, undefined);
-  assert.match(o.error, /^pressed "Bravo" but the control shows only the text select typed; not verified$/);
+  assert.equal(o.error, `pressed "Bravo" but the control shows only the text select typed; not verified: retry with select {trusted:true}, or check the field (a list that stays open on pick shows this too)`);
   assert.equal(dom.document.getElementById("t").value, "Bravo");
 });
 
@@ -712,6 +712,22 @@ test("custom combobox: a pick equal to the typed text holds once the list closes
     ["option selected", "t.value = o.textContent; o.setAttribute('aria-selected', 'true');"],
   ]) {
     onPage(SEARCH, SEARCH_JS(onPick));
+    const { o } = await select({ label_pattern: "team", text: "Bravo" });
+    assert.equal(o.ok, true, what + " " + JSON.stringify(o));
+    assert.equal(o.selected, "Bravo", what);
+  }
+});
+
+// A list that closes by transition: the control says aria-expanded=false at once
+// while the options stay mounted through a leave animation, or it holds
+// aria-expanded=true a couple of tasks before closing. Either is the list
+// closing on the pick, read on later reads too, before any Escape of select's own.
+test("custom combobox: a typed-text pick holds when the list closes through a transition", async () => {
+  for (const [what, onPick] of [
+    ["leave transition", "t.value = o.textContent; t.setAttribute('aria-expanded', 'false'); later(() => { ul.remove(); ul = null; }, 2);"],
+    ["late close", "t.value = o.textContent; later(() => { t.setAttribute('aria-expanded', 'false'); ul.remove(); ul = null; }, 2);"],
+  ]) {
+    onTickPage(SEARCH, SEARCH_JS(onPick));
     const { o } = await select({ label_pattern: "team", text: "Bravo" });
     assert.equal(o.ok, true, what + " " + JSON.stringify(o));
     assert.equal(o.selected, "Bravo", what);

@@ -6477,6 +6477,7 @@ if (opt) {
   s.multi = isMulti(s, opt);
   // What the press may move, for select_read's check on a typed filter.
   s.selBefore = attr(opt, "aria-selected") === "true";
+  s.expAtPick = [s.ctl, s.input].some(function (e) { return e && attr(e, "aria-expanded") === "true"; });
   s.compAtPick = s.comp ? s.comp.value : null;
   if (chosenAlready(s, opt, s.pickedN)) s.already = true;
   else press(opt);
@@ -6607,10 +6608,15 @@ if (!s.ctl.isConnected) {
     s.box = own ? again : ctlBox(again, s.input).box;
   }
 }
-// Whether the list closed on the pick, read before this call's own Escape.
-if (!s.closed) s.shut = !stillOpen(s);
+// A filter select typed into the input shows whatever the press did, so the
+// list closing on the pick is the proof there: read on every read, and this
+// call's own Escape waits for the answer. A control going from aria-expanded
+// true to not counts though the options stay mounted (a leave transition).
+const typedIn = s.typed === s.input && s.typedQ != null;
+if (typedIn && !s.closed && (!stillOpen(s) || (s.expAtPick && ![s.ctl, s.input].some(function (e) { return e && attr(e, "aria-expanded") === "true"; })))) s.shut = true;
 // A popup select opened and a pick left open (a multi-select) closes again.
-if (s.opened && !s.closed && !A.keep) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
+const escOwn = function () { if (s.opened && !s.closed && !A.keep) { s.closed = true; if (stillOpen(s)) escapeOwn(s); } };
+if (!typedIn) escOwn();
 // An input's own value first: its wrapper may hold only its label.
 const iv = (s.input && s.input.value) || "";
 const has = function (t) { return s.multi ? norm(t).indexOf(s.pickedN) >= 0 : norm(t) === s.pickedN; };
@@ -6629,9 +6635,13 @@ const typedOnly = s.typed === s.input && s.typedQ != null && full === iv && norm
   !(s.shut || (s.comp && s.comp.value !== s.compAtPick) || (s.optEl && !s.selBefore && attr(s.optEl, "aria-selected") === "true"));
 const seen = !typedOnly && (has(full) || (!s.multi && parts.some(function (t) { return norm(t) === s.pickedN; })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; }))));
 if (!seen && !A.final) return { pending: true, tok: s.tok };
+if (typedIn) escOwn();
+// A widget that fills the input and keeps its list open on pick (MUI's
+// disableCloseOnSelect, free solo) shows the same, so the error says how to check.
 const out = seen
   ? { ok: true, selected: s.picked, el: ident(s.ctl), value: shown, tok: s.tok }
-  : { ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control shows ' + (typedOnly ? "only the text select typed" : shown ? '"' + shown + '"' : "nothing") + "; not verified", pressed: s.picked, el: ident(s.ctl), value: shown, tok: s.tok };
+  : { ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control shows ' + (typedOnly ? "only the text select typed" : shown ? '"' + shown + '"' : "nothing") + "; not verified" +
+    (typedOnly ? ": " + (A.trusted ? "" : "retry with select {trusted:true}, or ") + "check the field (a list that stays open on pick shows this too)" : ""), pressed: s.picked, el: ident(s.ctl), value: shown, tok: s.tok };
 if (s.pref) out.pref = s.pref;
 if (s.already) out.note = "already chosen; not pressed again, since a press would toggle it off";
 return out;
