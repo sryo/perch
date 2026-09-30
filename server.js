@@ -4920,7 +4920,19 @@ function optText(s) {
 }
 `;
 
-const FILL_LIB = TOK_LIB + TYPEAHEAD_LIB + EMBED_LIB + HOLDS_LIB + String.raw`
+// Keeps what a write landed for fill_reread; needs TOK_LIB.
+const FR_LIB = String.raw`
+// Keeps fields that landed for fill_reread under a fresh owner token, at most
+// 20 records a document, and returns the token.
+function frRecord(items) {
+  const m = window.__perch_fr = window.__perch_fr || {}, tok = rbTok(), keys = Object.keys(m);
+  if (keys.length >= 20) delete m[keys[0]];
+  m[tok] = items;
+  return tok;
+}
+`;
+
+const FILL_LIB = TOK_LIB + TYPEAHEAD_LIB + EMBED_LIB + HOLDS_LIB + FR_LIB + String.raw`
 // trapLike, except that untabbable with autofill off as the only sign is no trap
 // on a required field: date pickers and masks look like that.
 function trapShaped(el) {
@@ -4936,14 +4948,6 @@ function trapWarning(el) {
   // that alone never advises clearing what may be a right date.
   if (!why) return ident(el) + " is untabbable, autofill off: bot trap or date picker?";
   return ident(el) + " looks like a bot trap (" + why + ") and was filled anyway; clear it with text \"\" if the form should leave it empty";
-}
-// Keeps fields that landed for fill_reread under a fresh owner token, at most
-// 20 records a document, and returns the token.
-function frRecord(items) {
-  const m = window.__perch_fr = window.__perch_fr || {}, tok = rbTok(), keys = Object.keys(m);
-  if (keys.length >= 20) delete m[keys[0]];
-  m[tok] = items;
-  return tok;
 }
 // Up to 2 visible, enabled buttons that may reveal a field fill found no match
 // for, as ident-style lines under the name click {label_pattern} matches: named
@@ -6340,12 +6344,18 @@ return out;
 
   // select runs in phases polled from JXA (runtime `select`), never with page
   // timers: Chrome throttles those to ~1/s in background tabs.
-  select_start: TOK_LIB + TYPEAHEAD_LIB + SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + String.raw`
+  select_start: TOK_LIB + TYPEAHEAD_LIB + SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + HOLDS_LIB + FR_LIB + String.raw`
 const c = findCtl(A);
 if (c.out) return c.out;
 const ctl = c.el;
 const nat = nativeOf(ctl);
-if (nat) return pickNative(nat, A.text);
+// A.fr: keep a pick that landed for fill_reread, since the page's own change
+// handler may move it a task after this call returns.
+if (nat) {
+  const pt = optText(nat), o = pickNative(nat, A.text);
+  if (A.fr && o.ok === true) o.fr = frRecord([{ i: 0, el: nat, id: o.el, st: optText(nat), sv: nat.value, pt: pt }]);
+  return o;
+}
 const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySelector("input");
 const cb = ctlBox(ctl, input), wrap = cb.wrap, named = cb.named, box = cb.box;
 // A bare input's box is its parent, which may hold only its label: its value is in the input.
@@ -7960,17 +7970,17 @@ async function fill(args = {}) {
 // that put its old value back a task after the write reverted it, and one that
 // shows another value adds a note. A re-read that can't run or finds no record
 // leaves the fill's own answer.
-async function reread(r, target) {
+async function reread(r, target, tool = "fill") {
   const { fr, ...out } = r;
-  const x = await rereadPass(fr, target);
+  const x = await rereadPass(fr, target, tool);
   if (x && x.recheck && x.recheck[0] && x.recheck[0].ok === false) return x.recheck[0];
   return x && x.notes && x.notes[0] ? addNote(out, x.notes[0]) : out;
 }
 const addNote = (o, n) => ({ ...o, note: o.note ? `${o.note}; ${n}` : n });
 // fill_reread, or null when it could not run.
-async function rereadPass(tok, target) {
+async function rereadPass(tok, target, tool = "fill") {
   try {
-    const x = await runPage("fill", "fill_reread", { tok }, target);
+    const x = await runPage(tool, "fill_reread", { tok }, target);
     return x && typeof x === "object" && x.__perch_error == null ? x : null;
   } catch { return null; }
 }
@@ -8068,15 +8078,18 @@ async function select(args = {}, prefs = null) {
   if (label_pattern) validateLabelPattern("select", label_pattern);
   const A = { ref, selector, label_pattern, text: prefs || String(text), ...(trusted ? { trusted: true } : {}) };
   const step = (name, extra = {}) => pageFn(name, { ...A, ...extra });
-  return pageFault(await rt("select", {
+  // A native pick that landed comes back with fr: read it again a task later, as
+  // fill does. fill's own combobox passes (prefs) never reach a native select.
+  const r = pageFault(await rt("select", {
     target,
-    start: step("select_start"), pick: step("select_pick"), miss: step("select_miss"),
+    start: step("select_start", prefs ? {} : { fr: true }), pick: step("select_pick"), miss: step("select_miss"),
     read: step("select_read"), readFinal: step("select_read", { final: true }),
     ...(trusted ? { trusted: {
       open: step("select_open"), type: step("select_type"), keep: step("select_read", { keep: true }), check: pageFn("trusted_check", {}),
       control: pageFn("trusted_probe", { select: "control" }), option: pageFn("trusted_probe", { select: "option" }),
     } } : {}),
   }, { lane: "slow" }), "select");
+  return r && r.fr ? reread(r, target, "select") : r;
 }
 
 // Shared guidance lives here once instead of in every tool description.

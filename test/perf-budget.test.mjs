@@ -630,6 +630,29 @@ test("fill on a plain field costs two Apple Events, a miss one", async () => {
   assert.equal(appleEvents(), 1, breakdown());
 });
 
+// A native select is the pick and one re-read a task later, as a plain fill;
+// a miss or a tie sets nothing and has nothing to re-read. The pick runs on the
+// runtime's bounded execute, which the fake counts twice (NSAppleScript and
+// tab.execute), so page runs are read off tab.execute; untargeted, the resolve
+// adds the shown tab's id read.
+test("select on a native <select> costs two page runs, a miss or a tie one", async () => {
+  const dom = page(`<label>Plan <select id=plan><option value="">Select...</option><option>Basic plan</option><option>Basic support</option><option>Pro</option></select></label>`, { url: "https://c0.test/" });
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  const seen = evalsOf(dom);
+  const { o } = await call("select", { label_pattern: "^plan", text: "Pro" });
+  assert.deepEqual(o, { ok: true, selected: "Pro", el: `combobox "Plan"` });
+  assert.equal(world.counts["tab.execute"], 2, breakdown());
+  assert.equal(appleEvents(), 1 + 1 + 2, breakdown());
+  assert.ok(seen[1].length < 16000, `re-read eval'd ${seen[1].length} bytes`);
+  for (const text of ["Enterprise", "basic"]) {
+    world.reset();
+    const miss = await call("select", { label_pattern: "^plan", text });
+    assert.equal(miss.o.ok, false, JSON.stringify(miss.o));
+    assert.equal(world.counts["tab.execute"], 1, `${text} ${breakdown()}`);
+    assert.equal(appleEvents(), 1 + 1 + 1, `${text} ${breakdown()}`);
+  }
+});
+
 // A typeahead whose lookup answers the full text: the typing, the probe, the
 // polls up to the pick and the reads up to the verified pick; nothing retyped.
 test("fill on a typeahead that answers the full text costs a fixed count of Apple Events", async () => {

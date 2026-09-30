@@ -110,6 +110,69 @@ const CUSTOM_JS = `
     document.querySelectorAll('[role=option]').forEach(o => o.addEventListener('click', () => { cb.querySelector('.v').textContent = o.textContent; }));
   });`;
 
+// The page's async work runs on window.__q, one step per execute, standing in
+// for timers that fire between the page calls (as in fill-typeahead.test.mjs).
+function onTickPage(html, setup) {
+  const dom = page(html);
+  dom.eval(`window.__q = [];
+    window.later = (fn, n) => { window.__q.push({ fn, n }); };
+    window.__tick = () => { const due = window.__q.filter((j) => --j.n <= 0); window.__q = window.__q.filter((j) => j.n > 0); due.forEach((j) => j.fn()); };`);
+  if (setup) dom.eval(setup);
+  const ev = dom.eval.bind(dom);
+  dom.eval = (js) => { dom.__tick(); return ev(js); };
+  const world = makeWorld({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: [{ url: "https://a.test/", id: "x", dom }] }] }],
+    cg: [{ owner: "Google Chrome" }],
+  });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  return { dom, world };
+}
+const PLAN = `<label>Plan <select id=plan><option value="">Select...</option><option>Basic</option><option>Pro</option></select></label>`;
+
+// A native pick is read back in its own page call, before the page's queued
+// work runs; the re-read a task later, as fill's, catches a page that moves it.
+test("native select: a pick the page moves to another option a task later is ok:false, never selected", async () => {
+  const { dom } = onTickPage(PLAN, `const plan = document.getElementById('plan');
+    plan.addEventListener('change', () => { later(() => { if (plan.value === 'Basic') plan.value = 'Pro'; }, 1); });`);
+  const { o } = await select({ label_pattern: "^Plan", text: "Basic" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.selected, undefined);
+  assert.equal(o.reverted, undefined);
+  assert.equal(o.kept, "Pro");
+  assert.equal(o.el, `combobox "Plan"`);
+  assert.equal(o.error, `combobox "Plan" changed to "Pro" after it was filled; the page chose another option`);
+  assert.equal(dom.document.getElementById("plan").value, "Pro");
+  assert.equal(Object.keys(dom.__perch_fr).length, 0, "the re-read drops its record");
+});
+
+test("native select: a pick the page puts back or empties a task later is reverted; one that holds stays ok", async () => {
+  for (const [js, kept] of [["plan.selectedIndex = 2", "Pro"], ["plan.selectedIndex = 0", "Select..."]]) {
+    onTickPage(PLAN, `const plan = document.getElementById('plan'); plan.selectedIndex = 2;
+      plan.addEventListener('change', () => { later(() => { ${js}; }, 1); });`);
+    const { o } = await select({ label_pattern: "^Plan", text: "Basic" });
+    assert.equal(o.ok, false, JSON.stringify(o));
+    assert.equal(o.reverted, true, JSON.stringify(o));
+    assert.equal(o.kept, kept);
+    assert.equal(o.error, `combobox "Plan" changed to ${JSON.stringify(kept)} after it was filled; the page reverted the write`);
+  }
+  onTickPage(PLAN, `const plan = document.getElementById('plan');
+    plan.addEventListener('change', () => { later(() => { const v = plan.value, o = document.createElement('option'); o.textContent = 'Team'; plan.appendChild(o); plan.value = v; }, 1); });`);
+  assert.deepEqual((await select({ label_pattern: "^Plan", text: "Basic" })).o, { ok: true, selected: "Basic", el: `combobox "Plan"` });
+});
+
+// A custom list's pick is pressed in one page call and read in a later one, so
+// a page that moves it a task after the press has done so before the read.
+test("custom combobox: a pick the page moves a task after the press is ok:false, never selected", async () => {
+  onTickPage(CUSTOM, CUSTOM_JS.replace("cb.querySelector('.v').textContent = o.textContent;",
+    "cb.querySelector('.v').textContent = o.textContent; later(() => { cb.querySelector('.v').textContent = 'Junior'; }, 1);"));
+  const { o } = await select({ label_pattern: "level", text: "senior" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.selected, undefined);
+  assert.equal(o.error, `pressed "Senior" but the control shows "Junior"; not verified`);
+});
+
 test("custom combobox: opens with a real left press, picks, verifies", async () => {
   const { dom } = onPage(CUSTOM, CUSTOM_JS);
   const { o } = await select({ label_pattern: "level", text: "senior" });
