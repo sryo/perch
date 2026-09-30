@@ -603,7 +603,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     state.files[q.out] = { text: JSON.stringify(r) };
   };
   const fakeHelper = (task) => {
-    const h = { args: task.arguments.slice(), alive: !state.helper.exits, killed: false };
+    const h = { args: task.arguments.slice(), alive: !state.helper.exits, killed: false, filesAtLaunch: Object.keys(state.files) };
     h.prefix = /shotHelper\("([^"]+)", \d+\)$/.exec(h.args[3])[1];
     helpers.push(h);
     (state.helpers = state.helpers || []).push(h);
@@ -663,7 +663,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (!apps[name]) throw new Error("Application can't be found.");
       return apps[name];
     },
-    delay: (s) => { clock.t += Math.round(s * 1000); },
+    delay: (s) => { (state.delays = state.delays || []).push(s); clock.t += Math.round(s * 1000); },
     Date: { now: () => clock.t },
     ObjC: {
       // AppKit's classes exist only once it is imported, as in real osascript.
@@ -813,7 +813,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         fileHandleForUpdatingAtPath: (path) => (path === state.lockFile ? { isNil: () => false, fileDescriptor: 7, closeFile: undefined } : null),
       },
       flock: (fd, op) => { bump("flock"); (state.flocks = state.flocks || []).push(op); return op & 2 && !state.helper ? -1 : 0; },
-      getppid: () => state.ppid ?? 555,
+      getppid: () => { bump("getppid"); return state.ppid ?? 555; },
+      access: (path) => { if (state.helper) helperServe(); return path in state.files || path === state.lockFile ? 0 : -1; },
       NSString: { stringWithString: (str) => nsString(str), stringWithContentsOfFileEncodingError: (path) => {
         const f = state.files[path];
         return f && f.text != null ? { isNil: () => false, js: f.text } : { isNil: () => true };
