@@ -80,6 +80,24 @@ test("typeahead: plain input with a hidden companion picks the suggestion and su
   assert.equal(dom.lookups, 1);
 });
 
+// A browser's focus() scrolls its field into view unless told not to, and a
+// page may scroll on focus itself; either way the fill leaves the page's
+// scroll where it was, window and scrolled container alike.
+test("typeahead: a fill leaves the window and a scrolled container where they were", async () => {
+  for (const pageScrolls of [false, true]) {
+    const { dom } = onPage(`<div id=pane style="overflow:auto;height:60px">${LOCATION}</div>`, LOCATION_JS() + `
+      const pane = document.getElementById('pane');
+      const focus = HTMLElement.prototype.focus;
+      HTMLElement.prototype.focus = function (o) { if (!(o && o.preventScroll)) { window.scrollTo(0, 0); pane.scrollTop = 0; } return focus.call(this, o); };
+      ${pageScrolls ? "document.getElementById('loc').addEventListener('focus', () => { window.scrollTo(0, 0); pane.scrollTop = 0; });" : ""}
+      window.scrollTo(0, 400); pane.scrollTop = 30;`);
+    const o = await fill({ label_pattern: "location", text: "Rosario" });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    assert.equal($(dom, "#loc").value, "Rosario, Santa Fe, Argentina");
+    assert.deepEqual([dom.scrollY, $(dom, "#pane").scrollTop], [400, 30], `page scrolls on focus: ${pageScrolls}`);
+  }
+});
+
 test("typeahead: an exact suggestion beats an earlier prefix match", async () => {
   const { dom } = onPage(LOCATION, LOCATION_JS().replace("const cities = ", "const cities = ['Rosario del Tala, Entre Rios', 'Rosario'].concat(").replace(";\n  const inp", ");\n  const inp"));
   const o = await fill({ selector: "#loc", text: "rosario" });

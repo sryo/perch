@@ -4195,7 +4195,7 @@ const pressFocus = function (target, el) {
   const on = function () { fired = true; };
   el.addEventListener("focus", on);
   press(target);
-  if (document.activeElement !== el && el.focus) el.focus();
+  if (document.activeElement !== el && el.focus) el.focus({ preventScroll: true });
   el.removeEventListener("focus", on);
   if (fired || was === el || document.activeElement !== el) return;
   el.dispatchEvent(new FocusEvent("focus"));
@@ -4731,14 +4731,31 @@ function census(f) {
 }
 `;
 const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
-// Typed with input events and no blur, so the widget runs its own lookup.
+// Typed with input events and no blur, so the widget runs its own lookup. The
+// window and el's scrolled ancestors end where they were: focus() would scroll
+// el into view, and a page may scroll on focus or input itself.
 function taType(el, text) {
-  if (el.focus) el.focus();
+  const back = scrollsOf(el);
+  if (el.focus) el.focus({ preventScroll: true });
   setNativeValue(el, text);
   const key = text.slice(-1);
   el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: key }));
   el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
   el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: key }));
+  back();
+}
+// -> a function that puts the window's and el's ancestors' scroll offsets back.
+function scrollsOf(el) {
+  const els = [], x = window.scrollX, y = window.scrollY;
+  for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
+  return function () {
+    els.forEach(function (e) {
+      const n = e[0];
+      if (n.scrollLeft === e[1] && n.scrollTop === e[2]) return;
+      try { n.scrollTo({ left: e[1], top: e[2], behavior: "instant" }); } catch (err) { n.scrollLeft = e[1]; n.scrollTop = e[2]; }
+    });
+    if (window.scrollX !== x || window.scrollY !== y) window.scrollTo({ left: x, top: y, behavior: "instant" });
+  };
 }
 `;
 
