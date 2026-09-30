@@ -759,13 +759,19 @@ test("fill {fields}: a select an earlier field's change rebuilds and resets says
   assert.equal(o.results[0].ok, true);
   const r = o.results[1];
   assert.deepEqual([r.ok, r.reverted, r.kept], [false, true, "Pick"], JSON.stringify(r));
-  assert.equal(r.error, `combobox "Region" changed to "Pick" after it was filled; the page rebuilt its options after fields[0] (combobox "Country") changed; fill it again once that settles`);
+  assert.equal(r.error, `combobox "Region" changed to "Pick" after it was filled; the page rebuilt its options, and fields[0] (combobox "Country") may have changed them; fill it again once that settles`);
   assert.doesNotMatch(r.error, /reverted the write/);
   assert.equal(dom.document.getElementById("re").value, "");
   // Alone, a list rebuilt onto its placeholder is the plain revert: no earlier field to name.
   onPage(REGIONS, JS.replace("co.addEventListener('change'", "re.addEventListener('change'"));
   const a = await fill({ fields: [{ label_pattern: "region", option: "Cordoba" }] });
   assert.match(a.results[0].error, /changed to "Pick" after it was filled; the page reverted the write$/);
+  // A checkbox before it drives no list: a select rebuilding its own options is
+  // not blamed on it.
+  onPage(`<label><input type=checkbox id=ag> I agree</label>` + REGIONS, JS.replace("co.addEventListener('change'", "re.addEventListener('change'"));
+  const b = await fill({ fields: [{ label_pattern: "agree", checked: true }, { label_pattern: "region", option: "Cordoba" }] });
+  assert.equal(b.results[0].ok, true, JSON.stringify(b));
+  assert.match(b.results[1].error, /changed to "Pick" after it was filled; the page reverted the write$/);
 });
 
 // A select or radio showing an option other than the one asked for is a miss,

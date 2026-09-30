@@ -6022,11 +6022,12 @@ items.forEach(function (it) {
     if (now === it.st || (it.sv !== "" && el.value === it.sv)) return;
     back = el.selectedIndex < 0 || el.value === "" || now === it.pt;
     o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
-    // A list rebuilt under the pick after an earlier field of the batch landed
-    // is that field's dependent (a country reloading its regions), not a refusal.
-    const e = back && it.o && !el.contains(it.o) && items.filter(function (x) { return x.i < it.i; }).pop();
+    // A list rebuilt under the pick after an earlier select, radio or text field
+    // of the batch landed may be that field's dependent (a country reloading its
+    // regions), not a refusal. A checkbox drives no list, so it is never named.
+    const e = back && it.o && !el.contains(it.o) && items.filter(function (x) { return x.i < it.i && (!("on" in x) || x.mates); }).pop();
     if (e) {
-      recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + LATER + "the page rebuilt its options after fields[" + e.i + "] (" + e.id + ") changed; fill it again once that settles" });
+      recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + LATER + "the page rebuilt its options, and fields[" + e.i + "] (" + e.id + ") may have changed them; fill it again once that settles" });
       return;
     }
   } else {
