@@ -4402,38 +4402,9 @@ function ownOptions(s) {
   }
   if (!s.opened) return [];
   const fresh = within(document).filter(function (o) { return s.before.indexOf(o) < 0; });
-  // A bare input pressed with nothing new showing for 8 polls (about 400ms,
-  // past a list an async load or a portal renders a few tasks later): a list
-  // the page rendered before the press (collapsed by CSS) is the one that
-  // follows it. Never before the press, so it never makes the control read as open.
-  if (!fresh.length && s.input && s.ctl === s.input && s.polls >= 8) {
-    const l = nextList(s.input), o = l ? within(l) : [];
-    if (o.length) return o;
-  }
   if (fresh.length && !s.pop) s.pop = fresh[0].closest("[data-radix-popper-content-wrapper], [cmdk-root], [role=dialog]");
   if (s.pop && !s.input && !s.filter) s.filter = popSearch(s.pop, [], fresh);
   return fresh;
-}
-// The listbox that follows input before any other field: a sibling, or one inside
-// a sibling, climbing out of up to two wrappers (a label) that hold no other
-// field, never out of a form, main or body. A list another control names by
-// aria-controls is that control's; a chips list is passed over.
-function nextList(input) {
-  const F = "input:not([type=hidden]), select, textarea, [role=combobox]";
-  const field = function (n) { return n.matches(F) || !!n.querySelector(F); };
-  for (let e = input, d = 0; e && d < 3 && !/^(FORM|MAIN|BODY|HTML)$/.test(e.tagName); e = e.parentElement, d++) {
-    if (e !== input && Array.prototype.some.call(e.querySelectorAll(F), function (x) { return x !== input; })) return null;
-    for (let n = e.nextElementSibling; n; n = n.nextElementSibling) {
-      const l = n.matches("[role=listbox]") ? n : field(n) ? null : n.querySelector("[role=listbox]");
-      if (!l && field(n)) return null;
-      // A multi-select list, or one holding only chosen options, shows what was
-      // picked (chips), never what can be.
-      if (!l || attr(l, "aria-multiselectable") === "true" || !l.querySelector(OPT + ":not([aria-selected=true])")) continue;
-      const by = l.id ? document.querySelectorAll("[aria-controls]") : [];
-      return Array.prototype.some.call(by, function (c) { return c !== input && attr(c, "aria-controls").split(/\s+/).indexOf(l.id) >= 0; }) ? null : l;
-    }
-  }
-  return null;
 }
 // A popup's own search box, empty: cmdk's, one inside a Radix popper or cmdk root,
 // or a combobox/searchbox naming the list select picks from (one of lists, or one

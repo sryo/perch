@@ -591,15 +591,16 @@ test("custom combobox: a control already in view is not scrolled by select", asy
   assert.equal(dom.intoView, 0);
 });
 
-// A bare input with no aria-controls, its own box inside a page-wide form, whose
-// listbox follows it and is rendered before select opens it (collapsed by CSS,
-// so its options already have boxes): the list is found by where it sits.
-test("custom combobox: a bare input's following listbox in a page-wide form is its own list", async () => {
+// A bare input with no aria-controls, its own box inside a page-wide form, and a
+// listbox after it that was rendered before the press (collapsed by CSS, its
+// options already laid out): nothing ties that list to the input, so select
+// refuses rather than guess, and presses nothing in it.
+test("custom combobox: a bare input's pre-rendered neighbour listbox in a page-wide form is refused, never pressed", async () => {
   const list = `<ul id=cl role=listbox><li role=option>Rosario</li><li role=option>Cordoba</li></ul>`;
   const js = `const i = document.getElementById('city'), l = document.getElementById('cl');
-    window.opens = 0;
-    i.addEventListener('click', () => { window.opens++; i.setAttribute('aria-expanded', 'true'); });
-    l.querySelectorAll('li').forEach((o) => o.addEventListener('mousedown', (e) => { e.preventDefault(); if (i.getAttribute('aria-expanded') === 'true') { i.value = o.textContent; i.setAttribute('aria-expanded', 'false'); } }));`;
+    window.hits = 0;
+    i.addEventListener('click', () => { i.setAttribute('aria-expanded', 'true'); });
+    l.querySelectorAll('li').forEach((o) => o.addEventListener('mousedown', (e) => { window.hits++; e.preventDefault(); i.value = o.textContent; }));`;
   const input = `<input id=city role=combobox aria-expanded=false autocomplete=off>`;
   for (const html of [
     `<form><label>Name <input name=n></label><label>Email <input name=e></label><label for=city>City</label>${input}${list}<button>Send</button></form>`,
@@ -607,16 +608,11 @@ test("custom combobox: a bare input's following listbox in a page-wide form is i
   ]) {
     const { dom } = onPage(html, js);
     const { o } = await select({ label_pattern: "city", text: "Cordoba" });
-    assert.equal(o.ok, true, html + " " + JSON.stringify(o));
-    assert.equal(o.selected, "Cordoba");
-    assert.equal(dom.document.getElementById("city").value, "Cordoba");
-    assert.equal(dom.opens, 1, html);
+    assert.equal(o.ok, false, html + " " + JSON.stringify(o));
+    assert.match(o.error, /^the control's option list did not open or is empty/, html);
+    assert.equal(dom.hits, 0, html);
+    assert.equal(dom.document.getElementById("city").value, "", html);
   }
-  // A listbox past another field is that field's, never this input's.
-  const { dom } = onPage(`<form><label>Name <input name=n></label><label for=city>City</label>${input}<label>Zip <input name=z></label>${list}</form>`, js);
-  const { o } = await select({ label_pattern: "city", text: "Cordoba" });
-  assert.equal(o.ok, false, JSON.stringify(o));
-  assert.equal(dom.document.getElementById("city").value, "");
 });
 
 // A bare input whose real list is a portal appended to body on open, followed
@@ -653,8 +649,8 @@ test("custom combobox: a bare input's portal list wins over a neighbour listbox"
 // The real list may render a few tasks after the press (an async loadOptions,
 // a portal mounted on the next render): a following listbox is no stand-in
 // while select is still waiting for it.
-test("custom combobox: a portal list that renders a few tasks after the press wins over a following listbox", async () => {
-  for (const n of [2, 5]) {
+test("custom combobox: a portal list that renders tasks after the press wins; a static neighbour listbox is never pressed", async () => {
+  for (const n of [2, 6, 12, 20]) {
     const { dom } = onTickPage(`<form><label>Name <input name=n></label><label>Email <input name=e></label><label for=t>Team</label><input id=t role=combobox aria-expanded=false>
       <ul id=rec role=listbox aria-label=Recent><li role=option>Bravo</li></ul></form>`, `const t = document.getElementById('t');
       window.recentHits = 0;
