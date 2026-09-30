@@ -505,6 +505,26 @@ test("typeahead: several suggestions equally matching the text pick nothing and 
   }
 });
 
+// Lever's location lookup answers the city alone with its abbreviated form.
+test("typeahead: a state and country typed in full pick their abbreviated suggestion", async () => {
+  const { dom } = onPage(LOCATION, SHORT_LOOKUP(["Tuscaloosa, AL, USA"]));
+  const o = await fill({ label_pattern: "location", text: "Tuscaloosa, Alabama, United States" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Tuscaloosa, AL, USA");
+  assert.equal($(dom, "#loc").value, "Tuscaloosa, AL, USA");
+  assert.equal($(dom, "#selected-location").value, "loc-0");
+});
+
+// Rippling's lookup lists places inside the city after the city itself.
+test("typeahead: of suggestions naming the typed place, the one that starts with it is picked", async () => {
+  const opts = ["Tuscaloosa, Alabama, EE. UU.", "Cottondale, Tuscaloosa, Alabama, EE. UU.", "Northport, Tuscaloosa, Alabama, EE. UU."];
+  const { dom } = onPage(LOCATION, LOCATION_JS().replace(JSON.stringify(CITIES), JSON.stringify(opts)).replace("cities.filter((c) => q && c.toLowerCase().startsWith(q))", "(q ? cities : [])"));
+  const o = await fill({ label_pattern: "location", text: "Tuscaloosa, Alabama" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Tuscaloosa, Alabama, EE. UU.");
+  assert.equal($(dom, "#selected-location").value, "loc-0");
+});
+
 test("typeahead: a tie that holds through a debounce still waits for the fresh list", async () => {
   // The tied list sits unchanged for several polls (a stale list during a
   // debounce) before the exact suggestion arrives.
@@ -1167,6 +1187,7 @@ test("fill {trusted}: an option's leading unit that the control already showed b
   }
 });
 
+// The place names a text carries (PLACES) are args too.
 test("fill {trusted}: the typeahead pick and read scripts differ by text only in their args", async () => {
   const [html, js] = locVariant(["New York City", "Paris, Texas"]);
   const ta = [];
@@ -1174,7 +1195,7 @@ test("fill {trusted}: the typeahead pick and read scripts differ by text only in
     const { dom } = onPage(html, js);
     const ev = dom.eval;
     const seen = [];
-    dom.eval = (s) => { if (/s\.pickedN|const pk = /.test(s)) seen.push(s.replace(/\nconst A = .*;\n/, "\n")); return ev(s); };
+    dom.eval = (s) => { if (/s\.pickedN|const pk = /.test(s)) seen.push(s.replace(/\nconst A = .*;\n(const PLACES = .*;\n)?/, "\n")); return ev(s); };
     const o = await fill({ label_pattern: "location", text, trusted: true });
     assert.equal(o.ok, true, JSON.stringify(o));
     ta.push([...new Set(seen)].sort());

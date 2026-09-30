@@ -4333,6 +4333,15 @@ function inOrder(have, want) {
   }
   return want.length > 0;
 }
+// A folded text's comma parts as places: a part PLACES names (pageScript's map
+// of the place names in this call's args to "#" and their group) is its group,
+// else itself; dots and a leading "the" never count ("U.S." is "us").
+function placesOf(t) {
+  return t.split(",").map(function (p) {
+    p = p.replace(/\.|^ *(the )?| +$/g, "");
+    return typeof PLACES == "object" && PLACES[p] || p;
+  });
+}
 // A radio group as results name it.
 function groupId(g) { return "radiogroup " + JSON.stringify(clip(g.q, 80)); }
 // The best tier's hits: exact text, then a whole-word hit, then a word prefix,
@@ -4344,7 +4353,7 @@ function matchTier(list, key, want) {
   const word = new RegExp("(?:^|[^\\p{L}\\p{N}])" + esc + "(?:$|[^\\p{L}\\p{N}])", "u");
   const pre = new RegExp("(?:^|[^\\p{L}\\p{N}])" + esc, "u");
   const tiers = [function (t) { return t === want; }, function (t) { return word.test(t); }, function (t) { return pre.test(t); },
-    function (t) { return inOrder(wordsOf(t), ws); }];
+    function (t) { return inOrder(wordsOf(t), ws); }, function (t) { return inOrder(placesOf(t), placesOf(want)); }];
   const keys = list.map(function (x) { return fold(key(x)); });
   for (let i = 0; i < tiers.length; i++) {
     const hits = list.filter(function (x, j) { return tiers[i](keys[j]); });
@@ -5216,22 +5225,31 @@ function taOptions(s) {
   }, []);
 }
 // The options best matching text, most specific tier first: exact; each typed
-// comma part equal to one of the option's parts, in order; a prefix of the whole
-// option; a prefix of one of its words; every typed word whole and in order.
-// Accents fold. -> {hits, exact}
+// comma part equal to one of the option's parts, in order, as written, then as
+// places (placesOf); a prefix of the whole option; a prefix of one of its
+// words; every typed word whole and in order. Accents fold. A comma tie keeps
+// the hits whose first part is the typed first part; a tie as places yields to
+// any later tier's hits. -> {hits, exact}
 function taMatch(opts, text) {
   const w = fold(taNorm(text));
   const parts = function (t) { return t.split(",").map(function (p) { return p.trim(); }).filter(Boolean); };
-  const wp = parts(w), ws = wordsOf(w);
+  const wp = parts(w), wa = placesOf(w), ws = wordsOf(w);
   const pre = new RegExp("(?:^|[^\\p{L}\\p{N}])" + reEsc(w), "u");
-  const tiers = [function (t) { return t === w; }, function (t) { return inOrder(parts(t), wp); }, function (t) { return t.indexOf(w) === 0; },
-    function (t) { return pre.test(t); }, function (t) { return inOrder(wordsOf(t), ws); }];
+  const tiers = [function (t) { return t === w; }, function (t) { return inOrder(parts(t), wp); }, function (t) { return inOrder(placesOf(t), wa); },
+    function (t) { return t.indexOf(w) === 0; }, function (t) { return pre.test(t); }, function (t) { return inOrder(wordsOf(t), ws); }];
+  const lead = [null, function (t) { return parts(t)[0] === wp[0]; }, function (t) { return placesOf(t)[0] === wa[0]; }];
   const keys = w ? opts.map(function (o) { return fold(taNorm(o.textContent)); }) : [];
+  let tie = null;
   if (w) for (let i = 0; i < tiers.length; i++) {
-    const hits = opts.filter(function (o, j) { return tiers[i](keys[j]); });
+    let hits = opts.filter(function (o, j) { return tiers[i](keys[j]); });
+    if (hits.length > 1 && lead[i]) {
+      const first = hits.filter(function (o) { return lead[i](keys[opts.indexOf(o)]); });
+      if (first.length) hits = first;
+    }
+    if (i === 2 && hits.length > 1) { tie = hits; continue; }
     if (hits.length) return { hits: hits, exact: i === 0 };
   }
-  return { hits: [], exact: false };
+  return { hits: tie || [], exact: false };
 }
 // What an emptied control box shows, folded as pickedN is: its value or each
 // chip, else its whole text. chips: a multi-value box.
@@ -7906,10 +7924,44 @@ function lean(s) {
 const LEAN_PRELUDE = lean(PAGE_PRELUDE);
 const LEAN_SCRIPTS = new Map(Object.entries(PAGE_SCRIPTS).map(([k, v]) => [k, lean(v)]));
 
+// US states, Canadian provinces and common countries, each group's names equal
+// ("|" between groups, ":" between names), for comparing one comma part.
+const PLACES = "al:alabama|ak:alaska|az:arizona|ar:arkansas|ca:california|co:colorado|ct:connecticut|de:delaware|fl:florida|ga:georgia|hi:hawaii|" +
+  "id:idaho|il:illinois|in:indiana|ia:iowa|ks:kansas|ky:kentucky|la:louisiana|me:maine|md:maryland|ma:massachusetts|mi:michigan|mn:minnesota|" +
+  "ms:mississippi|mo:missouri|mt:montana|ne:nebraska|nv:nevada|nh:new hampshire|nj:new jersey|nm:new mexico|ny:new york|nc:north carolina|" +
+  "nd:north dakota|oh:ohio|ok:oklahoma|or:oregon|pa:pennsylvania|ri:rhode island|sc:south carolina|sd:south dakota|tn:tennessee|tx:texas|" +
+  "ut:utah|vt:vermont|va:virginia|wa:washington|wv:west virginia|wi:wisconsin|wy:wyoming|dc:district of columbia|pr:puerto rico|" +
+  "ab:alberta|bc:british columbia|mb:manitoba|nb:new brunswick|nl:newfoundland and labrador|ns:nova scotia|nt:northwest territories|" +
+  "nu:nunavut|on:ontario|pe:prince edward island|qc:quebec|sk:saskatchewan|yt:yukon|" +
+  "us:usa:united states:united states of america:estados unidos:ee uu:eeuu|uk:united kingdom:great britain:gb:britain|uae:united arab emirates|" +
+  "netherlands:holland|south korea:korea:republic of korea|czechia:czech republic|russia:russian federation|turkey:turkiye";
+const PLACE_GROUPS = new Map(PLACES.split("|").flatMap((g) => g.split(":").map((n) => [n, g.split(":")])));
+const placeName = (p) => p.normalize("NFD").replace(/\p{M}+/gu, "").toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim().replace(/^the /, "");
+// The page's PLACES for A: every name of each group that names a comma part of
+// a text or option A carries, mapped to "#" and its group's first name. An option part
+// matches a typed part as a place only through the typed part's own group, so
+// the rest of the table never needs to ship.
+function placesIn(A) {
+  const out = {};
+  const add = (v) => {
+    if (Array.isArray(v)) return v.forEach(add);
+    if (typeof v !== "string" || v.length > 300) return;
+    for (const p of v.split(",")) { const g = PLACE_GROUPS.get(placeName(p)); if (g) for (const n of g) out[n] = "#" + g[0]; }
+  };
+  const walk = (v, d) => {
+    if (!v || typeof v !== "object" || d > 3) return;
+    for (const [k, x] of Object.entries(v)) (k === "text" || k === "option" ? add : (y) => walk(y, d + 1))(x);
+  };
+  walk(A, 0);
+  return Object.keys(out).length ? out : null;
+}
+const PLACE_SCRIPTS = new Set([...LEAN_SCRIPTS].filter(([, v]) => v.includes("placesOf(")).map(([k]) => k));
+
 export function pageScript(name, A) {
   const c = callNotes.getStore();
   if (c) A = withRid(A, c.refs);
-  return LEAN_PRELUDE + "\nconst A = " + JSON.stringify(A) + ";\n" + (name ? LEAN_SCRIPTS.get(name) : "");
+  const pl = !name || PLACE_SCRIPTS.has(name) ? placesIn(A) : null;
+  return LEAN_PRELUDE + "\nconst A = " + JSON.stringify(A) + ";\n" + (pl ? "const PLACES = " + JSON.stringify(pl) + ";\n" : "") + (name ? LEAN_SCRIPTS.get(name) : "");
 }
 
 // What this server's last snapshot of a tab listed, keyed by the target as
