@@ -621,40 +621,43 @@ test("fill {fields} whose boxes and radios are already set costs one Apple Event
   assert.equal(appleEvents(), 1 + REREAD, breakdown());
 });
 
-// A plain field is the write and one re-read a task later; a miss (nothing
-// landed) has nothing to re-read.
-test("fill on a plain field costs a write and a bounded re-read, a miss one Apple Event", async () => {
+// A plain field is one page call, as a miss is: what it landed stays on the
+// page, and the next page call on the tab checks it inside its own execute.
+test("fill on a plain field costs one Apple Event, and the next call's check costs none", async () => {
   const dom = page(`<label>City <input id=c></label>`, { url: "https://c0.test/" });
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
   const seen = evalsOf(dom);
   const { o } = await call("fill", { label_pattern: "city", text: "Rosario" });
   assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "City"`, len: 7 });
-  assert.equal(appleEvents(), 1 + REREAD, breakdown());
-  assert.ok(seen[1].length < 16000, `re-read eval'd ${seen[1].length} bytes`);
+  assert.equal(appleEvents(), 1, breakdown());
+  world.reset();
+  assert.equal((await call("eval_js", { script: "return 1" })).o, 1);
+  assert.equal(appleEvents(), 1, breakdown());
+  assert.equal(seen.length, 2);
+  assert.ok(seen[1].length < 16000, `the checked eval_js sent ${seen[1].length} bytes`);
+  assert.ok(!seen[1].includes("function fillOne"), "the check ships none of fill's matching");
   world.reset();
   const miss = await call("fill", { label_pattern: "zzz", text: "x" });
   assert.equal(miss.o.ok, false);
-  assert.equal(appleEvents(), 1, breakdown());  // A listed tabId costs the same.
+  assert.equal(appleEvents(), 1, breakdown());
+  // A listed tabId costs the same.
   const h = (await listed("Google Chrome"))[0].tabId;
   world.reset();
   assert.equal((await call("fill", { label_pattern: "city", text: "Lima", target: { tabId: h } })).o.ok, true);
-  assert.equal(appleEvents(), 1 + REREAD, breakdown());
+  assert.equal(appleEvents(), 1, breakdown());
 });
 
-// A native select is the pick and one re-read a task later, as a plain fill;
-// a miss or a tie sets nothing and has nothing to re-read. Both run in the same
-// runtime call on its bounded execute, which the fake counts twice
-// (NSAppleScript and tab.execute), so page runs are read off tab.execute;
-// untargeted, the resolve adds the shown tab's id read once.
-test("select on a native <select> costs two page runs, a miss or a tie one", async () => {
+// A native select is one page run, a miss or a tie too; untargeted, the resolve
+// adds the shown tab's id read once, and the pick's step runs bounded, which
+// the fake counts twice (NSAppleScript and tab.execute), so page runs are read
+// off tab.execute.
+test("select on a native <select> costs one page run, a miss or a tie too", async () => {
   const dom = page(`<label>Plan <select id=plan><option value="">Select...</option><option>Basic plan</option><option>Basic support</option><option>Pro</option></select></label>`, { url: "https://c0.test/" });
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
-  const seen = evalsOf(dom);
   const { o } = await call("select", { label_pattern: "^plan", text: "Pro" });
   assert.deepEqual(o, { ok: true, selected: "Pro", el: `combobox "Plan"` });
-  assert.equal(world.counts["tab.execute"], 2, breakdown());
-  assert.equal(appleEvents(), 1 + 2 + 2, breakdown());
-  assert.ok(seen[1].length < 16000, `re-read eval'd ${seen[1].length} bytes`);
+  assert.equal(world.counts["tab.execute"], 1, breakdown());
+  assert.equal(appleEvents(), 1 + 2, breakdown());
   for (const text of ["Enterprise", "basic"]) {
     world.reset();
     const miss = await call("select", { label_pattern: "^plan", text });

@@ -632,38 +632,11 @@ test("fill: a write the page reverts names the trusted retry, but not after a tr
   assert.doesNotMatch(t.error, /retry with fill/);
 });
 
-// A page that empties the field one task after the write: fill's re-read on the
-// next page call sees it, alone or in a batch.
+// A page that empties the field one task after the write: a batch's re-read
+// sees it (a single fill's is the next call's check: late.test.mjs).
 const LATE_REVERT = `<form><label>Zip <input id=zip name=zip></label><label>City <input id=city name=city></label></form>`;
 const LATE_REVERT_JS = `const z = document.getElementById('zip');
   z.addEventListener('input', () => { later(() => { z.value = ''; }, 1); });`;
-
-test("fill: a write the page undoes a task later is ok:false reverted, not ok", async () => {
-  const { dom } = onPage(LATE_REVERT, LATE_REVERT_JS);
-  const o = await fill({ label_pattern: "zip", text: "2000" });
-  assert.equal(o.ok, false, JSON.stringify(o));
-  assert.equal(o.reverted, true);
-  assert.equal(o.kind, "plain");
-  assert.equal(o.el, `textbox "Zip"`);
-  assert.equal(o.kept, "");
-  assert.ok(o.error.endsWith("the page reverted the write; retry with fill {trusted:true}"), o.error);
-  assert.equal($(dom, "#zip").value, "");
-  assert.equal(dom.__perch_fr && Object.keys(dom.__perch_fr).length, 0, "the re-read drops its record");
-});
-
-test("fill: a write that holds past the re-read stays ok, and a clear the page refills is reverted", async () => {
-  const { dom } = onPage(LATE_REVERT, LATE_REVERT_JS);
-  const o = await fill({ label_pattern: "city", text: "Rosario" });
-  assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "City"`, len: 7 });
-  assert.equal($(dom, "#city").value, "Rosario");
-  const refill = onPage(`<label>Code <input id=code value=A1></label>`, `const c = document.getElementById('code');
-    c.addEventListener('input', () => { later(() => { c.value = 'A1'; }, 1); });`);
-  const c = await fill({ label_pattern: "code", text: "" });
-  assert.equal(c.ok, false, JSON.stringify(c));
-  assert.equal(c.reverted, true);
-  assert.equal(c.kept, "A1");
-  assert.equal($(refill.dom, "#code").value, "A1");
-});
 
 test("fill {fields}: a field the page undoes a task after the batch is reverted; the others stay ok", async () => {
   const { dom } = onPage(LATE_REVERT, LATE_REVERT_JS);
@@ -689,20 +662,10 @@ test("fill {fields}: a box or select the page flips back a task later is reverte
 });
 
 // A page that formats what was typed a task later changed it to a value that is
-// neither what it held before nor empty: the fill stands, with a note.
+// neither what it held before nor empty: the batch stands, with a note.
 const FORMATS_LATER = `<label>Postcode <input id=pc></label><label>Amount <input id=am></label><label>Start <input id=sd></label>`;
 const FORMATS_LATER_JS = `const fmt = { pc: (v) => v.toUpperCase(), am: (v) => Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }), sd: (v) => v.split('-').reverse().join('/') };
   for (const id of Object.keys(fmt)) { const e = document.getElementById(id); e.addEventListener('input', () => { later(() => { e.value = fmt[id](e.value); }, 1); }); }`;
-
-test("fill: a page that formats the value a task later keeps ok, with a note, never reverted", async () => {
-  for (const [label, text, shown] of [["postcode", "sw1a 1aa", "SW1A 1AA"], ["amount", "1000", "1,000.00"], ["start", "2024-01-05", "05/01/2024"]]) {
-    onPage(FORMATS_LATER, FORMATS_LATER_JS);
-    const o = await fill({ label_pattern: label, text });
-    assert.equal(o.ok, true, JSON.stringify(o));
-    assert.equal(o.reverted, undefined, JSON.stringify(o));
-    assert.match(o.note, new RegExp(`changed to ${JSON.stringify(shown).replace(/[.()/]/g, "\\$&")} after it was filled; another value replaced it`), JSON.stringify(o));
-  }
-});
 
 test("fill {fields}: a field the page formats a task later keeps ok, with a note", async () => {
   onPage(FORMATS_LATER, FORMATS_LATER_JS);
@@ -711,20 +674,6 @@ test("fill {fields}: a field the page formats a task later keeps ok, with a note
   assert.deepEqual(o.results.map((x) => [x.ok, x.reverted]), [[true, undefined], [true, undefined]]);
   assert.match(o.results[0].note, /changed to "SW1A 1AA" after it was filled; another value replaced it/);
   assert.match(o.results[1].note, /changed to "05\/01\/2024" after it was filled; another value replaced it/);
-});
-
-test("fill: a field the page puts back to its prior value a task later is reverted; another value is a note", async () => {
-  onPage(`<label>Code <input id=code value=A1></label>`, `const c = document.getElementById('code');
-    c.addEventListener('input', () => { later(() => { c.value = 'A1'; }, 1); });`);
-  const o = await fill({ label_pattern: "code", text: "B2" });
-  assert.equal(o.ok, false, JSON.stringify(o));
-  assert.equal(o.reverted, true);
-  assert.equal(o.kept, "A1");
-  onPage(`<label>Code <input id=code value=A1></label>`, `const c = document.getElementById('code');
-    c.addEventListener('input', () => { later(() => { c.value = 'C3'; }, 1); });`);
-  const n = await fill({ label_pattern: "code", text: "B2" });
-  assert.equal(n.ok, true, JSON.stringify(n));
-  assert.equal(n.note, `textbox "Code" changed to "C3" after it was filled; another value replaced it`);
 });
 
 test("fill {fields}: a select the page rebuilds a task later with the same choice holds", async () => {
@@ -809,10 +758,6 @@ test("fill {fields}: a radio checked by label that the page moves back a task la
 const isReread = (js) => js.includes("items = m && m[A.tok]");
 const NO_REREAD = "not read again after the write: the page gave no reply (it may be navigating); check it";
 for (const [name, html, args, check] of [
-  ["select", `<label>Sort <select id=so><option>Name</option><option>Price</option></select></label>`, ["select", { label_pattern: "sort", text: "Price" }],
-    (o) => assert.deepEqual(o, { ok: true, selected: "Price", el: `combobox "Sort"`, note: NO_REREAD })],
-  ["fill", `<form><label>Search <input id=q></label></form>`, ["fill", { label_pattern: "search", text: "shoes" }],
-    (o) => assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "Search"`, len: 5, note: NO_REREAD })],
   ["fill {fields}", `<form><label>Search <input id=q></label><label>Sort <select id=so><option>Name</option><option>Price</option></select></label></form>`,
     ["fill", { fields: [{ label_pattern: "search", text: "shoes" }, { label_pattern: "sort", option: "Price" }] }],
     (o) => { assert.equal(o.ok, true, JSON.stringify(o)); assert.deepEqual(o.results.map((r) => r.note), [NO_REREAD, NO_REREAD]); }],
@@ -833,18 +778,17 @@ for (const [name, html, args, check] of [
   });
 }
 
-// Arc and Safari have no bounded page call, so a re-read there could wait out
-// the 2-minute Apple Event default behind a navigating change handler: it is
-// skipped, with a note, and the write's answer stands.
-const NO_BOUND = "not read again after the write: this browser has no bounded page call; check it if the page may undo it";
+// Arc and Safari have no bounded page call; a single fill or select sends no
+// re-read of its own (the next call's check reads it), so a navigating change
+// handler never leaves one waiting.
 for (const [name, browser] of [
   ["Arc", { name: "Arc", kind: "arc", windows: [{ id: "W1", active: 0, tabs: [{ url: "https://a.test/", id: "x" }] }] }],
   ["Safari", { name: "Safari", kind: "safari", windows: [{ id: 1, active: 0, tabs: [{ url: "https://a.test/", id: "x" }] }] }],
 ]) {
-  test(`${name}: fill and select skip the re-read with a note, never waiting on a dropped reply`, async () => {
+  test(`${name}: fill and select answer from the write alone, with no note`, async () => {
     for (const [tool, html, args, want] of [
-      ["fill", `<label>Search <input id=q></label>`, { label_pattern: "search", text: "shoes" }, { ok: true, kind: "plain", el: `textbox "Search"`, len: 5, note: NO_BOUND }],
-      ["select", `<label>Sort <select><option>Name</option><option>Price</option></select></label>`, { label_pattern: "sort", text: "Price" }, { ok: true, selected: "Price", el: `combobox "Sort"`, note: NO_BOUND }],
+      ["fill", `<label>Search <input id=q></label>`, { label_pattern: "search", text: "shoes" }, { ok: true, kind: "plain", el: `textbox "Search"`, len: 5 }],
+      ["select", `<label>Sort <select><option>Name</option><option>Price</option></select></label>`, { label_pattern: "sort", text: "Price" }, { ok: true, selected: "Price", el: `combobox "Sort"` }],
     ]) {
       const dom = page(html);
       const spec = structuredClone(browser);
@@ -857,18 +801,13 @@ for (const [name, browser] of [
       const t0 = world.clock.t;
       const r = await handleCall(tool, args);
       assert.deepEqual(JSON.parse(r.content[0].text), want, `${name} ${tool}`);
-      console.log(`# ${name} ${tool}: ${world.clock.t - t0}ms virtual`);
       assert.ok(world.clock.t - t0 < 1000, `${name} ${tool} took ${world.clock.t - t0}ms`);
     }
   });
 }
 
 const NO_RECORD = "not read again after the write: the page no longer held its record (a new document, or another tab); check it";
-test("fill: a re-read that finds no record (a new document) keeps the write's answer, with a note", async () => {
-  const { dom } = onPage(LATE_REVERT, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
-  const o = await fill({ label_pattern: "city", text: "Rosario" });
-  assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "City"`, len: 7, note: NO_RECORD });
-  assert.equal($(dom, "#city").value, "Rosario");
+test("fill {fields}: a re-read that finds no record (a new document) keeps the write's answer, with a note", async () => {
   onPage(LATE_REVERT, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
   const f = await fill({ fields: [{ label_pattern: "zip", text: "2000" }, { label_pattern: "city", text: "Rosario" }] });
   assert.equal(f.ok, true, JSON.stringify(f));

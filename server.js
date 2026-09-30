@@ -477,14 +477,15 @@ function jxaRuntime(BROWSERS, HANG) {
     return onTab(t, function () { return execOnce(t, js); });
   }
   function execOnce(t, js) {
-    if (t.kind === "safari") {
-      if (t.pick) return pickRun(t, js);
-      return safariJs(t, js);
+    const w = lateWrap(js);
+    let x;
+    if (t.kind === "safari") x = t.pick ? pickRun(t, w) : safariJs(t, w);
+    else {
+      x = t.tab.execute({ javascript: w });
+      // Arc JSON.stringifies whatever execute returns; perch's wrappers already did.
+      if (t.kind === "arc") { try { x = JSON.parse(x); } catch (e) {} }
     }
-    const x = t.tab.execute({ javascript: js });
-    // Arc JSON.stringifies whatever execute returns; perch's wrappers already did.
-    if (t.kind === "arc") { try { return JSON.parse(x); } catch (e) { return x; } }
-    return x;
+    return w === js ? x : lateOut(x);
   }
 
   function safariJs(t, js) {
@@ -523,6 +524,36 @@ function jxaRuntime(BROWSERS, HANG) {
     note = note || {};
     note.s = "safari:" + set;
     if (set !== raw) note.m = note.s;
+  }
+  // Node's check of this server's pending late records (lateTemplate): the
+  // template runs the check, then the page JS put in place of LATE_JS, in one
+  // execute. The first page JS a runtime call sends carries it until one answers
+  // with the check's mark (\u0002{l, h?}\u0002 ahead of the result), whose list
+  // rides the call's note as l. A held answer (h) ran nothing else: it throws,
+  // and so does every later send in the call, with no Apple Event.
+  const LATE_JS = "@perch_late_js@", LATE_HOLD = "perch-late-hold ";
+  let late = null, lateHeld = null;
+  function lateWrap(js) {
+    if (lateHeld) throw lateHeld;
+    return late ? late.split(LATE_JS).join(js) : js;
+  }
+  function lateOut(v) {
+    if (typeof v !== "string" || v.charCodeAt(0) !== 2) return v;
+    const e = v.indexOf("\u0002", 1), o = JSON.parse(v.slice(1, e));
+    late = null;
+    if (o.h) {
+      lateHeld = new Error(LATE_HOLD + JSON.stringify(o.l));
+      lateHeld.perchHeld = true;
+      throw lateHeld;
+    }
+    note = note || {};
+    note.l = o.l;
+    return v.slice(e + 1);
+  }
+  const held = function (e) { return !!e && e.perchHeld === true; };
+  // A function sending page JS through `send`, with the late check.
+  function lateRun(send) {
+    return function (s) { const w = lateWrap(s), r = send(w); return w === s ? r : lateOut(r); };
   }
   // A Safari handle's window as last read: [tabs at its URL, tabs in all], as
   // note.c. For a handle that has stamped, an unstamped page at its recorded index
@@ -602,41 +633,46 @@ function jxaRuntime(BROWSERS, HANG) {
         // before) not stamped at all, is left to pickRun, which sees the other candidates.
         const guard = function (s, mode) { return stampGuard(s, m[3], ours(want, h.raw), h.raw, mode, want.foreign); };
         const win = app("Safari").windows.byId(Number(m[1])), tab = win.tabs[Number(m[2])];
+        const w = lateWrap(js);
         let v;
-        try { v = app("Safari").doJavaScript(guard(js, want.own ? "ours" : "any"), { in: tab }); }
+        try { v = app("Safari").doJavaScript(guard(w, want.own ? "ours" : "any"), { in: tab }); }
         catch (e) { if (e && e.errorNumber === -1712) throw e; return null; }
         if (v === WRONG_TAB || v === UNSTAMPED) return null;
         noted(h.raw, h.raw);
-        if (at) Object.assign(at, { app: "Safari", kind: "safari", win: win, winId: m[1], run: function (s) {
+        if (at) Object.assign(at, { app: "Safari", kind: "safari", win: win, winId: m[1], run: lateRun(function (s) {
           const r = app("Safari").doJavaScript(guard(s, "ours"), { in: tab });
           if (r === WRONG_TAB || r === UNSTAMPED) throw staleError(want.tabId);
           return r;
-        } });
-        return { v: v };
+        }) });
+        return { v: w === js ? v : lateOut(v) };
       }
       const hn = hints[want.tabId];
       if (KIND[h.app] !== "chrome" || !hn || !alive(h.app, procs())) return null;
       const win = app(h.app).windows[hn.w], tab = win.tabs.byId(hn.id);
+      const w = lateWrap(js);
       let v;
-      try { v = tab.execute({ javascript: js }); }
+      try { v = tab.execute({ javascript: w }); }
       catch (e) { if (noSuchObject(e)) { delete hints[want.tabId]; return null; } throw e; }
-      if (at) Object.assign(at, { app: h.app, kind: "chrome", win: win, w: hn.w, tabId: hn.id, run: function (s) { return tab.execute({ javascript: s }); } });
-      return { v: v };
+      if (at) Object.assign(at, { app: h.app, kind: "chrome", win: win, w: hn.w, tabId: hn.id, run: lateRun(function (s) { return tab.execute({ javascript: s }); }) });
+      return { v: w === js ? v : lateOut(v) };
     }
     if (want.app != null) return null;
     const top = procs().z[0], kind = KIND[top];
     if (!top || (kind !== "chrome" && kind !== "safari")) return null;
     const win = app(top).windows[0];
-    const run = kind === "chrome"
+    const send = kind === "chrome"
       ? function (s) { return win.activeTab.execute({ javascript: s }); }
       : function (s) { return app(top).doJavaScript(s, { in: win.currentTab }); };
-    if (at) Object.assign(at, { app: top, kind: kind, win: win, w: 0, run: run });
+    if (at) Object.assign(at, { app: top, kind: kind, win: win, w: 0, run: lateRun(send) });
+    const w = lateWrap(js);
+    let v;
     try {
-      return { v: run(js) };
+      v = send(w);
     } catch (e) {
       if (noSuchObject(e) || (kind === "safari" && !(e && e.errorNumber === -1712))) return null;
       throw e;
     }
+    return { v: w === js ? v : lateOut(v) };
   }
 
   // exec with an Apple Event timeout of `secs`. Chrome never replies to an
@@ -665,7 +701,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // A poll's page JS answers in tens of ms, or seconds on a loaded machine; a reply
   // dropped mid-navigation costs at most this.
   const POLL_EXEC_SECS = 2;
-  // Where select's re-read script takes the token its pick answered with.
+  // Where fill {fields}' re-read script takes the token its write answered with.
   const FR_TOK = '"@perch_fr_tok@"';
   const asQuote = function (s) { return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; };
   const NO_REPLY = "timeout: " + HANG.noReply;
@@ -701,12 +737,14 @@ function jxaRuntime(BROWSERS, HANG) {
   }
   // `win` is an AppleScript window specifier.
   function asExecute(t, js, secs, win) {
+    const w = lateWrap(js);
     const s = asScript(t.app, t.tabId, win);
     if (!s) throw new Error("page JS failed");
     const start = Date.now();
-    const d = s.executeAppleEventError(asCall(js, Math.round(secs * 1000)), Ref());
+    const d = s.executeAppleEventError(asCall(w, Math.round(secs * 1000)), Ref());
     if (d.isNil()) throw new Error(Date.now() - start >= secs * 900 ? NO_REPLY + secs + "s; the page may be navigating; retry" : "page JS failed");
-    return ObjC.unwrap(d.stringValue);
+    const v = ObjC.unwrap(d.stringValue);
+    return w === js ? v : lateOut(v);
   }
   // AppleScript's `tell application "Name"` may reach another instance of the
   // browser (another tool's headless copy), while JXA's Application(name) reaches
@@ -735,14 +773,14 @@ function jxaRuntime(BROWSERS, HANG) {
   function pollExec(t, js, secs) {
     if (!pinned(t)) return exec(t, js);
     try { return asExecute(t, js, secs, namedWindow(t)); }
-    catch (e) { if (isNoReply(e)) throw e; }
+    catch (e) { if (isNoReply(e) || held(e)) throw e; }
     return exec(t, js);
   }
   // pollExec for quickExec's Chromium tab (`at`, sole instance): by id, or the
   // window's active tab when untargeted. A fast failure takes the plain path.
   function boundedAt(at, js) {
     try { return asExecute(at, js, POLL_EXEC_SECS, "window " + (at.w + 1)); }
-    catch (e) { if (isNoReply(e)) throw e; }
+    catch (e) { if (isNoReply(e) || held(e)) throw e; }
     return at.run(js);
   }
   // A one-shot read, sent once more with twice the cap after a dropped reply: it
@@ -774,7 +812,7 @@ function jxaRuntime(BROWSERS, HANG) {
   function stepExec(t, js, secs) {
     if (!pinned(t)) return exec(t, js);
     try { return asExecute(t, js, secs, namedWindow(t)); }
-    catch (e) { if (isNoReply(e)) throw new Error(NO_REPLY + secs + "s" + MAY_HAVE_RUN); }
+    catch (e) { if (held(e)) throw e; if (isNoReply(e)) throw new Error(NO_REPLY + secs + "s" + MAY_HAVE_RUN); }
     if (!inNamedWindow(t)) return exec(t, js);
     exec(t, "1");
     throw new Error("timeout: " + HANG.failed + MAY_HAVE_RUN);
@@ -809,7 +847,7 @@ function jxaRuntime(BROWSERS, HANG) {
       const secs = step ? STEP_EXEC_SECS : Math.max(0.1, Math.min(cap, (deadline - Date.now()) / 1000));
       const src = typeof js === "function" ? js() : js;
       try { v = pollValue(step ? stepExec(t, src, secs) : pollExec(t, src, secs)); } catch (e) {
-        if (isStale(e) || (step && isNoReply(e))) throw e;
+        if (isStale(e) || held(e) || (step && isNoReply(e))) throw e;
         if (isNoReply(e)) { cap *= 2; silent = true; }
       }
       if (!silent) answered = Date.now();
@@ -2304,6 +2342,7 @@ function jxaRuntime(BROWSERS, HANG) {
     // runs keep it lazy.
     warm() { try { appKit(); } catch (e) {} },
     takeNote() { const n = note; note = null; return n; },
+    lateArm(t) { late = t; lateHeld = null; },
     dialogs(a) {
       return provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
     },
@@ -2756,17 +2795,6 @@ function jxaRuntime(BROWSERS, HANG) {
       // No start: the caller's own page call already opened the control.
       const r = a.start ? stepRead(t, a.start) : { pending: true };
       if (!r || !r.pending) {
-        // A native pick that landed (fr) is read again here, bounded, on the same
-        // tab: its change handler may have queued a move, or a navigation that
-        // drops the reply ({dropped}). null: the read could not run.
-        if (r && r.fr && a.reread) {
-          let x = { unbounded: true };
-          if (pinned(t)) {
-            try { x = JSON.parse(String(pollExec(t, a.reread.split(FR_TOK).join(JSON.stringify(r.fr)), POLL_EXEC_SECS))); }
-            catch (e) { x = isNoReply(e) ? { dropped: true } : null; }
-          }
-          r.rr = x;
-        }
         return r;
       }
       // r.tok (a typeahead's: a.tok, from fill's own page call): the owner token of
@@ -3318,8 +3346,10 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   const call = `__perch.${fn}(${JSON.stringify(args)})`;
   let script = raw ? call : `JSON.stringify(${call})`;
   // The runtime's note (the stamp it wrote, a moved tab's handle, Safari windows'
-  // tab counts) rides ahead of the result. Any call can issue a Safari handle.
-  script = `(function(){__perch.takeNote();var r=${script},n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
+  // tab counts, the late check's list) rides ahead of the result. Any call can
+  // issue a Safari handle.
+  const c0 = callNotes.getStore(), lt = c0 && c0.late && !c0.late.done && !DIALOG_BLIND.has(fn) ? lateTemplate(c0.late) : null;
+  script = `(function(){__perch.takeNote();__perch.lateArm(${JSON.stringify(lt)});var r=${script},n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
   let out = DIALOG_BLIND.has(fn) && !(args && args.clip)
     ? await jxa(script, { lane, timeout })
     : await watchDialogs(args && args.target ? args.target : {}, lane, (token) => jxa(script, { lane, timeout, token }));
@@ -3344,8 +3374,53 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
       if (n.m !== tabId) remember(movedTo, tabId, n.m);
       if (c) c.moved = n.m;
     }
+    if (n.l && c && c.late) lateDone(c.late, n.l);
   }
   return raw ? out : JSON.parse(out);
+}
+
+// Late reverts. A plain fill or a native select (and a fill {fields} batch
+// whose re-read could not run in its own call) leaves its record of what landed
+// on the page (frRecord) under an owner token, and Node keeps the token here,
+// per target as tabKey keys it. The next call on that target that runs page JS
+// runs fill_late ahead of its own script in the same execute (lateTemplate): no
+// Apple Event of its own. Its list comes back as the call's `late`, and the
+// tokens it was sent are dropped whether or not their records were found (a
+// new document, another tab). A click or press is held by a late find: nothing
+// else in its call runs.
+const lateToks = new Map();
+const LATE_TOKS_MAX = 20, LATE_KEYS_MAX = 200;
+function lateKeep(target, tok) {
+  if (typeof tok !== "string") return;
+  const k = tabKey(target), list = (lateToks.get(k) || []).filter((t) => t !== tok);
+  list.push(tok);
+  lateToks.delete(k);
+  lateToks.set(k, list.slice(-LATE_TOKS_MAX));
+  if (lateToks.size > LATE_KEYS_MAX) lateToks.delete(lateToks.keys().next().value);
+}
+const LATE_HOLD_TOOLS = new Set(["click", "press"]);
+function lateArm(name, target) {
+  const k = tabKey(target), toks = lateToks.get(k);
+  return toks && toks.length ? { key: k, toks: toks.slice(), hold: LATE_HOLD_TOOLS.has(name) } : null;
+}
+function lateDone(late, found) {
+  if (late.done) return;
+  late.done = true;
+  late.found = Array.isArray(found) ? found : [];
+  const left = (lateToks.get(late.key) || []).filter((t) => !late.toks.includes(t));
+  if (left.length) lateToks.set(late.key, left); else lateToks.delete(late.key);
+}
+// The check wrapped around the page JS the runtime puts in place of LATE_JS:
+// it runs fill_late first, then the script, and prefixes the script's string
+// answer with its mark, dropping the records it was sent. A held check (h)
+// runs no script. A script answering a non-string (a bare probe) takes no mark,
+// and its call's next page JS carries the check again.
+const LATE_JS = "@perch_late_js@";
+function lateTemplate(late) {
+  if (late.tpl) return late.tpl;
+  const check = buildEvalWrapper(pageScript("fill_late", { toks: late.toks, hold: late.hold || undefined, hint: TRUSTED_HINT }));
+  const drop = `var m=window.__perch_fr;if(m)${JSON.stringify(late.toks)}.forEach(function(k){delete m[k]});`;
+  return (late.tpl = `(function(){var L=${check},o=null;try{o=JSON.parse(L)}catch(e){}if(!o||!Array.isArray(o.l))L='{"l":[]}';else if(o.h){${drop}return "\u0002"+L+"\u0002"}var r=(\n${LATE_JS}\n);if(typeof r!=="string")return r;${drop}return "\u0002"+L+"\u0002"+r})()`);
 }
 
 const NOTE = "\\u0001", NOTE_MARK = "\u0001";
@@ -4998,6 +5073,63 @@ function frRecord(items) {
 }
 `;
 
+// Judges the fields a write pass landed (frRecord's items) as they stand now.
+// -> {recheck: {index: miss}, notes: {index: text}}. Only a field back at what it
+// held before the write, or emptied, was reverted. A text field showing some
+// other value was reformatted by the page or written by another call, which is
+// a note; a select or radio group on another option is a miss, since no page
+// formats one option into another. A field that left the document can't be
+// judged here and is left as it was.
+const FR_JUDGE_LIB = HOLDS_LIB + String.raw`
+function frJudge(items) {
+  const LATER = " after it was filled; ", BACK = LATER + "the page reverted the write", OTHER = LATER + "another value replaced it", PICKED = LATER + "the page chose another option";
+  const on = function (el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; };
+  const changed = function (kept) { return kept ? " changed to " + JSON.stringify(kept) : " was cleared"; };
+  const recheck = {}, notes = {};
+  items.forEach(function (it) {
+    const el = it.el;
+    if (!el.isConnected) return;
+    let o, back;
+    if (it.mates) {
+      if (on(el)) return;
+      const cur = it.mates.filter(on)[0];
+      back = !cur || cur === it.pel;
+      const name = cur && it.names ? it.names[it.mates.indexOf(cur)] : "";
+      o = { error: it.id + (name ? changed(clip(name, 60)) : " is no longer selected") };
+    } else if ("on" in it) {
+      const now = on(el);
+      if (now === it.on) return;
+      back = true;
+      o = { checked: now, error: it.id + (!it.on ? ' changed to "checked"' : " was cleared") };
+    } else if ("st" in it) {
+      const now = optText(el);
+      if (now === it.st || (it.sv !== "" && el.value === it.sv)) return;
+      back = el.selectedIndex < 0 || el.value === "" || now === it.pt;
+      o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
+      // A list rebuilt under the pick after an earlier select, radio or text field
+      // of the batch landed may be that field's dependent (a country reloading its
+      // regions), not a refusal. A checkbox drives no list, so it is never named.
+      const e = back && it.o && !el.contains(it.o) && items.filter(function (x) { return x.i < it.i && (!("on" in x) || x.mates); }).pop();
+      if (e) {
+        recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + LATER + "the page rebuilt its options, and fields[" + e.i + "] (" + e.id + ") may have changed them; fill it again once that settles" });
+        return;
+      }
+    } else {
+      const now = it.rich ? textOf(el) : el.value;
+      if (it.text === "" ? !now.trim() : !!now.trim() && (now === it.want || holdsText(now, it.text))) return;
+      back = now === it.prior || (it.text !== "" && !now.trim());
+      o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
+    }
+    if (back) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + BACK });
+    else if (it.mates || "st" in it) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id }, o, { error: o.error + PICKED });
+    else notes[it.i] = o.error + OTHER;
+  });
+  const out = { recheck: recheck };
+  if (Object.keys(notes).length) out.notes = notes;
+  return out;
+}
+`;
+
 const FILL_LIB = TOK_LIB + TYPEAHEAD_LIB + EMBED_LIB + HOLDS_LIB + FR_LIB + String.raw`
 // trapLike, except that untabbable with autofill off as the only sign is no trap
 // on a required field: date pickers and masks look like that.
@@ -6020,63 +6152,35 @@ return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "
 
   fill: FILL_LIB + "return fillOne(A);",
 
-  // The fields a fill or fill {fields} write pass landed (frRecord, under
-  // A.tok), read again one page call later. -> {recheck: {index: miss}, notes:
-  // {index: text}}, {} when all hold, or {lost} (no record: a new document).
-  // Only a field back at what it held before the write, or emptied, was
-  // reverted. A text field showing some other value was reformatted by the page
-  // or written by another call, which is a note; a select or radio group on
-  // another option is a miss, since no page formats one option into another. A
-  // field that left the document can't be judged here and is left as it was.
-  fill_reread: HOLDS_LIB + String.raw`
+  // The fields a fill {fields} write pass landed (frRecord, under A.tok), read
+  // again in the same runtime call. -> frJudge's answer, or {lost} (no record: a
+  // new document, or another tab).
+  fill_reread: FR_JUDGE_LIB + String.raw`
 const m = window.__perch_fr, items = m && m[A.tok];
 if (!items) return { lost: true };
 delete m[A.tok];
-const LATER = " after it was filled; ", BACK = LATER + "the page reverted the write", OTHER = LATER + "another value replaced it", PICKED = LATER + "the page chose another option";
-const on = function (el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; };
-const changed = function (kept) { return kept ? " changed to " + JSON.stringify(kept) : " was cleared"; };
-const recheck = {}, notes = {};
-items.forEach(function (it) {
-  const el = it.el;
-  if (!el.isConnected) return;
-  let o, back;
-  if (it.mates) {
-    if (on(el)) return;
-    const cur = it.mates.filter(on)[0];
-    back = !cur || cur === it.pel;
-    const name = cur && it.names ? it.names[it.mates.indexOf(cur)] : "";
-    o = { error: it.id + (name ? changed(clip(name, 60)) : " is no longer selected") };
-  } else if ("on" in it) {
-    const now = on(el);
-    if (now === it.on) return;
-    back = true;
-    o = { checked: now, error: it.id + (!it.on ? ' changed to "checked"' : " was cleared") };
-  } else if ("st" in it) {
-    const now = optText(el);
-    if (now === it.st || (it.sv !== "" && el.value === it.sv)) return;
-    back = el.selectedIndex < 0 || el.value === "" || now === it.pt;
-    o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
-    // A list rebuilt under the pick after an earlier select, radio or text field
-    // of the batch landed may be that field's dependent (a country reloading its
-    // regions), not a refusal. A checkbox drives no list, so it is never named.
-    const e = back && it.o && !el.contains(it.o) && items.filter(function (x) { return x.i < it.i && (!("on" in x) || x.mates); }).pop();
-    if (e) {
-      recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + LATER + "the page rebuilt its options, and fields[" + e.i + "] (" + e.id + ") may have changed them; fill it again once that settles" });
-      return;
-    }
-  } else {
-    const now = it.rich ? textOf(el) : el.value;
-    if (it.text === "" ? !now.trim() : !!now.trim() && (now === it.want || holdsText(now, it.text))) return;
-    back = now === it.prior || (it.text !== "" && !now.trim());
-    o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
-  }
-  if (back) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + BACK });
-  else if (it.mates || "st" in it) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id }, o, { error: o.error + PICKED });
-  else notes[it.i] = o.error + OTHER;
+return frJudge(items);
+`,
+
+  // The next page call's check of this server's pending records (A.toks) on its
+  // tab, run ahead of that call's own script in the same execute (lateTemplate).
+  // -> {l: [{el, error}]}: a revert or another option, never a reformat. With
+  // A.hold (a click or key press) and anything to report, {l, h}: the call's own
+  // script does not run. The records are dropped by the wrapper, not here.
+  fill_late: FR_JUDGE_LIB + String.raw`
+const m = window.__perch_fr, l = [];
+A.toks.forEach(function (k) {
+  const items = m && m[k];
+  if (!items) return;
+  const j = frJudge(items).recheck;
+  Object.keys(j).forEach(function (i) {
+    const x = j[i], e = x.error.indexOf(x.el + " ") === 0 ? x.error.slice(x.el.length + 1) : x.error;
+    // A text write the page put back may take trusted input; a clear can't.
+    const typed = items.some(function (it) { return String(it.i) === i && typeof it.text === "string" && it.text !== "" && !it.mates && !("st" in it) && !("on" in it); });
+    l.push({ el: x.el, error: e + (typed && x.reverted ? A.hint : "") });
+  });
 });
-const out = { recheck: recheck };
-if (Object.keys(notes).length) out.notes = notes;
-return out;
+return A.hold && l.length ? { l: l, h: 1 } : { l: l };
 `,
 
   // {pending} = keep polling; the best tier of taMatch. A.probe: is a pick worth
@@ -8133,24 +8237,19 @@ async function fill(args = {}) {
   const key = taArgs({ ref, selector, label_pattern, text: body }, trusted);
   const r = trusted
     ? await trustedFill({ ...key, raise, target })
-    : await runPage("fill", "fill", { ...key, fr: true }, target, { reread: REREAD_JS() });
-  if (!trusted && r && r.fr) return hintTrusted(reread(r));
+    : await runPage("fill", "fill", { ...key, fr: true }, target);
+  if (!trusted && r && r.fr) return hintTrusted(keepLate(r, target));
   if (!r || !r.pending) return trusted ? noTok(r) : hintTrusted(r);
   const out = { ...await (r.trusted ? pickSuggestion(target, r.tok, key) : pickTypeahead(key, target, r.tok).then(hintTrusted)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
 }
 
-// A plain or rich fill that landed, read again on the next page call: a page
-// that put its old value back a task after the write reverted it, and one that
-// shows another value adds a note. A re-read that can't run or finds no record
-// leaves the fill's own answer.
-// r.rr: the re-read the runtime ran right after the write, in the same call.
-function reread(r) {
-  const { fr, rr, ...out } = r;
-  const x = rereadOf(rr);
-  if (unread(x)) return addNote(out, unread(x));
-  if (x && x.recheck && x.recheck[0] && x.recheck[0].ok === false) return x.recheck[0];
-  return x && x.notes && x.notes[0] ? addNote(out, x.notes[0]) : out;
+// A plain or rich fill, or a native pick, that landed: its record stays on the
+// page for the next call on the target to check (lateKeep), and it answers now.
+function keepLate(r, target) {
+  const { fr, ...out } = r;
+  lateKeep(target, fr);
+  return out;
 }
 const addNote = (o, n) => ({ ...o, note: o.note ? `${o.note}; ${n}` : n });
 // fill_reread's answer, {dropped} when its reply never came (the page may be
@@ -8262,14 +8361,14 @@ async function select(args = {}, prefs = null) {
   // fill does. fill's own combobox passes (prefs) never reach a native select.
   const r = pageFault(await rt("select", {
     target,
-    start: step("select_start", prefs ? {} : { fr: true }), ...(prefs ? {} : { reread: REREAD_JS() }), pick: step("select_pick"), miss: step("select_miss"),
+    start: step("select_start", prefs ? {} : { fr: true }), pick: step("select_pick"), miss: step("select_miss"),
     read: step("select_read"), readFinal: step("select_read", { final: true }),
     ...(trusted ? { trusted: {
       open: step("select_open"), type: step("select_type"), keep: step("select_read", { keep: true }), check: pageFn("trusted_check", {}),
       control: pageFn("trusted_probe", { select: "control" }), option: pageFn("trusted_probe", { select: "option" }),
     } } : {}),
   }, { lane: "slow" }), "select");
-  return r && r.fr ? reread(r) : r;
+  return r && r.fr ? keepLate(r, target) : r;
 }
 
 // Shared guidance lives here once instead of in every tool description.
@@ -8505,12 +8604,13 @@ const tabLockKey = (name, args) =>
 
 export async function handleCall(name, args = {}) {
   const handler = Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : null;
+  let note = null;
   try {
     if (!handler) throw new Error(`unknown tool: ${name}`);
     guardFrameRefs(name, args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
-    const note = { refs: refMaps.get(tabKey(args.target)) };
+    note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name, args.target) };
     const lockKey = tabLockKey(name, args);
     const call = () => callNotes.run(note, () => handler(args));
     let result = await (lockKey ? withTabLock(lockKey, call) : call());
@@ -8526,11 +8626,29 @@ export async function handleCall(name, args = {}) {
       movedTo.delete(t);
       if (typeof t === "string" && t.startsWith("safari:")) remember(issueSeq, t, ++stampClock);
     }
+    const late = note.late && note.late.found && note.late.found.length ? note.late.found : null;
+    if (late && plainResult(result) && name !== "eval_js") result = { ...result, late };
+    else if (late) return withLate(note.moved ? withMoved(name, result, note.moved) : formatResult(result), late);
     return note.moved ? withMoved(name, result, note.moved) : formatResult(result);
   } catch (e) {
-    if (e instanceof RefMiss) return formatResult({ __perch_ref_miss: true, ref: e.ref });
-    return { content: [{ type: "text", text: `error: ${e.message}` }], isError: true };
+    const hold = e && typeof e.message === "string" ? LATE_HELD.exec(e.message) : null;
+    if (hold && note && note.late) {
+      lateDone(note.late, JSON.parse(hold[1]));
+      return formatResult({ ok: false, error: `nothing ${name === "press" ? "pressed" : "clicked"}: ${LATE_HOLD_WHY}`, late: note.late.found });
+    }
+    if (e instanceof RefMiss) return withLate(formatResult({ __perch_ref_miss: true, ref: e.ref }), note && note.late && note.late.found);
+    return withLate({ content: [{ type: "text", text: `error: ${e.message}` }], isError: true }, note && note.late && note.late.found);
   }
+}
+
+const LATE_HELD = /perch-late-hold (\[[\s\S]*\])/;
+const LATE_HOLD_WHY = "a field filled earlier did not keep its value (late); fill it again, then retry";
+const plainResult = (r) => r && typeof r === "object" && !Array.isArray(r) && !r.__image && !r.__perch_ref_miss && r.__perch_error === undefined;
+// A result that can't take a late key (text, an image, eval_js's value) gets it
+// as one more text item.
+function withLate(out, late) {
+  if (late && late.length) out.content.push({ type: "text", text: JSON.stringify({ late }) });
+  return out;
 }
 
 export { TOOLS };

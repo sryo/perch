@@ -43,7 +43,7 @@ const keep = (w) => runBody(w, `window.__init = deepAll("input, textarea, select
 const reset = (w) => runBody(w, `
   deepAll("input, textarea, select").forEach(function (el, i) { if (el.value !== window.__init[i]) el.value = window.__init[i]; });
   if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-  delete window.__perch_ta; delete window.__perch_select; delete window.__perch_refs;
+  delete window.__perch_ta; delete window.__perch_select; delete window.__perch_refs; delete window.__perch_fr;
   return null`);
 
 const FILLS = ["full name 12", "email 7", "shipping city 14", "phone 33", "search orders 4", "notes 5", "shadow field 3",

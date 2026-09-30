@@ -133,33 +133,30 @@ const PLAN = `<label>Plan <select id=plan><option value="">Select...</option><op
 
 // A native pick is read back in its own page call, before the page's queued
 // work runs; the re-read a task later, as fill's, catches a page that moves it.
-test("native select: a pick the page moves to another option a task later is ok:false, never selected", async () => {
+// A native pick answers at once; the next page call on the tab reads it again
+// first and reports a page that moved it as late.
+const lateAfter = async () => { const c = (await handleCall("eval_js", { script: "return 1" })).content; return c[1] && JSON.parse(c[1].text).late; };
+test("native select: a pick the page moves to another option a task later is late on the next call", async () => {
   const { dom } = onTickPage(PLAN, `const plan = document.getElementById('plan');
     plan.addEventListener('change', () => { later(() => { if (plan.value === 'Basic') plan.value = 'Pro'; }, 1); });`);
   const { o } = await select({ label_pattern: "^Plan", text: "Basic" });
-  assert.equal(o.ok, false, JSON.stringify(o));
-  assert.equal(o.selected, undefined);
-  assert.equal(o.reverted, undefined);
-  assert.equal(o.kept, "Pro");
-  assert.equal(o.el, `combobox "Plan"`);
-  assert.equal(o.error, `combobox "Plan" changed to "Pro" after it was filled; the page chose another option`);
+  assert.deepEqual(o, { ok: true, selected: "Basic", el: `combobox "Plan"` });
+  assert.deepEqual(await lateAfter(), [{ el: `combobox "Plan"`, error: `changed to "Pro" after it was filled; the page chose another option` }]);
   assert.equal(dom.document.getElementById("plan").value, "Pro");
-  assert.equal(Object.keys(dom.__perch_fr).length, 0, "the re-read drops its record");
+  assert.equal(Object.keys(dom.__perch_fr).length, 0, "the check drops its record");
 });
 
-test("native select: a pick the page puts back or empties a task later is reverted; one that holds stays ok", async () => {
+test("native select: a pick the page puts back or empties a task later is a late revert; one that holds is not reported", async () => {
   for (const [js, kept] of [["plan.selectedIndex = 2", "Pro"], ["plan.selectedIndex = 0", "Select..."]]) {
     onTickPage(PLAN, `const plan = document.getElementById('plan'); plan.selectedIndex = 2;
       plan.addEventListener('change', () => { later(() => { ${js}; }, 1); });`);
-    const { o } = await select({ label_pattern: "^Plan", text: "Basic" });
-    assert.equal(o.ok, false, JSON.stringify(o));
-    assert.equal(o.reverted, true, JSON.stringify(o));
-    assert.equal(o.kept, kept);
-    assert.equal(o.error, `combobox "Plan" changed to ${JSON.stringify(kept)} after it was filled; the page reverted the write`);
+    assert.equal((await select({ label_pattern: "^Plan", text: "Basic" })).o.ok, true);
+    assert.deepEqual(await lateAfter(), [{ el: `combobox "Plan"`, error: `changed to ${JSON.stringify(kept)} after it was filled; the page reverted the write` }]);
   }
   onTickPage(PLAN, `const plan = document.getElementById('plan');
     plan.addEventListener('change', () => { later(() => { const v = plan.value, o = document.createElement('option'); o.textContent = 'Team'; plan.appendChild(o); plan.value = v; }, 1); });`);
   assert.deepEqual((await select({ label_pattern: "^Plan", text: "Basic" })).o, { ok: true, selected: "Basic", el: `combobox "Plan"` });
+  assert.equal(await lateAfter(), undefined);
 });
 
 // A custom list's pick is pressed in one page call and read in a later one, so
