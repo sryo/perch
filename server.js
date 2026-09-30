@@ -6788,6 +6788,10 @@ if (opt) {
   s.pickedN = keys.get(opt);
   s.optEl = opt;
   s.multi = isMulti(s, opt);
+  // The list's other texts and the option's own values, for select_read's
+  // check of a pick the control shows in its own format.
+  s.others = all.filter(function (o) { return o !== opt; }).slice(0, 500).map(function (o) { return norm(textOf(o)); });
+  s.optVals = [attr(opt, "value"), attr(opt, "data-value")].map(norm).filter(function (v) { return v && v !== s.pickedN && s.others.indexOf(v) < 0; });
   // What the press may move, for select_read's check on a typed filter.
   s.selBefore = attr(opt, "aria-selected") === "true";
   s.expAtPick = [s.ctl, s.input].some(function (e) { return e && attr(e, "aria-expanded") === "true"; });
@@ -6961,7 +6965,18 @@ const answer = function (o) {
 if (!typedIn) escOwn();
 // An input's own value first: its wrapper may hold only its label.
 const iv = (s.input && s.input.value) || "";
-const has = function (t) { return s.multi ? norm(t).indexOf(s.pickedN) >= 0 : norm(t) === s.pickedN; };
+// A single pick may show in the control's own format: the option's text, then a
+// separator and detail ("Cherry (cherry)", "Blue - #00f", "Blue · primary"),
+// or the option's value or data-value. Never text that another option of the
+// list, longer than the pick, equals or starts ("Blue Jay" beside "Blue").
+const asPicked = function (n) {
+  if (n === s.pickedN) return true;
+  if (s.multi || !s.pickedN) return false;
+  if ((s.optVals || []).indexOf(n) >= 0) return true;
+  return n.indexOf(s.pickedN) === 0 && /^(\s*[(\[]|\s+[-|\/#\u00b7\u2022]\s*\S|:\s)/.test(n.slice(s.pickedN.length)) &&
+    !(s.others || []).some(function (o) { return o.length > s.pickedN.length && n.indexOf(o) === 0; });
+};
+const has = function (t) { return s.multi ? norm(t).indexOf(s.pickedN) >= 0 : asPicked(norm(t)); };
 const full = (iv && has(iv) ? iv : textOf(s.box)) || iv;
 const parts = full === iv ? [] : shownParts(s.box);
 // An empty input whose box holds only the control's own label shows nothing.
@@ -6976,7 +6991,7 @@ const grew = !s.multi && s.whole && now !== s.whole && now.indexOf(s.whole) === 
 // typeahead requires).
 const typedOnly = s.typed === s.input && s.typedQ != null && full === iv && norm(iv) === norm(s.typedQ) &&
   !(s.shut || (s.comp && s.comp.value !== s.compAtPick) || (s.optEl && !s.selBefore && attr(s.optEl, "aria-selected") === "true"));
-const seen = !typedOnly && (has(full) || (!s.multi && parts.some(function (t) { return norm(t) === s.pickedN; })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; }))));
+const seen = !typedOnly && (has(full) || (!s.multi && parts.some(function (t) { return asPicked(norm(t)); })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; }))));
 if (!seen && !A.final) return { pending: true, tok: s.tok };
 // The held Escape goes out on the returning read, final or verified; a value
 // it changed was not the page's answer, so the pick is read again.

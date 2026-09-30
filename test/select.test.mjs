@@ -950,3 +950,49 @@ test("custom combobox: a bare input re-rendered empty on pick in a form or body 
     assert.equal(dom.document.getElementById("dest").value, "", html);
   }
 });
+
+// A control may show the pick in its own format: the option's text followed by a
+// separator and detail, or the option's value. A different option whose text
+// merely starts the same way is never the pick.
+const FMT = (items, attrs = "") => `<label id=fl>Fruit</label><div id=fc role=combobox aria-labelledby=fl aria-expanded=false aria-controls=fm tabindex=0><span class=placeholder>Pick one</span></div>
+  <ul id=fm role=listbox hidden>${items.map((t) => `<li role=option ${attrs.replace("$v", t.toLowerCase().replace(/ /g, "-"))}>${t}</li>`).join("")}</ul>`;
+const FMT_JS = (show) => `const c = document.getElementById('fc'), m = document.getElementById('fm');
+  c.addEventListener('click', () => { m.hidden = false; c.setAttribute('aria-expanded', 'true'); });
+  m.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => {
+    c.innerHTML = '<span class=v></span>'; c.firstChild.textContent = (${show})(o.textContent, o);
+    m.hidden = true; c.setAttribute('aria-expanded', 'false');
+  }));`;
+
+test("custom combobox: a pick shown in the control's own format holds", async () => {
+  for (const [what, items, pick, show, attrs] of [
+    ["parenthetical", ["Apple", "Banana", "Cherry"], "Cherry", "(t) => t + ' (' + t.toLowerCase() + ')'"],
+    ["dash detail", ["Red", "Blue", "Green"], "Blue", "(t) => t + ' - #00f'"],
+    ["middle dot", ["Red", "Blue", "Green"], "Blue", "(t) => t + ' · primary'"],
+    ["bracketed code", ["Red", "Blue", "Green"], "Blue", "(t) => t + ' [BLU]'"],
+    ["value attribute", ["Red", "Blue", "Green"], "Blue", "(t, o) => o.getAttribute('value')", "value=$v-1"],
+    ["data-value", ["Red", "Blue", "Green"], "Blue", "(t, o) => o.dataset.value", "data-value=c-$v"],
+    ["parenthetical beside look-alikes", ["Blue", "Blueberry", "Blue Jay"], "Blue", "(t) => t + ' (blue)'"],
+  ]) {
+    onPage(FMT(items, attrs), FMT_JS(show));
+    const { o } = await select({ label_pattern: "fruit", text: pick });
+    assert.equal(o.ok, true, what + " " + JSON.stringify(o));
+    assert.equal(o.selected, pick, what);
+  }
+});
+
+test("custom combobox: another option whose text starts like the pick is not the pick", async () => {
+  const items = ["Blue", "Blueberry", "Blue Jay", "Blue - Navy"];
+  for (const [what, show] of [
+    ["longer word", "() => 'Blueberry'"],
+    ["two words", "() => 'Blue Jay'"],
+    ["other option formatted", "() => 'Blue Jay (bj)'"],
+    ["other option with a dash", "() => 'Blue - Navy'"],
+    ["other option with a dash, formatted", "() => 'Blue - Navy (nv)'"],
+    ["plain extra word", "() => 'Blue Sky'"],
+  ]) {
+    onPage(FMT(items), FMT_JS(show));
+    const { o } = await select({ label_pattern: "fruit", text: "Blue" });
+    assert.equal(o.ok, false, what + " " + JSON.stringify(o));
+    assert.match(o.error, /^pressed "Blue" but the control shows /, what);
+  }
+});
