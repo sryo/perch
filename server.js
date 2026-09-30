@@ -1157,8 +1157,12 @@ function jxaRuntime(BROWSERS, HANG) {
   // come. Requests and replies are files: `<prefix>.req` holds the request as
   // JSON, and the reply is written to `<out>.w` and renamed to `out`, so a file
   // at `out` is always whole. Every one is removed on every path.
-  const HELPER_WAIT_MS = 1000, HELPER_STALL_MS = 60000, HELPER_LOCKED_MS = 10000, HELPER_GONE_MS = 5000, HELPER_IDLE_MS = 30000, HELPER_BUSY_MS = 5000;
-  let helper = null, helperOff = 0, helperGen = 0, helperSeq = 0;
+  const HELPER_WAIT_MS = 1000, HELPER_STALL_MS = 60000, HELPER_LOCKED_MS = 10000, HELPER_GONE_MS = 5000, HELPER_IDLE_MS = 30000;
+  // The helper's poll for a request and for its parent: 10ms costs it about 2.5%
+  // of a core while idle, 2ms cost 9%, and a shot waits 5ms more on average.
+  const HELPER_POLL_SECS = 0.01;
+  // helperOffCall: this call's noHelper (PERCH_CAPTURE_HELPER=0 in Node).
+  let helper = null, helperOff = 0, helperGen = 0, helperSeq = 0, helperOffCall = false;
   function shotLock() {
     const fm = $.NSFileManager.defaultManager, path = $.NSTemporaryDirectory().js + "perch-capture.lock";
     if (!fm.fileExistsAtPath(path)) fm.createFileAtPathContentsAttributes(path, $(), $());
@@ -1171,7 +1175,7 @@ function jxaRuntime(BROWSERS, HANG) {
   }
   // Whether the helper can take a shot now, launching it if needed.
   function helperUp() {
-    if (Date.now() < helperOff) return false;
+    if (helperOffCall || Date.now() < helperOff) return false;
     if (helper && helper.task.isRunning) return true;
     if (helper) { dropHelper(); }
     const lock = shotLock();
@@ -1180,6 +1184,8 @@ function jxaRuntime(BROWSERS, HANG) {
     $.flock(lock.fileDescriptor, 8);
     lock.closeFile;
     const prefix = $.NSTemporaryDirectory().js + "perch-" + $.NSProcessInfo.processInfo.processIdentifier + "-h" + (++helperGen);
+    // A request left under this prefix by an earlier daemon with the same pid.
+    dropFile(prefix + ".req");
     const task = $.NSTask.alloc.init;
     task.executableURL = $.NSURL.fileURLWithPath("/usr/bin/osascript");
     task.arguments = $(["-l", "JavaScript", "-e", "(" + jxaRuntime + ")(" + JSON.stringify(BROWSERS) + ", " + JSON.stringify(HANG) + ");__perch.shotHelper(" + JSON.stringify(prefix) + ", " + $.NSProcessInfo.processInfo.processIdentifier + ")"]);
@@ -1248,15 +1254,16 @@ function jxaRuntime(BROWSERS, HANG) {
     ObjC.import("CoreGraphics");
     appKit();
     ObjC.bindFunction("getppid", ["int", []]);
+    // access(2) costs about half of fileExistsAtPath's bridge per idle poll.
+    ObjC.bindFunction("access", ["int", ["char *", "int"]]);
     const fm = $.NSFileManager.defaultManager, req = prefix + ".req";
     let last = Date.now();
     try {
+      // The parent is read every poll: a helper left behind by a daemon that
+      // exited holds the lock, and a new daemon's shots go to screencapture
+      // until it is gone.
       while (Date.now() - last < HELPER_IDLE_MS && Number($.getppid()) === parent) {
-        if (!fm.fileExistsAtPath(req)) {
-          // Every 2ms for HELPER_BUSY_MS after a shot, every 10ms after that.
-          delay(Date.now() - last < HELPER_BUSY_MS ? SHOT_POLL_SECS : 0.01);
-          continue;
-        }
+        if (Number($.access(req, 0)) !== 0) { delay(HELPER_POLL_SECS); continue; }
         let q = null;
         try { q = JSON.parse($.NSString.stringWithContentsOfFileEncodingError(req, 4, $()).js); } catch (e) {}
         dropFile(req);
@@ -2887,6 +2894,7 @@ function jxaRuntime(BROWSERS, HANG) {
     // The geometry plus, when the runtime could capture, `data` (base64) and
     // `image` {w,h}; without them the caller runs screencapture.
     shot(a) {
+      helperOffCall = a.noHelper === true;
       if (a.clip) return shotClip(a);
       const I = shotGeom(a), c = capture(I.windowNumber, a.format, a.maxWidth, null, null, (I.cgBounds || I.geom).w);
       if (c.noGrant) return { ok: false, error: SHOT_NO_GRANT };
@@ -3816,9 +3824,11 @@ let nodeShotSeq = 0;
 async function screenshot(args = {}) {
   const { raise = false, target, format = "png", maxWidth = 1568, ref, selector } = args;
   const aimed = (ref != null && ref !== "") || (selector != null && selector !== "");
+  // PERCH_CAPTURE_HELPER=0: every capture goes to screencapture (see the runtime's helperUp).
+  const noHelper = process.env.PERCH_CAPTURE_HELPER === "0" ? { noHelper: true } : {};
   const g = await rt("shot", aimed
-    ? { target, raise, format, maxWidth, clip: pageFn("shot_clip", { ref, selector }), painted: pageFn("shot_painted", {}), restore: pageFn("shot_restore", {}) }
-    : { target, raise, format, maxWidth });
+    ? { target, raise, format, maxWidth, ...noHelper, clip: pageFn("shot_clip", { ref, selector }), painted: pageFn("shot_painted", {}), restore: pageFn("shot_restore", {}) }
+    : { target, raise, format, maxWidth, ...noHelper });
   // A refusal, or the element's own outcome: a ref miss, no match, a page fault, nothing visible.
   if (!g || g.ok === false || (aimed && g.windowNumber == null)) return g;
   const ext = format === "jpeg" ? "jpg" : "png";

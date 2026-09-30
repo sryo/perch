@@ -265,3 +265,43 @@ test("an element crop whose helper stalls is cropped from screencapture after th
   assert.deepEqual(where(p), [0, 40, 37]);
   onlyLock();
 });
+
+// ---- idle cost, stale requests, the off switch ----
+
+test("shotHelper idles at 10ms polls throughout, never the 2ms poll", () => {
+  install();
+  world.state.lockFile = "/tmp/fake/perch-capture.lock";
+  world.state.files[REQ] = { text: JSON.stringify({ wid: 77, format: "png", maxWidth: 0, map: null, out: "/tmp/fake/r1.json" }) };
+  world.state.delays = [];
+  world.run(`__perch.shotHelper(${JSON.stringify(REQ.slice(0, -4))}, 555)`);
+  assert.deepEqual([...new Set(world.state.delays)], [0.01], "never the 2ms poll");
+  const polls = world.state.delays.length;
+  assert.ok(polls >= 2900 && polls <= 3000, `${polls} polls in 30s`);
+});
+
+test("a stale request left under the new helper's prefix (a reused pid) is removed before the helper launches", async () => {
+  install({ exits: true });
+  spawns();
+  world.state.files[REQ] = { text: JSON.stringify({ wid: 77, format: "png", maxWidth: 0, map: null, out: "/tmp/fake/old.json" }) };
+  await shoot({});
+  assert.deepEqual(world.state.helpers[0].filesAtLaunch, []);
+  onlyLock();
+});
+
+test("PERCH_CAPTURE_HELPER=0 turns the helper off: no lock probe, no launch, screencapture takes every shot, crops included", async (t) => {
+  const was = process.env.PERCH_CAPTURE_HELPER;
+  process.env.PERCH_CAPTURE_HELPER = "0";
+  t.after(() => { if (was == null) delete process.env.PERCH_CAPTURE_HELPER; else process.env.PERCH_CAPTURE_HELPER = was; });
+  install();
+  spawns();
+  await shoot({});
+  await shoot({ format: "jpeg" });
+  assert.deepEqual([world.state.helpers, world.state.flocks, cgShots().length, scShots().length], [undefined, undefined, 0, 2]);
+  const p = scrolled({ from: "100,200,300,50" });
+  installCrop(p);
+  spawns();
+  const { meta } = await shoot({ target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.deepEqual([world.state.helpers, cgShots().length, scShots().length], [undefined, 0, 1]);
+  assert.deepEqual(meta.clip, { x: 584, y: 544, w: 632, h: 132 });
+  onlyLock();
+});
