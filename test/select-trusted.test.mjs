@@ -358,3 +358,33 @@ test("trusted, in a modal: an option another open menu covers is refused, never 
   assert.equal(d.getElementById("dlg").hidden, false);
   assert.equal(w.dom.dlgCloses, 0);
 });
+
+// A browser's document.elementFromPoint retargets a hit inside a shadow tree to
+// its host, so a web-component control (its combobox in the host's shadow root)
+// reads as the host at the aim point: that is the control itself, not a cover.
+// So is the control's own label.
+test("trusted_probe {select}: a shadow host holding the control, or the control's own label, at the aim point is no cover", () => {
+  for (const deep of [true, false]) {
+    const dom = page(`<x-sel id=host></x-sel><div id=over>Over</div>`);
+    const host = dom.document.getElementById("host");
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `<span id=sl>Shade</span><div id=sc role=combobox tabindex=0 aria-labelledby=sl aria-expanded=false><span>Pick</span></div>`;
+    const sc = root.getElementById("sc");
+    dom.document.elementFromPoint = () => host;
+    root.elementFromPoint = deep ? () => sc.firstChild : () => null;
+    run(dom, "select_start", { selector: "#sc", text: "Apple" });
+    const c = run(dom, "trusted_probe", { select: "control" });
+    assert.equal(c.ok, true, `deep ${deep} ${JSON.stringify(c)}`);
+    // Another element over it is still a cover.
+    dom.document.elementFromPoint = () => dom.document.getElementById("over");
+    const x = run(dom, "trusted_probe", { select: "control" });
+    assert.equal(x.covered, true, `deep ${deep} ${JSON.stringify(x)}`);
+  }
+  const dom = page(`<label for=lc id=lab>Tier</label><div id=lc role=combobox aria-labelledby=lab tabindex=0>Pick</div><label id=wrap><input id=li role=combobox> Wrapped</label>`);
+  dom.document.elementFromPoint = () => dom.document.getElementById("lab");
+  run(dom, "select_start", { selector: "#lc", text: "Apple" });
+  assert.equal(run(dom, "trusted_probe", { select: "control" }).ok, true, "label for");
+  dom.document.elementFromPoint = () => dom.document.getElementById("wrap");
+  run(dom, "select_start", { selector: "#li", text: "Apple" });
+  assert.equal(run(dom, "trusted_probe", { select: "control" }).ok, true, "wrapping label");
+});
