@@ -124,11 +124,14 @@ test("custom combobox: no matching option lists what was there", async () => {
   assert.deepEqual(o.candidates, ["Junior", "Senior"]);
 });
 
-test("custom combobox that never shows the choice is flagged unverified", async () => {
+test("custom combobox that never shows the choice is ok:false, naming what it shows", async () => {
   onPage(CUSTOM, CUSTOM_JS.replace("cb.querySelector('.v').textContent = o.textContent;", ""));
   const { o } = await select({ label_pattern: "level", text: "junior" });
-  assert.equal(o.ok, true);
-  assert.equal(o.unverified, true);
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /^pressed ".*" but the control shows .*; not verified$/);
+  assert.equal(o.pressed, "Junior");
+  assert.ok("value" in o, JSON.stringify(o));
+  assert.equal(o.unverified, undefined);
 });
 
 test("select validates its arguments before touching the page", async () => {
@@ -360,7 +363,10 @@ test("a loading signal elsewhere in the popup dialog keeps it waited on, without
   const { dom, world } = onPage(html, `
     const b = document.getElementById('pb');
     let d = null;
-    const show = (xs) => { d.querySelector('[cmdk-list]').innerHTML = xs.map((x) => '<div cmdk-item role=option>' + x + '</div>').join(''); };
+    const show = (xs) => {
+      d.querySelector('[cmdk-list]').innerHTML = xs.map((x) => '<div cmdk-item role=option>' + x + '</div>').join('');
+      d.querySelectorAll('[cmdk-item]').forEach((o) => o.addEventListener('click', () => { b.textContent = o.textContent; }));
+    };
     b.addEventListener('click', () => {
       if (d) return;
       d = document.createElement('div');

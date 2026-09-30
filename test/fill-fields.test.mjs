@@ -882,12 +882,16 @@ function closeTabNow(world, app, id) {
 }
 const TWO = [{ label_pattern: "first", text: "A" }, { label_pattern: "level", option: "senior" }];
 
-test("fill {fields}: a pick the control never shows is counted as unverified at the top", async () => {
+test("fill {fields}: a pick the control never shows fails that field and the batch", async () => {
   onPage(CUSTOM, NO_SHOW_JS);
   const { o } = await fill({ fields: TWO });
-  assert.equal(o.results[1].unverified, true, JSON.stringify(o));
-  assert.equal(o.unverified, 1);
-  assert.equal(o.ok, true);
+  assert.equal(o.results[0].ok, true, JSON.stringify(o));
+  assert.equal(o.results[1].ok, false, JSON.stringify(o));
+  assert.equal(o.results[1].kind, "select");
+  assert.equal(o.results[1].pressed, "Senior");
+  assert.ok("value" in o.results[1], JSON.stringify(o));
+  assert.equal(o.unverified, undefined);
+  assert.equal(o.ok, false);
 });
 
 test("fill {fields}: a tab closing during a later select keeps the fields that landed", async () => {
@@ -988,15 +992,16 @@ test("fill {fields}: the first page pass erroring is ok:false as a single call w
   assert.deepEqual(o, { ok: false, error: "fill: the page script failed on this page (Error); nothing verified" });
 });
 
-test("fill {fields}: a halted batch keeps its skipped and unverified counts", async () => {
+test("fill {fields}: a halted batch keeps its skipped count and the failed pick", async () => {
   const { world, dom } = onPage(CUSTOM, NO_SHOW_JS);
   breakPassFrom(world, dom, 3);
   const { o } = await fill({ only_empty: true, fields: [{ label_pattern: "zzz", text: "Z" }, ...TWO, { label_pattern: "last", text: "B" }] });
   halted(o, 4);
   assert.equal(o.results[0].skipped, "absent");
-  assert.equal(o.results[2].unverified, true);
+  assert.equal(o.results[2].ok, false);
+  assert.equal(o.results[2].pressed, "Senior");
   assert.equal(o.skipped, 1);
-  assert.equal(o.unverified, 1);
+  assert.equal(o.unverified, undefined);
 });
 
 test("fill {fields}: an all-green batch carries no new keys", async () => {
