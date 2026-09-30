@@ -6328,6 +6328,18 @@ return { ok: true, tok: s.tok };
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "the page changed after the pick was pressed; not verified" };
 if (selLost) return selLost;
+// A page that re-renders the control on pick replaces its node: the choice shows
+// on the new one, found by id, else by the call's own selector or label_pattern.
+if (!s.ctl.isConnected) {
+  let again = s.ctl.id ? document.getElementById(s.ctl.id) : null;
+  if (!again && (A.selector || A.label_pattern)) { try { again = findCtl({ selector: A.selector, label_pattern: A.label_pattern }).el; } catch (e) {} }
+  if (again && again.isConnected && !nativeOf(again)) {
+    const w = again.closest && again.closest('.select__control, [class*="-control"], [class*="__control"]');
+    s.ctl = again;
+    s.input = again.tagName === "INPUT" ? again : again.querySelector && again.querySelector("input");
+    s.box = w || (again.tagName === "INPUT" ? again.parentElement : again);
+  }
+}
 // A popup select opened and a pick left open (a multi-select) closes again.
 if (s.opened && !s.closed && !A.keep) { s.closed = true; if (stillOpen(s)) escapeOwn(s); }
 // An input's own value first: its wrapper may hold only its label.

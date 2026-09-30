@@ -185,6 +185,17 @@ const CUSTOM_JS = `
     document.querySelectorAll('[role=option]').forEach(o => o.addEventListener('click', () => { cb.querySelector('.v').textContent = o.textContent; }));
   });`;
 
+test("fill {fields}: a combobox the page re-renders on pick counts as picked", async () => {
+  const { dom } = onPage(`<input aria-label=First><span id=color-label>Color</span> <div id=w></div>`, `let color = "", open = false;
+  window.render = () => { document.getElementById("w").innerHTML = '<button type=button id=color role=combobox aria-labelledby=color-label aria-expanded=' + open + ' aria-controls=color-list>' + (color || "Pick a color") + '</button><ul id=color-list role=listbox>' + (open ? ["Red", "Blue"].map((c) => "<li role=option>" + c + "</li>").join("") : "") + "</ul>"; };
+  document.addEventListener("click", (e) => { if (e.target.closest("#color")) { open = !open; render(); return; } const li = e.target.closest("#color-list li"); if (li) { color = li.textContent; open = false; render(); } });
+  render();`);
+  const { o } = await fill({ fields: [{ label_pattern: "first", text: "A" }, { label_pattern: "^color$", option: "Blue" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.results[1].value, "Blue");
+  assert.equal(dom.document.querySelector("#color").textContent, "Blue");
+});
+
 test("fill {fields}: a custom combobox goes through select, in order", async () => {
   const { dom } = onPage(CUSTOM, CUSTOM_JS);
   const { o } = await fill({ fields: [

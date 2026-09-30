@@ -134,6 +134,21 @@ test("custom combobox that never shows the choice is ok:false, naming what it sh
   assert.equal(o.unverified, undefined);
 });
 
+test("a combobox the page re-renders on pick is read from its new node, not the detached one", async () => {
+  const html = `<span id=color-label>Color</span> <div id=w></div>`;
+  const js = `let color = "", open = false;
+  window.render = () => { document.getElementById("w").innerHTML = '<div class=box><button type=button id=color role=combobox aria-labelledby=color-label aria-expanded=' + open + ' aria-controls=color-list>' + (color || "Pick a color") + '</button><ul id=color-list role=listbox>' + (open ? ["Red", "Green", "Blue"].map((c) => "<li role=option>" + c + "</li>").join("") : "") + "</ul></div>"; };
+  document.addEventListener("click", (e) => { if (e.target.closest("#color")) { open = !open; render(); return; } const li = e.target.closest("#color-list li"); if (li) { color = li.textContent; open = false; render(); } });
+  render();`;
+  onPage(html, js);
+  const { o } = await select({ label_pattern: "^color$", text: "Blue" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.value, "Blue");
+  // By id too, when the call named the control by selector.
+  onPage(html, js);
+  assert.equal((await select({ selector: "#color", text: "Green" })).o.ok, true);
+});
+
 test("select validates its arguments before touching the page", async () => {
   onPage(NATIVE);
   assert.match((await handleCall("select", { text: "x" })).content[0].text, /requires `ref`, `selector`, or `label_pattern`/);
