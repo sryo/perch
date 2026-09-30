@@ -797,7 +797,27 @@ test("custom combobox: the typed filter showing in the input is not the pick", a
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.selected, undefined);
   assert.equal(o.error, `pressed "Bravo" but the control shows only the text select typed; not verified: retry with select {trusted:true}, or check the field (a list that stays open on pick shows this too)`);
-  assert.equal(dom.document.getElementById("t").value, "Bravo");
+  assert.equal(dom.document.getElementById("t").value, "");
+});
+
+// A refused read takes select's typed filter back out and restores the input
+// and companion before any blur: a widget that commits its first match on blur
+// (MUI autoSelect, select-first-on-blur) would otherwise pick after ok:false,
+// the wrong option when the first match is not the wanted one.
+test("custom combobox: a refused read leaves the field at its prior value though blur commits the first match", async () => {
+  for (const [what, opts] of [["first match wanted", ["Bravo", "Bravo Company", "Alpha"]], ["first match differs", ["Bravo Company", "Bravo", "Alpha"]]]) {
+    for (const prior of ["", "Alpha"]) {
+      const html = SEARCH.replace("<input id=t role=combobox", `<input id=t role=combobox value="${prior}"`).replace("name=team_id>", `name=team_id value="${prior && "id-" + prior}">`);
+      const { dom } = onPage(html, SEARCH_JS("if (!e.isTrusted) return; t.value = o.textContent;").replace("['Alpha', 'Bravo']", JSON.stringify(opts)) + `
+        t.addEventListener('blur', () => { const f = ul && ul.querySelector('li'); if (f && t.value) { t.value = f.textContent; hid.value = 'id-' + f.textContent; } });`);
+      const { o } = await select({ label_pattern: "team", text: "Bravo" });
+      const at = `${what}, prior ${JSON.stringify(prior)}`;
+      assert.equal(o.ok, false, at + " " + JSON.stringify(o));
+      assert.match(o.error, /shows only the text select typed/, at);
+      assert.equal(dom.document.getElementById("t").value, prior, at);
+      assert.equal(dom.document.getElementById("tid").value, prior && "id-" + prior, at);
+    }
+  }
 });
 
 test("custom combobox: a pick equal to the typed text holds once the list closes, the companion fills or the option is selected", async () => {

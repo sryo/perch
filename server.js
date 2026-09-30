@@ -4376,7 +4376,7 @@ function taBlur(el) {
 function unstick(s, open, o) {
   if (!open()) return o;
   const a = document.activeElement;
-  if (a && (mine(s, a) || inPop(s, a))) taBlur(a);
+  if (a && (mine(s, a) || inPop(s, a)) && !(a === s.typed && a.value && a.value === s.typedQ)) taBlur(a);
   if (open()) { o.open = true; o.note = (o.note ? o.note + "; " : "") + "its popup is still open"; }
   return o;
 }
@@ -5430,6 +5430,18 @@ function editType(el, text) {
 // Withdraws text typed with editType the same way; a plain value write only if that fails.
 function editClear(el) {
   if (el.value && !editType(el, "").ok && el.value) { setNativeValue(el, ""); fire(el, ["input"]); }
+}
+`;
+
+// A refused select takes its typed filter back out and puts the input's prior
+// value and its companion's back, before anything blurs the control: a widget
+// that commits its first match on blur would pick from select's own typing.
+const UNTYPE_LIB = EDIT_LIB + String.raw`
+function untype(s) {
+  if (s.typedTrusted) { editClear(s.typed); taBlur(s.typed); }
+  else if (s.typed) { setNativeValue(s.typed, ""); fire(s.typed, ["input"]); }
+  if (s.prior != null && s.input.value !== s.prior) { setNativeValue(s.input, s.prior); fire(s.input, ["input", "change"]); }
+  if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
 }
 `;
 
@@ -6547,16 +6559,13 @@ return wait;
 
   // Candidates come from the control's own list, unfiltered when it was seen; the
   // typed filter is cleared and a menu select opened is closed again.
-  select_miss: TYPEAHEAD_LIB + SCROLL_HOME_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + EDIT_LIB + SELECT_OWN_LIB + String.raw`
+  select_miss: TYPEAHEAD_LIB + SCROLL_HOME_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + UNTYPE_LIB + SELECT_OWN_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
 if (selLost) return selLost;
 const now = ownOptions(s).filter(function (o) { return !optOff(o); }).slice(0, 30).map(function (o) { return clip(textOf(o), 60); });
 const cands = s.cands || now;
-if (s.typedTrusted) { editClear(s.typed); taBlur(s.typed); }
-else if (s.typed) { setNativeValue(s.typed, ""); fire(s.typed, ["input"]); }
-if (s.prior != null && s.input.value !== s.prior) { setNativeValue(s.input, s.prior); fire(s.input, ["input", "change"]); }
-if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
+untype(s);
 // Escape on a closed Downshift menu clears its selection, so only an open one gets it.
 const shut = s.opened && stillOpen(s);
 if (shut) escapeOwn(s);
@@ -6612,7 +6621,7 @@ return { ok: true, tok: s.tok };
 
   // Until the control shows the choice: {pending} (keep polling); A.final answers ok:false.
   // A.keep leaves an open popup alone, so a pick that didn't show can still be clicked.
-  select_read: SCROLL_LIB + SCROLL_HOME_LIB + SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + String.raw`
+  select_read: SCROLL_LIB + SCROLL_HOME_LIB + SELECT_LIB + SELECT_PICK_LIB + UNTYPE_LIB + SELECT_OWN_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "the page changed after the pick was pressed; not verified" };
 if (selLost) return selLost;
@@ -6652,8 +6661,17 @@ const escOwn = function () {
 };
 // A refusal leaves nothing open that select opened; any answer puts back the
 // scroll select made to press the control.
+// Undoing select's typing may reopen a list the Escape closed, which gets
+// Escape again.
 const answer = function (o) {
-  if (o.ok === false && s.opened && !s.shut && !A.keep) unstick(s, openNow, o);
+  if (o.ok === false && !A.keep) {
+    const was = openNow();
+    untype(s);
+    if (s.opened && !s.shut) {
+      if (!was && openNow()) escapeOwn(s);
+      unstick(s, openNow, o);
+    }
+  }
   scrollHome(s);
   return o;
 };
