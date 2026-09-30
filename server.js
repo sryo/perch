@@ -7969,7 +7969,7 @@ async function fillFields(fields, target, only) {
     // page call reads the landed fields again. One that can't run, or finds a
     // new document, leaves the pass's answer.
     const x = rereadOf(fr.rr);
-    if (x && (x.dropped || x.unbounded)) results.forEach((y, i) => { if (y.ok === true && !y.skipped) results[i] = addNote(y, x.dropped ? NO_REREAD : NO_BOUND); });
+    if (unread(x)) results.forEach((y, i) => { if (y.ok === true && !y.skipped) results[i] = addNote(y, unread(x)); });
     else if (x) recheck(x, true);
   } else if (from === A.length && watch) {
     // The combobox ended the batch, so no page pass has re-read the fields
@@ -8070,7 +8070,7 @@ async function fill(args = {}) {
 function reread(r) {
   const { fr, rr, ...out } = r;
   const x = rereadOf(rr);
-  if (x && (x.dropped || x.unbounded)) return addNote(out, x.dropped ? NO_REREAD : NO_BOUND);
+  if (unread(x)) return addNote(out, unread(x));
   if (x && x.recheck && x.recheck[0] && x.recheck[0].ok === false) return x.recheck[0];
   return x && x.notes && x.notes[0] ? addNote(out, x.notes[0]) : out;
 }
@@ -8083,6 +8083,9 @@ let rereadJs = null;
 const REREAD_JS = () => rereadJs || (rereadJs = buildEvalWrapper(pageScript("fill_reread", { tok: "@perch_fr_tok@" })));
 const NO_REREAD = "not read again after the write: the page gave no reply (it may be navigating); check it";
 const NO_BOUND = "not read again after the write: this browser has no bounded page call; check it if the page may undo it";
+// Why a re-read that ran, or was skipped, checked nothing: its note, else "".
+const unread = (x) => !x ? "" : x.dropped ? NO_REREAD : x.unbounded ? NO_BOUND
+  : x.lost ? "not read again after the write: the page no longer held its record (a new document, or another tab); check it" : "";
 
 // A perch page script that threw, by error name only: its message and stack
 // are page internals the agent can't act on. eval_js's own errors never come here.

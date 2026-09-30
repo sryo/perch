@@ -863,11 +863,16 @@ for (const [name, browser] of [
   });
 }
 
-test("fill: a re-read that finds no record (a new document) keeps the write's answer", async () => {
+const NO_RECORD = "not read again after the write: the page no longer held its record (a new document, or another tab); check it";
+test("fill: a re-read that finds no record (a new document) keeps the write's answer, with a note", async () => {
   const { dom } = onPage(LATE_REVERT, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
   const o = await fill({ label_pattern: "city", text: "Rosario" });
-  assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "City"`, len: 7 });
+  assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "City"`, len: 7, note: NO_RECORD });
   assert.equal($(dom, "#city").value, "Rosario");
+  onPage(LATE_REVERT, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
+  const f = await fill({ fields: [{ label_pattern: "zip", text: "2000" }, { label_pattern: "city", text: "Rosario" }] });
+  assert.equal(f.ok, true, JSON.stringify(f));
+  assert.deepEqual(f.results.map((r) => r.note), [NO_RECORD, NO_RECORD]);
 });
 
 test("typeahead: a trusted fill types through the editing command and picks the suggestion", async () => {
