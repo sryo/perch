@@ -273,3 +273,17 @@ test("snapshot: a custom combobox holding its own counted input is counted once"
     <div role=combobox aria-required=true aria-expanded=false><input id=i name=city required aria-autocomplete=list></div></form>`);
   assert.deepEqual(snap(w).head.form, { fields: 1, requiredEmpty: 1 });
 });
+
+// test/fixtures/address-catchers.html: Workable's city, postcode and country
+// autofill catchers (aria-hidden, tabindex=-1, clipped to a pixel) are no
+// fields of the form: the census already skips them, and the snapshot lists no
+// row a caller could fill them by. A Workable radio input (aria-hidden,
+// tabindex=-1 behind its role=radio box) keeps its row.
+test("snapshot: autofill catchers get no row and stay out of the census", () => {
+  const html = readFileSync(new URL("./fixtures/address-catchers.html", import.meta.url), "utf8");
+  const w = page(html.slice(html.indexOf("<body>") + 6, html.indexOf("<script>")).replace("</form>",
+    `<label><input type=radio name=q value=yes aria-hidden=true tabindex=-1>YES</label><input name=catch2 required aria-hidden=true tabindex=-1></form>`));
+  const { head, lines } = snap(w);
+  assert.deepEqual(lines, [`1 textbox "First name" name="firstname"`, `2 textbox "Address" name="address" value="Córdoba, Argentina"`, `3 radio "YES" name="q"`]);
+  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 0 });
+});

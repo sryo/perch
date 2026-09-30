@@ -372,7 +372,8 @@ test("fill {fields}: a radio that never takes the click stays refused", async ()
 // that the page empties on a 300ms debounce after a value lands, well after a
 // batch's re-read a task later. A batch that wrote a text field the user can't
 // see re-reads it once more after a watch window (page time, longer in a hidden
-// tab), so the emptied catchers are ok:false in the batch's own answer. A batch
+// tab), so the emptied catchers are ok:false in the batch's own answer, with no
+// trusted-retry hint (trusted typing can't help a field no one sees). A batch
 // of shown fields keeps its one re-read: no extra Apple Event.
 const AC = readFileSync(new URL("./fixtures/address-catchers.html", import.meta.url), "utf8");
 const AC_BODY = AC.slice(AC.indexOf("<body>") + 6, AC.indexOf("<script>"));
@@ -383,16 +384,14 @@ const AC_FIELDS = [
   { selector: "#postcode", text: "35401" },
   { selector: "#country", text: "United States" },
 ];
-const cleared = (id) => ({ ok: false, kind: "plain", el: `textbox "${id}" hidden`, reverted: true, kept: "", error: `textbox "${id}" hidden was cleared after it was filled; the page reverted the write${TRUSTED}` });
-const TRUSTED = "; retry with fill {trusted:true}";
+const cleared = (id) => ({ ok: false, kind: "plain", el: `textbox "${id}" hidden`, reverted: true, kept: "", hidden: true, error: `textbox "${id}" hidden was cleared after it was filled; the page reverted the write` });
 
 test("fill {fields}: autofill catchers the page empties on a debounce are ok:false in the batch's answer", async () => {
   const { dom, world } = onPage(AC_BODY, AC_JS);
   const f = await call("fill", { fields: AC_FIELDS });
   assert.equal(f.o.ok, false, JSON.stringify(f.o));
   assert.deepEqual(f.o.results[0], { ok: true, kind: "plain", el: `textbox "First name"`, len: 4 });
-  assert.deepEqual(f.o.results.slice(1).map((r) => ({ ...r, warning: undefined, hidden: undefined, len: undefined })).map((r) => JSON.parse(JSON.stringify(r))),
-    ["city", "postcode", "country"].map(cleared));
+  assert.deepEqual(f.o.results.slice(1), ["city", "postcode", "country"].map(cleared));
   assert.equal(dom.document.getElementById("address").value, "Córdoba, Argentina, Tuscaloosa, 35401, United States");
   // The batch, its re-read, and the one read after the watch.
   assert.equal(execs(world), 3);
@@ -424,7 +423,7 @@ test("fill {fields}: a watch whose last read drops leaves the record for the nex
   const f = await call("fill", { fields: AC_FIELDS });
   assert.equal(f.o.ok, true, JSON.stringify(f.o));
   world.state.hangIf = null;
-  assert.deepEqual(lateOf(await call("get_text", {})), ["city", "postcode", "country"].map((id) => ({ el: `textbox "${id}" hidden`, error: "was cleared after it was filled; the page reverted the write; retry with fill {trusted:true}" })));
+  assert.deepEqual(lateOf(await call("get_text", {})), ["city", "postcode", "country"].map((id) => ({ el: `textbox "${id}" hidden`, error: "was cleared after it was filled; the page reverted the write" })));
 });
 
 // A batch that ends on a custom combobox has no write pass after the catchers,
@@ -444,4 +443,17 @@ test("fill {fields}: a batch ending on a combobox still watches the catchers", a
   assert.equal(f.o.ok, false, JSON.stringify(f.o));
   assert.deepEqual(f.o.results.map((r) => r.ok), [true, false, false, false, true]);
   assert.equal(f.o.results[1].reverted, true);
+});
+
+// A single fill into a field no one sees gets no trusted-retry hint either,
+// whether the page puts it back at once or a task later.
+test("fill: a hidden field the page reverts gets no trusted-retry hint", async () => {
+  onPage(AC_BODY, `document.getElementById('city').addEventListener('input', (e) => { e.target.value = ''; });`);
+  const now = await call("fill", { selector: "#city", text: "Tuscaloosa" });
+  assert.equal(now.o.ok, false, JSON.stringify(now.o));
+  assert.doesNotMatch(now.o.error, /trusted/);
+  onPage(AC_BODY, `const c = document.getElementById('city'); c.addEventListener('input', () => { later(() => { c.value = ''; }, 1); });`);
+  const f = await call("fill", { selector: "#city", text: "Tuscaloosa" });
+  assert.equal(f.o.ok, true, JSON.stringify(f.o));
+  assert.deepEqual(lateOf(await call("get_text", {})), [{ el: `textbox "city" hidden`, error: "was cleared after it was filled; the page reverted the write" }]);
 });

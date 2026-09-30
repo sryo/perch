@@ -5039,13 +5039,18 @@ function reqEmpty(el, loose) {
   if (String(el.value || el.textContent || "").trim()) return loose == null ? unpicked(el) : loose;
   return !(el.tagName === "INPUT" && attr(el, "role") === "combobox" && shownValue(el));
 }
-// A file input is a field to fill too (through file_upload). An input that is
-// both aria-hidden and out of the tab order is a widget's stand-in for native
-// validation (react-select's required input), not a field of its own.
+// A file input is a field to fill too (through file_upload). A text field
+// both aria-hidden (itself or an ancestor) and out of the tab order is a
+// widget's stand-in, not a field of its own: react-select's required input, or
+// an address block's autofill catchers the page empties itself (standIn).
 function textish(el) {
   const t = (el.type || "text").toLowerCase();
   if (el.tagName === "INPUT" && t !== "file" && INPUT_SKIP.indexOf(t) >= 0) return false;
-  return !(t !== "file" && attr(el, "aria-hidden") === "true" && attr(el, "tabindex") === "-1");
+  return t === "file" || !standIn(el);
+}
+function standIn(el) {
+  if (el.tagName !== "TEXTAREA" && (el.tagName !== "INPUT" || /^(checkbox|radio|file|hidden)$/i.test(el.type || ""))) return false;
+  return attr(el, "tabindex") === "-1" && !!el.closest("[aria-hidden=true]");
 }
 const TICKS = "[role=checkbox][aria-required=true], [role=radiogroup][aria-required=true]";
 const BOXES = "[role=combobox][aria-required=true]:not(input)";
@@ -5372,6 +5377,7 @@ function frJudge(items) {
       back = now === it.prior || (it.text !== "" && !now.trim());
       o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
     }
+    if (it.hid) o.hidden = true;
     if (back) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + BACK });
     else if (it.mates || "st" in it) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id }, o, { error: o.error + PICKED });
     else notes[it.i] = o.error + OTHER;
@@ -5456,7 +5462,7 @@ function fillOne(a, only, onLand) {
   if (a.fr && !onLand) {
     let got = null;
     const out = fillOne(a, only, function (el, rich, prior) { got = { el: el, rich: rich, prior: prior }; });
-    if (got && out.ok === true) out.fr = frRecord([{ i: 0, el: got.el, id: out.el, kind: out.kind, rich: got.rich, text: a.text, want: got.rich ? textOf(got.el) : got.el.value, prior: got.prior }]);
+    if (got && out.ok === true) out.fr = frRecord([{ i: 0, el: got.el, id: out.el, kind: out.kind, rich: got.rich, text: a.text, want: got.rich ? textOf(got.el) : got.el.value, prior: got.prior, hid: !!out.hidden }]);
     return out;
   }
   const text = a.text;
@@ -5571,8 +5577,8 @@ function fillOne(a, only, onLand) {
     if (kept) return kept;
     const out = tryFill(r.el);
     if (!out) return { ok: false, error: ident(r.el) + " is not fillable or rejected the text" };
-    if (out.ok === false) return out;
     if (!fieldVis(r.el)) out.hidden = true;
+    if (out.ok === false) return out;
     if (text !== "" && trapShaped(r.el)) out.warning = trapWarning(r.el);
     if (a.selector) {
       const hits = Array.from(document.querySelectorAll(a.selector)).filter(fieldVis);
@@ -6290,7 +6296,7 @@ function walk(root) {
   for (const el of deepAll(SEL, root)) {
     const r = role(el);
     if (roles && roles.indexOf(r) < 0) continue;
-    if (!snapVis(el)) continue;
+    if (!snapVis(el) || standIn(el)) continue;
     if (!re && n - n0 >= A.max) { truncated = true; return; }
     const line = describe(el, r, accName(el)) + frameTag(el);
     if (re && !re.test(line)) continue;
@@ -6453,7 +6459,8 @@ A.toks.forEach(function (k) {
   Object.keys(j).forEach(function (i) {
     const x = j[i], e = x.error.indexOf(x.el + " ") === 0 ? x.error.slice(x.el.length + 1) : x.error;
     // A text write the page put back may take trusted input; a clear can't.
-    const typed = items.some(function (it) { return String(it.i) === i && typeof it.text === "string" && it.text !== "" && !it.mates && !("st" in it) && !("on" in it); });
+    // Not one in a field no one sees: trusted typing can't reach it either.
+    const typed = items.some(function (it) { return String(it.i) === i && typeof it.text === "string" && it.text !== "" && !it.hid && !it.mates && !("st" in it) && !("on" in it); });
     l.push({ el: x.el, error: e + (typed && x.reverted ? A.hint : "") });
   });
 });
@@ -6820,7 +6827,7 @@ if (heard.length || late.length) {
     }
     else if ("checked" in g) it.on = g.checked;
     else if ("sel" in g) { it.st = optText(g.el); it.sv = g.el.value; it.pt = g.pt; it.o = g.el[g.sel]; }
-    else { it.text = g.text; it.want = g.want; it.rich = g.rich; it.prior = g.prior; }
+    else { it.text = g.text; it.want = g.want; it.rich = g.rich; it.prior = g.prior; if (!g.shown) it.hid = true; }
     return it;
   })), until);
 }
@@ -8708,7 +8715,7 @@ async function pickTypeahead(key, target, tok) {
 // appeared, or the field put its value back. Trusted typing may land either.
 const TRUSTED_HINT = "; retry with fill {trusted:true}";
 function hintTrusted(r) {
-  if (!r || r.ok !== false || r.trusted || typeof r.error !== "string") return r;
+  if (!r || r.ok !== false || r.trusted || r.hidden || typeof r.error !== "string") return r;
   const noList = r.kind === "typeahead" && !r.candidates && !r.ambiguous && /^no suggestion matched/.test(r.error);
   return noList || r.error.endsWith("the page reverted the write") ? { ...r, error: r.error + TRUSTED_HINT } : r;
 }
