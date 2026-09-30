@@ -296,6 +296,36 @@ test("fill by label passes over a visible trap-like field tied with a normal one
   }
 });
 
+// Date pickers and masks sit out of the tab order with autofill off. When such a
+// field is required, or its label is the whole pattern while the normal match's
+// label only contains it, it is the field asked for, not a trap.
+test("fill by label keeps an untabbable autofill-off field that is the better label match", () => {
+  for (const [html, pattern] of [
+    [`<label for=d>Birth date</label><input id=d tabindex=-1 autocomplete=off required><label for=u>Update your birth date reason</label><input id=u>`, "birth date"],
+    [`<label for=d>Date</label><input id=d tabindex=-1 autocomplete=off><label for=u>Last update notes</label><input id=u>`, "date"],
+    [`<label for=d>Date *</label><input id=d tabindex=-1 autocomplete=off><label for=u>Update notes</label><input id=u>`, "date"],
+  ]) {
+    const w = page(`<form onsubmit="return false">${html}</form>`);
+    const o = run(w, "fill", { label_pattern: pattern, text: "1990-01-02" });
+    assert.equal(o.ok, true, html + " " + JSON.stringify(o));
+    assert.equal(w.document.getElementById("d").value, "1990-01-02", html);
+    assert.equal(w.document.getElementById("u").value, "", html);
+    assert.ok(o.ambiguous, html + " " + JSON.stringify(o));
+    assert.equal(o.warning, undefined, html);
+  }
+});
+
+// A trap-like field only yields to a normal one it ties with; a normal field
+// matched far more weakly (by hint) does not take the text over it.
+test("fill by label lets a trap-like field outscoring every normal one win, with a warning", () => {
+  const w = page(`<form onsubmit="return false"><label for=t>Website</label><input id=t name=website tabindex=-1 autocomplete=off><input id=n placeholder="Your website here"></form>`);
+  const o = run(w, "fill", { label_pattern: "website", text: "https://x.test" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(w.document.getElementById("t").value, "https://x.test");
+  assert.equal(w.document.getElementById("n").value, "");
+  assert.match(o.warning, /bot trap/);
+});
+
 test("fill by label into the only, visible trap-like match keeps filling it but warns", () => {
   const w = page(`<form><div><label for=t>Website</label><input id=t name=website tabindex=-1 autocomplete=off></div></form>`);
   const o = run(w, "fill", { label_pattern: "website", text: "https://x.test" });

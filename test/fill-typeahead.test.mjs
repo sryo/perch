@@ -98,6 +98,17 @@ test("typeahead: a fill leaves the window and a scrolled container where they we
   }
 });
 
+// Only the scroll focusing caused is undone: a page that scrolls as the text
+// comes in (to show its suggestions) keeps that scroll.
+test("typeahead: a scroll the page makes on input is kept", async () => {
+  const { dom } = onPage(LOCATION, LOCATION_JS() + `
+    document.getElementById('loc').addEventListener('input', () => window.scrollTo(0, 250));
+    window.scrollTo(0, 400);`);
+  const o = await fill({ label_pattern: "location", text: "Rosario" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(dom.scrollY, 250);
+});
+
 test("typeahead: an exact suggestion beats an earlier prefix match", async () => {
   const { dom } = onPage(LOCATION, LOCATION_JS().replace("const cities = ", "const cities = ['Rosario del Tala, Entre Rios', 'Rosario'].concat(").replace(";\n  const inp", ");\n  const inp"));
   const o = await fill({ selector: "#loc", text: "rosario" });

@@ -4190,7 +4190,7 @@ const pressFocus = function (target, el) {
   const on = function () { fired = true; };
   el.addEventListener("focus", on);
   press(target);
-  if (document.activeElement !== el && el.focus) el.focus({ preventScroll: true });
+  if (document.activeElement !== el && el.focus) el.focus();
   el.removeEventListener("focus", on);
   if (fired || was === el || document.activeElement !== el) return;
   el.dispatchEvent(new FocusEvent("focus"));
@@ -4736,32 +4736,38 @@ function census(f) {
   return { fields: fields, loose: loose, empty: els(function (e) { return e.req && !e.on; }), left: els(function (e) { return e.req && !e.on || e.loose; }) };
 }
 `;
-const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
-// Typed with input events and no blur, so the widget runs its own lookup. The
-// window and el's scrolled ancestors end where they were: focus() would scroll
-// el into view, and a page may scroll on focus or input itself.
+// Every scroll offset that can move el: its ancestors' (across shadow roots) and
+// the window's. scrollBack puts them back, instantly even under
+// scroll-behavior: smooth.
+const SCROLL_LIB = String.raw`
+function scrollsAt(el) {
+  const els = [];
+  for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
+  return { els: els, x: window.scrollX, y: window.scrollY };
+}
+function scrollBack(s) {
+  const to = function (n, x, y) {
+    if (n.scrollLeft === x && n.scrollTop === y) return;
+    try { n.scrollTo({ left: x, top: y, behavior: "instant" }); } catch (e) { n.scrollLeft = x; n.scrollTop = y; }
+  };
+  s.els.forEach(function (e) { to(e[0], e[1], e[2]); });
+  if (window.scrollX !== s.x || window.scrollY !== s.y) window.scrollTo({ left: s.x, top: s.y, behavior: "instant" });
+}
+`;
+const TYPEAHEAD_LIB = TA_BOX_LIB + SCROLL_LIB + String.raw`
+// Typed with input events and no blur, so the widget runs its own lookup.
+// Focusing leaves the window and el's scrolled ancestors where they were, a page
+// that scrolls on focus included; a scroll the page makes as the text comes in
+// (to show its suggestions) stays.
 function taType(el, text) {
-  const back = scrollsOf(el);
+  const at = scrollsAt(el);
   if (el.focus) el.focus({ preventScroll: true });
+  scrollBack(at);
   setNativeValue(el, text);
   const key = text.slice(-1);
   el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: key }));
   el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
   el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: key }));
-  back();
-}
-// -> a function that puts the window's and el's ancestors' scroll offsets back.
-function scrollsOf(el) {
-  const els = [], x = window.scrollX, y = window.scrollY;
-  for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
-  return function () {
-    els.forEach(function (e) {
-      const n = e[0];
-      if (n.scrollLeft === e[1] && n.scrollTop === e[2]) return;
-      try { n.scrollTo({ left: e[1], top: e[2], behavior: "instant" }); } catch (err) { n.scrollLeft = e[1]; n.scrollTop = e[2]; }
-    });
-    if (window.scrollX !== x || window.scrollY !== y) window.scrollTo({ left: x, top: y, behavior: "instant" });
-  };
 }
 `;
 
@@ -5184,11 +5190,25 @@ function fillOne(a, only, onLand) {
       : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
   }
   // A shown field that still looks like a trap (untabbable with autofill off, or
-  // named to be left blank) never takes the text over a normal one; alone, it
-  // does, with a warning.
-  const normal = shown.filter(function (c) { return !trapLike(c.el, wanted(c.el)); });
-  const trapOnly = !normal.length;
-  if (!trapOnly) shown = normal;
+  // named to be left blank) yields to a normal match scoring within 10 of it;
+  // one outscoring every normal match by more, or alone, takes the text with a
+  // warning. Untabbable with autofill off alone is also how date pickers and
+  // masks look, so that pair is no trap on a required field, or on one whose
+  // own label is the whole pattern while the normal matches it ties with only
+  // contain it.
+  const whole = function (el) { return acWhole.test(labelText(el).replace(/[\s*:]+$/, "").trim()); };
+  const pairOnly = function (el) { return !honeypot(el, wanted(el)) && !LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name")); };
+  const flagged = shown.filter(function (c) { return trapLike(c.el, wanted(c.el)); });
+  const normal = shown.filter(function (c) { return flagged.indexOf(c) < 0; });
+  const betterLabel = function (c) {
+    const tied = normal.filter(function (n) { return Math.abs(n.s - c.s) <= 10; });
+    return tied.length > 0 && whole(c.el) && !tied.some(function (n) { return whole(n.el); });
+  };
+  const trap = function (c) {
+    return flagged.indexOf(c) >= 0 && !(pairOnly(c.el) && (c.el.required || attr(c.el, "aria-required") === "true" || betterLabel(c)));
+  };
+  const firstNormal = shown.find(function (c) { return !trap(c); });
+  if (firstNormal) shown = shown.filter(function (c) { return !trap(c) || c.s - firstNormal.s > 10; });
   // A disabled winner refuses the fill; only an enabled field of equal score stands in.
   const best = shown.find(function (c) { return c.s === shown[0].s && !unsent(c.el); }) || shown[0];
   if (unsent(best.el)) return refuse(best.el);
@@ -5205,7 +5225,7 @@ function fillOne(a, only, onLand) {
   if (out.ok === false) return out;
   const rivals = shown.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
   if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
-  if (trapOnly) out.warning = trapWarning(best.el);
+  if (trap(best)) out.warning = trapWarning(best.el);
   return out;
 }
 `;
@@ -5680,18 +5700,6 @@ return {
 };`;
 
 export const SHOT_BUSY = "screenshot: another perch call on this tab is mid-screenshot; nothing was scrolled or captured, retry";
-// Puts back the scroll positions a shot_clip record kept, instantly even under
-// scroll-behavior: smooth.
-const SHOT_LIB = String.raw`
-function shotBack(s) {
-  const to = function (n, x, y) {
-    if (n.scrollLeft === x && n.scrollTop === y) return;
-    try { n.scrollTo({ left: x, top: y, behavior: "instant" }); } catch (e) { n.scrollLeft = x; n.scrollTop = y; }
-  };
-  s.els.forEach(function (e) { to(e[0], e[1], e[2]); });
-  if (window.scrollX !== s.x || window.scrollY !== s.y) window.scrollTo({ left: s.x, top: s.y, behavior: "instant" });
-}
-`;
 
 export const PAGE_SCRIPTS = {
   get_text: String.raw`
@@ -6313,10 +6321,17 @@ const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySele
 // Where the choice shows: react-select v5 puts role=combobox on an inner <input>
 // that it empties after a pick, so read the surrounding control instead.
 const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
-// A bare input straight in <body> has no box of its own: the page would count as
-// the control, and every list and open menu on it as the control's own.
+// A bare input's parent is its box only when it is the control's alone: body or
+// html, a parent holding the list the input names, or one holding two or more
+// other fields is the page's, and taking it would count every list and open
+// menu there as the control's own. Such an input is its own box.
 const up = ctl.parentElement;
-const box = wrap || (ctl.tagName === "INPUT" && up && !/^(BODY|HTML)$/.test(up.tagName) ? up : ctl);
+const named = [ctl, input].filter(Boolean).map(function (e) { return document.getElementById(attr(e, "aria-controls")); }).filter(Boolean);
+const pageLevel = function (p) {
+  if (/^(BODY|HTML)$/.test(p.tagName) || named.some(function (l) { return p.contains(l); })) return true;
+  return Array.prototype.filter.call(p.querySelectorAll("input:not([type=hidden]), select, textarea"), function (x) { return x !== ctl && x !== input; }).length >= 2;
+};
+const box = wrap || (ctl.tagName === "INPUT" && up && !pageLevel(up) ? up : ctl);
 // A bare input's box is its parent, which may hold only its label: its value is in the input.
 const shows = wrap || ctl.tagName !== "INPUT";
 const s = { key: selKey, tok: rbTok(), ctl: ctl, input: input, box: box, polls: 0, shown: shows ? shownParts(box) : [], whole: shows ? shownWhole(box) : "", multiBox: shows && multiBox(box, labelText(ctl)) };
@@ -6325,7 +6340,7 @@ const s = { key: selKey, tok: rbTok(), ctl: ctl, input: input, box: box, polls: 
 if (input && input.tagName === "INPUT") { s.prior = input.value; s.comp = taParts(input).comp; s.priorComp = s.comp && s.comp.value; }
 // Other open menus would cover this one or grab its keys: Escape them first, but
 // not a combobox inside this control's own popup (cmdk's search box).
-const popups = [ctl, input].filter(Boolean).map(function (e) { return document.getElementById(attr(e, "aria-controls")); }).filter(Boolean);
+const popups = named;
 document.querySelectorAll("[role=combobox][aria-expanded=true], [aria-haspopup][aria-expanded=true]").forEach(function (o) {
   if (mine(s, o) || popups.some(function (p) { return p.contains(o); })) return;
   pressEscape(o);
@@ -7141,7 +7156,7 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
   // document after a scroll (a covered or minimized window paints nothing), a
   // throw. A visible one counts two animation frames for shot_painted, and a
   // timer marks the record late if they have not come by then.
-  shot_clip: SHOT_LIB + String.raw`
+  shot_clip: SCROLL_LIB + String.raw`
 const held = window.__perch_shot;
 if (held && Date.now() - held.at < 10000) return { ok: false, error: ${JSON.stringify(SHOT_BUSY)} };
 const r = resolveEl(A);
@@ -7152,12 +7167,12 @@ const b = el.getBoundingClientRect();
 if (!b.width || !b.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
 const iw = innerWidth, ih = innerHeight;
 if (b.width > iw || b.height > ih) return { ok: false, error: "screenshot: the element is larger than the viewport (" + Math.round(b.width) + "x" + Math.round(b.height) + " CSS px in " + iw + "x" + ih + "); nothing was captured; screenshot without ref or selector" };
-if (held) shotBack(held);
-const els = [];
-for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
+if (held) scrollBack(held);
 window.__perch_shot_n = (window.__perch_shot_n || 0) + 1;
-const st = window.__perch_shot = { els: els, x: window.scrollX, y: window.scrollY, at: Date.now(), token: window.__perch_shot_n + "." + Math.random().toString(36).slice(2, 10) };
-const undo = function () { shotBack(st); if (window.__perch_shot === st) window.__perch_shot = null; };
+const st = window.__perch_shot = scrollsAt(el), els = st.els;
+st.at = Date.now();
+st.token = window.__perch_shot_n + "." + Math.random().toString(36).slice(2, 10);
+const undo = function () { scrollBack(st); if (window.__perch_shot === st) window.__perch_shot = null; };
 try {
   try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); } catch (e) {}
   const c = el.getBoundingClientRect();
@@ -7188,11 +7203,11 @@ const s = window.__perch_shot;
 return s ? { painted: s.painted === true, late: s.late === true, token: s.token } : { painted: false, gone: true };
 `,
   // Puts back what shot_clip kept and says whose record it was.
-  shot_restore: SHOT_LIB + String.raw`
+  shot_restore: SCROLL_LIB + String.raw`
 const s = window.__perch_shot;
 window.__perch_shot = null;
 if (!s) return { ok: false };
-shotBack(s);
+scrollBack(s);
 return { ok: true, token: s.token };
 `,
 
