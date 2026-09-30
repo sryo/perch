@@ -5973,6 +5973,13 @@ items.forEach(function (it) {
     if (now === it.st || (it.sv !== "" && el.value === it.sv)) return;
     back = el.selectedIndex < 0 || el.value === "" || now === it.pt;
     o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
+    // A list rebuilt under the pick after an earlier field of the batch landed
+    // is that field's dependent (a country reloading its regions), not a refusal.
+    const e = back && it.o && !el.contains(it.o) && items.filter(function (x) { return x.i < it.i; }).pop();
+    if (e) {
+      recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + LATER + "the page rebuilt its options after fields[" + e.i + "] (" + e.id + ") changed; fill it again once that settles" });
+      return;
+    }
   } else {
     const now = it.rich ? textOf(el) : el.value;
     if (it.text === "" ? !now.trim() : !!now.trim() && (now === it.want || holdsText(now, it.text))) return;
@@ -6328,7 +6335,7 @@ if (heard.length) {
       if (g.group) it.names = g.group.names;
     }
     else if ("checked" in g) it.on = g.checked;
-    else if ("sel" in g) { it.st = optText(g.el); it.sv = g.el.value; it.pt = g.pt; }
+    else if ("sel" in g) { it.st = optText(g.el); it.sv = g.el.value; it.pt = g.pt; it.o = g.el[g.sel]; }
     else { it.text = g.text; it.want = g.want; it.rich = g.rich; it.prior = g.prior; }
     return it;
   }));

@@ -745,6 +745,29 @@ test("fill {fields}: a select a later field's handler rebuilds with the same cho
   assert.equal(o.results[0].error, undefined);
 });
 
+// A dependent list an earlier field's change rebuilds a task later (a country
+// that reloads its regions) comes back on its placeholder: the page did not
+// refuse the write, the list was reset under it, so the error names that field.
+test("fill {fields}: a select an earlier field's change rebuilds and resets says so and to fill it again", async () => {
+  const REGIONS = `<label>Country <select id=co><option value="">Pick</option><option value=ar>Argentina</option><option value=ca>Canada</option></select></label>
+    <label>Region <select id=re><option value="">Pick</option><option>Cordoba</option><option>Ontario</option></select></label>`;
+  const JS = `const co = document.getElementById('co'), re = document.getElementById('re');
+    co.addEventListener('change', () => { later(() => { re.innerHTML = '<option value="">Pick</option>' + (co.value === 'ar' ? ['Cordoba', 'Santa Fe'] : ['Ontario']).map((r) => '<option>' + r + '</option>').join(''); }, 1); });`;
+  const { dom } = onPage(REGIONS, JS);
+  const o = await fill({ fields: [{ label_pattern: "country", option: "Argentina" }, { label_pattern: "region", option: "Cordoba" }] });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.results[0].ok, true);
+  const r = o.results[1];
+  assert.deepEqual([r.ok, r.reverted, r.kept], [false, true, "Pick"], JSON.stringify(r));
+  assert.equal(r.error, `combobox "Region" changed to "Pick" after it was filled; the page rebuilt its options after fields[0] (combobox "Country") changed; fill it again once that settles`);
+  assert.doesNotMatch(r.error, /reverted the write/);
+  assert.equal(dom.document.getElementById("re").value, "");
+  // Alone, a list rebuilt onto its placeholder is the plain revert: no earlier field to name.
+  onPage(REGIONS, JS.replace("co.addEventListener('change'", "re.addEventListener('change'"));
+  const a = await fill({ fields: [{ label_pattern: "region", option: "Cordoba" }] });
+  assert.match(a.results[0].error, /changed to "Pick" after it was filled; the page reverted the write$/);
+});
+
 // A select or radio showing an option other than the one asked for is a miss,
 // never a note: unlike text, no page formats one option into another.
 test("fill {fields}: a select the page moves to another option a task later is ok:false, a radio too", async () => {
