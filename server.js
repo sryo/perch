@@ -4428,21 +4428,32 @@ function checkByLabel(a, only) {
   if (trap) { const id = ident(trap); return { out: { ok: false, el: id, error: id + " matched " + pat + " but it looks like a bot trap; leave it unchecked" } }; }
   return { out: { ok: false, error: "no checkbox/radio matched " + pat } };
 }
-// onLand(el) hears of a box that ends in the wanted state.
+// The radios in el's group: same-name inputs of its form, else its radiogroup's.
+function radioMates(el) {
+  if (el.tagName !== "INPUT") {
+    const g = el.closest("[role=radiogroup]");
+    return g ? Array.prototype.slice.call(g.querySelectorAll("[role=radio]")) : [el];
+  }
+  if (!el.name) return [el];
+  return Array.prototype.filter.call((el.form || el.ownerDocument).querySelectorAll("input[type=radio]"), function (x) { return x.name === el.name && x.form === el.form; });
+}
+// onLand(el, was, prev) hears of a box that ends in the wanted state, whether
+// it was already on, and for a radio the one of its group that was on before.
 function checkOne(a, only, onLand) {
   const r = a.ref || a.selector ? resolveEl(a) : checkByLabel(a, only);
   if (r.out) return r.out;
   const el = r.el;
   if (!el.matches(CHECKABLE)) return { ok: false, error: ident(el) + " is not a checkbox or radio" };
   if (isDisabled(el) || el.closest("fieldset[disabled]")) return only ? { ok: true, kind: "check", el: ident(el), skipped: "disabled" } : { ok: false, kind: "check", el: ident(el), error: ident(el) + " is disabled; the form will not submit it" };
-  const want = !!a.checked;
+  const want = !!a.checked, was = isOn(el);
+  const prev = onLand && role(el) === "radio" ? radioMates(el).filter(isOn)[0] || null : null;
   const out = { ok: true, kind: "check", el: ident(el), checked: want };
-  if (isOn(el) !== want) {
+  if (was !== want) {
     if (!want && role(el) === "radio") return { ok: false, kind: "check", el: out.el, error: "a radio can't be unchecked; check another option" };
     el.click();
     if (isOn(el) !== want) return { ok: false, kind: "check", el: out.el, error: "state did not change after click", checked: isOn(el) };
   }
-  if (onLand) onLand(el);
+  if (onLand) onLand(el, was, prev);
   return out;
 }
 // Radio groups, each asked by a question: a [role=radiogroup] (its accessible
@@ -4879,6 +4890,11 @@ function holdsText(v, text) {
   const norm = function (s) { return String(s || "").trim().replace(/\s+/g, " "); };
   return norm(v).indexOf(norm(text)) >= 0 || sameNumber(v, text);
 }
+// The text of the option a native select shows, "" for none.
+function optText(s) {
+  const o = s && s.selectedIndex >= 0 ? s.options[s.selectedIndex] : null;
+  return o ? o.text.trim() : "";
+}
 `;
 
 const FILL_LIB = TOK_LIB + TYPEAHEAD_LIB + EMBED_LIB + HOLDS_LIB + String.raw`
@@ -4937,15 +4953,16 @@ function acToken(el) {
 }
 // -> fill's result for one field {ref|selector|label_pattern, text}. only:
 // write nothing to a field that is absent, a trap, ambiguous or already set.
-// onLand(el, rich) hears of each field or editor root that took the text.
+// onLand(el, rich, prior) hears of each field or editor root that took the
+// text, and what it held before the write.
 function fillOne(a, only, onLand) {
   // A page may undo a write a task later (a timer or a promise its input
   // handler queued), after this script returns. a.fr asks to keep what landed
   // for fill_reread, the next page call, under the token returned as fr.
   if (a.fr && !onLand) {
     let got = null;
-    const out = fillOne(a, only, function (el, rich) { got = { el: el, rich: rich }; });
-    if (got && out.ok === true) out.fr = frRecord([{ i: 0, el: got.el, id: out.el, kind: out.kind, rich: got.rich, text: a.text, want: got.rich ? textOf(got.el) : got.el.value }]);
+    const out = fillOne(a, only, function (el, rich, prior) { got = { el: el, rich: rich, prior: prior }; });
+    if (got && out.ok === true) out.fr = frRecord([{ i: 0, el: got.el, id: out.el, kind: out.kind, rich: got.rich, text: a.text, want: got.rich ? textOf(got.el) : got.el.value, prior: got.prior }]);
     return out;
   }
   const text = a.text;
@@ -4982,8 +4999,9 @@ function fillOne(a, only, onLand) {
     return f;
   }
   // -> true, false (not landed), or a miss result for a sanitizing type or a revert.
+  let prior = "";
   function setPlain(el) {
-    const prior = el.value;
+    prior = el.value;
     setNativeValue(el, text);
     fire(el, ["input", "change", "blur"]);
     const t = el.tagName === "INPUT" ? (el.type || "text").toLowerCase() : "";
@@ -5010,6 +5028,7 @@ function fillOne(a, only, onLand) {
     return { pending: true, tok: tok };
   }
   function setRich(root) {
+    prior = textOf(root);
     root.focus();
     const doc = root.ownerDocument;
     // Build nodes rather than assigning innerHTML: an HTML-string sink trips
@@ -5033,11 +5052,11 @@ function fillOne(a, only, onLand) {
     if (isField(el)) {
       const r = setPlain(el);
       if (r !== true) return r || null;
-      if (onLand) onLand(el, false);
+      if (onLand) onLand(el, false, prior);
       return { ok: true, kind: "plain", el: ident(el), len: el.value.length };
     }
     if (!isRich(el) || !setRich(el)) return null;
-    if (onLand) onLand(el, true);
+    if (onLand) onLand(el, true, prior);
     return { ok: true, kind: "rich", el: ident(host || el), len: textOf(el).length };
   }
   // A typeahead holds only its pick (a companion's value or what its control
@@ -5880,36 +5899,52 @@ return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "
   fill: FILL_LIB + "return fillOne(A);",
 
   // The fields a fill or fill {fields} write pass landed (frRecord, under
-  // A.tok), read again one page call later. -> {recheck: {index: miss}}, {} when
-  // all hold, or {lost} (no record: a new document). A field that left the
-  // document can't be judged here and is left as it was.
+  // A.tok), read again one page call later. -> {recheck: {index: miss}, notes:
+  // {index: text}}, {} when all hold, or {lost} (no record: a new document).
+  // Only a field back at what it held before the write, or emptied, was
+  // reverted; one showing some other value was reformatted by the page or
+  // written by another call, which is a note, never a miss. A field that left
+  // the document can't be judged here and is left as it was.
   fill_reread: HOLDS_LIB + String.raw`
 const m = window.__perch_fr, items = m && m[A.tok];
 if (!items) return { lost: true };
 delete m[A.tok];
-const LATER = " after it was filled; the page reverted the write";
-const recheck = {};
+const LATER = " after it was filled; ", BACK = LATER + "the page reverted the write", OTHER = LATER + "another value replaced it";
+const on = function (el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; };
+const changed = function (kept) { return kept ? " changed to " + JSON.stringify(kept) : " was cleared"; };
+const recheck = {}, notes = {};
 items.forEach(function (it) {
   const el = it.el;
   if (!el.isConnected) return;
-  let o;
-  if ("on" in it) {
-    const on = el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true";
-    if (on === it.on) return;
-    o = { checked: on, error: it.id + (!it.on ? ' changed to "checked"' : it.kind === "radio" ? " is no longer selected" : " was cleared") + LATER };
-  } else if ("sel" in it) {
-    if (el.selectedIndex === it.sel) return;
-    const kept = clip(el.selectedIndex >= 0 ? el.options[el.selectedIndex].text : "", 60);
-    o = { kept: kept, error: it.id + (kept ? " changed to " + JSON.stringify(kept) : " was cleared") + LATER };
+  let o, back;
+  if (it.mates) {
+    if (on(el)) return;
+    const cur = it.mates.filter(on)[0];
+    back = !cur || cur === it.pel;
+    const name = cur && it.names ? it.names[it.mates.indexOf(cur)] : "";
+    o = { error: it.id + (name ? changed(clip(name, 60)) : " is no longer selected") };
+  } else if ("on" in it) {
+    const now = on(el);
+    if (now === it.on) return;
+    back = true;
+    o = { checked: now, error: it.id + (!it.on ? ' changed to "checked"' : " was cleared") };
+  } else if ("st" in it) {
+    const now = optText(el);
+    if (now === it.st || (it.sv !== "" && el.value === it.sv)) return;
+    back = el.selectedIndex < 0 || el.value === "" || now === it.pt;
+    o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
   } else {
     const now = it.rich ? textOf(el) : el.value;
     if (it.text === "" ? !now.trim() : !!now.trim() && (now === it.want || holdsText(now, it.text))) return;
-    const kept = clip(now, 60);
-    o = { kept: kept, error: it.id + (kept ? " changed to " + JSON.stringify(kept) : " was cleared") + LATER };
+    back = now === it.prior || (it.text !== "" && !now.trim());
+    o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
   }
-  recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o);
+  if (back) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + BACK });
+  else notes[it.i] = o.error + OTHER;
 });
-return { recheck: recheck };
+const out = { recheck: recheck };
+if (Object.keys(notes).length) out.notes = notes;
+return out;
 `,
 
   // {pending} = keep polling; the best tier of taMatch. A.probe: is a pick worth
@@ -6173,7 +6208,7 @@ function drift(it, again) {
     now = chosen({ group: it.group });
   } else if ("sel" in it) {
     now = chosen({ el: el });
-    if (el.selectedIndex === it.sel && (now || !it.want)) return null;
+    if ((el.selectedIndex === it.sel || now === it.want) && (now || !it.want)) return null;
   } else {
     now = it.rich ? textOf(el) : el.value;
     if (now.trim() && (now === it.want || holdsText(now, it.text))) return null;
@@ -6198,20 +6233,22 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     if (c.out) o = c.out.absent ? { ok: true, skipped: "absent" } : c.out;
     else if (v) o = { ok: true, skipped: "has value", el: c.group ? "radiogroup " + JSON.stringify(clip(c.group.q, 80)) : ident(nativeOf(c.el) || c.el), value: clip(v, 60) };
     else if (c.group) {
+      const prev = c.group.opts.filter(isOn)[0] || null;
       o = pickRadio(c.group, f.option);
-      got = { el: c.group.opts.filter(isOn)[0], group: c.group };
+      got = { el: c.group.opts.filter(isOn)[0], group: c.group, prev: prev };
+      got.quiet = got.el === prev;
     } else {
-      const nat = nativeOf(c.el);
+      const nat = nativeOf(c.el), pt = optText(nat);
       if (!nat) return stop(i);
       o = A.only && unsent(nat) ? { ok: true, skipped: "disabled", el: ident(nat) } : pickNative(nat, f.option);
-      got = { el: nat, sel: nat.selectedIndex, want: chosen({ el: nat }) };
+      got = { el: nat, sel: nat.selectedIndex, want: chosen({ el: nat }), pt: pt };
     }
   } else if (f.checked != null) {
     kind = "check";
-    o = checkOne(f, A.only, function (el) { got = { el: el, checked: !!f.checked }; });
+    o = checkOne(f, A.only, function (el, was, prev) { got = { el: el, checked: !!f.checked, quiet: was === !!f.checked, prev: prev }; });
   } else {
     kind = "text";
-    o = fillOne(f, A.only, function (el, rich) { if (f.text !== "") got = { el: el, rich: rich, want: rich ? textOf(el) : el.value, text: f.text }; });
+    o = fillOne(f, A.only, function (el, rich, prior) { if (f.text !== "") got = { el: el, rich: rich, want: rich ? textOf(el) : el.value, text: f.text, prior: prior }; });
     if (o.pending) return stop(i, o.tok);
   }
   if (o.__perch_ref_miss) o = { ok: false, error: "ref " + o.ref + " is stale or unknown; call accessibility_snapshot again" };
@@ -6236,14 +6273,22 @@ const recheck = {};
 if (ff) Object.keys(ff.items).forEach(function (k) { const d = drift(ff.items[k]); if (d) recheck[k] = d; });
 const out = { results: results };
 if (Object.keys(recheck).length) out.recheck = recheck;
-// A write pass hands what landed to fill_reread; a re-read-only pass wrote nothing.
-if (ff && A.from !== A.fields.length && Object.keys(ff.items).length) {
-  out.fr = frRecord(Object.keys(ff.items).map(function (k) {
+// A write pass hands what landed to fill_reread; a re-read-only pass wrote
+// nothing, and a box or radio already in its state was not clicked, so the
+// page heard nothing it could undo there.
+const heard = ff && A.from !== A.fields.length ? Object.keys(ff.items).filter(function (k) { return !ff.items[k].quiet; }) : [];
+if (heard.length) {
+  out.fr = frRecord(heard.map(function (k) {
     const g = ff.items[k], it = { i: +k, el: g.el, id: g.id, kind: g.kind };
-    if ("checked" in g) it.on = g.checked;
-    else if (g.group) it.on = true;
-    else if ("sel" in g) it.sel = g.sel;
-    else { it.text = g.text; it.want = g.want; it.rich = g.rich; }
+    if (g.group || ("checked" in g && g.checked && role(g.el) === "radio")) {
+      it.on = true;
+      it.mates = g.group ? g.group.opts : radioMates(g.el);
+      it.pel = g.prev;
+      if (g.group) it.names = g.group.names;
+    }
+    else if ("checked" in g) it.on = g.checked;
+    else if ("sel" in g) { it.st = optText(g.el); it.sv = g.el.value; it.pt = g.pt; }
+    else { it.text = g.text; it.want = g.want; it.rich = g.rich; it.prior = g.prior; }
     return it;
   }));
 }
@@ -7724,7 +7769,10 @@ async function fillFields(fields, target, only) {
     }
   };
   // A late re-read only speaks for fields the pass before it still found landed.
-  const recheck = (r, late) => { for (const [i, x] of Object.entries(r.recheck || {})) if (results[i] && (!late || results[i].ok === true)) results[i] = x; };
+  const recheck = (r, late) => {
+    for (const [i, x] of Object.entries(r.recheck || {})) if (results[i] && (!late || results[i].ok === true)) results[i] = x;
+    for (const [i, n] of Object.entries(r.notes || {})) if (results[i] && results[i].ok === true) results[i] = addNote(results[i], n);
+  };
   let watch = false, warning = null, form, fr = null;
   // The document the earlier fields landed in is gone, so nothing proves they
   // survived; the ones that landed are flagged rather than failed.
@@ -7732,7 +7780,8 @@ async function fillFields(fields, target, only) {
     for (let k = 0; k < i; k++) if (results[k] && results[k].ok === true && !results[k].skipped) results[k].unverified = true;
     warning = `the page changed after fields[${i}]; earlier fields may have been cleared, check them`;
   };
-  for (let from = 0; from < A.length;) {
+  let from = 0;
+  while (from < A.length) {
     const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target));
     if (halted) return halted;
     if (!r || !Array.isArray(r.results)) {
@@ -7783,7 +7832,7 @@ async function fillFields(fields, target, only) {
     // new document, leaves the pass's answer.
     const x = await rereadPass(fr, target);
     if (x) recheck(x, true);
-  } else if (watch) {
+  } else if (from === A.length && watch) {
     // The combobox ended the batch, so no page pass has re-read the fields
     // before it. A navigated page has nothing to re-read; a re-read that failed
     // leaves the fields before the combobox unproven, and says so.
@@ -7875,13 +7924,16 @@ async function fill(args = {}) {
 }
 
 // A plain or rich fill that landed, read again on the next page call: a page
-// that put its old value back a task after the write reverted it. A re-read
-// that can't run or finds no record leaves the fill's own answer.
+// that put its old value back a task after the write reverted it, and one that
+// shows another value adds a note. A re-read that can't run or finds no record
+// leaves the fill's own answer.
 async function reread(r, target) {
   const { fr, ...out } = r;
   const x = await rereadPass(fr, target);
-  return x && x.recheck && x.recheck[0] && x.recheck[0].ok === false ? x.recheck[0] : out;
+  if (x && x.recheck && x.recheck[0] && x.recheck[0].ok === false) return x.recheck[0];
+  return x && x.notes && x.notes[0] ? addNote(out, x.notes[0]) : out;
 }
+const addNote = (o, n) => ({ ...o, note: o.note ? `${o.note}; ${n}` : n });
 // fill_reread, or null when it could not run.
 async function rereadPass(tok, target) {
   try {

@@ -599,6 +599,21 @@ test("fill {fields} costs the same Apple Events inline and from fields_path", as
   assert.deepEqual(cost, { inline: 2, path: 2 }, breakdown());
 });
 
+// A box or radio already in the wanted state is not clicked, so the page heard
+// nothing it could undo: a batch of only those has nothing to re-read.
+test("fill {fields} whose boxes and radios are already set costs one Apple Event", async () => {
+  const dom = page(`<label><input type=checkbox id=ag checked> I agree</label>
+    <fieldset><legend>Size</legend><label><input type=radio name=sz value=s checked> Small</label><label><input type=radio name=sz value=m> Medium</label></fieldset>`, { url: "https://c0.test/" });
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Google Chrome" }] });
+  const { o } = await call("fill", { fields: [{ label_pattern: "agree", checked: true }, { label_pattern: "size", option: "Small" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(appleEvents(), 1, breakdown());
+  world.reset();
+  const { o: flip } = await call("fill", { fields: [{ label_pattern: "agree", checked: false }, { label_pattern: "size", option: "Small" }] });
+  assert.equal(flip.ok, true, JSON.stringify(flip));
+  assert.equal(appleEvents(), 2, breakdown());
+});
+
 // A plain field is the write and one re-read a task later; a miss (nothing
 // landed) has nothing to re-read.
 test("fill on a plain field costs two Apple Events, a miss one", async () => {

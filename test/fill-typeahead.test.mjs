@@ -677,6 +677,87 @@ test("fill {fields}: a box or select the page flips back a task later is reverte
   assert.equal(dom.document.getElementById("ag").checked, false);
 });
 
+// A page that formats what was typed a task later changed it to a value that is
+// neither what it held before nor empty: the fill stands, with a note.
+const FORMATS_LATER = `<label>Postcode <input id=pc></label><label>Amount <input id=am></label><label>Start <input id=sd></label>`;
+const FORMATS_LATER_JS = `const fmt = { pc: (v) => v.toUpperCase(), am: (v) => Number(v).toLocaleString('en-US', { minimumFractionDigits: 2 }), sd: (v) => v.split('-').reverse().join('/') };
+  for (const id of Object.keys(fmt)) { const e = document.getElementById(id); e.addEventListener('input', () => { later(() => { e.value = fmt[id](e.value); }, 1); }); }`;
+
+test("fill: a page that formats the value a task later keeps ok, with a note, never reverted", async () => {
+  for (const [label, text, shown] of [["postcode", "sw1a 1aa", "SW1A 1AA"], ["amount", "1000", "1,000.00"], ["start", "2024-01-05", "05/01/2024"]]) {
+    onPage(FORMATS_LATER, FORMATS_LATER_JS);
+    const o = await fill({ label_pattern: label, text });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    assert.equal(o.reverted, undefined, JSON.stringify(o));
+    assert.match(o.note, new RegExp(`changed to ${JSON.stringify(shown).replace(/[.()/]/g, "\\$&")} after it was filled; another value replaced it`), JSON.stringify(o));
+  }
+});
+
+test("fill {fields}: a field the page formats a task later keeps ok, with a note", async () => {
+  onPage(FORMATS_LATER, FORMATS_LATER_JS);
+  const o = await fill({ fields: [{ label_pattern: "postcode", text: "sw1a 1aa" }, { label_pattern: "start", text: "2024-01-05" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(o.results.map((x) => [x.ok, x.reverted]), [[true, undefined], [true, undefined]]);
+  assert.match(o.results[0].note, /changed to "SW1A 1AA" after it was filled; another value replaced it/);
+  assert.match(o.results[1].note, /changed to "05\/01\/2024" after it was filled; another value replaced it/);
+});
+
+test("fill: a field the page puts back to its prior value a task later is reverted; another value is a note", async () => {
+  onPage(`<label>Code <input id=code value=A1></label>`, `const c = document.getElementById('code');
+    c.addEventListener('input', () => { later(() => { c.value = 'A1'; }, 1); });`);
+  const o = await fill({ label_pattern: "code", text: "B2" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.reverted, true);
+  assert.equal(o.kept, "A1");
+  onPage(`<label>Code <input id=code value=A1></label>`, `const c = document.getElementById('code');
+    c.addEventListener('input', () => { later(() => { c.value = 'C3'; }, 1); });`);
+  const n = await fill({ label_pattern: "code", text: "B2" });
+  assert.equal(n.ok, true, JSON.stringify(n));
+  assert.equal(n.note, `textbox "Code" changed to "C3" after it was filled; another value replaced it`);
+});
+
+test("fill {fields}: a select the page rebuilds a task later with the same choice holds", async () => {
+  onPage(`<label>Country <select id=co><option value="">Pick</option><option value=cl>Chile</option></select></label>`,
+    `const co = document.getElementById('co');
+    co.addEventListener('change', () => { later(() => { const v = co.value, o = document.createElement('option'); o.value = 'ar'; o.textContent = 'Argentina'; co.insertBefore(o, co.options[1]); co.value = v; }, 1); });`);
+  const o = await fill({ fields: [{ label_pattern: "country", option: "Chile" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(o.results[0], { ok: true, kind: "select", el: o.results[0].el, selected: o.results[0].selected }, JSON.stringify(o));
+});
+
+test("fill {fields}: a select a later field's handler rebuilds with the same choice holds", async () => {
+  onPage(`<label>Country <select id=co><option value="">Pick</option><option value=cl>Chile</option></select></label><label>City <input id=ci></label>`,
+    `const co = document.getElementById('co');
+    document.getElementById('ci').addEventListener('input', () => { const v = co.value, o = document.createElement('option'); o.value = 'ar'; o.textContent = 'Argentina'; co.insertBefore(o, co.options[1]); co.value = v; });`);
+  const o = await fill({ fields: [{ label_pattern: "country", option: "Chile" }, { label_pattern: "city", text: "Santiago" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.results[0].error, undefined);
+});
+
+test("fill {fields}: a select the page moves to another option a task later is a note, a radio too", async () => {
+  onPage(`<label>Country <select id=co><option value="">Pick</option><option>Chile</option><option>Peru</option></select></label>
+    <fieldset><legend>Size</legend><label><input type=radio name=sz value=s> Small</label><label><input type=radio name=sz value=m> Medium</label><label><input type=radio name=sz value=l> Large</label></fieldset>`,
+    `const co = document.getElementById('co'), rs = document.querySelectorAll('[name=sz]');
+    co.addEventListener('change', () => { later(() => { co.selectedIndex = 2; }, 1); });
+    rs[0].addEventListener('change', () => { later(() => { rs[2].checked = true; }, 1); });`);
+  const o = await fill({ fields: [{ label_pattern: "country", option: "Chile" }, { label_pattern: "size", option: "Small" }] });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.match(o.results[0].note, /changed to "Peru" after it was filled; another value replaced it$/);
+  assert.match(o.results[1].note, /changed to "Large" after it was filled; another value replaced it$/);
+});
+
+test("fill {fields}: a radio checked by label that the page moves back a task later is reverted, elsewhere a note", async () => {
+  const RADIOS = `<label><input type=radio name=sz value=s checked> Small</label><label><input type=radio name=sz value=m> Medium</label><label><input type=radio name=sz value=l> Large</label>`;
+  for (const [to, reverted] of [[0, true], [2, false]]) {
+    onPage(RADIOS, `const rs = document.querySelectorAll('[name=sz]');
+      rs[1].addEventListener('change', () => { later(() => { rs[${to}].checked = true; }, 1); });`);
+    const o = await fill({ fields: [{ label_pattern: "medium", checked: true }] });
+    const r = o.results[0];
+    if (reverted) assert.deepEqual([r.ok, r.reverted, /is no longer selected after it was filled; the page reverted the write$/.test(r.error)], [false, true, true], JSON.stringify(o));
+    else assert.deepEqual([r.ok, /is no longer selected after it was filled; another value replaced it$/.test(r.note)], [true, true], JSON.stringify(o));
+  }
+});
+
 test("fill: a re-read that finds no record (a new document) keeps the write's answer", async () => {
   const { dom } = onPage(LATE_REVERT, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
   const o = await fill({ label_pattern: "city", text: "Rosario" });
