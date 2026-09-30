@@ -446,3 +446,21 @@ test("custom combobox: a listbox that ignores the pick is ok:false and the input
   assert.match(o.error, /Bravo/);
   assert.equal(dom.document.getElementById("dest").value, "");
 });
+
+// The same combobox inside a page-wide <form> or <main>: a parent holding the
+// listbox the input names, or two or more other fields, is the page's, not the
+// control's box, so its text is never read as the pick.
+test("custom combobox: a page-wide form or main around the bare input is not its box", async () => {
+  const input = `<label for=dest>Destination</label><input id=dest role=combobox aria-controls=l aria-expanded=true>`;
+  const list = `<ul id=l role=listbox><li role=option>Alpha</li><li role=option>Bravo</li></ul>`;
+  const other = `<label for=n>Name</label><input id=n role=combobox aria-expanded=true><ul role=listbox><li role=option>Bravo</li></ul><label for=e>Email</label><input id=e>`;
+  for (const html of [`<form>${input}${list}</form>`, `<main>${input}${list}</main>`, `<form>${other}${input}</form>${list}`]) {
+    const { dom } = onPage(html);
+    const { r, o } = await select({ label_pattern: "destination", text: "Bravo" });
+    assert.equal(r.isError, undefined, html + " " + JSON.stringify(o));
+    assert.equal(o.ok, false, html + " " + JSON.stringify(o));
+    assert.doesNotMatch(o.error, /did not open or is empty/, html);
+    assert.match(o.error, /Bravo/, html);
+    assert.equal(dom.document.getElementById("dest").value, "", html);
+  }
+});

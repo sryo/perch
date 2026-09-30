@@ -6282,10 +6282,17 @@ const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySele
 // Where the choice shows: react-select v5 puts role=combobox on an inner <input>
 // that it empties after a pick, so read the surrounding control instead.
 const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
-// A bare input straight in <body> has no box of its own: the page would count as
-// the control, and every list and open menu on it as the control's own.
+// A bare input's parent is its box only when it is the control's alone: body or
+// html, a parent holding the list the input names, or one holding two or more
+// other fields is the page's, and taking it would count every list and open
+// menu there as the control's own. Such an input is its own box.
 const up = ctl.parentElement;
-const box = wrap || (ctl.tagName === "INPUT" && up && !/^(BODY|HTML)$/.test(up.tagName) ? up : ctl);
+const named = [ctl, input].filter(Boolean).map(function (e) { return document.getElementById(attr(e, "aria-controls")); }).filter(Boolean);
+const pageLevel = function (p) {
+  if (/^(BODY|HTML)$/.test(p.tagName) || named.some(function (l) { return p.contains(l); })) return true;
+  return Array.prototype.filter.call(p.querySelectorAll("input:not([type=hidden]), select, textarea"), function (x) { return x !== ctl && x !== input; }).length >= 2;
+};
+const box = wrap || (ctl.tagName === "INPUT" && up && !pageLevel(up) ? up : ctl);
 // A bare input's box is its parent, which may hold only its label: its value is in the input.
 const shows = wrap || ctl.tagName !== "INPUT";
 const s = { key: selKey, tok: rbTok(), ctl: ctl, input: input, box: box, polls: 0, shown: shows ? shownParts(box) : [], whole: shows ? shownWhole(box) : "", multiBox: shows && multiBox(box, labelText(ctl)) };
@@ -6294,7 +6301,7 @@ const s = { key: selKey, tok: rbTok(), ctl: ctl, input: input, box: box, polls: 
 if (input && input.tagName === "INPUT") { s.prior = input.value; s.comp = taParts(input).comp; s.priorComp = s.comp && s.comp.value; }
 // Other open menus would cover this one or grab its keys: Escape them first, but
 // not a combobox inside this control's own popup (cmdk's search box).
-const popups = [ctl, input].filter(Boolean).map(function (e) { return document.getElementById(attr(e, "aria-controls")); }).filter(Boolean);
+const popups = named;
 document.querySelectorAll("[role=combobox][aria-expanded=true], [aria-haspopup][aria-expanded=true]").forEach(function (o) {
   if (mine(s, o) || popups.some(function (p) { return p.contains(o); })) return;
   pressEscape(o);
