@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Address catchers</title></head>
+<body>
+<form id="apply">
+  <div><label for="firstname">First name</label><input id="firstname" name="firstname"></div>
+  <div><label for="address">Address</label><input id="address" name="address" value="Córdoba, Argentina"></div>
+  <div style="position:absolute;width:1px;height:1px;overflow:hidden" data-rect="0,0,1,1">
+    <label>city<input id="city" name="city" aria-hidden="true" tabindex="-1" type="text"></label>
+    <label>postcode<input id="postcode" name="postcode" aria-hidden="true" tabindex="-1" type="text"></label>
+    <label>country<input id="country" name="country" aria-hidden="true" tabindex="-1" type="text"></label>
+  </div>
+</form>
+<script>
+// Workable's Address field (apply.workable.com, shared.applicationForm chunk):
+// city, postcode and country are browser-autofill catchers, aria-hidden and
+// clipped to a pixel. A value that lands in one without a real keystroke in
+// Address is appended to Address, a 300ms debounce commits Address, and the
+// commit empties all three catchers. In a hidden tab the debounce fires on
+// Chrome's 1s timer tick, so the catchers read filled for up to about 1.3s.
+(function () {
+  const address = document.getElementById('address');
+  let typed = false, pending = address.value, timer = null;
+  address.addEventListener('keydown', function (e) { typed = e.key !== 'Unidentified'; });
+  ['city', 'postcode', 'country'].forEach(function (id) {
+    document.getElementById(id).addEventListener('input', function (e) {
+      if (typed || !e.target.value) return;
+      pending = pending + ', ' + e.target.value;
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        address.value = pending;
+        ['city', 'postcode', 'country'].forEach(function (c) { document.getElementById(c).value = ''; });
+      }, 300);
+    });
+  });
+})();
+</script>
+</body>
+</html>

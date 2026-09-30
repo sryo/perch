@@ -2553,6 +2553,15 @@ function jxaRuntime(BROWSERS, HANG) {
       o.rr = x;
       return JSON.stringify(o);
     },
+    // fill_reread's last read of a record still inside its watch when the first
+    // re-read ran, sent after Node waited the watch out: bounded, {dropped} for
+    // no reply, {unbounded} where no bounded page call exists.
+    reread(a) {
+      const t = pageTarget(a.target, "fill");
+      if (!pinned(t)) return JSON.stringify({ unbounded: true });
+      try { return pollExec(t, a.js, POLL_EXEC_SECS); }
+      catch (e) { if (isNoReply(e)) return JSON.stringify({ dropped: true }); throw e; }
+    },
     evalAsync(a) {
       const t = pageTarget(a.target, "eval_js"), start = Date.now();
       // The kick is never sent twice. It sets its result slot before the user's
@@ -5303,10 +5312,12 @@ function pendOn(p) {
 const FR_LIB = String.raw`
 ` + PEND_LIB + String.raw`
 // Keeps fields that landed for fill_reread under a fresh owner token, at most
-// 20 records a document, and returns the token.
-function frRecord(items) {
+// 20 records a document, and returns the token. until: the page time
+// fill_reread watches the record to before its answer is final.
+function frRecord(items, until) {
   const m = window.__perch_fr = window.__perch_fr || {}, tok = rbTok(), keys = Object.keys(m);
   if (keys.length >= 20) delete m[keys[0]];
+  if (until) items.until = until;
   m[tok] = items;
   return tok;
 }
@@ -6415,11 +6426,15 @@ return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "
   // The fields a fill {fields} write pass landed (frRecord, under A.tok), read
   // again in the same runtime call. -> frJudge's answer, or {lost} (no record: a
   // new document, or another tab).
+  // A record still inside its watch (until) answers with wait, the ms left, and
+  // stays for the read after it (A.last), which is final.
   fill_reread: FR_JUDGE_LIB + String.raw`
 const m = window.__perch_fr, items = m && m[A.tok];
 if (!items) return { lost: true };
+const j = frJudge(items), left = items.until ? Math.ceil(items.until - performance.now()) : 0;
+if (left > 0 && !A.last) { j.wait = left; return j; }
 delete m[A.tok];
-return frJudge(items);
+return j;
 `,
 
   // The next page call's check of this server's pending records (A.toks), run
@@ -6762,6 +6777,9 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     if (got.group) got.pick = chosen({ group: got.group });
     if (got.group || "checked" in got) got.key.value = got.el.value;
     got.shown = fieldVis(got.el);
+    // Text put in a field no one sees (an autofill catcher, a mirror) is the
+    // page's to manage, and it may move it on a timer: watched past the re-read.
+    if (!got.shown && "text" in got) got.at = performance.now();
     ff.items[i] = got;
     if (kind !== "text" && i < A.fields.length - 1 && stepMoved(got)) return { results: results.concat(o), gone: true, at: i };
   }
@@ -6783,9 +6801,14 @@ pends.forEach(function (k) {
 });
 // A write pass hands what landed to fill_reread; a re-read-only pass wrote
 // nothing, and a box or radio already in its state was not clicked, so the
-// page heard nothing it could undo there.
-const heard = ff && A.from !== A.fields.length ? Object.keys(ff.items).filter(function (k) { return !ff.items[k].quiet; }) : [];
-const late = ff && ff.pend && A.from !== A.fields.length ? Object.keys(ff.pend) : [];
+// page heard nothing it could undo there, except in a hidden text field still
+// inside its watch: 600ms of page time after the last such write, 1500ms in a
+// hidden tab, where the page's timers fire on a 1s tick.
+const writes = A.from !== A.fields.length;
+const watchTo = ff ? Object.keys(ff.items).reduce(function (t, k) { return Math.max(t, ff.items[k].at || 0); }, 0) : 0;
+const until = watchTo && watchTo + (document.hidden ? 1500 : 600);
+const heard = ff ? Object.keys(ff.items).filter(function (k) { return writes ? !ff.items[k].quiet : ff.items[k].at && until > performance.now(); }) : [];
+const late = ff && ff.pend && writes ? Object.keys(ff.pend) : [];
 if (heard.length || late.length) {
   out.fr = frRecord(late.map(function (k) { const p = ff.pend[k]; return { i: +k, el: p.el, pend: true, ok: p.ok, mates: p.mates }; }).concat(heard.map(function (k) {
     const g = ff.items[k], it = { i: +k, el: g.el, id: g.id, kind: g.kind };
@@ -6799,7 +6822,7 @@ if (heard.length || late.length) {
     else if ("sel" in g) { it.st = optText(g.el); it.sv = g.el.value; it.pt = g.pt; it.o = g.el[g.sel]; }
     else { it.text = g.text; it.want = g.want; it.rich = g.rich; it.prior = g.prior; }
     return it;
-  })));
+  })), until);
 }
 if (ff && ff.form && ff.form.isConnected) {
   const c = census(ff.form), form = out.form = { requiredEmpty: c.empty.length };
@@ -8472,27 +8495,38 @@ async function fillFields(fields, target, only) {
       : { kind: "select", ...pageFault(s, "select") });
     from = r.defer + 1;
   }
-  if (fr) {
-    // A page may undo a write a task after the pass that made it; one light
-    // page call reads the landed fields again. One that could not run (no
-    // bounded page call, a dropped reply, a failure) leaves the record for the
-    // next call's check; one that finds no record (a new document) leaves the
-    // pass's answer.
-    const x = rereadOf(fr.rr);
-    if (!x || x.unbounded || x.dropped) lateKeep(fr.fr);
+  // A page may undo a write a task after the pass that made it; one light page
+  // call reads the landed fields again, and once more after the watch it
+  // answers for text in a field no one sees. One that could not run (no bounded
+  // page call, a dropped reply, a failure) leaves the record for the next
+  // call's check; one that finds no record (a new document) leaves the pass's
+  // answer.
+  const settle = async (p) => {
+    let x = rereadOf(p.rr);
+    if (x && x.wait > 0) {
+      recheck(x, true);
+      x = await rereadLast(target, p.fr, x.wait);
+    }
+    if (!x || x.unbounded || x.dropped) lateKeep(p.fr);
     else recheck(x, true);
-  } else if (from === A.length && watch) {
+  };
+  if (fr) await settle(fr);
+  else if (from === A.length && watch) {
     // The combobox ended the batch, so no page pass has re-read the fields
     // before it. A navigated page has nothing to re-read; a re-read that failed
     // leaves the fields before the combobox unproven, and says so.
     let x, why = null;
-    try { x = await runPage("fill", "fill_fields", { fields: A, from: A.length }, target); } catch (e) { why = (/^([a-z_]+):/.exec(codeOsaError(String(e && e.message))) || [0, "error"])[1]; }
+    try { x = await runPage("fill", "fill_fields", { fields: A, from: A.length }, target, { reread: REREAD_JS() }); } catch (e) { why = (/^([a-z_]+):/.exec(codeOsaError(String(e && e.message))) || [0, "error"])[1]; }
     if (!why && (!x || typeof x !== "object" || x.__perch_error != null)) why = "page error";
     if (why) {
       for (let i = 0; i < A.length - 1; i++) if (results[i].ok === true && !results[i].skipped) results[i].unverified = true;
       warning = `the final re-read did not run (${why}); earlier fields are unverified`;
     } else if (x.gone) changedAfter(A.length - 1);
-    else { recheck(x); form = x.form; }
+    else {
+      recheck(x);
+      form = x.form;
+      if (x.fr) await settle(x);
+    }
   }
   return { ok: results.every((x) => x.ok === true), results, ...counts(), ...(warning ? { warning } : {}), ...(form ? { form } : {}) };
 }
@@ -8586,6 +8620,14 @@ const rereadOf = (x) => x && typeof x === "object" && x.__perch_error == null ? 
 // The re-read script, its token left for the runtime to fill in (FR_TOK).
 let rereadJs = null;
 const REREAD_JS = () => rereadJs || (rereadJs = buildEvalWrapper(pageScript("fill_reread", { tok: "@perch_fr_tok@" })));
+// A watched record's last read (fill_reread with A.last), after Node waited out
+// the watch the first re-read answered: the batch's own answer, not a late one.
+const WATCH_MAX_MS = 2000;
+async function rereadLast(target, tok, wait) {
+  await new Promise((r) => setTimeout(r, Math.min(wait, WATCH_MAX_MS)));
+  const js = buildEvalWrapper(pageScript("fill_reread", { tok, last: true }));
+  try { return rereadOf(parsePage(await rt("reread", { target, js }, { raw: true }))); } catch { return null; }
+}
 
 // A perch page script that threw, by error name only: its message and stack
 // are page internals the agent can't act on. eval_js's own errors never come here.

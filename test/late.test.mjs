@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
+import { readFileSync } from "node:fs";
 
 const QUEUE_JS = `
   window.__q = [];
@@ -364,4 +365,83 @@ test("fill {fields}: a radio that never takes the click stays refused", async ()
     assert.deepEqual(f.o.results[0], { ok: false, kind: "check", el: `radio "Are you comfortable working in person? YES"`, error: "state did not change after click", checked: false }, browser);
     assert.equal(dom.document.getElementById("yd").getAttribute("aria-checked"), "false", browser);
   }
+});
+
+// test/fixtures/address-catchers.html: Workable's Address field. Its city,
+// postcode and country inputs are autofill catchers (aria-hidden, a pixel wide)
+// that the page empties on a 300ms debounce after a value lands, well after a
+// batch's re-read a task later. A batch that wrote a text field the user can't
+// see re-reads it once more after a watch window (page time, longer in a hidden
+// tab), so the emptied catchers are ok:false in the batch's own answer. A batch
+// of shown fields keeps its one re-read: no extra Apple Event.
+const AC = readFileSync(new URL("./fixtures/address-catchers.html", import.meta.url), "utf8");
+const AC_BODY = AC.slice(AC.indexOf("<body>") + 6, AC.indexOf("<script>"));
+const AC_JS = AC.slice(AC.indexOf("<script>") + 8, AC.indexOf("</script>"));
+const AC_FIELDS = [
+  { selector: "#firstname", text: "Test" },
+  { selector: "#city", text: "Tuscaloosa" },
+  { selector: "#postcode", text: "35401" },
+  { selector: "#country", text: "United States" },
+];
+const cleared = (id) => ({ ok: false, kind: "plain", el: `textbox "${id}" hidden`, reverted: true, kept: "", error: `textbox "${id}" hidden was cleared after it was filled; the page reverted the write${TRUSTED}` });
+const TRUSTED = "; retry with fill {trusted:true}";
+
+test("fill {fields}: autofill catchers the page empties on a debounce are ok:false in the batch's answer", async () => {
+  const { dom, world } = onPage(AC_BODY, AC_JS);
+  const f = await call("fill", { fields: AC_FIELDS });
+  assert.equal(f.o.ok, false, JSON.stringify(f.o));
+  assert.deepEqual(f.o.results[0], { ok: true, kind: "plain", el: `textbox "First name"`, len: 4 });
+  assert.deepEqual(f.o.results.slice(1).map((r) => ({ ...r, warning: undefined, hidden: undefined, len: undefined })).map((r) => JSON.parse(JSON.stringify(r))),
+    ["city", "postcode", "country"].map(cleared));
+  assert.equal(dom.document.getElementById("address").value, "Córdoba, Argentina, Tuscaloosa, 35401, United States");
+  // The batch, its re-read, and the one read after the watch.
+  assert.equal(execs(world), 3);
+  assert.equal(lateOf(await call("get_text", {})), undefined, "answered in the batch, not again");
+});
+
+test("fill {fields}: a batch of shown fields takes no watch and no extra Apple Event", async () => {
+  const { world } = onPage(AC_BODY, AC_JS);
+  const t0 = Date.now();
+  const f = await call("fill", { fields: [AC_FIELDS[0]] });
+  assert.equal(f.o.ok, true);
+  assert.equal(execs(world), 2, "the batch and its re-read");
+  assert.ok(Date.now() - t0 < 400, `took ${Date.now() - t0}ms`);
+});
+
+test("fill {fields}: a hidden field the page keeps stays ok after the watch", async () => {
+  const { world } = onPage(AC_BODY, "");
+  const t0 = Date.now();
+  const f = await call("fill", { fields: AC_FIELDS });
+  assert.equal(f.o.ok, true, JSON.stringify(f.o));
+  assert.equal(execs(world), 3);
+  assert.ok(Date.now() - t0 >= 500, `watched ${Date.now() - t0}ms`);
+});
+
+test("fill {fields}: a watch whose last read drops leaves the record for the next call", async () => {
+  const { world } = onPage(AC_BODY, AC_JS);
+  let n = 0;
+  world.state.hangIf = (js) => js.includes("items = m && m[A.tok]") && ++n === 2;
+  const f = await call("fill", { fields: AC_FIELDS });
+  assert.equal(f.o.ok, true, JSON.stringify(f.o));
+  world.state.hangIf = null;
+  assert.deepEqual(lateOf(await call("get_text", {})), ["city", "postcode", "country"].map((id) => ({ el: `textbox "${id}" hidden`, error: "was cleared after it was filled; the page reverted the write; retry with fill {trusted:true}" })));
+});
+
+// A batch that ends on a custom combobox has no write pass after the catchers,
+// so the re-read-only pass that ends it takes the watch instead.
+test("fill {fields}: a batch ending on a combobox still watches the catchers", async () => {
+  const LEVEL = `<label id=lab>Level</label><div class="select__control"><div role=combobox aria-labelledby=lab aria-expanded=false tabindex=0><span class=v>Choose</span></div></div><div id=menu></div>`;
+  const LEVEL_JS = `
+  const cb = document.querySelector('[role=combobox]');
+  document.querySelector('.select__control').addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !e.view) return;
+    cb.setAttribute('aria-expanded', 'true');
+    document.getElementById('menu').innerHTML = '<div role=option>Junior</div><div role=option>Senior</div>';
+    document.querySelectorAll('[role=option]').forEach(o => o.addEventListener('click', () => { cb.querySelector('.v').textContent = o.textContent; }));
+  });`;
+  onPage(AC_BODY.replace("</form>", LEVEL + "</form>"), AC_JS + LEVEL_JS);
+  const f = await call("fill", { fields: [...AC_FIELDS, { label_pattern: "level", option: "Senior" }] });
+  assert.equal(f.o.ok, false, JSON.stringify(f.o));
+  assert.deepEqual(f.o.results.map((r) => r.ok), [true, false, false, false, true]);
+  assert.equal(f.o.results[1].reverted, true);
 });
