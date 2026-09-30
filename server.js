@@ -6257,7 +6257,10 @@ const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySele
 // Where the choice shows: react-select v5 puts role=combobox on an inner <input>
 // that it empties after a pick, so read the surrounding control instead.
 const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
-const box = wrap || (ctl.tagName === "INPUT" ? ctl.parentElement : ctl);
+// A bare input straight in <body> has no box of its own: the page would count as
+// the control, and every list and open menu on it as the control's own.
+const up = ctl.parentElement;
+const box = wrap || (ctl.tagName === "INPUT" && up && !/^(BODY|HTML)$/.test(up.tagName) ? up : ctl);
 // A bare input's box is its parent, which may hold only its label: its value is in the input.
 const shows = wrap || ctl.tagName !== "INPUT";
 const s = { key: selKey, tok: rbTok(), ctl: ctl, input: input, box: box, polls: 0, shown: shows ? shownParts(box) : [], whole: shows ? shownWhole(box) : "", multiBox: shows && multiBox(box, labelText(ctl)) };

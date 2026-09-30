@@ -432,3 +432,17 @@ test("native select: a disabled option or a disabled select is refused and nothi
   assert.equal(dom.document.querySelector("#t").value, "");
   assert.equal((await select({ selector: "#s", text: "L" })).o.ok, true);
 });
+
+// A combobox whose open listbox ignores the press on an option: nothing shows
+// the pick, so select never claims it. The list it names is its own even when
+// the bare input sits straight in <body>, so the miss is about the pick, not
+// an empty list.
+test("custom combobox: a listbox that ignores the pick is ok:false and the input keeps its value", async () => {
+  const { dom } = onPage(`<label for=dest>Destination</label><input id=dest role=combobox aria-controls=l aria-expanded=true><ul id=l role=listbox><li role=option>Alpha</li><li role=option>Bravo</li></ul>`);
+  const { r, o } = await select({ label_pattern: "destination", text: "Bravo" });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.doesNotMatch(o.error, /did not open or is empty/);
+  assert.match(o.error, /Bravo/);
+  assert.equal(dom.document.getElementById("dest").value, "");
+});
