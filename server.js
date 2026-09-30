@@ -620,7 +620,7 @@ function jxaRuntime(BROWSERS, HANG) {
       let v;
       try { v = tab.execute({ javascript: js }); }
       catch (e) { if (noSuchObject(e)) { delete hints[want.tabId]; return null; } throw e; }
-      if (at) Object.assign(at, { app: h.app, kind: "chrome", win: win, w: hn.w, run: function (s) { return tab.execute({ javascript: s }); } });
+      if (at) Object.assign(at, { app: h.app, kind: "chrome", win: win, w: hn.w, tabId: hn.id, run: function (s) { return tab.execute({ javascript: s }); } });
       return { v: v };
     }
     if (want.app != null) return null;
@@ -680,8 +680,9 @@ function jxaRuntime(BROWSERS, HANG) {
     const key = app + "\n" + tabId + "\n" + win;
     if (asScripts[key]) return asScripts[key];
     if (++asCount > AS_CACHE_MAX) { asScripts = {}; asCount = 1; }
+    // No tabId: the window's active tab, as the untargeted plain path runs page JS.
     const src = "on perch_exec(js, ms)\nwith timeout of (ms / 1000) seconds\ntell application " + asQuote(app) +
-      " to execute tab id " + asQuote(tabId) + " of " + win + " javascript js\nend timeout\nend perch_exec";
+      " to execute " + (tabId == null ? "active tab" : "tab id " + asQuote(tabId)) + " of " + win + " javascript js\nend timeout\nend perch_exec";
     const s = $.NSAppleScript.alloc.initWithSource(src);
     if (!s.compileAndReturnError(Ref())) return null;
     return (asScripts[key] = s);
@@ -736,6 +737,16 @@ function jxaRuntime(BROWSERS, HANG) {
     try { return asExecute(t, js, secs, namedWindow(t)); }
     catch (e) { if (isNoReply(e)) throw e; }
     return exec(t, js);
+  }
+  // pollExec for quickExec's tab (`at`): a Chromium tab by id, or the window's
+  // active tab when untargeted. A fast failure takes the plain path; Safari
+  // has no bounded path.
+  function boundedAt(at, js) {
+    if (at.kind === "chrome" && soleInstance(at)) {
+      try { return asExecute(at, js, POLL_EXEC_SECS, "window " + (at.w + 1)); }
+      catch (e) { if (isNoReply(e)) throw e; }
+    }
+    return at.run(js);
   }
   // A one-shot read, sent once more with twice the cap after a dropped reply: it
   // is read-only, and after a navigation drop the new document answers at once.
@@ -2325,20 +2336,31 @@ function jxaRuntime(BROWSERS, HANG) {
       if (failed.length) res.failed = failed;
       return res;
     },
+    // a.reread: a write whose result carries fr (fill's record of what landed) is
+    // read again a task later in this same call, on the tab the write ran in (the
+    // same window's active tab when untargeted), bounded so a write whose change
+    // handler navigates costs POLL_EXEC_SECS: its result gets rr, the re-read's
+    // answer, {dropped} for no reply, or null when it could not run.
     evalJs(a) {
-      const q = quickExec(a.target, a.js);
-      if (q) return q.v;
-      const t = resolve(a.target);
-      visibleGuard(t, a.tool || "eval_js");
-      return exec(t, a.js);
-    },
-    // fill_reread, a task after a write: one bounded read. A write whose change
-    // handler navigates leaves an execute Chrome never answers, so a dropped
-    // reply is {dropped}, the write's answer standing, never the 2-minute default.
-    reread(a) {
-      const t = pageTarget(a.target, a.tool);
-      try { return pollExec(t, a.js, POLL_EXEC_SECS); }
-      catch (e) { if (isNoReply(e)) return JSON.stringify({ dropped: true }); throw e; }
+      const at = a.reread ? {} : undefined;
+      const q = quickExec(a.target, a.js, at);
+      let t = null, v;
+      if (q) v = q.v;
+      else {
+        t = resolve(a.target);
+        visibleGuard(t, a.tool || "eval_js");
+        v = exec(t, a.js);
+      }
+      if (!a.reread) return v;
+      let o = null;
+      try { o = JSON.parse(String(v)); } catch (e) {}
+      if (!o || typeof o !== "object" || o.fr == null) return v;
+      const js = a.reread.split(FR_TOK).join(JSON.stringify(o.fr));
+      let x = null;
+      try { x = JSON.parse(String(t ? pollExec(t, js, POLL_EXEC_SECS) : boundedAt(at, js))); }
+      catch (e) { if (isNoReply(e)) x = { dropped: true }; }
+      o.rr = x;
+      return JSON.stringify(o);
     },
     evalAsync(a) {
       const t = pageTarget(a.target, "eval_js"), start = Date.now();
@@ -3483,8 +3505,8 @@ async function listTabs(args = {}) {
   return out;
 }
 
-async function evalJs(script, target, { awaitPromise = false, timeout = 30000, tool = "eval_js" } = {}) {
-  if (!awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool }, { raw: true }));
+async function evalJs(script, target, { awaitPromise = false, timeout = 30000, tool = "eval_js", reread } = {}) {
+  if (!awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
   const key = `__perch_async_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const r = await rt("evalAsync", { target, kick: buildAsyncKickoff(script, key), poll: buildAsyncPoll(key), timeout },
     { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
@@ -7893,7 +7915,7 @@ async function fillFields(fields, target, only) {
   };
   let from = 0;
   while (from < A.length) {
-    const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target));
+    const r = await step(() => runPage("fill", "fill_fields", { fields: A, from, only: only || undefined }, target, { reread: REREAD_JS() }));
     if (halted) return halted;
     if (!r || !Array.isArray(r.results)) {
       if (!results.length) return scriptFault("fill", r);
@@ -7920,7 +7942,7 @@ async function fillFields(fields, target, only) {
     recheck(r);
     watch = !!r.watch;
     form = r.form;
-    if (r.defer == null) { fr = r.fr || null; break; }
+    if (r.defer == null) { fr = r.fr ? r : null; break; }
     const f = A[r.defer];
     // A trusted entry types into the field this pass resolved and held, never
     // one trusted_fill_background finds by its own looser label match.
@@ -7941,7 +7963,7 @@ async function fillFields(fields, target, only) {
     // A page may undo a write a task after the pass that made it; one light
     // page call reads the landed fields again. One that can't run, or finds a
     // new document, leaves the pass's answer.
-    const x = await rereadPass(fr, target);
+    const x = rereadOf(fr.rr);
     if (x && x.dropped) results.forEach((y, i) => { if (y.ok === true && !y.skipped) results[i] = addNote(y, NO_REREAD); });
     else if (x) recheck(x, true);
   } else if (from === A.length && watch) {
@@ -8028,8 +8050,8 @@ async function fill(args = {}) {
   const key = taArgs({ ref, selector, label_pattern, text: body }, trusted);
   const r = trusted
     ? await trustedFill({ ...key, raise, target })
-    : await runPage("fill", "fill", { ...key, fr: true }, target);
-  if (!trusted && r && r.fr) return hintTrusted(await reread(r, target));
+    : await runPage("fill", "fill", { ...key, fr: true }, target, { reread: REREAD_JS() });
+  if (!trusted && r && r.fr) return hintTrusted(reread(r));
   if (!r || !r.pending) return trusted ? noTok(r) : hintTrusted(r);
   const out = { ...await (r.trusted ? pickSuggestion(target, r.tok, key) : pickTypeahead(key, target, r.tok).then(hintTrusted)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
@@ -8039,23 +8061,21 @@ async function fill(args = {}) {
 // that put its old value back a task after the write reverted it, and one that
 // shows another value adds a note. A re-read that can't run or finds no record
 // leaves the fill's own answer.
-// rr: the runtime's own re-read result, when it already ran one.
-async function reread(r, target, tool = "fill") {
+// r.rr: the re-read the runtime ran right after the write, in the same call.
+function reread(r) {
   const { fr, rr, ...out } = r;
-  const x = rr !== undefined ? (rr && typeof rr === "object" && rr.__perch_error == null ? rr : null) : await rereadPass(fr, target, tool);
+  const x = rereadOf(rr);
   if (x && x.dropped) return addNote(out, NO_REREAD);
   if (x && x.recheck && x.recheck[0] && x.recheck[0].ok === false) return x.recheck[0];
   return x && x.notes && x.notes[0] ? addNote(out, x.notes[0]) : out;
 }
 const addNote = (o, n) => ({ ...o, note: o.note ? `${o.note}; ${n}` : n });
-// fill_reread, {dropped} when its reply never came (the page may be leaving),
-// or null when it could not run.
-async function rereadPass(tok, target, tool = "fill") {
-  try {
-    const x = parsePage(await rt("reread", { target, js: buildEvalWrapper(pageScript("fill_reread", { tok })), tool }, { raw: true, lane: "slow" }));
-    return x && typeof x === "object" && x.__perch_error == null ? x : null;
-  } catch { return null; }
-}
+// fill_reread's answer, {dropped} when its reply never came (the page may be
+// leaving), or null when it could not run.
+const rereadOf = (x) => x && typeof x === "object" && x.__perch_error == null ? x : null;
+// The re-read script, its token left for the runtime to fill in (FR_TOK).
+let rereadJs = null;
+const REREAD_JS = () => rereadJs || (rereadJs = buildEvalWrapper(pageScript("fill_reread", { tok: "@perch_fr_tok@" })));
 const NO_REREAD = "not read again after the write: the page gave no reply (it may be navigating); check it";
 
 // A perch page script that threw, by error name only: its message and stack
@@ -8155,14 +8175,14 @@ async function select(args = {}, prefs = null) {
   // fill does. fill's own combobox passes (prefs) never reach a native select.
   const r = pageFault(await rt("select", {
     target,
-    start: step("select_start", prefs ? {} : { fr: true }), ...(prefs ? {} : { reread: pageFn("fill_reread", { tok: "@perch_fr_tok@" }) }), pick: step("select_pick"), miss: step("select_miss"),
+    start: step("select_start", prefs ? {} : { fr: true }), ...(prefs ? {} : { reread: REREAD_JS() }), pick: step("select_pick"), miss: step("select_miss"),
     read: step("select_read"), readFinal: step("select_read", { final: true }),
     ...(trusted ? { trusted: {
       open: step("select_open"), type: step("select_type"), keep: step("select_read", { keep: true }), check: pageFn("trusted_check", {}),
       control: pageFn("trusted_probe", { select: "control" }), option: pageFn("trusted_probe", { select: "option" }),
     } } : {}),
   }, { lane: "slow" }), "select");
-  return r && r.fr ? reread(r, target, "select") : r;
+  return r && r.fr ? reread(r) : r;
 }
 
 // Shared guidance lives here once instead of in every tool description.

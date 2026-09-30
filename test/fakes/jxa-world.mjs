@@ -366,12 +366,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   // NSAppleScript understands one shape: the runtime's bounded execute, a handler
   // `on perch_exec(js, ms) / with timeout of (ms / 1000) seconds / tell application
   // "A" to execute tab id "T" of window id "W" javascript js / end timeout / end
-  // perch_exec`, where the window may instead be `window N` (1-based, front first),
+  // perch_exec`, where the tab may instead be `active tab` (the one the window
+  // shows) and the window `window N` (1-based, front first),
   // called by a subroutine Apple Event whose direct object is the list {js, ms}.
   // state.compiles counts compilations (a live compile costs about as much as the
   // execute), apart from `counts`, which the Apple Event budgets sum.
   const asString = String.raw`"((?:[^"\\]|\\.)*)"`;
-  const asHandler = new RegExp(String.raw`^on perch_exec\(js, ms\)\nwith timeout of \(ms / 1000\) seconds\ntell application ${asString} to execute tab id ${asString} of window (?:id ${asString}|(\d+)) javascript js\nend timeout\nend perch_exec$`);
+  const asHandler = new RegExp(String.raw`^on perch_exec\(js, ms\)\nwith timeout of \(ms / 1000\) seconds\ntell application ${asString} to execute (?:tab id ${asString}|active tab) of window (?:id ${asString}|(\d+)) javascript js\nend timeout\nend perch_exec$`);
   const unquote = (s) => s.replace(/\\(.)/g, "$1");
   state.compiles = 0;
   function appleScript(src) {
@@ -409,7 +410,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     if (twinOf(appName)) return nil();
     const wins = winsByApp[appName] || [];
     const w = winIndex != null ? wins[Number(winIndex) - 1] : wins.find((x) => String(x.spec.id) === winId);
-    const tab = w && w.tabs.find((x) => String(x.spec.id) === tabId);
+    // No tab id: `active tab of window N`, the tab that window shows.
+    const tab = w && (tabId == null ? w.tabs[w.spec.active] : w.tabs.find((x) => String(x.spec.id) === tabId));
     if (!tab) return nil();
     try {
       const r = tab.execute({ javascript: js }, { timeoutMs: ms });

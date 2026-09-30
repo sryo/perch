@@ -553,12 +553,12 @@ test("navigate from a file: page to a file: url costs the same Apple Events as a
   assert.equal(appleEvents(), 2 + 2 + 2 + 1 + 2, breakdown());
 });
 
-// The re-read a task after an untargeted write: the resolve's read of the shown
-// tab's id, then one bounded execute (so a page the write sent away costs at
-// most POLL_EXEC_SECS), which the fake counts twice (NSAppleScript and
-// tab.execute). Live that is 2 Apple Events; a tabId the server has listed
-// needs no id read.
-const REREAD = 1 + 2;
+// The re-read a task after a write: one bounded execute in the same runtime
+// call as the write, on the tab the write ran in (the active tab of the same
+// window when untargeted), so a page the write sent away costs at most
+// POLL_EXEC_SECS and no tab id is read. The fake counts a bounded execute twice
+// (NSAppleScript and tab.execute); live it is 1 Apple Event.
+const REREAD = 2;
 
 // fill {fields} on native fields is one page pass, whatever the order-dependent
 // recheck finds, plus one short re-read a task later for a page that undoes a
@@ -634,11 +634,11 @@ test("fill on a plain field costs a write and a bounded re-read, a miss one Appl
   world.reset();
   const miss = await call("fill", { label_pattern: "zzz", text: "x" });
   assert.equal(miss.o.ok, false);
-  assert.equal(appleEvents(), 1, breakdown());  // A listed tabId needs no id read for the re-read.
+  assert.equal(appleEvents(), 1, breakdown());  // A listed tabId costs the same.
   const h = (await listed("Google Chrome"))[0].tabId;
   world.reset();
   assert.equal((await call("fill", { label_pattern: "city", text: "Lima", target: { tabId: h } })).o.ok, true);
-  assert.equal(appleEvents(), 1 + 2, breakdown());
+  assert.equal(appleEvents(), 1 + REREAD, breakdown());
 });
 
 // A native select is the pick and one re-read a task later, as a plain fill;
