@@ -5927,14 +5927,15 @@ return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "
   // A.tok), read again one page call later. -> {recheck: {index: miss}, notes:
   // {index: text}}, {} when all hold, or {lost} (no record: a new document).
   // Only a field back at what it held before the write, or emptied, was
-  // reverted; one showing some other value was reformatted by the page or
-  // written by another call, which is a note, never a miss. A field that left
-  // the document can't be judged here and is left as it was.
+  // reverted. A text field showing some other value was reformatted by the page
+  // or written by another call, which is a note; a select or radio group on
+  // another option is a miss, since no page formats one option into another. A
+  // field that left the document can't be judged here and is left as it was.
   fill_reread: HOLDS_LIB + String.raw`
 const m = window.__perch_fr, items = m && m[A.tok];
 if (!items) return { lost: true };
 delete m[A.tok];
-const LATER = " after it was filled; ", BACK = LATER + "the page reverted the write", OTHER = LATER + "another value replaced it";
+const LATER = " after it was filled; ", BACK = LATER + "the page reverted the write", OTHER = LATER + "another value replaced it", PICKED = LATER + "the page chose another option";
 const on = function (el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; };
 const changed = function (kept) { return kept ? " changed to " + JSON.stringify(kept) : " was cleared"; };
 const recheck = {}, notes = {};
@@ -5965,6 +5966,7 @@ items.forEach(function (it) {
     o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
   }
   if (back) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + BACK });
+  else if (it.mates || "st" in it) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id }, o, { error: o.error + PICKED });
   else notes[it.i] = o.error + OTHER;
 });
 const out = { recheck: recheck };

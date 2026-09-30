@@ -745,19 +745,23 @@ test("fill {fields}: a select a later field's handler rebuilds with the same cho
   assert.equal(o.results[0].error, undefined);
 });
 
-test("fill {fields}: a select the page moves to another option a task later is a note, a radio too", async () => {
+// A select or radio showing an option other than the one asked for is a miss,
+// never a note: unlike text, no page formats one option into another.
+test("fill {fields}: a select the page moves to another option a task later is ok:false, a radio too", async () => {
   onPage(`<label>Country <select id=co><option value="">Pick</option><option>Chile</option><option>Peru</option></select></label>
     <fieldset><legend>Size</legend><label><input type=radio name=sz value=s> Small</label><label><input type=radio name=sz value=m> Medium</label><label><input type=radio name=sz value=l> Large</label></fieldset>`,
     `const co = document.getElementById('co'), rs = document.querySelectorAll('[name=sz]');
     co.addEventListener('change', () => { later(() => { co.selectedIndex = 2; }, 1); });
     rs[0].addEventListener('change', () => { later(() => { rs[2].checked = true; }, 1); });`);
   const o = await fill({ fields: [{ label_pattern: "country", option: "Chile" }, { label_pattern: "size", option: "Small" }] });
-  assert.equal(o.ok, true, JSON.stringify(o));
-  assert.match(o.results[0].note, /changed to "Peru" after it was filled; another value replaced it$/);
-  assert.match(o.results[1].note, /changed to "Large" after it was filled; another value replaced it$/);
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.results.map((x) => [x.ok, x.reverted, x.note]), [[false, undefined, undefined], [false, undefined, undefined]], JSON.stringify(o));
+  assert.match(o.results[0].error, /changed to "Peru" after it was filled; the page chose another option$/);
+  assert.equal(o.results[0].kept, "Peru");
+  assert.match(o.results[1].error, /changed to "Large" after it was filled; the page chose another option$/);
 });
 
-test("fill {fields}: a radio checked by label that the page moves back a task later is reverted, elsewhere a note", async () => {
+test("fill {fields}: a radio checked by label that the page moves back a task later is reverted, elsewhere a miss", async () => {
   const RADIOS = `<label><input type=radio name=sz value=s checked> Small</label><label><input type=radio name=sz value=m> Medium</label><label><input type=radio name=sz value=l> Large</label>`;
   for (const [to, reverted] of [[0, true], [2, false]]) {
     onPage(RADIOS, `const rs = document.querySelectorAll('[name=sz]');
@@ -765,7 +769,7 @@ test("fill {fields}: a radio checked by label that the page moves back a task la
     const o = await fill({ fields: [{ label_pattern: "medium", checked: true }] });
     const r = o.results[0];
     if (reverted) assert.deepEqual([r.ok, r.reverted, /is no longer selected after it was filled; the page reverted the write$/.test(r.error)], [false, true, true], JSON.stringify(o));
-    else assert.deepEqual([r.ok, /is no longer selected after it was filled; another value replaced it$/.test(r.note)], [true, true], JSON.stringify(o));
+    else assert.deepEqual([r.ok, r.reverted, r.note, /is no longer selected after it was filled; the page chose another option$/.test(r.error)], [false, undefined, undefined, true], JSON.stringify(o));
   }
 });
 
