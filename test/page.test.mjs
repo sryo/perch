@@ -299,11 +299,13 @@ test("fill by label passes over a visible trap-like field tied with a normal one
 // Date pickers and masks sit out of the tab order with autofill off. When such a
 // field is required, or its label is the whole pattern while the normal match's
 // label only contains it, it is the field asked for, not a trap.
+// A required one is no trap at all; an optional one that wins on its label
+// still carries the trap warning.
 test("fill by label keeps an untabbable autofill-off field that is the better label match", () => {
-  for (const [html, pattern] of [
-    [`<label for=d>Birth date</label><input id=d tabindex=-1 autocomplete=off required><label for=u>Update your birth date reason</label><input id=u>`, "birth date"],
-    [`<label for=d>Date</label><input id=d tabindex=-1 autocomplete=off><label for=u>Last update notes</label><input id=u>`, "date"],
-    [`<label for=d>Date *</label><input id=d tabindex=-1 autocomplete=off><label for=u>Update notes</label><input id=u>`, "date"],
+  for (const [html, pattern, warned] of [
+    [`<label for=d>Birth date</label><input id=d tabindex=-1 autocomplete=off required><label for=u>Update your birth date reason</label><input id=u>`, "birth date", false],
+    [`<label for=d>Date</label><input id=d tabindex=-1 autocomplete=off><label for=u>Last update notes</label><input id=u>`, "date", true],
+    [`<label for=d>Date *</label><input id=d tabindex=-1 autocomplete=off><label for=u>Update notes</label><input id=u>`, "date", true],
   ]) {
     const w = page(`<form onsubmit="return false">${html}</form>`);
     const o = run(w, "fill", { label_pattern: pattern, text: "1990-01-02" });
@@ -311,7 +313,21 @@ test("fill by label keeps an untabbable autofill-off field that is the better la
     assert.equal(w.document.getElementById("d").value, "1990-01-02", html);
     assert.equal(w.document.getElementById("u").value, "", html);
     assert.ok(o.ambiguous, html + " " + JSON.stringify(o));
-    assert.equal(o.warning, undefined, html);
+    if (warned) assert.match(o.warning || "", /bot trap/, html);
+    else assert.equal(o.warning, undefined, html);
+  }
+});
+
+// The textbook honeypot's label is the whole pattern, but the real field's
+// name, type or autocomplete token is too: the label is no better match there.
+test("fill by label passes over an exactly labelled honeypot when the real field's name, type or token is the pattern", () => {
+  for (const real of [`name=email type=email required`, `name=email`, `type=email`, `autocomplete=email`]) {
+    const w = page(`<form onsubmit="return false"><label for=t>Email</label><input id=t name=email_c tabindex=-1 autocomplete=off><label for=r>Email address</label><input id=r ${real}></form>`);
+    const o = run(w, "fill", { label_pattern: "email", text: "ada@x.test" });
+    assert.equal(o.ok, true, real + " " + JSON.stringify(o));
+    assert.equal(w.document.getElementById("t").value, "", real);
+    assert.equal(w.document.getElementById("r").value, "ada@x.test", real);
+    assert.equal(o.warning, undefined, real);
   }
 });
 
@@ -349,6 +365,13 @@ test("fill by selector or ref into a trap-shaped field fills it, with a warning"
     const plain = run(w, "fill", { selector: "#e", text: "a@x.test" });
     assert.equal(plain.warning, undefined, JSON.stringify(plain));
   }
+  // Out of the tab order with autofill off on a required field is a date
+  // picker or mask, not a trap; a blank-naming label still warns.
+  const w = page(`<form><label for=d>Start date</label><input id=d tabindex=-1 autocomplete=off required><input id=b aria-label="Leave this field blank" required></form>`);
+  const d = run(w, "fill", { selector: "#d", text: "2024-01-02" });
+  assert.equal(d.ok, true, JSON.stringify(d));
+  assert.equal(d.warning, undefined, JSON.stringify(d));
+  assert.match(run(w, "fill", { selector: "#b", text: "x" }).warning || "", /leave it blank/);
 });
 
 test("fill by label prefers a plainly visible field over a faded combobox decoy before it", () => {
