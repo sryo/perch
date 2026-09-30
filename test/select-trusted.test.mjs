@@ -80,7 +80,7 @@ test("trusted: a control that ignores synthetic presses is opened with a backgro
   const o = await select({ selector: "#fruit", text: "banana", trusted: true });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.selected, "Banana");
-  assert.equal(o.value, "Banana");
+  assert.equal(o.value ?? o.selected, "Banana");
   assert.deepEqual(o.trusted, ["control"]);
   assert.deepEqual([...w.dom.pickerLog], ["fruit:Banana"]);
   assert.deepEqual(presses(w), [["skylight", { x: 106, y: 167 }]]);
@@ -91,7 +91,7 @@ test("trusted: options that also ignore synthetic presses get a trusted click of
   const w = world();
   const o = await select({ label_pattern: "^city$", text: "Quito", trusted: true });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Quito");
+  assert.equal(o.value ?? o.selected, "Quito");
   assert.deepEqual(o.trusted, ["control", "option"]);
   assert.deepEqual([...w.dom.pickerLog], ["city:Quito"]);
   assert.equal(presses(w).length, 2);
@@ -127,7 +127,7 @@ for (const shown of [true, false]) test(`trusted: a control that opens synthetic
   const edits = editing(w.dom);
   const o = await select({ selector: "#size", text: "Large", trusted: true });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Large");
+  assert.equal(o.value ?? o.selected, "Large");
   assert.equal(o.trusted, undefined);
   assert.deepEqual(w.posted, []);
   assert.deepEqual(edits, []);
@@ -174,7 +174,7 @@ test("trusted, background tab: a picker that opens only on trusted input is type
   const o = await select({ selector: "#loc", text: "Córdoba, Argentina", trusted: true });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.selected, "Córdoba, Argentina");
-  assert.equal(o.value, "Córdoba, Argentina");
+  assert.equal(o.value ?? o.selected, "Córdoba, Argentina");
   assert.deepEqual(o.trusted, ["typed"]);
   assert.deepEqual(edits, [["insertText", "Córdoba"]]);
   assert.deepEqual([...w.dom.pickerLog], ["loc:Córdoba, Argentina"]);
@@ -187,7 +187,7 @@ test("trusted, shown tab: a picker the trusted click leaves shut is typed into w
   const edits = editing(w.dom);
   const o = await select({ selector: "#loc", text: "Córdoba, Argentina", trusted: true });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Córdoba, Argentina");
+  assert.equal(o.value ?? o.selected, "Córdoba, Argentina");
   assert.deepEqual(o.trusted, ["control", "typed"]);
   assert.deepEqual(edits, [["insertText", "Córdoba"]]);
   assert.deepEqual([...w.dom.pickerLog], ["loc:Córdoba, Argentina"]);

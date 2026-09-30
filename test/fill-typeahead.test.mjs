@@ -297,7 +297,7 @@ test("typeahead: async react-select picks after the debounced lookup and reads t
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.kind, "typeahead");
   assert.equal(o.selected, "Toronto, ON, Canada");
-  assert.equal(o.value, "Toronto, ON, Canada");
+  assert.equal(o.value ?? o.selected, "Toronto, ON, Canada");
   assert.equal($(dom, "input[name=city]").value, "Toronto, ON, Canada");
 });
 
@@ -1148,7 +1148,7 @@ test("fill {trusted}: an option whose leading unit is its own element or line ve
       const { dom } = onPage(html, js.replace(LI, li));
       const [r, o] = await fillLoc({ label_pattern: "location", text: "Paris", trusted: true }, fields);
       assert.equal(r.ok, true, name + " " + JSON.stringify(o));
-      assert.equal(r.value, "Paris");
+      assert.equal(r.value ?? r.selected, "Paris");
       assert.equal($(dom, ".loc__value").textContent, "Paris");
     }
   }

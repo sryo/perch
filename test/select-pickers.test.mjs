@@ -38,12 +38,12 @@ test("cmdk multi-select: each select picks from the trigger's own popover, reads
   let o = await select({ selector: "#langs", text: "spanish" });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.selected, "Spanish");
-  assert.match(o.value, /Spanish/);
+  assert.match(o.value ?? o.selected, /Spanish/);
   assert.equal(popovers(dom), 0, "the popover select opened is closed");
   o = await select({ label_pattern: "^languages$", text: "French" });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.selected, "French (Canada)");
-  assert.equal(o.value, "Spanish, French (Canada)", "each badge reads back apart");
+  assert.equal(o.value ?? o.selected, "Spanish, French (Canada)", "each badge reads back apart");
   assert.deepEqual(badges(dom, "langs"), ["Spanish", "French (Canada)"]);
   assert.deepEqual([...dom.pickerLog], ["langs:Spanish", "langs:French (Canada)"]);
   assert.equal(popovers(dom), 0);
@@ -131,7 +131,7 @@ test("cmdk single combobox: picks, closes itself, and a repeat does not toggle t
   const dom = onPage();
   let o = await select({ label_pattern: "country", text: "Spain" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Spain");
+  assert.equal(o.value ?? o.selected, "Spain");
   o = await select({ label_pattern: "country", text: "spain" });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(dom.document.getElementById("country").textContent, "Spain");
@@ -148,7 +148,7 @@ test("Downshift: its toggle button lists the items, typing opens it to pick, and
   assert.equal(input.value, "");
   o = await select({ label_pattern: "department", text: "Design" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Design");
+  assert.equal(o.value ?? o.selected, "Design");
   assert.equal(dom.downshift.selectedItem, "Design");
   // The menu filters by the input's text, so a filled combobox lists what matches it.
   o = await select({ label_pattern: "department", text: "" });
@@ -236,11 +236,11 @@ test("a single value with a comma is one value: an option equal to one of its pa
   const dom = onPage("", CITY);
   let o = await select({ selector: "#city", text: "Paris, Texas" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Paris, Texas");
+  assert.equal(o.value ?? o.selected, "Paris, Texas");
   o = await select({ selector: "#city", text: "Paris" });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.note, undefined, JSON.stringify(o));
-  assert.equal(o.value, "Paris");
+  assert.equal(o.value ?? o.selected, "Paris");
   assert.equal(o.unverified, undefined, JSON.stringify(o));
   assert.deepEqual([...dom.pickerLog], ["city:Paris, Texas", "city:Paris"]);
 });
@@ -260,7 +260,7 @@ test("a single value that only contains the pick does not verify it", async () =
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.deepEqual([...dom.stuckLog], ["Paris"]);
   assert.equal(o.pressed, "Paris");
-  assert.match(o.value, /Paris, Texas/);
+  assert.match(o.value ?? o.selected, /Paris, Texas/);
   assert.match(o.error, /^pressed "Paris" but the control shows ".*Paris, Texas.*"; not verified$/);
   assert.equal(o.unverified, undefined, JSON.stringify(o));
 });

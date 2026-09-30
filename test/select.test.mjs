@@ -173,7 +173,7 @@ test("custom combobox: a pick the page moves a task after the press is ok:false,
 test("custom combobox: opens with a real left press, picks, verifies", async () => {
   const { dom } = onPage(CUSTOM, CUSTOM_JS);
   const { o } = await select({ label_pattern: "level", text: "senior" });
-  assert.deepEqual(o, { ok: true, selected: "Senior", el: `combobox "Level"`, value: "Senior" });
+  assert.deepEqual(o, { ok: true, selected: "Senior", el: `combobox "Level"` });
   assert.equal(dom.opens, 1);
 });
 
@@ -203,7 +203,7 @@ test("a combobox the page re-renders on pick is read from its new node, not the 
   onPage(html, js);
   const { o } = await select({ label_pattern: "^color$", text: "Blue" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Blue");
+  assert.equal(o.value ?? o.selected, "Blue");
   // By id too, when the call named the control by selector.
   onPage(html, js);
   assert.equal((await select({ selector: "#color", text: "Green" })).o.ok, true);
@@ -238,7 +238,7 @@ test("react-select v5: readback comes from the control, not the emptied input", 
   onPage(REACT_SELECT, REACT_SELECT_JS);
   const { o } = await select({ label_pattern: "seniority", text: "senior" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Senior");
+  assert.equal(o.value ?? o.selected, "Senior");
   assert.equal(o.unverified, undefined);
 });
 
@@ -848,7 +848,7 @@ test("custom combobox: an empty input's box showing only its label reads as noth
   const { o } = await select({ label_pattern: "team", text: "Bravo" });
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.error, 'pressed "Bravo" but the control shows nothing; not verified');
-  assert.equal(o.value, "");
+  assert.equal(o.value ?? o.selected, "");
 });
 
 test("custom combobox: a pick equal to the typed text holds once the list closes, the companion fills or the option is selected", async () => {

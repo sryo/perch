@@ -91,7 +91,7 @@ test("another control's open list never supplies candidates or a pick", async ()
   assert.equal($(dom, "#react-select-1-input").value, "", "typed filter is cleared after a miss");
   const hit = await select({ label_pattern: "english", text: "fluent" });
   assert.equal(hit.ok, true, JSON.stringify(hit));
-  assert.equal(hit.value, "Fluent");
+  assert.equal(hit.value ?? hit.selected, "Fluent");
 });
 
 test("a mid-word substring never matches, and other open menus close first", async () => {
@@ -116,7 +116,7 @@ test("an already open menu is used as is, not toggled closed", async () => {
   const dom = onPage(rs(2, "Experience"), RS_JS + `mkRS(2, ["Junior", "Senior"], { open: true });`);
   const o = await select({ selector: "#c2 .select__control", text: "Senior" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Senior");
+  assert.equal(o.value ?? o.selected, "Senior");
   assert.deepEqual([...dom.log], ["2:Senior"]);
   assert.equal(dom.closes, 1, "closed only by the pick");
 });
@@ -126,7 +126,7 @@ test("long option text is matched on the unfiltered list, curly apostrophes incl
   let dom = onPage(rs(4, "Years"), RS_JS + `mkRS(4, ${JSON.stringify(LONG)}, { strict: true });`);
   let o = await select({ label_pattern: "years", text: "Senior (7+ years)" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Senior (7+ years)");
+  assert.equal(o.value ?? o.selected, "Senior (7+ years)");
   dom = onPage(rs(4, "Years"), RS_JS + `mkRS(4, ${JSON.stringify(LONG)}, { strict: true });`);
   o = await select({ label_pattern: "years", text: "I'm not sure" });
   assert.equal(o.ok, true, JSON.stringify(o));
@@ -137,7 +137,7 @@ test("an async list gets a typed filter; a miss clears it", async () => {
   let dom = onPage(rs(5, "Location"), RS_JS + `mkRS(5, ["Berlin, Germany", "Bern, Switzerland"], { async: true, strict: true });`);
   let o = await select({ label_pattern: "location", text: "Berlin, Germany" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Berlin, Germany");
+  assert.equal(o.value ?? o.selected, "Berlin, Germany");
   dom = onPage(rs(5, "Location"), RS_JS + `mkRS(5, ["Berlin, Germany"], { async: true });`);
   o = await select({ label_pattern: "location", text: "Atlantis" });
   assert.equal(o.ok, false);
@@ -164,7 +164,7 @@ test("react-select's Loading... message keeps an emptied list waited on until th
   const t0 = dom.world.clock.t;
   const o = await select({ label_pattern: "department", text: "Design lead" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Design lead");
+  assert.equal(o.value ?? o.selected, "Design lead");
   assert.equal(dom.world.clock.t - t0, 950, "the answer lands on the 16th page call after Loading... shows");
 });
 
@@ -248,11 +248,11 @@ test("Radix popover + cmdk multi-select: picks items and closes the popover it o
   const dom = onPage(RADIX, RADIX_JS);
   let o = await select({ selector: "#trigger", text: "spanish" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Spanish");
+  assert.equal(o.value ?? o.selected, "Spanish");
   assert.equal($(dom, "#trigger").getAttribute("aria-expanded"), "false");
   o = await select({ selector: "#trigger", text: "English" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Spanish, English");
+  assert.equal(o.value, "Spanish, English", "value stays when the control shows more than the pick");
   assert.equal(o.unverified, undefined, "a value that grew by the pick verifies it");
   assert.equal(dom.opens, 2);
   assert.equal($(dom, "[data-radix-popper-content-wrapper]"), null);
@@ -293,7 +293,7 @@ for (const hidden of [false, true]) {
     dom = onPage(GATED, gatedJs(hidden));
     o = await select({ label_pattern: "priority", text: "High" });
     assert.equal(o.ok, true, JSON.stringify(o));
-    assert.equal(o.value, "High");
+    assert.equal(o.value ?? o.selected, "High");
   });
 }
 
@@ -302,6 +302,6 @@ test("a combobox input sharing its wrapper with its label reads back its own val
   dom.document.getElementById("downshift-:r0:-input").id = "fr";
   const o = await select({ selector: "#fr", text: "Design" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.value, "Design");
+  assert.equal(o.value ?? o.selected, "Design");
   assert.equal(o.unverified, undefined, JSON.stringify(o));
 });

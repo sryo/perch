@@ -199,7 +199,7 @@ test("tab lock: a trusted click waits for a trusted select on its tab, and selec
   assert.ok(otherFirst > selectDone, `click's first script (${otherFirst}) waits for select to resolve (${selectDone})`);
   assert.equal(rs.ok, true, JSON.stringify(rs));
   assert.deepEqual(rs.trusted, ["control"]);
-  assert.equal(rs.value, "Banana");
+  assert.equal(rs.value ?? rs.selected, "Banana");
   assert.deepEqual([...tab.dom.pickerLog], ["fruit:Banana"]);
   assert.equal(ro.ok, true, JSON.stringify(ro));
   assert.deepEqual(tab.downs, ["fruit", "go"]);

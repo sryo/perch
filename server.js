@@ -6308,6 +6308,8 @@ if (!A.final && good && !s.blurred) {
 }
 if (!A.final && !good) return { pending: true, tok: s.tok };
 const out = { ok: good, kind: "typeahead", el: ident(el), selected: s.picked, value: clip(shown, 120), tok: s.tok };
+// What the field shows adds nothing when it is the pick itself.
+if (good && out.value === s.picked) delete out.value;
 if (!good) out.error = "picked " + JSON.stringify(s.picked) + " but " + (!seen ? "the field doesn't show it" : !filled ? (s.comp.value ? "the hidden field didn't change" : "the hidden field stayed empty") : "the field still shows only the typed text");
 return out;
 `,
@@ -6824,6 +6826,7 @@ const out = seen
   ? { ok: true, selected: s.picked, el: ident(s.ctl), value: shown, tok: s.tok }
   : { ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control shows ' + (typedOnly ? "only the text select typed" : shown ? '"' + shown + '"' : "nothing") + "; not verified" +
     (typedOnly ? ": " + (A.trusted ? "" : "retry with select {trusted:true}, or ") + "check the field (a list that stays open on pick shows this too)" : ""), pressed: s.picked, el: ident(s.ctl), value: shown, tok: s.tok };
+if (out.ok && shown === s.picked) delete out.value;
 if (s.pref) out.pref = s.pref;
 if (s.already) out.note = "already chosen; not pressed again, since a press would toggle it off";
 return answer(out);

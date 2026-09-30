@@ -192,7 +192,8 @@ test("fill {fields}: a combobox the page re-renders on pick counts as picked", a
   render();`);
   const { o } = await fill({ fields: [{ label_pattern: "first", text: "A" }, { label_pattern: "^color$", option: "Blue" }] });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.results[1].value, "Blue");
+  assert.equal(o.results[1].selected, "Blue");
+  assert.equal(o.results[1].value, undefined, "the pick it shows is not repeated");
   assert.equal(dom.document.querySelector("#color").textContent, "Blue");
 });
 
@@ -206,7 +207,8 @@ test("fill {fields}: a custom combobox goes through select, in order", async () 
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.deepEqual(o.results.map((x) => x.kind), ["plain", "select", "plain"]);
   assert.equal(o.results[1].selected, "Senior");
-  assert.equal(o.results[1].value, "Senior");
+  assert.equal(o.results[1].selected, "Senior");
+  assert.equal(o.results[1].value, undefined, "the pick it shows is not repeated");
   assert.equal(dom.document.querySelector(".v").textContent, "Senior");
   assert.equal(dom.document.querySelector("[aria-label=Last]").value, "B");
 });
@@ -1019,7 +1021,7 @@ test("fill {fields}: an all-green batch carries no new keys", async () => {
   onPage(CUSTOM, CUSTOM_JS);
   const { o } = await fill({ fields: [...TWO, { label_pattern: "last", text: "B" }] });
   assert.deepEqual(Object.keys(o), ["ok", "results"]);
-  assert.deepEqual(Object.keys(o.results[1]), ["kind", "ok", "selected", "el", "value"]);
+  assert.deepEqual(Object.keys(o.results[1]), ["kind", "ok", "selected", "el"]);
   assert.equal(o.ok, true);
 });
 
