@@ -52,39 +52,56 @@ const TYPEAHEAD = `<div class=loc><label for=f>Location</label><input id=f name=
 test("trusted_fill_probe records the typeahead's prior value before clearing it, and the check leaves it pending", () => {
   const w = page(TYPEAHEAD);
   const el = w.document.querySelector("#f");
-  assert.equal(run(w, "trusted_fill_probe", { selector: "#f", forFill: true }).ok, true);
+  const K = { selector: "#f", text: "Rosario", trusted: true, forFill: true };
+  const p = run(w, "trusted_fill_probe", K);
+  assert.equal(p.ok, true);
+  assert.equal(p.tok, w.__perch_ta.tok, "the probe answers the state's token");
   assert.equal(el.value, "", "cleared for typing");
   assert.equal(w.__perch_ta.el, el);
   assert.equal(w.__perch_ta.prior, "Lyon");
   assert.equal(w.__perch_ta.priorComp, "loc-9");
   assert.equal(w.__perch_ta.comp, w.document.querySelector("#comp"));
-  assert.equal(w.__perch_ta.text, undefined, "the probe carries no text; the check has it");
+  assert.equal(w.__perch_ta.text, undefined, "the check sets the text once it is typed");
   down(w, el);
   setValue(w, el, "Rosario");
-  assert.deepEqual(run(w, "trusted_check", { forFill: true, text: "Rosario" }), { hit: true, pending: true, trusted: true });
+  assert.deepEqual(run(w, "trusted_check", K), { hit: true, pending: true, trusted: true, tok: p.tok });
   assert.equal(w.__perch_ta.text, "Rosario");
 });
 
 test("trusted_check never leaves a typeahead pending when the click missed it", () => {
   const w = page(TYPEAHEAD);
   const el = w.document.querySelector("#f");
-  run(w, "trusted_fill_probe", { selector: "#f", forFill: true });
+  const K = { selector: "#f", text: "Rosario", trusted: true, forFill: true };
+  run(w, "trusted_fill_probe", K);
   setValue(w, el, "Rosario");
-  const o = run(w, "trusted_check", { forFill: true, text: "Rosario" });
+  const o = run(w, "trusted_check", K);
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.pending, undefined);
   assert.equal(o.hit, null);
 });
 
-test("trusted_fill_probe drops a stale typeahead record when the field is plain", () => {
+test("trusted_fill_probe on a plain field: another call's typeahead record is left alone and never makes the check pending", () => {
   const w = page(TYPEAHEAD + `<input id=p aria-label=Name>`);
-  run(w, "trusted_fill_probe", { selector: "#f", forFill: true });
-  run(w, "trusted_fill_probe", { selector: "#p", forFill: true });
+  run(w, "trusted_fill_probe", { selector: "#f", text: "Rosario", forFill: true });
+  const other = w.__perch_ta;
+  const K = { selector: "#p", text: "Ada", forFill: true };
+  run(w, "trusted_fill_probe", K);
+  assert.equal(w.__perch_ta, other);
   down(w, w.document.querySelector("#p"));
   w.document.querySelector("#p").value = "Ada";
-  const o = run(w, "trusted_check", { forFill: true, text: "Ada" });
+  const o = run(w, "trusted_check", K);
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.pending, undefined);
+});
+
+test("trusted_fill_probe drops its own call's stale typeahead record when the field is now plain", () => {
+  const w = page(TYPEAHEAD);
+  const K = { selector: "#f", text: "Ada", forFill: true };
+  run(w, "trusted_fill_probe", K);
+  w.document.querySelector("#comp").remove();
+  w.document.querySelector(".dropdown-container").remove();
+  run(w, "trusted_fill_probe", K);
+  assert.equal(w.__perch_ta, null);
 });
 
 // ---- the raised route through the runtime (fake world) ----
@@ -167,3 +184,21 @@ test("raised trusted fill on a typeahead with no suggestion withdraws to the pri
   assert.equal(el.value, "Lyon");
   assert.equal(dom.document.getElementById("comp").value, "loc-9");
 });
+
+// Another perch server's trusted fill of the same field lands between this
+// call's probe and its check: its typeahead state replaces this call's.
+for (const [name, B] of [["other args", { selector: "#f", text: "Rosario" }], ["identical args, by token", { selector: "#f", text: "Rosario", trusted: true }]]) {
+  test(`raised trusted fill on a typeahead another call took over before the check picks nothing (${name})`, async () => {
+    const { dom, el } = raisedTypeahead();
+    const ev = dom.eval;
+    let b = null;
+    dom.eval = (js) => { if (!b && js.includes("A.forFill && st.el")) b = run(dom, "trusted_fill_background", B); return ev(js); };
+    const o = await fillRaised("Rosario");
+    assert.ok(b, "B ran");
+    assert.deepEqual({ ok: o.ok, kind: o.kind, delivery: o.delivery, error: o.error },
+      { ok: false, kind: "typeahead", delivery: "hid", error: "another perch call on this tab took over this fill's suggestions; not verified" });
+    assert.equal("tok" in o, false);
+    assert.equal(dom.document.getElementById("comp").value, "", "nothing picked");
+    assert.notEqual(el.value, "Lyon", "nothing put back");
+  });
+}

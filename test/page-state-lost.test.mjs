@@ -64,8 +64,9 @@ test("select_pick and fill_ta_pick answer the option they pressed", () => {
   run(w, "select_start", A);
   assert.deepEqual(run(w, "select_pick", A), { picked: "Design (Lima)", tok: w.__perch_select.tok });
   const t = page(`<input id=loc role=combobox aria-autocomplete=list aria-controls=lb aria-label=City><ul id=lb role=listbox><li role=option>Rosario, Santa Fe</li></ul>`);
-  assert.equal(run(t, "fill", { selector: "#loc", text: "Rosario" }).pending, true);
-  assert.deepEqual(run(t, "fill_ta_pick", {}), { picked: "Rosario, Santa Fe" });
+  const K = { selector: "#loc", text: "Rosario" };
+  assert.equal(run(t, "fill", K).pending, true);
+  assert.deepEqual(run(t, "fill_ta_pick", K), { picked: "Rosario, Santa Fe", tok: t.__perch_ta.tok });
   for (const name of ["select_pick", "fill_ta_pick"]) {
     const a = { selector: "#c", text: "Design" }, b = { selector: "#c", text: "Sales" };
     assert.equal(pageScript(name, a).replace(JSON.stringify(a), ""), pageScript(name, b).replace(JSON.stringify(b), ""));

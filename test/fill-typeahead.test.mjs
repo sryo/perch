@@ -636,8 +636,8 @@ test("trusted_fill_background: a typeahead is left pending with its state record
   dom.eval(TRUSTED_ONLY_JS().replace(/later\(/g, "(fn => fn)("));
   let keyup = null;
   $(dom, "#loc").addEventListener("keyup", (e) => { keyup = e.key; });
-  const o = run(dom, "trusted_fill_background", { selector: "#loc", text: "Rosario" });
-  assert.deepEqual(o, { pending: true, trusted: true });
+  const o = run(dom, "trusted_fill_background", { selector: "#loc", text: "Rosario", trusted: true });
+  assert.deepEqual(o, { pending: true, trusted: true, tok: dom.__perch_ta.tok });
   assert.equal(keyup, "o");
   assert.equal(dom.__perch_ta.text, "Rosario");
   assert.equal(dom.__perch_ta.prior, "");
@@ -769,14 +769,17 @@ test("trusted_fill_background {held}: the field fill_fields held is used once; a
   const o = run(dom, "fill_fields", { fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }] });
   assert.equal(o.defer, 0);
   assert.equal($(dom, "[name=email]").value, "");
-  const s = run(dom, "trusted_fill_background", { held: true, text: "a@b.test" });
+  const K = { label_pattern: "email", text: "a@b.test", trusted: true };
+  const s = run(dom, "trusted_fill_background", { held: true, ...K });
   assert.equal(s.ok, true, JSON.stringify(s));
+  assert.equal(s.tok, o.tok, "the held state's token");
   assert.equal($(dom, "[name=email]").value, "a@b.test");
   const gone = { ok: false, error: "the page changed before the trusted entry; not filled" };
-  assert.deepEqual(run(dom, "trusted_fill_background", { held: true, text: "x" }), gone);
+  assert.deepEqual(run(dom, "trusted_fill_background", { held: true, ...K }), gone);
+  assert.deepEqual(run(dom, "trusted_fill_background", { held: true, ...K, text: "x" }), { lost: true, tok: o.tok }, "another entry's held state");
   run(dom, "fill_fields", { fields: [{ label_pattern: "name", text: "Ada", trusted: true }] });
   $(dom, "[name=name]").remove();
-  assert.deepEqual(run(dom, "trusted_fill_background", { held: true, text: "Ada" }), gone);
+  assert.deepEqual(run(dom, "trusted_fill_background", { held: true, label_pattern: "name", text: "Ada", trusted: true }), gone);
 });
 test("fill {fields}: a trusted entry whose page script throws stays kind plain, in neutral words", async () => {
   const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
@@ -952,14 +955,14 @@ test("fill {trusted}: an option's leading unit that the control already showed b
   }
 });
 
-test("fill {trusted}: the typeahead pick and read scripts are the same source for every text", async () => {
+test("fill {trusted}: the typeahead pick and read scripts differ by text only in their args", async () => {
   const [html, js] = locVariant(["New York City", "Paris, Texas"]);
   const ta = [];
   for (const text of ["New York City", "Paris, Texas"]) {
     const { dom } = onPage(html, js);
     const ev = dom.eval;
     const seen = [];
-    dom.eval = (s) => { if (/s\.pickedN|const pk = /.test(s)) seen.push(s); return ev(s); };
+    dom.eval = (s) => { if (/s\.pickedN|const pk = /.test(s)) seen.push(s.replace(/\nconst A = .*;\n/, "\n")); return ev(s); };
     const o = await fill({ label_pattern: "location", text, trusted: true });
     assert.equal(o.ok, true, JSON.stringify(o));
     ta.push([...new Set(seen)].sort());
@@ -1236,3 +1239,21 @@ test("the trusted-retry hint is one literal in server.js", async () => {
   const src = readFileSync(new URL("../server.js", import.meta.url), "utf8");
   assert.equal(src.split("retry with fill {trusted:true}").length - 1, 1);
 });
+
+// Another perch server's fill on this tab replaces the state a pass held for a
+// trusted entry before the entry types: under other args, or identical ones
+// (caught by the held state's token).
+for (const [name, B] of [["other args", { label_pattern: "location", text: "Toronto" }], ["identical args", { label_pattern: "location", text: "Rosario", trusted: true }]]) {
+  test(`fill {fields}: a trusted entry whose held state another call replaced types nothing (${name})`, async () => {
+    const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
+    const ev = dom.eval;
+    let b = null;
+    dom.eval = (js) => { if (!b && js.includes('"held":true')) b = run(dom, "fill", B); return ev(js); };
+    const o = await fill({ fields: TRUSTED_ENTRIES });
+    assert.ok(b && b.pending, JSON.stringify(b));
+    assert.equal(o.ok, false, JSON.stringify(o));
+    assert.deepEqual(o.results[1], { ok: false, kind: "typeahead", error: "another perch call on this tab took over this fill's suggestions; not verified" });
+    assert.equal($(dom, "#selected-location").value, "");
+    assert.equal(dom.lookups, 0, "A typed nothing");
+  });
+}
