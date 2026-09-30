@@ -4559,6 +4559,17 @@ function isMulti(s, opt) {
   return !!(s.multiBox || attr(s.ctl, "aria-multiselectable") === "true" || (opt && opt.closest("[aria-multiselectable=true]")) ||
     linkedLists(s).some(function (m) { return attr(m, "aria-multiselectable") === "true"; }));
 }
+// A single pick shown in the control's own format: the option's text, then a
+// separator and detail ("Cherry (cherry)", "Blue - #00f", "Blue · primary"),
+// or the option's value or data-value (vals: true, the separator form "sep").
+// Never text that another option of the list, longer than the pick, equals or
+// starts ("Blue Jay" beside "Blue").
+function pickForm(s, n) {
+  if (s.multi || !s.pickedN || n === s.pickedN) return false;
+  if ((s.optVals || []).indexOf(n) >= 0) return true;
+  return n.indexOf(s.pickedN) === 0 && /^(\s*[(\[]|\s+[-|\/#\u00b7\u2022]\s*\S|:\s)/.test(n.slice(s.pickedN.length)) &&
+    !(s.others || []).some(function (o) { return o.length > s.pickedN.length && n.indexOf(o) === 0; }) ? "sep" : false;
+}
 // A picked item that already shows as chosen; pressing it again would toggle it off.
 // A multi-select shows each choice apart; a single one shows the whole value.
 function chosenAlready(s, opt, key) {
@@ -6847,7 +6858,10 @@ if (opt) {
   s.selBefore = attr(opt, "aria-selected") === "true";
   s.expAtPick = [s.ctl, s.input].some(function (e) { return e && attr(e, "aria-expanded") === "true"; });
   s.compAtPick = s.comp ? s.comp.value : null;
-  if (chosenAlready(s, opt, s.pickedN)) s.already = true;
+  // A single control already showing it in its own format: the option's value
+  // as is, or the separator form of an option aria-selected before the press.
+  const fmt = function (w) { const f = pickForm(s, w); return f === true || (f === "sep" && s.selBefore); };
+  if (chosenAlready(s, opt, s.pickedN) || (s.was || []).some(fmt)) s.already = true;
   else press(opt);
   return { picked: s.picked, tok: tok };
 }
@@ -7016,18 +7030,12 @@ const answer = function (o) {
 if (!typedIn) escOwn();
 // An input's own value first: its wrapper may hold only its label.
 const iv = (s.input && s.input.value) || "";
-// A single pick may show in the control's own format: the option's text, then a
-// separator and detail ("Cherry (cherry)", "Blue - #00f", "Blue · primary"),
-// or the option's value or data-value. Never text that another option of the
-// list, longer than the pick, equals or starts ("Blue Jay" beside "Blue"), nor
-// text the control already showed before the press (s.was): a control that
-// ignored the press still shows it.
+// A formatted form of the pick (pickForm) proves it only once the display
+// moved from what the control showed before the press (s.was): a control that
+// ignored the press still shows it. An unmoved one proves it only as a re-pick
+// select_pick found already chosen and didn't press.
 const asPicked = function (n) {
-  if (n === s.pickedN) return true;
-  if (s.multi || !s.pickedN || (s.was || []).indexOf(n) >= 0) return false;
-  if ((s.optVals || []).indexOf(n) >= 0) return true;
-  return n.indexOf(s.pickedN) === 0 && /^(\s*[(\[]|\s+[-|\/#\u00b7\u2022]\s*\S|:\s)/.test(n.slice(s.pickedN.length)) &&
-    !(s.others || []).some(function (o) { return o.length > s.pickedN.length && n.indexOf(o) === 0; });
+  return n === s.pickedN || (pickForm(s, n) && (!!s.already || (s.was || []).indexOf(n) < 0));
 };
 const has = function (t) { return s.multi ? norm(t).indexOf(s.pickedN) >= 0 : asPicked(norm(t)); };
 const full = (iv && has(iv) ? iv : textOf(s.box)) || iv;

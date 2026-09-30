@@ -1115,7 +1115,6 @@ test("custom combobox: a formatted or value display that was already there befor
     ["separator form", ignore(["New York", "Newark"], "New York - Brooklyn"), "New York"],
     ["placeholder text", ignore(["Cherry", "Apple"], "Cherry (none)"), "Cherry"],
     ["placeholder class", FMT(["Cherry", "Apple"]).replace("Pick one", "Cherry (none)"), "Cherry"],
-    ["value form", ignore(["Red", "Blue"], "blue-1", "value=$v-1"), "Blue"],
   ]) {
     onPage(html, js);
     const { o } = await select({ label_pattern: "fruit", text: pick });
@@ -1130,4 +1129,29 @@ test("custom combobox: a formatted or value display that was already there befor
   // A display that moved into the format still holds, from an older formatted value too.
   onPage(ignore(["Red", "Blue", "Green"], "Red - #f00"), FMT_JS("(t) => t + ' - #00f'"));
   assert.equal((await select({ label_pattern: "fruit", text: "Blue" })).o.ok, true);
+});
+
+// A control already showing the pick in its own format is a re-pick of the
+// chosen value: the option's value or data-value as is, or the separator form
+// when the option was aria-selected before the press. Neither is pressed again.
+test("custom combobox: an already chosen value shown in the control's own format is ok with the already-chosen note", async () => {
+  const shows = (items, before, attrs = "", sel = "") => FMT(items, attrs).replace("<span class=placeholder>Pick one</span>", `<span class=v>${before}</span>`).replace(`>${sel}</li>`, ` aria-selected=true>${sel}</li>`);
+  const js = `const c = document.getElementById('fc'), m = document.getElementById('fm');
+    window.presses = 0;
+    c.addEventListener('click', () => { m.hidden = false; c.setAttribute('aria-expanded', 'true'); });
+    m.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => { window.presses++; }));`;
+  for (const [what, html, pick] of [
+    ["separator form, option selected", shows(["Red", "Blue"], "Blue - #00f", "", "Blue"), "Blue"],
+    ["data-value", shows(["Argentina", "Chile"], "CL", "data-value=$v", "").replace("data-value=chile", "data-value=CL"), "Chile"],
+    ["value", shows(["Red", "Blue"], "blue-1", "value=$v-1"), "Blue"],
+  ]) {
+    const { dom } = onPage(html, js);
+    const { o } = await select({ label_pattern: "fruit", text: pick });
+    assert.equal(o.ok, true, what + " " + JSON.stringify(o));
+    assert.equal(o.note, "already chosen; not pressed again, since a press would toggle it off", what);
+    assert.equal(dom.presses, 0, what);
+  }
+  // The separator form without the option selected before the press stays refused.
+  onPage(shows(["Red", "Blue"], "Blue - #00f"), js);
+  assert.equal((await select({ label_pattern: "fruit", text: "Blue" })).o.ok, false);
 });
