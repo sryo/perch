@@ -751,7 +751,24 @@ test("custom combobox: no Escape reaches a control that says it closed, and one 
   const c = onTickPage(SEARCH, SEARCH_JS("t.value = o.textContent; hid.value = 'id-' + o.textContent;") + always);
   const { o: x } = await select({ label_pattern: "team", text: "Bravo" });
   assert.equal(x.ok, false, JSON.stringify(x));
+  assert.match(x.error, /^pressed "Bravo" but the control dropped it when its popup was closed/);
   assert.equal(c.dom.document.getElementById("t").value, "");
+});
+
+// A hand-rolled combobox whose aria-expanded never leaves "false": its list shows
+// on click and hides only on Escape. The stale attribute says nothing, so the
+// list still showing decides, and select closes the popup it opened.
+test("custom combobox: a stale aria-expanded=false never keeps select from closing the list it opened", async () => {
+  const { dom } = onPage(`<label id=hl>Tier</label><div id=hc role=combobox aria-labelledby=hl aria-expanded=false aria-controls=hm tabindex=0><span class=v>Choose</span></div>
+    <ul id=hm role=listbox hidden><li role=option>Alpha</li><li role=option>Beta</li></ul>`, `const c = document.getElementById('hc'), m = document.getElementById('hm');
+    window.escs = 0;
+    c.addEventListener('click', () => { m.hidden = false; });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { window.escs++; m.hidden = true; } });
+    m.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => { c.querySelector('.v').textContent = o.textContent; }));`);
+  const { o } = await select({ label_pattern: "tier", text: "Beta" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(dom.escs, 1);
+  assert.equal(dom.document.getElementById("hm").hidden, true);
 });
 
 // A pick select can't verify still closes the popup it opened, on the final read.

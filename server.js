@@ -6615,14 +6615,15 @@ if (!s.ctl.isConnected) {
 const typedIn = s.typed === s.input && s.typedQ != null;
 if (typedIn && !s.closed && (!stillOpen(s) || (s.expAtPick && ![s.ctl, s.input].some(function (e) { return e && attr(e, "aria-expanded") === "true"; })))) s.shut = true;
 // A popup select opened and a pick left open (a multi-select) closes again.
-// Never one that closed or says so (aria-expanded other than true, options
-// still mounted through a leave transition): downshift and MUI's clearOnEscape
-// clear the input on an Escape while closed.
+// Never one the page closed: downshift and MUI's clearOnEscape clear the input
+// on an Escape while closed. aria-expanded says so only once it went from true
+// at the pick to not (options may stay mounted through a leave transition); a
+// value that never said true is stale, and the own list still showing decides.
 const escOwn = function () {
   if (!s.opened || s.closed || A.keep) return;
   s.closed = true;
-  const said = [s.ctl, s.input].filter(function (e) { return e && e.hasAttribute("aria-expanded"); });
-  if (!s.shut && (said.length ? said.some(function (e) { return attr(e, "aria-expanded") === "true"; }) : stillOpen(s))) escapeOwn(s);
+  const said = [s.ctl, s.input].some(function (e) { return e && attr(e, "aria-expanded") === "true"; });
+  if (!s.shut && (s.expAtPick ? said : stillOpen(s))) escapeOwn(s);
 };
 if (!typedIn) escOwn();
 // An input's own value first: its wrapper may hold only its label.
@@ -6649,9 +6650,12 @@ if (typedIn) {
   const was = s.input.value;
   escOwn();
   if (seen && s.input.value !== was) {
+    s.dropped = true;
     if (!A.final) return { pending: true, tok: s.tok };
-    return { ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control dropped it when its popup was closed (it shows ' + (s.input.value ? JSON.stringify(clip(s.input.value, 60)) : "nothing") + "); not verified", pressed: s.picked, el: ident(s.ctl), value: clip(s.input.value, 120), tok: s.tok };
   }
+}
+if (s.dropped && !(seen && s.input.value === iv)) {
+  return { ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control dropped it when its popup was closed (it shows ' + (s.input.value ? JSON.stringify(clip(s.input.value, 60)) : "nothing") + "); not verified", pressed: s.picked, el: ident(s.ctl), value: clip(s.input.value, 120), tok: s.tok };
 }
 // A widget that fills the input and keeps its list open on pick (MUI's
 // disableCloseOnSelect, free solo) shows the same, so the error says how to check.
