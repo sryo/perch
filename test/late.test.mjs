@@ -310,3 +310,58 @@ test("a token never found stops riding page calls after 20 checks", async () => 
   await call("eval_js", { script: "return 1" });
   assert.ok(scripts.at(-1).length < 2000, `the 21st call still carried the check (${scripts.at(-1).length} bytes)`);
 });
+
+// Workable's yes/no questions: a div role=radio holding a <label> around a
+// hidden input radio and the option text, both drawn from React state. Only the
+// input's change reaches React (a click on the div itself does nothing, as on
+// the live page), and React 18 renders the new state in a microtask, after the
+// page script that clicked returned: the radio reads unchanged right after its
+// click and checked a moment later. The controlled input is put back at once.
+// `render`: how many ticks the render takes (0: never, the page ignores it).
+const WK_OPT = (id, v, t) => `<div role=radio id=${id}d aria-checked=false tabindex=0 aria-label="Are you comfortable working in person? ${t}"><label><input type=radio id=${id}i name=QA_1 value=${v} tabindex=-1 aria-hidden=true style="opacity:0;position:absolute"><div><span>${t}</span></div></label></div>`;
+const WK_RADIO = `<form><fieldset role=radiogroup aria-label="Are you comfortable working in person?">${WK_OPT("y", "true", "YES")}${WK_OPT("n", "false", "NO")}</fieldset><label>Name <input id=name name=name></label></form>`;
+const WK_RADIO_JS = (render = 1) => `
+  let state = null;
+  window.divClicks = 0;
+  const draw = () => { for (const [d, i, v] of [['yd', 'yi', 'true'], ['nd', 'ni', 'false']]) {
+    document.getElementById(d).setAttribute('aria-checked', String(state === v)); document.getElementById(i).checked = state === v; } };
+  for (const [i, v] of [['yi', 'true'], ['ni', 'false']]) document.getElementById(i).addEventListener('change', () => {
+    draw();
+    if (${render}) later(() => { state = v; draw(); }, ${render});
+  });
+  document.getElementById('yd').addEventListener('click', () => { window.divClicks++; });`;
+
+test("fill {fields}: a radio whose click renders a microtask later is checked, not refused", async () => {
+  for (const [what, fields] of [
+    ["the div radio", [{ selector: "#yd", checked: true }]],
+    ["the hidden input radio", [{ selector: "#yi", checked: true }]],
+    ["both, as the bench fills them", [{ selector: "#yd", checked: true }, { selector: "#yi", checked: true }, { label_pattern: "^name", text: "Ada" }]],
+  ]) {
+    const { dom } = onPage(WK_RADIO, WK_RADIO_JS());
+    const f = await call("fill", { fields });
+    assert.equal(f.o.ok, true, what + " " + JSON.stringify(f.o));
+    for (const r of f.o.results.slice(0, fields.length).filter((r) => r.kind === "check")) assert.deepEqual(Object.keys(r).sort(), ["checked", "el", "kind", "ok"], what);
+    assert.equal(dom.document.getElementById("yd").getAttribute("aria-checked"), "true", what);
+  }
+  // A radio group answered by its question takes the same path.
+  onPage(WK_RADIO, WK_RADIO_JS());
+  const g = await call("fill", { fields: [{ label_pattern: "comfortable working", option: "Yes" }, { label_pattern: "^name", text: "Ada" }] });
+  assert.equal(g.o.ok, true, JSON.stringify(g.o));
+  assert.match(g.o.results[0].selected, /YES$/);
+  onPage(WK_RADIO, WK_RADIO_JS(0));
+  assert.equal((await call("fill", { fields: [{ label_pattern: "comfortable working", option: "Yes" }, { label_pattern: "^name", text: "Ada" }] })).o.results[0].ok, false, "a group that never takes it");
+  // A single fill {checked} takes the same path.
+  onPage(WK_RADIO, WK_RADIO_JS());
+  const one = await call("fill", { selector: "#yd", checked: true });
+  assert.equal(one.o.ok, true, JSON.stringify(one.o));
+});
+
+test("fill {fields}: a radio that never takes the click stays refused", async () => {
+  for (const browser of ["chrome", "arc", "safari"]) {
+    const { dom } = onPage(WK_RADIO, WK_RADIO_JS(0), browser);
+    const f = await call("fill", { fields: [{ selector: "#yd", checked: true }, { label_pattern: "^name", text: "Ada" }] });
+    assert.equal(f.o.ok, false, browser);
+    assert.deepEqual(f.o.results[0], { ok: false, kind: "check", el: `radio "Are you comfortable working in person? YES"`, error: "state did not change after click", checked: false }, browser);
+    assert.equal(dom.document.getElementById("yd").getAttribute("aria-checked"), "false", browser);
+  }
+});

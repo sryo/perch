@@ -4805,9 +4805,19 @@ function radioMates(el) {
   if (!el.name) return [el];
   return Array.prototype.filter.call((el.form || el.ownerDocument).querySelectorAll("input[type=radio]"), function (x) { return x.name === el.name && x.form === el.form; });
 }
+// A click as a person's lands: a role=radio or role=checkbox box holding a
+// <label> for its own input gets it on that label, which activates the input
+// its framework listens to; a click on the box itself may reach no handler.
+function boxClick(el) {
+  const l = el.tagName !== "INPUT" && el.querySelector("label"), c = l && (l.control || l.querySelector("input"));
+  (c && el.contains(c) ? l : el).click();
+}
 // onLand(el, was, prev) hears of a box that ends in the wanted state, whether
 // it was already on, and for a radio the one of its group that was on before.
-function checkOne(a, only, onLand) {
+// onPend(el, ok) hears of a click that changed nothing yet: a React 18 page
+// renders it in a microtask after this script returns, so a later page call
+// may still find it landed and answer ok instead.
+function checkOne(a, only, onLand, onPend) {
   const r = a.ref || a.selector ? resolveEl(a) : checkByLabel(a, only);
   if (r.out) return r.out;
   const el = r.el;
@@ -4818,8 +4828,11 @@ function checkOne(a, only, onLand) {
   const out = { ok: true, kind: "check", el: ident(el), checked: want };
   if (was !== want) {
     if (!want && role(el) === "radio") return { ok: false, kind: "check", el: out.el, error: "a radio can't be unchecked; check another option" };
-    el.click();
-    if (isOn(el) !== want) return { ok: false, kind: "check", el: out.el, error: "state did not change after click", checked: isOn(el) };
+    boxClick(el);
+    if (isOn(el) !== want) {
+      if (onPend) onPend(el, out);
+      return { ok: false, kind: "check", el: out.el, error: "state did not change after click", checked: isOn(el) };
+    }
   }
   if (onLand) onLand(el, was, prev);
   return out;
@@ -4889,7 +4902,7 @@ function groupOf(el, gs) {
 // Picks by select's match tiers, through the option's own click so page
 // handlers run, then reads back which option the group shows checked.
 // A preference list is tried in order before anything is clicked; a tie stops.
-function pickRadio(g, text) {
+function pickRadio(g, text, onPend) {
   const el = groupId(g);
   const prefs = Array.isArray(text) ? text : [text];
   let m = null, p = 0;
@@ -4907,11 +4920,12 @@ function pickRadio(g, text) {
     return out;
   }
   const i = m.hits[0], o = g.opts[i];
-  if (!isOn(o)) o.click();
+  if (!isOn(o)) boxClick(o);
   const on = g.opts.filter(isOn);
   const ok = { ok: true, kind: "radio", selected: clip(g.names[i], 80), el: el };
   if (p) ok.pref = p;
   if (on.length === 1 && on[0] === o) return ok;
+  if (onPend) onPend(o, ok, g.opts);
   return { ok: false, kind: "radio", el: el, error: "clicked " + JSON.stringify(clip(g.names[i], 80)) + " but it did not stick; the group reverted it",
     selected: on.length ? clip(g.names[g.opts.indexOf(on[0])], 80) : null };
 }
@@ -5267,8 +5281,17 @@ function optText(s) {
 }
 `;
 
+// A click that changed nothing when it was sent ({el, ok, mates?}) and shows
+// now: the box in the state its ok result names, alone in its group.
+const PEND_LIB = String.raw`
+function pendOn(p) {
+  const on = function (el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; };
+  return p.el.isConnected && on(p.el) === (p.ok.checked !== false) && (!p.mates || p.mates.filter(on).length === 1);
+}
+`;
 // Keeps what a write landed for fill_reread; needs TOK_LIB.
 const FR_LIB = String.raw`
+` + PEND_LIB + String.raw`
 // Keeps fields that landed for fill_reread under a fresh owner token, at most
 // 20 records a document, and returns the token.
 function frRecord(items) {
@@ -5286,14 +5309,16 @@ function frRecord(items) {
 // a note; a select or radio group on another option is a miss, since no page
 // formats one option into another. A field that left the document can't be
 // judged here and is left as it was.
-const FR_JUDGE_LIB = HOLDS_LIB + String.raw`
+const FR_JUDGE_LIB = HOLDS_LIB + PEND_LIB + String.raw`
 function frJudge(items) {
   const LATER = " after it was filled; ", BACK = LATER + "the page reverted the write", OTHER = LATER + "another value replaced it", PICKED = LATER + "the page chose another option";
   const on = function (el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; };
   const changed = function (kept) { return kept ? " changed to " + JSON.stringify(kept) : " was cleared"; };
   const recheck = {}, notes = {};
+  const settled = {};
   items.forEach(function (it) {
     const el = it.el;
+    if (it.pend) { if (pendOn(it)) settled[it.i] = it.ok; return; }
     if (!el.isConnected) return;
     let o, back;
     if (it.mates) {
@@ -5332,6 +5357,7 @@ function frJudge(items) {
   });
   const out = { recheck: recheck };
   if (Object.keys(notes).length) out.notes = notes;
+  if (Object.keys(settled).length) out.settled = settled;
   return out;
 }
 `;
@@ -6687,7 +6713,7 @@ const stop = function (i, tok) {
 };
 for (let i = A.from || 0; i < A.fields.length; i++) {
   const f = A.fields[i];
-  let o, kind, got = null;
+  let o, kind, got = null, pend = null;
   if (f.option != null) {
     kind = "select";
     const c = findCtl(f, radioGroups, A.only);
@@ -6696,7 +6722,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     else if (v) o = { ok: true, skipped: "has value", el: c.group ? groupId(c.group) : ident(nativeOf(c.el) || c.el), value: clip(v, 60) };
     else if (c.group) {
       const prev = c.group.opts.filter(isOn)[0] || null;
-      o = pickRadio(c.group, f.option);
+      o = pickRadio(c.group, f.option, function (el, ok, mates) { pend = { el: el, ok: ok, mates: mates }; });
       got = { el: c.group.opts.filter(isOn)[0], group: c.group, prev: prev };
       got.quiet = got.el === prev;
     } else {
@@ -6707,7 +6733,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     }
   } else if (f.checked != null) {
     kind = "check";
-    o = checkOne(f, A.only, function (el, was, prev) { got = { el: el, checked: !!f.checked, quiet: was === !!f.checked, prev: prev }; });
+    o = checkOne(f, A.only, function (el, was, prev) { got = { el: el, checked: !!f.checked, quiet: was === !!f.checked, prev: prev }; }, function (el, ok) { pend = { el: el, ok: ok }; });
   } else {
     kind = "text";
     o = fillOne(f, A.only, function (el, rich, prior) { if (f.text !== "") got = { el: el, rich: rich, want: rich ? textOf(el) : el.value, text: f.text, prior: prior }; });
@@ -6729,6 +6755,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     ff.items[i] = got;
     if (kind !== "text" && i < A.fields.length - 1 && stepMoved(got)) return { results: results.concat(o), gone: true, at: i };
   }
+  if (ff && pend && o.ok === false) (ff.pend = ff.pend || {})[i] = pend;
   if (ff) blame(ff.items[i] && (!("checked" in got) || role(got.el) === "radio") ? i : -1, i);
   results.push(o);
 }
@@ -6736,12 +6763,21 @@ const recheck = {};
 if (ff) Object.keys(ff.items).forEach(function (k) { const d = drift(ff.items[k]); if (d) recheck[k] = d; });
 const out = { results: results };
 if (Object.keys(recheck).length) out.recheck = recheck;
+// A click an earlier pass saw change nothing that has rendered since: ok now.
+const pends = ff && ff.pend ? Object.keys(ff.pend) : [];
+pends.forEach(function (k) {
+  const p = ff.pend[k];
+  if (!pendOn(p)) return;
+  (out.settled = out.settled || {})[k] = p.ok;
+  delete ff.pend[k];
+});
 // A write pass hands what landed to fill_reread; a re-read-only pass wrote
 // nothing, and a box or radio already in its state was not clicked, so the
 // page heard nothing it could undo there.
 const heard = ff && A.from !== A.fields.length ? Object.keys(ff.items).filter(function (k) { return !ff.items[k].quiet; }) : [];
-if (heard.length) {
-  out.fr = frRecord(heard.map(function (k) {
+const late = ff && ff.pend && A.from !== A.fields.length ? Object.keys(ff.pend) : [];
+if (heard.length || late.length) {
+  out.fr = frRecord(late.map(function (k) { const p = ff.pend[k]; return { i: +k, el: p.el, pend: true, ok: p.ok, mates: p.mates }; }).concat(heard.map(function (k) {
     const g = ff.items[k], it = { i: +k, el: g.el, id: g.id, kind: g.kind };
     if (g.group || ("checked" in g && g.checked && role(g.el) === "radio")) {
       it.on = true;
@@ -6753,7 +6789,7 @@ if (heard.length) {
     else if ("sel" in g) { it.st = optText(g.el); it.sv = g.el.value; it.pt = g.pt; it.o = g.el[g.sel]; }
     else { it.text = g.text; it.want = g.want; it.rich = g.rich; it.prior = g.prior; }
     return it;
-  }));
+  })));
 }
 if (ff && ff.form && ff.form.isConnected) {
   const c = census(ff.form), form = out.form = { requiredEmpty: c.empty.length };
@@ -8363,6 +8399,7 @@ async function fillFields(fields, target, only) {
     return b && b.el ? { ...x, error: x.error.replace(/; fill it again$/, `, and fields[${by}] (${b.el}) may have changed it; fill it again`) } : x;
   };
   const recheck = (r, late) => {
+    for (const [i, x] of Object.entries(r.settled || {})) if (results[i] && results[i].ok === false) results[i] = x;
     for (const [i, x] of Object.entries(r.recheck || {})) if (results[i] && (!late || results[i].ok === true)) results[i] = named(x);
     for (const [i, n] of Object.entries(r.notes || {})) if (results[i] && results[i].ok === true) results[i] = addNote(results[i], n);
   };
