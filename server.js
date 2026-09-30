@@ -4398,10 +4398,11 @@ function ownOptions(s) {
   }
   if (!s.opened) return [];
   const fresh = within(document).filter(function (o) { return s.before.indexOf(o) < 0; });
-  // A bare input pressed with nothing new showing: a list the page rendered
-  // before the press (collapsed by CSS) is the one that follows it. Never before
-  // the press, so it never makes the control read as open.
-  if (!fresh.length && s.input && s.ctl === s.input) {
+  // A bare input pressed with nothing new showing for 8 polls (about 400ms,
+  // past a list an async load or a portal renders a few tasks later): a list
+  // the page rendered before the press (collapsed by CSS) is the one that
+  // follows it. Never before the press, so it never makes the control read as open.
+  if (!fresh.length && s.input && s.ctl === s.input && s.polls >= 8) {
     const l = nextList(s.input), o = l ? within(l) : [];
     if (o.length) return o;
   }

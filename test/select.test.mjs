@@ -650,6 +650,31 @@ test("custom combobox: a bare input's portal list wins over a neighbour listbox"
   }
 });
 
+// The real list may render a few tasks after the press (an async loadOptions,
+// a portal mounted on the next render): a following listbox is no stand-in
+// while select is still waiting for it.
+test("custom combobox: a portal list that renders a few tasks after the press wins over a following listbox", async () => {
+  for (const n of [2, 5]) {
+    const { dom } = onTickPage(`<form><label>Name <input name=n></label><label>Email <input name=e></label><label for=t>Team</label><input id=t role=combobox aria-expanded=false>
+      <ul id=rec role=listbox aria-label=Recent><li role=option>Bravo</li></ul></form>`, `const t = document.getElementById('t');
+      window.recentHits = 0;
+      document.querySelectorAll('#rec li').forEach((o) => o.addEventListener('click', () => { window.recentHits++; }));
+      t.addEventListener('click', () => {
+        t.setAttribute('aria-expanded', 'true');
+        later(() => {
+          const ul = document.createElement('ul'); ul.setAttribute('role', 'listbox');
+          ul.innerHTML = '<li role=option>Alpha</li><li role=option>Bravo</li>';
+          ul.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => { t.value = o.textContent; t.setAttribute('aria-expanded', 'false'); ul.remove(); }));
+          document.body.appendChild(ul);
+        }, ${n});
+      });`);
+    const { o } = await select({ label_pattern: "team", text: "Bravo" });
+    assert.equal(o.ok, true, `${n} ticks ${JSON.stringify(o)}`);
+    assert.equal(dom.document.getElementById("t").value, "Bravo");
+    assert.equal(dom.recentHits, 0, `${n} ticks`);
+  }
+});
+
 test("custom combobox: a bare input re-rendered empty on pick in a form or body is ok:false", async () => {
   const input = `<label for=dest>Destination</label><input id=dest role=combobox aria-controls=l aria-expanded=true>`;
   const list = `<ul id=l role=listbox><li role=option>Alpha</li><li role=option>Bravo</li></ul>`;
