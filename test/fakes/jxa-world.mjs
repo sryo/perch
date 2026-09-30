@@ -301,7 +301,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
 
   const apps = {};
   const winsByApp = {};
-  const nsString = (str) => ({ js: str, dataUsingEncoding: (enc) => (enc === 0x94000100 ? { length: str.length * 2, bytes: str } : null) });
+  const nsString = (str) => ({
+    js: str,
+    dataUsingEncoding: (enc) => (enc === 0x94000100 ? { length: str.length * 2, bytes: str } : null),
+    // A text file in state.files; a request the capture helper watches for is queued.
+    writeToFileAtomicallyEncodingError: (path) => { state.files[path] = { text: str }; helperSaw(path); return true; },
+  });
   const specifier = (resolveWin) => new Proxy({}, {
     get: (_, k) => { const w = resolveWin(); if (!w) throw gone(); const v = w[k]; return typeof v === "function" && !v.__specifier ? v.bind(w) : v; },
     set: (_, k, v) => { resolveWin()[k] = v; return true; },
@@ -574,6 +579,36 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     NSScreen: { get screens() { const k = state.screenScale ?? state.shotScale ?? 2; return { count: 1, objectAtIndex: () => ({ backingScaleFactor: k }) }; } },
     NSApplication: { get sharedApplication() { state.sharedApp = (state.sharedApp || 0) + 1; return { setActivationPolicy: (p) => { state.policies.push(p); return true; } }; } },
   };
+  // The capture helper, an osascript NSTask running the runtime's shotHelper.
+  // state.helper (an object) makes it available: without it the capture lock is
+  // held by another perch server, so flock fails and screencapture takes every
+  // shot. A request written to its `<prefix>.req` is served
+  // state.helper.ms (default 20) later by the runtime's own helperServe, which
+  // captures with CGWindowListCreateImage; state.helper.stall: never served;
+  // state.helper.exits: the helper ends at launch, unserved. state.helpers
+  // records each launch as {args, killed}. state.lockFile: the lock file made.
+  const helpers = [];
+  let pendingReq = null;
+  const helperOf = (path) => helpers.find((h) => h.alive && path === h.prefix + ".req");
+  const helperSaw = (path) => { const h = helperOf(path); if (h) pendingReq = { h, path, at: clock.t }; };
+  const helperServe = () => {
+    const p = pendingReq;
+    if (!p || !p.h.alive || state.helper.stall || clock.t < p.at + (state.helper.ms ?? 20)) return;
+    pendingReq = null;
+    const f = state.files[p.path];
+    delete state.files[p.path];
+    if (!f) return;
+    const q = JSON.parse(f.text);
+    const r = sandbox.__perch.helperServe(q);
+    state.files[q.out] = { text: JSON.stringify(r) };
+  };
+  const fakeHelper = (task) => {
+    const h = { args: task.arguments.slice(), alive: !state.helper.exits, killed: false };
+    h.prefix = /shotHelper\("([^"]+)", \d+\)$/.exec(h.args[3])[1];
+    helpers.push(h);
+    (state.helpers = state.helpers || []).push(h);
+    return h;
+  };
   // screencapture as an NSTask: it runs on the fake clock and writes its image
   // when done; a terminated one writes nothing.
   const tasks = {};
@@ -583,6 +618,14 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     const task = {
       executableURL: null, arguments: null, standardOutput: null, standardError: null, terminationStatus: 0,
       launchAndReturnError: () => {
+        if (task.executableURL.path === "/usr/bin/osascript") {
+          bump("helper");
+          const h = fakeHelper(task);
+          task.processIdentifier = 4100 + helpers.length;
+          tasks[task.processIdentifier] = task;
+          task.helper = h;
+          return true;
+        }
         bump("screencapture");
         if (state.captureThrows) throw new Error("launch failed");
         const args = task.arguments, wid = Number(args[args.indexOf("-l") + 1]);
@@ -593,6 +636,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       },
       processIdentifier: 3131,
       get isRunning() {
+        if (task.helper) return task.helper.alive;
         if (shot.killed || clock.t < doneAt) return !shot.killed;
         if (!shot.written) {
           shot.written = true;
@@ -605,7 +649,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         }
         return false;
       },
-      get terminate() { shot.termed = true; if (!state.ignoreTerm) { shot.killed = true; task.terminationStatus = 15; } return undefined; },
+      get terminate() { if (task.helper) { task.helper.alive = false; task.helper.killed = true; return undefined; } shot.termed = true; if (!state.ignoreTerm) { shot.killed = true; task.terminationStatus = 15; } return undefined; },
     };
     tasks[task.processIdentifier] = task;
     task.shot = () => shot;
@@ -670,7 +714,6 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       NSDictionary: { dictionaryWithObjectForKey: () => ({}) },
       NSAppleScript: { alloc: { initWithSource: (src) => appleScript(src) } },
       NSAppleEventDescriptor: aeDesc,
-      NSString: { stringWithString: (str) => nsString(str) },
       AXIsProcessTrusted: () => state.ax,
       // Accessibility tree: a CG entry's `ax: { web: [{x,y,w,h}, ...] }` lists the
       // window's web areas (the page, and a side panel's). No `ax`: nothing matches.
@@ -754,11 +797,30 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // what is written and not yet removed.
       CGPreflightScreenCaptureAccess: () => { bump("CGPreflight"); return state.capture !== false; },
       CGRectMake: (x, y, w, h) => ({ x, y, w, h }),
-      CGWindowListCreateImage: () => { bump("CGWindowListCreateImage"); throw new Error("CGWindowListCreateImage is not used"); },
+      // Only the capture helper calls it: a CG entry's pixels at state.shotScale,
+      // recorded in state.shots as {cg: wid}.
+      CGWindowListCreateImage: (_rect, _opt, wid) => {
+        bump("CGWindowListCreateImage");
+        const shot = { cg: wid, run: state.shots.length };
+        state.shots.push(shot);
+        const c = cgEntries.find((e) => (e.wid ?? 1) === wid), s = state.shotScale ?? 2;
+        return c && !perRun(state.shotEmpty, shot.run) ? { w: (c.w ?? 800) * s, h: (c.h ?? 600) * s, shot } : { w: 0, h: 0, shot };
+      },
+      CGRectNull: { null: true },
+      // The capture lock: held by another perch server unless state.helper is set.
+      NSFileHandle: {
+        fileHandleWithNullDevice: { nullDevice: true },
+        fileHandleForUpdatingAtPath: (path) => (path === state.lockFile ? { isNil: () => false, fileDescriptor: 7, closeFile: undefined } : null),
+      },
+      flock: (fd, op) => { bump("flock"); (state.flocks = state.flocks || []).push(op); return op & 2 && !state.helper ? -1 : 0; },
+      getppid: () => state.ppid ?? 555,
+      NSString: { stringWithString: (str) => nsString(str), stringWithContentsOfFileEncodingError: (path) => {
+        const f = state.files[path];
+        return f && f.text != null ? { isNil: () => false, js: f.text } : { isNil: () => true };
+      } },
       NSTemporaryDirectory: () => nsString("/tmp/fake/"),
       NSProcessInfo: { processInfo: { processIdentifier: 555 } },
       NSURL: { fileURLWithPath: (path) => ({ path }) },
-      NSFileHandle: { fileHandleWithNullDevice: { nullDevice: true } },
       // A file's bytes: a PNG or TIFF header naming the image's size.
       NSData: { dataWithContentsOfFile: (path) => {
         const f = state.files[path];
@@ -770,7 +832,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       } },
       NSTask: { alloc: { get init() { return fakeTask(); } } },
       kill: (pid, sig) => { (state.sigkills = state.sigkills || []).push([pid, sig]); const t = tasks[pid]; if (t && sig === 9) { t.shot().killed = true; t.terminationStatus = 9; } return 0; },
-      NSFileManager: { defaultManager: { removeItemAtPathError: (path) => { const had = path in state.files; delete state.files[path]; return had; } } },
+      NSFileManager: { defaultManager: {
+        removeItemAtPathError: (path) => { const had = path in state.files; delete state.files[path]; return had; },
+        fileExistsAtPath: (path) => { if (state.helper) helperServe(); return path in state.files || path === state.lockFile; },
+        createFileAtPathContentsAttributes: (path) => { state.lockFile = path; return true; },
+        moveItemAtPathToPathError: (from, to) => { if (!(from in state.files)) return false; state.files[to] = state.files[from]; delete state.files[from]; return true; },
+      } },
       // A crop keeps the pixels inside the image; the rect is recorded as shot.crop.
       CGImageCreateWithImageInRect: (img, r) => {
         img.shot.crop = { x: r.x, y: r.y, w: r.w, h: r.h };
