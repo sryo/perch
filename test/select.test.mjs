@@ -734,6 +734,35 @@ test("custom combobox: a typed-text pick holds when the list closes through a tr
   }
 });
 
+// downshift's useCombobox and MUI's clearOnEscape clear the input on an Escape
+// while closed: select must not Escape a control that already says it closed,
+// though its options stay mounted through a leave transition, and a value an
+// Escape of its own cleared is never reported as the pick.
+test("custom combobox: no Escape reaches a control that says it closed, and one that clears the pick is not ok", async () => {
+  const clears = "t.addEventListener('keydown', (e) => { if (e.key === 'Escape') { window.escapes = (window.escapes || 0) + 1; if (t.getAttribute('aria-expanded') !== 'true') t.value = ''; } });";
+  const { dom } = onTickPage(SEARCH, SEARCH_JS("t.value = o.textContent; t.setAttribute('aria-expanded', 'false'); later(() => { ul.remove(); ul = null; }, 3);") + clears);
+  const { o } = await select({ label_pattern: "team", text: "Bravo" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(dom.document.getElementById("t").value, "Bravo");
+  assert.equal(dom.escapes, undefined);
+  // A widget that says it is open but clears on any Escape: the returning read
+  // sees the cleared value and refuses.
+  const always = "t.addEventListener('keydown', (e) => { if (e.key === 'Escape') t.value = ''; });";
+  const c = onTickPage(SEARCH, SEARCH_JS("t.value = o.textContent; hid.value = 'id-' + o.textContent;") + always);
+  const { o: x } = await select({ label_pattern: "team", text: "Bravo" });
+  assert.equal(x.ok, false, JSON.stringify(x));
+  assert.equal(c.dom.document.getElementById("t").value, "");
+});
+
+// A pick select can't verify still closes the popup it opened, on the final read.
+test("custom combobox: a refused typed-text pick still closes the list select opened", async () => {
+  const { dom } = onPage(SEARCH, SEARCH_JS("t.value = o.textContent;") + "t.addEventListener('keydown', (e) => { if (e.key === 'Escape') { t.setAttribute('aria-expanded', 'false'); document.querySelector('[role=listbox]').remove(); } });");
+  const { o } = await select({ label_pattern: "team", text: "Bravo" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(dom.document.querySelector("[role=listbox]"), null);
+  assert.equal(dom.document.getElementById("t").getAttribute("aria-expanded"), "false");
+});
+
 test("custom combobox: a bare input re-rendered empty on pick in a form or body is ok:false", async () => {
   const input = `<label for=dest>Destination</label><input id=dest role=combobox aria-controls=l aria-expanded=true>`;
   const list = `<ul id=l role=listbox><li role=option>Alpha</li><li role=option>Bravo</li></ul>`;
