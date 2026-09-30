@@ -205,9 +205,10 @@ function background() {
   world.state.focus = { window: WIN, chain: [{ role: "AXTextField", box: { x: 20, y: 40, w: 100, h: 20 } }, { role: "AXGroup" }, { role: "AXWebArea", box: AREA }, { role: "AXGroup" }, { role: "AXWindow", box: WIN }] };
   return { world, dom };
 }
-test("a trusted click, a click {readback} and a trusted press hold before posting anything", async () => {
+test("trusted, point, readback and hover clicks, and trusted and plain presses, hold before posting anything", async () => {
   const target = { app: "Google Chrome", windowId: 1, tabIndex: 1 };
-  for (const args of [["click", { selector: "#b", trusted: true, target }], ["click", { selector: "#b", readback: "#i", target }], ["press", { key: "Enter", selector: "#i", trusted: true, target }]]) {
+  for (const args of [["click", { selector: "#b", trusted: true, target }], ["click", { x: 300, y: 200, trusted: true, target }], ["click", { selector: "#b", readback: "#i", target }],
+    ["click", { selector: "#b", hover: true, target }], ["press", { key: "Enter", selector: "#i", trusted: true, target }], ["press", { key: "Tab", target }]]) {
     const { world, dom } = background();
     assert.equal((await call("fill", { selector: "#i", text: "Lima", target })).o.ok, true);
     dom.document.getElementById("i").value = "";
@@ -216,6 +217,7 @@ test("a trusted click, a click {readback} and a trusted press hold before postin
     assert.equal(held.o.ok, false, JSON.stringify(held.o));
     assert.deepEqual(held.o.late, [{ el: `textbox "City"`, error: "was cleared after it was filled; the page reverted the write; retry with fill {trusted:true}" }], JSON.stringify(held.o));
     assert.equal(world.posted.length, 0, `${args[0]} posted input`);
+    assert.equal(dom.document.activeElement.id === "b", false, `${args[0]} moved focus`);
   }
 });
 
