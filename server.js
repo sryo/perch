@@ -528,10 +528,11 @@ function jxaRuntime(BROWSERS, HANG) {
   // Node's check of this server's pending late records (lateTemplate): the
   // template runs the check, then the page JS put in place of LATE_JS, in one
   // execute. The first page JS a runtime call sends carries it until one answers
-  // with the check's mark (\u0002{l, h?}\u0002 ahead of the result), whose list
-  // rides the call's note as l. A held answer (h) ran nothing else: it throws,
-  // and so does every later send in the call, with no Apple Event.
-  const LATE_JS = "@perch_late_js@", LATE_HOLD = "perch-late-hold ";
+  // with the check's mark (\u0002{l, f, h?}\u0002 ahead of the result), which
+  // rides the call's note as l, and on an error thrown later in the call rides
+  // ahead of the error's message. A held answer (h) ran nothing else: it
+  // throws, and so does every later send in the call, with no Apple Event.
+  const LATE_JS = "@perch_late_js@", LATE_HOLD = "perch-late-hold";
   let late = null, lateHeld = null;
   function lateWrap(js) {
     if (lateHeld) throw lateHeld;
@@ -541,13 +542,13 @@ function jxaRuntime(BROWSERS, HANG) {
     if (typeof v !== "string" || v.charCodeAt(0) !== 2) return v;
     const e = v.indexOf("\u0002", 1), o = JSON.parse(v.slice(1, e));
     late = null;
+    note = note || {};
+    note.l = o;
     if (o.h) {
-      lateHeld = new Error(LATE_HOLD + JSON.stringify(o.l));
+      lateHeld = new Error(LATE_HOLD);
       lateHeld.perchHeld = true;
       throw lateHeld;
     }
-    note = note || {};
-    note.l = o.l;
     return v.slice(e + 1);
   }
   const held = function (e) { return !!e && e.perchHeld === true; };
@@ -3349,10 +3350,23 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   // tab counts, the late check's list) rides ahead of the result. Any call can
   // issue a Safari handle.
   const c0 = callNotes.getStore(), lt = c0 && c0.late && !c0.late.done && !DIALOG_BLIND.has(fn) ? lateTemplate(c0.late) : null;
-  script = `(function(){__perch.takeNote();__perch.lateArm(${JSON.stringify(lt)});var r=${script},n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
-  let out = DIALOG_BLIND.has(fn) && !(args && args.clip)
-    ? await jxa(script, { lane, timeout })
-    : await watchDialogs(args && args.target ? args.target : {}, lane, (token) => jxa(script, { lane, timeout, token }));
+  // A call that throws after its late check answered carries the answer ahead
+  // of its message (LATE_ERR), for Node to take off before anything reads it.
+  const body = lt ? `var r;try{r=${script}}catch(e){var n0=__perch.takeNote();if(n0&&n0.l)try{e.message="${LATE_ERR}"+JSON.stringify(n0.l)+"${LATE_ERR}"+e.message}catch(x){}throw e}` : `var r=${script};`;
+  script = `(function(){__perch.takeNote();__perch.lateArm(${JSON.stringify(lt)});${body}var n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
+  let out;
+  try {
+    out = DIALOG_BLIND.has(fn) && !(args && args.clip)
+      ? await jxa(script, { lane, timeout })
+      : await watchDialogs(args && args.target ? args.target : {}, lane, (token) => jxa(script, { lane, timeout, token }));
+  } catch (e) {
+    const m = e && typeof e.message === "string" ? LATE_ERR_RE.exec(e.message) : null;
+    if (m) {
+      e.message = e.message.slice(0, m.index) + e.message.slice(m.index + m[0].length);
+      if (c0 && c0.late) lateDone(c0.late, JSON.parse(m[1]));
+    }
+    throw e;
+  }
   if (typeof out === "string" && out.startsWith(NOTE_MARK)) {
     const end = out.indexOf(NOTE_MARK, 1), n = JSON.parse(out.slice(1, end));
     out = out.slice(end + 1);
@@ -3382,48 +3396,50 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
 // Late reverts. A plain fill or a native select (and a fill {fields} batch
 // whose re-read could not run in its own call) leaves its record of what landed
 // on the page (frRecord) under an owner token, and Node keeps the token here,
-// per target as tabKey keys it. The next call on that target that runs page JS
-// runs fill_late ahead of its own script in the same execute (lateTemplate): no
-// Apple Event of its own. Its list comes back as the call's `late`, and the
-// tokens it was sent are dropped whether or not their records were found (a
-// new document, another tab). A click or press is held by a late find: nothing
-// else in its call runs.
-const lateToks = new Map();
-const LATE_TOKS_MAX = 20, LATE_KEYS_MAX = 200;
-function lateKeep(target, tok) {
-  if (typeof tok !== "string") return;
-  const k = tabKey(target), list = (lateToks.get(k) || []).filter((t) => t !== tok);
-  list.push(tok);
-  lateToks.delete(k);
-  lateToks.set(k, list.slice(-LATE_TOKS_MAX));
-  if (lateToks.size > LATE_KEYS_MAX) lateToks.delete(lateToks.keys().next().value);
+// for this server rather than a target: the tab a record lives in may be named
+// by tabId or be the untargeted default. The next call that runs page JS, on
+// any target, runs fill_late ahead of its own script in the same execute
+// (lateTemplate): no Apple Event of its own. Its list comes back as the call's
+// `late`. A token is dropped once an answer that found its record arrived, or,
+// never found, after LATE_TRIES checks or LATE_AGE_MS: a check on another tab
+// never drops it. A click or press is held by a late find: nothing else in its
+// call runs.
+const lateToks = [];
+const LATE_TOKS_MAX = 20, LATE_TRIES = 20, LATE_AGE_MS = 60000;
+function lateKeep(tok) {
+  if (typeof tok !== "string" || lateToks.some((t) => t.tok === tok)) return;
+  lateToks.push({ tok, at: Date.now(), tries: 0 });
+  if (lateToks.length > LATE_TOKS_MAX) lateToks.shift();
 }
 const LATE_HOLD_TOOLS = new Set(["click", "press"]);
-function lateArm(name, target) {
-  const k = tabKey(target), toks = lateToks.get(k);
-  return toks && toks.length ? { key: k, toks: toks.slice(), hold: LATE_HOLD_TOOLS.has(name) } : null;
+function lateArm(name) {
+  return lateToks.length ? { toks: lateToks.map((t) => t.tok), hold: LATE_HOLD_TOOLS.has(name) } : null;
 }
-function lateDone(late, found) {
+function lateDone(late, ans) {
   if (late.done) return;
   late.done = true;
-  late.found = Array.isArray(found) ? found : [];
-  const left = (lateToks.get(late.key) || []).filter((t) => !late.toks.includes(t));
-  if (left.length) lateToks.set(late.key, left); else lateToks.delete(late.key);
+  late.found = Array.isArray(ans && ans.l) ? ans.l : [];
+  const found = new Set(Array.isArray(ans && ans.f) ? ans.f : []), now = Date.now();
+  for (let i = lateToks.length - 1; i >= 0; i--) {
+    const t = lateToks[i];
+    if (!late.toks.includes(t.tok)) continue;
+    if (found.has(t.tok) || ++t.tries >= LATE_TRIES || now - t.at > LATE_AGE_MS) lateToks.splice(i, 1);
+  }
 }
 // The check wrapped around the page JS the runtime puts in place of LATE_JS:
 // it runs fill_late first, then the script, and prefixes the script's string
-// answer with its mark, dropping the records it was sent. A held check (h)
-// runs no script. A script answering a non-string (a bare probe) takes no mark,
-// and its call's next page JS carries the check again.
+// answer with its mark. A held check (h) runs no script. A script answering a
+// non-string (a bare probe) takes no mark, and its call's next page JS carries
+// the check again. Nothing in the page is deleted.
 const LATE_JS = "@perch_late_js@";
 function lateTemplate(late) {
   if (late.tpl) return late.tpl;
   const check = buildEvalWrapper(pageScript("fill_late", { toks: late.toks, hold: late.hold || undefined, hint: TRUSTED_HINT }));
-  const drop = `var m=window.__perch_fr;if(m)${JSON.stringify(late.toks)}.forEach(function(k){delete m[k]});`;
-  return (late.tpl = `(function(){var L=${check},o=null;try{o=JSON.parse(L)}catch(e){}if(!o||!Array.isArray(o.l))L='{"l":[]}';else if(o.h){${drop}return "\u0002"+L+"\u0002"}var r=(\n${LATE_JS}\n);if(typeof r!=="string")return r;${drop}return "\u0002"+L+"\u0002"+r})()`);
+  return (late.tpl = `(function(){var L=${check},o=null;try{o=JSON.parse(L)}catch(e){}if(!o||!Array.isArray(o.l))L='{"l":[],"f":[]}';else if(o.h)return "\u0002"+L+"\u0002";var r=(\n${LATE_JS}\n);if(typeof r!=="string")return r;return "\u0002"+L+"\u0002"+r})()`);
 }
 
 const NOTE = "\\u0001", NOTE_MARK = "\u0001";
+const LATE_ERR = "\\u0003", LATE_ERR_RE = /\u0003(\{[^\u0003]*\})\u0003/;
 // Safari handles perch has written on a page as its stamp: a page at their index
 // without it is not taken on trust. A handle a listing just issued is dropped
 // again, since the listing vouches for the tab at its index.
@@ -6162,16 +6178,18 @@ delete m[A.tok];
 return frJudge(items);
 `,
 
-  // The next page call's check of this server's pending records (A.toks) on its
-  // tab, run ahead of that call's own script in the same execute (lateTemplate).
-  // -> {l: [{el, error}]}: a revert or another option, never a reformat. With
-  // A.hold (a click or key press) and anything to report, {l, h}: the call's own
-  // script does not run. The records are dropped by the wrapper, not here.
+  // The next page call's check of this server's pending records (A.toks), run
+  // ahead of that call's own script in the same execute (lateTemplate). -> {l:
+  // [{el, error}], f: [tokens whose record this document holds]}: a revert or
+  // another option, never a reformat. With A.hold (a click or key press) and
+  // anything to report, h too: the call's own script does not run. Nothing is
+  // deleted: Node drops a token once it has the answer that found it.
   fill_late: FR_JUDGE_LIB + String.raw`
-const m = window.__perch_fr, l = [];
+const m = window.__perch_fr, l = [], f = [];
 A.toks.forEach(function (k) {
   const items = m && m[k];
   if (!items) return;
+  f.push(k);
   const j = frJudge(items).recheck;
   Object.keys(j).forEach(function (i) {
     const x = j[i], e = x.error.indexOf(x.el + " ") === 0 ? x.error.slice(x.el.length + 1) : x.error;
@@ -6180,7 +6198,7 @@ A.toks.forEach(function (k) {
     l.push({ el: x.el, error: e + (typed && x.reverted ? A.hint : "") });
   });
 });
-return A.hold && l.length ? { l: l, h: 1 } : { l: l };
+return A.hold && l.length ? { l: l, f: f, h: 1 } : { l: l, f: f };
 `,
 
   // {pending} = keep polling; the best tier of taMatch. A.probe: is a pick worth
@@ -8156,7 +8174,7 @@ async function fillFields(fields, target, only) {
     // next call's check; one that finds no record (a new document) leaves the
     // pass's answer.
     const x = rereadOf(fr.rr);
-    if (!x || x.unbounded || x.dropped) lateKeep(target, fr.fr);
+    if (!x || x.unbounded || x.dropped) lateKeep(fr.fr);
     else recheck(x, true);
   } else if (from === A.length && watch) {
     // The combobox ended the batch, so no page pass has re-read the fields
@@ -8243,7 +8261,7 @@ async function fill(args = {}) {
   const r = trusted
     ? await trustedFill({ ...key, raise, target })
     : await runPage("fill", "fill", { ...key, fr: true }, target);
-  if (!trusted && r && r.fr) return hintTrusted(keepLate(r, target));
+  if (!trusted && r && r.fr) return hintTrusted(keepLate(r));
   if (!r || !r.pending) return trusted ? noTok(r) : hintTrusted(r);
   const out = { ...await (r.trusted ? pickSuggestion(target, r.tok, key) : pickTypeahead(key, target, r.tok).then(hintTrusted)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
@@ -8251,9 +8269,9 @@ async function fill(args = {}) {
 
 // A plain or rich fill, or a native pick, that landed: its record stays on the
 // page for the next call on the target to check (lateKeep), and it answers now.
-function keepLate(r, target) {
+function keepLate(r) {
   const { fr, ...out } = r;
-  lateKeep(target, fr);
+  lateKeep(fr);
   return out;
 }
 const addNote = (o, n) => ({ ...o, note: o.note ? `${o.note}; ${n}` : n });
@@ -8368,7 +8386,7 @@ async function select(args = {}, prefs = null) {
       control: pageFn("trusted_probe", { select: "control" }), option: pageFn("trusted_probe", { select: "option" }),
     } } : {}),
   }, { lane: "slow" }), "select");
-  return r && r.fr ? keepLate(r, target) : r;
+  return r && r.fr ? keepLate(r) : r;
 }
 
 // Shared guidance lives here once instead of in every tool description.
@@ -8610,7 +8628,7 @@ export async function handleCall(name, args = {}) {
     guardFrameRefs(name, args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
-    note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name, args.target) };
+    note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name) };
     const lockKey = tabLockKey(name, args);
     const call = () => callNotes.run(note, () => handler(args));
     let result = await (lockKey ? withTabLock(lockKey, call) : call());
@@ -8631,9 +8649,7 @@ export async function handleCall(name, args = {}) {
     else if (late) return withLate(note.moved ? withMoved(name, result, note.moved) : formatResult(result), late);
     return note.moved ? withMoved(name, result, note.moved) : formatResult(result);
   } catch (e) {
-    const hold = e && typeof e.message === "string" ? LATE_HELD.exec(e.message) : null;
-    if (hold && note && note.late) {
-      lateDone(note.late, JSON.parse(hold[1]));
+    if (e && typeof e.message === "string" && e.message.includes(LATE_HELD) && note && note.late && note.late.found) {
       return formatResult({ ok: false, error: `nothing ${name === "press" ? "pressed" : "clicked"}: ${LATE_HOLD_WHY}`, late: note.late.found });
     }
     if (e instanceof RefMiss) return withLate(formatResult({ __perch_ref_miss: true, ref: e.ref }), note && note.late && note.late.found);
@@ -8641,8 +8657,8 @@ export async function handleCall(name, args = {}) {
   }
 }
 
-const LATE_HELD = /perch-late-hold (\[[\s\S]*\])/;
-const LATE_HOLD_WHY = "a field filled earlier did not keep its value (late); fill it again, then retry";
+const LATE_HELD = "perch-late-hold";
+const LATE_HOLD_WHY = "a field filled earlier no longer holds its value (late); fill it again (fill {trusted:true} if the page converts or clears it on blur), then retry";
 const plainResult = (r) => r && typeof r === "object" && !Array.isArray(r) && !r.__image && !r.__perch_ref_miss && r.__perch_error === undefined;
 // A result that can't take a late key (text, an image, eval_js's value) gets it
 // as one more text item.

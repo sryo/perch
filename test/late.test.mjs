@@ -59,7 +59,7 @@ for (const browser of ["chrome", "arc", "safari"]) {
     const next = await call("get_text", { selector: "form" });
     assert.deepEqual(lateOf(next), [ZIP_LATE], JSON.stringify(next.o));
     assert.equal(dom.document.getElementById("zip").value, "");
-    assert.deepEqual(Object.keys(dom.__perch_fr || {}), [], "the check drops the record");
+    assert.equal(Object.keys(dom.__perch_fr || {}).length, 1, "the check never deletes a record in the page");
     assert.equal(lateOf(await call("get_text", { selector: "form" })), undefined, "reported once");
   });
 
@@ -82,7 +82,6 @@ test("a write that holds, and a value the page reformats, are never reported", a
   const next = await call("get_text", {});
   assert.equal(lateOf(next), undefined, JSON.stringify(next.o));
   assert.equal(dom.document.getElementById("pc").value, "SW1A 1AA");
-  assert.deepEqual(Object.keys(dom.__perch_fr || {}), []);
 });
 
 test("a field put back to its prior value is late with that value; a clear the page refills is too", async () => {
@@ -130,7 +129,7 @@ test("another server's record on the page is not reported or dropped", async () 
     window.__perch_fr.theirs = [{ i: 0, el: z, id: 'textbox "Zip"', kind: "plain", rich: false, text: "2000", want: "2000", prior: "" }];
     z.value = '';`);
   assert.equal(lateOf(await call("get_text", {})), undefined);
-  assert.deepEqual(Object.keys(dom.__perch_fr), ["theirs"]);
+  assert.ok(Object.keys(dom.__perch_fr).includes("theirs"));
 });
 
 // A record lives in its document: a call on another tab finds nothing and the
@@ -154,7 +153,7 @@ test("click and press hold after a late revert, then run on the next call", asyn
     await call("fill", { label_pattern: "zip", text: "2000" });
     const held = await call(tool, args);
     assert.equal(held.o.ok, false, JSON.stringify(held.o));
-    assert.match(held.o.error, new RegExp(`^nothing ${verb}: `));
+    assert.equal(held.o.error, `nothing ${verb}: a field filled earlier no longer holds its value (late); fill it again (fill {trusted:true} if the page converts or clears it on blur), then retry`);
     assert.deepEqual(held.o.late, [ZIP_LATE]);
     assert.equal(dom.clicks, 0, `${tool} acted on a held call`);
     const again = await call(tool, args);
@@ -171,14 +170,54 @@ test("a click after writes that held runs at once", async () => {
   assert.equal(dom.clicks, 1);
 });
 
-// A targeted fill is checked by the next call on that tabId, not by an
-// untargeted one (each is its own key, as the tab locks key them).
-test("a targeted fill is checked by the next call on the same tabId", async () => {
+// Pending tokens are the server's, not a target's: a call on the tab by any
+// target checks them, and a call on another tab first leaves them pending.
+test("an untargeted fill is checked by a {tabId} call on the tab, and the reverse", async () => {
+  for (const [first, then] of [[false, true], [true, false]]) {
+    onPage(ZIP, ZIP_CLEARS);
+    const tabId = JSON.parse((await handleCall("list_tabs", {})).content[0].text).tabs[0].tabId;
+    await call("fill", { label_pattern: "zip", text: "2000", ...(first ? { target: { tabId } } : {}) });
+    assert.deepEqual(lateOf(await call("get_text", then ? { target: { tabId } } : {})), [ZIP_LATE], `${first} -> ${then}`);
+  }
+});
+
+test("a call on another tab first leaves the token pending; the fill's tab then reports it", async () => {
+  const dom = page(ZIP);
+  dom.eval(QUEUE_JS);
+  dom.eval(ZIP_CLEARS);
+  const ev = dom.eval.bind(dom);
+  dom.eval = (js) => { dom.__tick(); return ev(js); };
+  const other = page(`<p>Other</p>`);
+  const world = makeWorld({ browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: [{ url: "https://a.test/", id: "x", dom }, { url: "https://b.test/", id: "y", dom: other }] }] }], cg: [{ owner: "Google Chrome" }] });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  const tabs = JSON.parse((await handleCall("list_tabs", {})).content[0].text).tabs;
+  const [a, b] = ["https://a.test/", "https://b.test/"].map((u) => tabs.find((t) => t.url === u).tabId);
+  await call("fill", { label_pattern: "zip", text: "2000", target: { tabId: a } });
+  assert.equal(lateOf(await call("get_text", { target: { tabId: b } })), undefined);
+  assert.equal(lateOf(await call("eval_js", { script: "return 1", target: { tabId: b } })), undefined);
+  assert.deepEqual(lateOf(await call("get_text", { target: { tabId: a } })), [ZIP_LATE]);
+  assert.equal(lateOf(await call("get_text", { target: { tabId: a } })), undefined, "reported once");
+});
+
+// A call that fails after its check ran still reports the list; one whose
+// check answer was lost leaves the tokens for the next call, which re-reports.
+test("a call that errors after the check carries late in its error; a lost answer is re-reported next call", async () => {
   onPage(ZIP, ZIP_CLEARS);
-  const tabId = JSON.parse((await handleCall("list_tabs", {})).content[0].text).tabs[0].tabId;
-  await call("fill", { label_pattern: "zip", text: "2000", target: { tabId } });
-  assert.equal(lateOf(await call("get_text", {})), undefined);
-  assert.deepEqual(lateOf(await call("get_text", { target: { tabId } })), [ZIP_LATE]);
+  await call("fill", { label_pattern: "zip", text: "2000" });
+  const w = await call("wait", { selector: "#city", timeout: 1000 });
+  assert.equal(w.r.isError, true);
+  assert.match(w.o, /^error: timeout: /);
+  assert.deepEqual(lateOf(w), [ZIP_LATE]);
+  assert.equal(lateOf(await call("get_text", {})), undefined, "not reported twice");
+  const { world } = onPage(ZIP, ZIP_CLEARS);
+  await call("fill", { label_pattern: "zip", text: "2000" });
+  world.state.hangIf = (js) => js.includes("@perch_late") || js.includes("fill_late") || js.includes("A.toks");
+  const lost = await call("eval_js", { script: "return 1" });
+  assert.equal(lost.r.isError, true);
+  world.state.hangIf = null;
+  assert.deepEqual(lateOf(await call("get_text", {})), [ZIP_LATE]);
 });
 
 // A snapshot's result is text, so late rides a second text item.
@@ -254,8 +293,20 @@ test("fill {fields}: a dropped re-read defers to the next call; a missing record
   assert.deepEqual(f.o.results.map((r) => [r.ok, r.note]), [[true, undefined], [true, undefined]], JSON.stringify(f.o));
   world.state.hangIf = null;
   assert.deepEqual(lateOf(await call("get_text", {})), [ZIP_LATE]);
-  assert.deepEqual(Object.keys(dom.__perch_fr), []);
+  assert.equal(lateOf(await call("get_text", {})), undefined, "reported once");
   onPage(ZIP, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
   const g = await call("fill", { fields: [{ label_pattern: "zip", text: "2000" }, { label_pattern: "city", text: "Rosario" }] });
   assert.deepEqual(g.o.results.map((r) => [r.ok, r.note]), [[true, undefined], [true, undefined]], JSON.stringify(g.o));
+});
+
+// A token whose record no check finds (a new document, a tab never called
+// again) stops riding page calls after LATE_TRIES checks.
+test("a token never found stops riding page calls after 20 checks", async () => {
+  const { dom, scripts } = onPage(ZIP, ZIP_CLEARS);
+  await call("fill", { label_pattern: "zip", text: "2000" });
+  dom.eval(`delete window.__perch_fr;`);
+  for (let i = 0; i < 20; i++) await call("eval_js", { script: "return 1" });
+  assert.ok(scripts.at(-1).includes("A.toks") || scripts.at(-1).length > 5000, "the 20th check still ran");
+  await call("eval_js", { script: "return 1" });
+  assert.ok(scripts.at(-1).length < 2000, `the 21st call still carried the check (${scripts.at(-1).length} bytes)`);
 });

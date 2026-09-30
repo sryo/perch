@@ -143,7 +143,7 @@ test("native select: a pick the page moves to another option a task later is lat
   assert.deepEqual(o, { ok: true, selected: "Basic", el: `combobox "Plan"` });
   assert.deepEqual(await lateAfter(), [{ el: `combobox "Plan"`, error: `changed to "Pro" after it was filled; the page chose another option` }]);
   assert.equal(dom.document.getElementById("plan").value, "Pro");
-  assert.equal(Object.keys(dom.__perch_fr).length, 0, "the check drops its record");
+  assert.equal(await lateAfter(), undefined, "reported once");
 });
 
 test("native select: a pick the page puts back or empties a task later is a late revert; one that holds is not reported", async () => {
