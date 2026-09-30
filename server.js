@@ -4584,8 +4584,18 @@ function chosenAlready(s, opt, key) {
 // for more characters counts as loading, since a debounced search may still
 // replace it. Only elements that can carry a signal are queried, since a root
 // may be a whole dialog.
+const NONE_SAID = /^(no (results?|options?|match(es|ing)?|items?|suggestions?)|nothing (found|matche[sd])|0 (results?|options?|matches|items?)|not found)\b/i;
+// A shown notice in one of roots that the list has nothing for the text.
+function noneIn(roots) {
+  return roots.some(function (r) {
+    if (!r || !r.isConnected || !NONE_SAID.test(norm(r.textContent))) return false;
+    const w = document.createTreeWalker(r, 4);
+    for (let n = w.nextNode(); n; n = w.nextNode()) if (NONE_SAID.test(norm(n.nodeValue)) && vis(n.parentElement)) return true;
+    return false;
+  });
+}
 function loadingIn(roots) {
-  const none = /^(no (results?|options?|match(es|ing)?|items?|suggestions?)|nothing (found|matche[sd])|0 (results?|options?|matches|items?)|not found)\b/i;
+  const none = NONE_SAID;
   const count = /^\d+ (results?|options?|suggestions?|items?) (are )?available\b/i, word = /^(loading|searching|fetching)\b/i;
   const SIGNS = "[aria-busy=true], [role=progressbar], [role=status], [aria-live], [class*=load], [class*=spin], [class*=animate-]";
   const busy = function (e) {
@@ -6922,10 +6932,16 @@ const sig = opts.length ? Array.from(keys.values()).join("\n") : null;
 s.same = sig && sig === s.sig ? s.same + 1 : 0;
 s.sig = sig;
 if (s.typed && sig !== s.typedSig) s.answered = true;
+// A filter that emptied the list by the very next poll, saying it has
+// nothing, is the page's own filter, not a debounce or lookup: that answer
+// holds after 2 polls. A narrowed list keeps 8, since a local filter may
+// still be followed by a lookup's results.
+const roots = [s.ctl, s.input, s.box, s.pop, s.listRoot].concat(linkedLists(s));
+if (s.typed && s.sync == null) s.sync = sig !== s.typedSig;
 if (sig && s.same >= (wantN ? 8 : 3) && (!wantN || s.answered || !box)) return { settled: true, tok: tok };
 if (s.typed && s.typedSig && !sig) {
-  s.emptied = loadingIn([s.ctl, s.input, s.box, s.pop, s.listRoot].concat(linkedLists(s))) ? 0 : (s.emptied || 0) + 1;
-  if (s.emptied >= 8) return { settled: true, tok: tok };
+  s.emptied = loadingIn(roots) ? 0 : (s.emptied || 0) + 1;
+  if (s.emptied >= (s.sync && noneIn(roots) ? 2 : 8)) return { settled: true, tok: tok };
 } else s.emptied = 0;
 if (!s.typed && wantN && box && s.polls >= 4) {
   const q = wantT.trim().split(/[^\p{L}\p{N} ]/u)[0].trim() || wantT.trim();

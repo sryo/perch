@@ -1469,3 +1469,19 @@ for (const [name, B] of [["other args", { label_pattern: "location", text: "Toro
     assert.equal(dom.lookups, 0, "A typed nothing");
   });
 }
+
+// A local-then-remote typeahead: its own list filters the typed text at once
+// (a tie here), then the lookup's results land after a debounce with the exact
+// suggestion. The tie in the local list is not the site's answer yet.
+test("typeahead: a local tie followed by the lookup's exact suggestion waits for the lookup", async () => {
+  for (const n of [6, 8]) {
+    const { dom } = onPage(ACCENT_HTML(true), ACCENT_JS.replace("}, 3); });", "}, 2); });") + `
+      inp.addEventListener('input', () => { later(() => {
+        ul.insertAdjacentHTML('beforeend', '<div role=option>Cordoba</div>');
+        ul.lastChild.addEventListener('click', () => { window.picks.push('Cordoba'); document.querySelector('.select__single-value').textContent = 'Cordoba'; hid.value = 'Cordoba'; inp.value = ''; ul.innerHTML = ''; });
+      }, ${n}); });`);
+    const o = await fill({ selector: "#city", text: "Cordoba" });
+    assert.equal(o.ok, true, n + " " + JSON.stringify(o));
+    assert.deepEqual([...dom.picks], ["Cordoba"], String(n));
+  }
+});

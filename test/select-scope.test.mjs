@@ -144,7 +144,7 @@ test("an async list gets a typed filter; a miss clears it", async () => {
   assert.equal($(dom, "#react-select-5-input").value, "");
 });
 
-test("a typed filter answered with react-select's No options settles as a miss in about 0.5s", async () => {
+test("a typed filter answered at once with react-select's No options settles as a miss in about 0.25s", async () => {
   const dom = onPage(rs(9, "Department"), RS_JS + `mkRS(9, ["Engineering", "Design", "Sales"]);`);
   const t0 = dom.world.clock.t;
   const o = await select({ label_pattern: "department", text: "zz" });
@@ -153,7 +153,7 @@ test("a typed filter answered with react-select's No options settles as a miss i
   assert.deepEqual(o.candidates, ["Engineering", "Design", "Sales"]);
   assert.equal($(dom, "#react-select-9-input").value, "", "typed filter is cleared after a miss");
   assert.equal($(dom, "#react-select-9-input").getAttribute("aria-expanded"), "false");
-  assert.equal(ms, 550, "typed at 150ms, then 8 empty polls");
+  assert.equal(ms, 250, "typed at 150ms, then 2 empty polls saying No options");
 });
 
 test("react-select's Loading... message keeps an emptied list waited on until the answer lands", async () => {

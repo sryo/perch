@@ -360,7 +360,25 @@ test("a status saying nothing matched is no loading signal", async () => {
   const { world } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => { ul.innerHTML = '<li role=status>No results found</li>'; });`));
   const { o, ms } = await spent(world, { label_pattern: "office", text: "zz" });
   assert.deepEqual(o.candidates, ["Berlin", "Madrid"]);
-  assert.equal(ms, 550);
+  assert.equal(ms, 250, "typed at 150ms; the page's own filter said so at once, 2 polls");
+});
+
+// The long hold stays for a list a debounce or lookup answers: one that still
+// showed the old list on the poll after typing.
+test("a no-results notice after a debounce, or any narrowed list, still gets the long hold", async () => {
+  for (const [what, render] of [
+    ["notice", "ul.innerHTML = '<li role=status>No results found</li>'"],
+    ["narrowed", "show(['Madrid'])"],
+  ]) {
+    const { world } = onTickPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => { later(() => { ${render}; }, 2); });`));
+    const { o, ms } = await spent(world, { label_pattern: "office", text: "zz" });
+    assert.equal(o.ok, false, what);
+    assert.ok(ms >= 550, what + " " + ms);
+  }
+  // A list narrowed at once keeps it too: a lookup's results may still follow a local filter.
+  const { world } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => show(['Madrid']));`));
+  const { o, ms } = await spent(world, { label_pattern: "office", text: "zz" });
+  assert.deepEqual([o.ok, ms], [false, 600]);
 });
 
 // Loading signals on or inside the control or its list: an emptied list is still waited on.
@@ -400,11 +418,11 @@ const NOT_LOADING = {
   "a longer class word holding animate-spin": `ul.innerHTML = '<li><span class="animate-spin-once">x</span></li>';`,
 };
 for (const [name, html] of Object.entries(NOT_LOADING)) {
-  test(`an emptied list showing ${name} settles in about 0.5s`, async () => {
+  test(`an emptied list showing ${name} settles in about 0.5s, sooner when it says it has nothing`, async () => {
     const { world } = onPage(SUGGEST, SUGGEST_JS(`inp.addEventListener('input', () => { ${html} });`));
     const { o, ms } = await spent(world, { label_pattern: "office", text: "zz" });
     assert.deepEqual(o.candidates, ["Berlin", "Madrid"], JSON.stringify(o));
-    assert.equal(ms, 550);
+    assert.equal(ms, /No matches/.test(html) ? 250 : 550);
   });
 }
 
