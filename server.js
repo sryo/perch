@@ -4146,6 +4146,23 @@ function shownWhole(box) { return !box || box.tagName === "INPUT" || box.querySe
 // call's. Another perch server's select on this tab may have replaced it, and a
 // phase must not press, type or Escape on a state made under other args.
 const SELECT_OWN_LIB = String.raw`
+// Where a custom control's choice shows (box) and the lists it names (named).
+// react-select v5 puts role=combobox on an inner <input> that it empties after a
+// pick, so its surrounding control (wrap) is read instead. A bare input's parent
+// is its box only when it is the control's alone: body or html, a parent holding
+// the list the input names, or one holding two or more other fields is the
+// page's, and taking it would count every list and open menu there as the
+// control's own, and its text as the pick. Such an input is its own box.
+function ctlBox(ctl, input) {
+  const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
+  const named = [ctl, input].filter(Boolean).map(function (e) { return document.getElementById(attr(e, "aria-controls")); }).filter(Boolean);
+  const up = ctl.parentElement;
+  const pageLevel = function (p) {
+    if (/^(BODY|HTML)$/.test(p.tagName) || named.some(function (l) { return p.contains(l); })) return true;
+    return Array.prototype.filter.call(p.querySelectorAll("input:not([type=hidden]), select, textarea"), function (x) { return x !== ctl && x !== input; }).length >= 2;
+  };
+  return { wrap: wrap, named: named, box: wrap || (ctl.tagName === "INPUT" && up && !pageLevel(up) ? up : ctl) };
+}
 const selKey = JSON.stringify([A.ref, A.selector, A.label_pattern, A.text, !!A.trusted]);
 const selNow = window.__perch_select;
 const selLost = selNow && selNow.key !== selKey ? { lost: true, tok: selNow.tok } : null;
@@ -6318,20 +6335,7 @@ const ctl = c.el;
 const nat = nativeOf(ctl);
 if (nat) return pickNative(nat, A.text);
 const input = ctl.tagName === "INPUT" ? ctl : ctl.querySelector && ctl.querySelector("input");
-// Where the choice shows: react-select v5 puts role=combobox on an inner <input>
-// that it empties after a pick, so read the surrounding control instead.
-const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
-// A bare input's parent is its box only when it is the control's alone: body or
-// html, a parent holding the list the input names, or one holding two or more
-// other fields is the page's, and taking it would count every list and open
-// menu there as the control's own. Such an input is its own box.
-const up = ctl.parentElement;
-const named = [ctl, input].filter(Boolean).map(function (e) { return document.getElementById(attr(e, "aria-controls")); }).filter(Boolean);
-const pageLevel = function (p) {
-  if (/^(BODY|HTML)$/.test(p.tagName) || named.some(function (l) { return p.contains(l); })) return true;
-  return Array.prototype.filter.call(p.querySelectorAll("input:not([type=hidden]), select, textarea"), function (x) { return x !== ctl && x !== input; }).length >= 2;
-};
-const box = wrap || (ctl.tagName === "INPUT" && up && !pageLevel(up) ? up : ctl);
+const cb = ctlBox(ctl, input), wrap = cb.wrap, named = cb.named, box = cb.box;
 // A bare input's box is its parent, which may hold only its label: its value is in the input.
 const shows = wrap || ctl.tagName !== "INPUT";
 const s = { key: selKey, tok: rbTok(), ctl: ctl, input: input, box: box, polls: 0, shown: shows ? shownParts(box) : [], whole: shows ? shownWhole(box) : "", multiBox: shows && multiBox(box, labelText(ctl)) };
@@ -6502,10 +6506,9 @@ if (!s.ctl.isConnected) {
   let again = s.ctl.id ? document.getElementById(s.ctl.id) : null;
   if (!again && (A.selector || A.label_pattern)) { try { again = findCtl({ selector: A.selector, label_pattern: A.label_pattern }).el; } catch (e) {} }
   if (again && again.isConnected && !nativeOf(again)) {
-    const w = again.closest && again.closest('.select__control, [class*="-control"], [class*="__control"]');
     s.ctl = again;
     s.input = again.tagName === "INPUT" ? again : again.querySelector && again.querySelector("input");
-    s.box = w || (again.tagName === "INPUT" ? again.parentElement : again);
+    s.box = ctlBox(again, s.input).box;
   }
 }
 // A popup select opened and a pick left open (a multi-select) closes again.

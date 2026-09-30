@@ -476,3 +476,18 @@ test("custom combobox: select brings an offscreen control into view through its 
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(dom.scrollY, 900);
 });
+
+// A page that swaps the input for an empty clone on pick: the new node's box is
+// chosen by the same rule as at start, so a form's or body's text never reads
+// as the pick.
+test("custom combobox: a bare input re-rendered empty on pick in a form or body is ok:false", async () => {
+  const input = `<label for=dest>Destination</label><input id=dest role=combobox aria-controls=l aria-expanded=true>`;
+  const list = `<ul id=l role=listbox><li role=option>Alpha</li><li role=option>Bravo</li></ul>`;
+  const js = `document.getElementById("l").addEventListener("click", () => { const d = document.getElementById("dest"); d.replaceWith(d.cloneNode(false)); });`;
+  for (const html of [`<form><label for=n>Name</label><input id=n><label for=e>Email</label><input id=e>${input}</form>${list}`, `${input}${list}`]) {
+    const { dom } = onPage(html, js);
+    const { o } = await select({ label_pattern: "destination", text: "Bravo" });
+    assert.equal(o.ok, false, html + " " + JSON.stringify(o));
+    assert.equal(dom.document.getElementById("dest").value, "", html);
+  }
+});
