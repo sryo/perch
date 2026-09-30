@@ -1144,6 +1144,19 @@ test("fill {fields}: the cleared state fails the batch and the country stays ok"
   assert.equal(o.recheck, undefined);
 });
 
+// A drift first seen at a later pass's start happened between passes, where an
+// earlier field's async effect (a country change clearing State a task later)
+// is as likely a cause as the deferred field: it stays unnamed.
+test("fill_fields: a drift first seen at a pass's start is not pinned on the deferred field", () => {
+  const w = page(`<label>State <input id=st></label><label>Name <input id=n></label>`);
+  const fields = [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "name", text: "Ada", trusted: true }];
+  assert.equal(run(w, "fill_fields", { fields }).defer, 1);
+  val(w, "#st").value = "";
+  const o = run(w, "fill_fields", { fields, from: 2 });
+  assert.equal(o.recheck[0].error, `textbox "State" was cleared after a later field changed; fill it again`);
+  assert.equal("by" in o.recheck[0], false, JSON.stringify(o.recheck[0]));
+});
+
 // The later field named is the first after whose write the drift showed, and
 // only a text field, select or radio group: a checkbox drives no other field's
 // value, so a drift after one is left unnamed.

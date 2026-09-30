@@ -6335,12 +6335,13 @@ function drift(it, again) {
 }
 // Which later field an item first drifted after (by, for Node to name): one
 // landed in this pass, a text field, select or radio group, since a checkbox
-// drives no other field's value (-1: unnamed); at a pass's start, the deferred
-// field before it.
+// drives no other field's value (-1: unnamed). A drift first seen at a pass's
+// start happened between passes, where an earlier field's async effect is as
+// likely as the deferred field: unnamed too.
 const blame = function (by, before) {
   for (const k in ff.items) { const x = ff.items[k]; if (+k < before && x.by == null && drift(x)) x.by = by; }
 };
-if (ff && A.from) blame(A.from - 1, A.from);
+if (ff && A.from) blame(-1, A.from);
 const results = [];
 const stop = function (i, tok) {
   const out = { results: results, defer: i };

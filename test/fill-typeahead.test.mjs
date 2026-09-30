@@ -1010,7 +1010,9 @@ test("fill {fields}: a trusted entry last still gets the final re-read of the fi
   const o = await fill({ fields: [{ label_pattern: "name", text: "Ada" }, { label_pattern: "location", text: "Rosario", trusted: true }] });
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.results[0].ok, false);
-  assert.match(o.results[0].error, /was cleared after a later field changed, and fields\[1\] \(textbox "Location"\) may have changed it; fill it again$/);
+  // Between passes an earlier field's async effect may be the cause too, so
+  // nothing is named.
+  assert.match(o.results[0].error, /was cleared after a later field changed; fill it again$/);
   assert.equal(o.results[1].ok, true);
   assert.equal(o.results[1].trusted, true);
   assert.equal($(dom, "#selected-location").value, "loc-0");
