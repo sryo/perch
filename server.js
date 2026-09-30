@@ -1004,7 +1004,9 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     let err = null, refused = null, silent = false, early = null;
     // An element that did not move is captured while Accessibility places it.
-    if (!c.moved) { try { if (shotGranted()) early = startShot(I.windowNumber, "tiff"); } catch (e) {} }
+    // With the helper up (launched here, so its start overlaps the walk too) the
+    // capture waits for the map instead.
+    if (!c.moved) { try { if (shotGranted() && !helperUp()) early = startShot(I.windowNumber, "tiff"); } catch (e) {} }
     try {
       const m = shotMap(I, c, deadline);
       if (typeof m === "string") refused = m;
@@ -1067,13 +1069,14 @@ function jxaRuntime(BROWSERS, HANG) {
   // The window's own pixels, cropped, scaled and encoded here, so a crop happens
   // inside the runtime call that scrolled and restores. CGPreflightScreenCaptureAccess
   // never prompts; without the grant it returns NO_GRANT, which the call refuses
-  // (see SHOT_NO_GRANT). With the
-  // grant, two runs that give no usable image return NO_IMAGE, which Node's
-  // screencapture and sips also take over unless the page had to scroll. With a
-  // shot map it keeps only the map's box, cut before any downscale. A capture
-  // that gives no image in time is a coded timeout, which the crop's restore
-  // still follows. `run` is a capture startShot already began, which this call
-  // then owns; `points` is the window's width, for a shot with no map.
+  // (see SHOT_NO_GRANT). With the grant the capture helper (helperShot) takes it
+  // first; when it can't, screencapture does, and two of its runs that give no
+  // usable image return NO_IMAGE, which Node's screencapture and sips also take
+  // over unless the page had to scroll. With a shot map it keeps only the map's
+  // box, cut before any downscale. A capture that gives no image in time is a
+  // coded timeout, which the crop's restore still follows. `run` is a
+  // screencapture startShot already began, which this call then owns; `points`
+  // is the window's width, for a shot with no map.
   const NO_IMAGE = { noImage: true }, NO_GRANT = { noGrant: true };
   function capture(wid, format, maxWidth, map, run, points) {
     let granted = !!run;
@@ -1081,49 +1084,189 @@ function jxaRuntime(BROWSERS, HANG) {
       if (!run) {
         if (!shotGranted()) return NO_GRANT;
         granted = true;
-        run = startShot(wid, !map && format !== "jpeg" && fitsAsIs(points, maxWidth) ? "png" : "tiff");
+        const until = Date.now() + SHOT_CAPTURE_SECS * 1000;
+        const fast = helperShot({ wid: wid, format: format, maxWidth: maxWidth, map: map }, until);
+        if (fast) return fast;
+        run = launchShot({ wid: wid, type: !map && format !== "jpeg" && fitsAsIs(points, maxWidth) ? "png" : "tiff", until: until });
       }
       const src = awaitShot(run);
       if (!src) return NO_IMAGE;
-      let img = src.CGImage;
-      let w = Number($.CGImageGetWidth(img)), h = Number($.CGImageGetHeight(img));
-      if (run.type === "png" && !(maxWidth > 0 && w > maxWidth)) {
+      if (run.type === "png" && !(maxWidth > 0 && Number($.CGImageGetWidth(src.CGImage)) > maxWidth)) {
         const file = $.NSData.dataWithContentsOfFile(run.path);
         if (!file || file.isNil() || !Number(file.length)) return NO_IMAGE;
-        return { data: file.base64EncodedStringWithOptions(0).js, image: { w: w, h: h } };
+        return { data: file.base64EncodedStringWithOptions(0).js, image: { w: Number($.CGImageGetWidth(src.CGImage)), h: Number($.CGImageGetHeight(src.CGImage)) } };
       }
-      let clip = null;
-      if (map) {
-        clip = clipPixels(map, w, h);
-        if (!(clip.w > 0 && clip.h > 0)) return NO_IMAGE;
-        img = $.CGImageCreateWithImageInRect(img, $.CGRectMake(clip.x, clip.y, clip.w, clip.h));
-        w = Number($.CGImageGetWidth(img)); h = Number($.CGImageGetHeight(img));
-        if (w !== clip.w || h !== clip.h) return NO_IMAGE;
-      }
-      if (maxWidth > 0 && w > maxWidth) {
-        const sh = Math.round(h * maxWidth / w);
-        // kCGImageAlphaPremultipliedLast, kCGInterpolationHigh.
-        const ctx = $.CGBitmapContextCreate(null, maxWidth, sh, 8, 0, $.CGImageGetColorSpace(img), 1);
-        $.CGContextSetInterpolationQuality(ctx, 3);
-        $.CGContextDrawImage(ctx, $.CGRectMake(0, 0, maxWidth, sh), img);
-        const small = $.CGBitmapContextCreateImage(ctx);
-        // A failed downscale hands the shot to screencapture and sips, which
-        // always shrink it, rather than returning one wider than asked.
-        if (Number($.CGImageGetWidth(small)) !== maxWidth) return NO_IMAGE;
-        img = small; w = maxWidth; h = sh;
-      }
-      const rep = $.NSBitmapImageRep.alloc.initWithCGImage(img);
-      const data = format === "jpeg"
-        ? rep.representationUsingTypeProperties($.NSBitmapImageFileTypeJPEG, $({ NSImageCompressionFactor: 0.8 }))
-        : rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $());
-      if (!data || !Number(data.length)) return NO_IMAGE;
-      const out = { data: data.base64EncodedStringWithOptions(0).js, image: { w: w, h: h } };
-      if (clip) { out.clip = { x: clip.x, y: clip.y, w: clip.w, h: clip.h }; if (clip.cut) out.cut = true; }
-      return out;
+      return encodeShot(src.CGImage, format, maxWidth, map);
     } catch (e) {
       if (e && e.message === SHOT_NO_IMAGE) throw e;
       return granted ? NO_IMAGE : NO_GRANT;
     } finally { if (run) dropFile(run.path); }
+  }
+  // A captured image cut to the map's box (before any downscale), scaled to
+  // maxWidth when wider, and encoded as PNG or JPEG at 0.8; NO_IMAGE when any
+  // step gives nothing.
+  function encodeShot(img, format, maxWidth, map) {
+    let w = Number($.CGImageGetWidth(img)), h = Number($.CGImageGetHeight(img));
+    if (!w || !h) return NO_IMAGE;
+    let clip = null;
+    if (map) {
+      clip = clipPixels(map, w, h);
+      if (!(clip.w > 0 && clip.h > 0)) return NO_IMAGE;
+      img = $.CGImageCreateWithImageInRect(img, $.CGRectMake(clip.x, clip.y, clip.w, clip.h));
+      w = Number($.CGImageGetWidth(img)); h = Number($.CGImageGetHeight(img));
+      if (w !== clip.w || h !== clip.h) return NO_IMAGE;
+    }
+    if (maxWidth > 0 && w > maxWidth) {
+      const sh = Math.round(h * maxWidth / w);
+      // kCGImageAlphaPremultipliedLast, kCGInterpolationHigh.
+      const ctx = $.CGBitmapContextCreate(null, maxWidth, sh, 8, 0, $.CGImageGetColorSpace(img), 1);
+      $.CGContextSetInterpolationQuality(ctx, 3);
+      $.CGContextDrawImage(ctx, $.CGRectMake(0, 0, maxWidth, sh), img);
+      const small = $.CGBitmapContextCreateImage(ctx);
+      // A failed downscale hands the shot to screencapture and sips, which
+      // always shrink it, rather than returning one wider than asked.
+      if (Number($.CGImageGetWidth(small)) !== maxWidth) return NO_IMAGE;
+      img = small; w = maxWidth; h = sh;
+    }
+    const rep = $.NSBitmapImageRep.alloc.initWithCGImage(img);
+    const data = format === "jpeg"
+      ? rep.representationUsingTypeProperties($.NSBitmapImageFileTypeJPEG, $({ NSImageCompressionFactor: 0.8 }))
+      : rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $());
+    if (!data || !Number(data.length)) return NO_IMAGE;
+    const out = { data: data.base64EncodedStringWithOptions(0).js, image: { w: w, h: h } };
+    if (clip) { out.clip = { x: clip.x, y: clip.y, w: clip.w, h: clip.h }; if (clip.cut) out.cut = true; }
+    return out;
+  }
+
+  // The capture helper: a second osascript this runtime launches, running this
+  // same runtime's shotHelper, which captures in process with
+  // CGWindowListCreateImage (about 15ms for the image against screencapture's
+  // 150) and crops, scales and encodes it with encodeShot. That call is proxied
+  // through replayd, which serves one live process per executable: while
+  // another osascript that has captured is alive, every other osascript's
+  // capture waits 30s and gets no image, and the one served stalls as well
+  // while another asks. It can't be bounded in the process that makes it (a
+  // native call holds the JS lock), so the helper, never the daemon, makes it,
+  // and the daemon waits HELPER_WAIT_MS for the reply, then kills the helper,
+  // leaves it off for HELPER_STALL_MS and takes screencapture inside the same
+  // SHOT_CAPTURE_SECS. Only one perch helper runs per user: it holds an flock on
+  // $TMPDIR/perch-capture.lock for its life, and a runtime that finds the lock
+  // held (another perch server's helper) uses screencapture and checks again
+  // after HELPER_LOCKED_MS. The helper exits HELPER_IDLE_MS after its last
+  // shot, or once this daemon is gone, so it holds replayd only while shots
+  // come. Requests and replies are files: `<prefix>.req` holds the request as
+  // JSON, and the reply is written to `<out>.w` and renamed to `out`, so a file
+  // at `out` is always whole. Every one is removed on every path.
+  const HELPER_WAIT_MS = 1000, HELPER_STALL_MS = 60000, HELPER_LOCKED_MS = 10000, HELPER_GONE_MS = 5000, HELPER_IDLE_MS = 30000, HELPER_BUSY_MS = 5000;
+  let helper = null, helperOff = 0, helperGen = 0, helperSeq = 0;
+  function shotLock() {
+    const fm = $.NSFileManager.defaultManager, path = $.NSTemporaryDirectory().js + "perch-capture.lock";
+    if (!fm.fileExistsAtPath(path)) fm.createFileAtPathContentsAttributes(path, $(), $());
+    const h = $.NSFileHandle.fileHandleForUpdatingAtPath(path);
+    if (!h || h.isNil()) return null;
+    ObjC.bindFunction("flock", ["int", ["int", "int"]]);
+    // LOCK_EX | LOCK_NB
+    if (Number($.flock(h.fileDescriptor, 6)) !== 0) { h.closeFile; return null; }
+    return h;
+  }
+  // Whether the helper can take a shot now, launching it if needed.
+  function helperUp() {
+    if (Date.now() < helperOff) return false;
+    if (helper && helper.task.isRunning) return true;
+    if (helper) { dropHelper(); }
+    const lock = shotLock();
+    if (!lock) { helperOff = Date.now() + HELPER_LOCKED_MS; return false; }
+    // LOCK_UN: the helper takes it for itself.
+    $.flock(lock.fileDescriptor, 8);
+    lock.closeFile;
+    const prefix = $.NSTemporaryDirectory().js + "perch-" + $.NSProcessInfo.processInfo.processIdentifier + "-h" + (++helperGen);
+    const task = $.NSTask.alloc.init;
+    task.executableURL = $.NSURL.fileURLWithPath("/usr/bin/osascript");
+    task.arguments = $(["-l", "JavaScript", "-e", "(" + jxaRuntime + ")(" + JSON.stringify(BROWSERS) + ", " + JSON.stringify(HANG) + ");__perch.shotHelper(" + JSON.stringify(prefix) + ", " + $.NSProcessInfo.processInfo.processIdentifier + ")"]);
+    task.standardInput = $.NSFileHandle.fileHandleWithNullDevice;
+    task.standardOutput = $.NSFileHandle.fileHandleWithNullDevice;
+    task.standardError = $.NSFileHandle.fileHandleWithNullDevice;
+    let launched = false;
+    try { launched = !!task.launchAndReturnError($()); } catch (e) {}
+    if (!launched) { helperOff = Date.now() + HELPER_LOCKED_MS; return false; }
+    helper = { task: task, prefix: prefix, answered: false };
+    return true;
+  }
+  function dropHelper() {
+    if (helper.task.isRunning) stopTask(helper.task);
+    dropFile(helper.prefix + ".req");
+    helper = null;
+  }
+  // The helper's shot of q ({wid, format, maxWidth, map}), or null when it
+  // can't take one or gave no image; screencapture then takes it.
+  function helperShot(q, until) {
+    let out = null;
+    try {
+      if (!helperUp()) return null;
+      const h = helper, fm = $.NSFileManager.defaultManager;
+      out = h.prefix + "-" + (++helperSeq) + ".json";
+      q.out = out;
+      if (!$(JSON.stringify(q)).writeToFileAtomicallyEncodingError(h.prefix + ".req", true, 4, $())) return null;
+      const stop = Math.min(until, Date.now() + HELPER_WAIT_MS);
+      while (!fm.fileExistsAtPath(out)) {
+        if (!h.task.isRunning) {
+          // Gone without an answer: the idle exit at the same moment, or a
+          // helper that lost the lock or never ran, which is left off a while.
+          if (!h.answered) helperOff = Date.now() + HELPER_GONE_MS;
+          dropHelper();
+          return null;
+        }
+        if (Date.now() >= stop) {
+          dropHelper();
+          helperOff = Date.now() + HELPER_STALL_MS;
+          return null;
+        }
+        delay(SHOT_POLL_SECS);
+      }
+      h.answered = true;
+      const text = $.NSString.stringWithContentsOfFileEncodingError(out, 4, $());
+      const r = text && !text.isNil() ? JSON.parse(text.js) : null;
+      return r && r.data ? r : null;
+    } catch (e) {
+      return null;
+    } finally {
+      if (out) { dropFile(out); dropFile(out + ".w"); }
+    }
+  }
+  // The helper's own loop (run by the osascript helperUp launches): serves
+  // `<prefix>.req` until HELPER_IDLE_MS pass without one or `parent` (the
+  // daemon) is gone. It captures only while it holds the lock.
+  function helperServe(q) {
+    try {
+      // kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming (no shadow, as screencapture -o).
+      return encodeShot($.CGWindowListCreateImage($.CGRectNull, 8, q.wid, 1), q.format, q.maxWidth, q.map);
+    } catch (e) { return NO_IMAGE; }
+  }
+  function shotHelper(prefix, parent) {
+    const lock = shotLock();
+    if (!lock) return;
+    ObjC.import("CoreGraphics");
+    appKit();
+    ObjC.bindFunction("getppid", ["int", []]);
+    const fm = $.NSFileManager.defaultManager, req = prefix + ".req";
+    let last = Date.now();
+    try {
+      while (Date.now() - last < HELPER_IDLE_MS && Number($.getppid()) === parent) {
+        if (!fm.fileExistsAtPath(req)) {
+          // Every 2ms for HELPER_BUSY_MS after a shot, every 10ms after that.
+          delay(Date.now() - last < HELPER_BUSY_MS ? SHOT_POLL_SECS : 0.01);
+          continue;
+        }
+        let q = null;
+        try { q = JSON.parse($.NSString.stringWithContentsOfFileEncodingError(req, 4, $()).js); } catch (e) {}
+        dropFile(req);
+        if (q && typeof q.out === "string") {
+          $(JSON.stringify(helperServe(q))).writeToFileAtomicallyEncodingError(q.out + ".w", false, 4, $());
+          fm.moveItemAtPathToPathError(q.out + ".w", q.out, $());
+        }
+        last = Date.now();
+      }
+    } finally { dropFile(req); }
   }
   function shotGranted() {
     ObjC.import("CoreGraphics");
@@ -1143,12 +1286,9 @@ function jxaRuntime(BROWSERS, HANG) {
     } catch (e) { return false; }
     return k > 0 && points > 0 && points * k <= maxWidth;
   }
-  // The capture runs the screencapture binary rather than CGWindowListCreateImage:
-  // since macOS 15 that call is proxied through replayd, which serves one live
-  // process per executable, so once any long-lived osascript (another perch
-  // server's REPL, or another JXA tool) has captured, every other osascript's
-  // capture waits the proxy's 30s and gets no image. screencapture exits after
-  // each shot, so it never holds the proxy, and one that hangs is killed at
+  // When the capture helper can't take a shot, the screencapture binary does:
+  // it exits after each shot, so it never holds replayd's proxy (see the
+  // helper), and one that hangs is killed at the capture's deadline,
   // SHOT_CAPTURE_SECS. A run that ends without an image (nonzero exit, a file
   // that won't load or is empty) is run once more inside the same
   // SHOT_CAPTURE_SECS, so the retry never lengthens the worst case; a run
@@ -2303,6 +2443,8 @@ function jxaRuntime(BROWSERS, HANG) {
     // Run by the daemons' handshake, so no call pays the AppKit import; one-shot
     // runs keep it lazy.
     warm() { try { appKit(); } catch (e) {} },
+    shotHelper: shotHelper,
+    helperServe: helperServe,
     takeNote() { const n = note; note = null; return n; },
     dialogs(a) {
       return provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
