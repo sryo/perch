@@ -845,6 +845,15 @@ test("custom combobox: a refusal leaves a value the page's pick wrote", async ()
   assert.equal(dom.document.getElementById("tid").value, "id-Bravo");
 });
 
+// An empty input whose box shows only the control's own label shows nothing.
+test("custom combobox: an empty input's box showing only its label reads as nothing", async () => {
+  onPage(SEARCH, SEARCH_JS("t.value = ''; t.setAttribute('aria-expanded', 'false'); ul.remove(); ul = null;"));
+  const { o } = await select({ label_pattern: "team", text: "Bravo" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.error, 'pressed "Bravo" but the control shows nothing; not verified');
+  assert.equal(o.value, "");
+});
+
 test("custom combobox: a pick equal to the typed text holds once the list closes, the companion fills or the option is selected", async () => {
   for (const [what, onPick] of [
     ["list closes", "t.value = o.textContent; t.setAttribute('aria-expanded', 'false'); ul.remove(); ul = null;"],

@@ -6687,7 +6687,8 @@ const iv = (s.input && s.input.value) || "";
 const has = function (t) { return s.multi ? norm(t).indexOf(s.pickedN) >= 0 : norm(t) === s.pickedN; };
 const full = (iv && has(iv) ? iv : textOf(s.box)) || iv;
 const parts = full === iv ? [] : shownParts(s.box);
-const shown = clip(parts.length > 1 && !/[,;\n]/.test(full) ? parts.join(", ") : full, 120);
+// An empty input whose box holds only the control's own label shows nothing.
+const shown = !iv && norm(full) === norm(labelText(s.input || s.ctl)) ? "" : clip(parts.length > 1 && !/[,;\n]/.test(full) ? parts.join(", ") : full, 120);
 // A single value must equal the pick; one that grew from the prior value may be a
 // multi-select without chips, so its newest element or comma part counts.
 const now = norm(full);
