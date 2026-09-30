@@ -68,7 +68,7 @@ test("tempDir with a test context removes the dir when that test ends", async (t
 // screencapture fallback's PNGs), run for real against an empty TMPDIR.
 test("the test files that write temp files leave nothing in TMPDIR", (t) => {
   const tmp = tempDir("perch-cleanup-", t);
-  const files = ["fill-fields", "perf-budget", "schema", "upload", "page-fault", "screenshot", "contract"].map((f) => join("test", `${f}.test.mjs`));
+  const files = ["fill-fields", "perf-budget", "schema", "upload", "page-fault", "screenshot", "contract", "cross-server-state"].map((f) => join("test", `${f}.test.mjs`));
   const r = spawnSync(process.execPath, ["--import", "./test/helpers/isolate.mjs", "--test", ...files], { cwd: ROOT, env: env(tmp), encoding: "utf8" });
   assert.equal(r.status, 0, r.stdout.slice(-2000) + r.stderr);
   assert.deepEqual(perchEntries(tmp), []);
