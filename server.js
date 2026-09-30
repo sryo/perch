@@ -6379,6 +6379,13 @@ if (!open) {
   // react-select and friends open on a left-button press with a view, on the control
   // wrapper. Pressed before focus: a React 18 control that sees its own focus event
   // only a microtask later takes a press right after focus() as unfocused.
+  // An offscreen control is centered first, as a person would scroll to it:
+  // focus() scrolls only when focus moves, so a control still focused from an
+  // earlier select would otherwise stay offscreen on an identical call.
+  const at = (wrap || ctl).getBoundingClientRect();
+  if (at.top < 0 || at.left < 0 || at.bottom > window.innerHeight || at.right > window.innerWidth) {
+    try { (wrap || ctl).scrollIntoView({ block: "center", inline: "center", behavior: "instant" }); } catch (e) {}
+  }
   pressFocus(wrap || ctl, input || ctl);
   s.opened = true;
 }

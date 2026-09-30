@@ -543,6 +543,36 @@ test("custom combobox: select brings an offscreen control into view through its 
 // A page that swaps the input for an empty clone on pick: the new node's box is
 // chosen by the same rule as at start, so a form's or body's text never reads
 // as the pick.
+// Chrome scrolls on focus() only when focus moves, so a control still focused
+// from an earlier select stayed offscreen while a first call brought it into
+// view. select centers an offscreen control itself before pressing it, every call.
+test("custom combobox: two identical selects on an offscreen control leave the page scrolled the same", async () => {
+  const closes = CUSTOM_JS.replace("cb.querySelector('.v').textContent = o.textContent;",
+    "cb.querySelector('.v').textContent = o.textContent; cb.setAttribute('aria-expanded', 'false'); document.getElementById('menu').innerHTML = '';");
+  const { dom } = onPage(CUSTOM.replace("tabindex=0", "tabindex=0 data-rect=0,3000,100,20").replace('<div class="select__control">', '<div class="select__control" data-rect="0,3000,100,20">'), closes + `
+    window.intoView = [];
+    HTMLElement.prototype.scrollIntoView = function (o) { window.intoView.push(o && o.block); window.scrollTo(0, 2573); };
+    const focus = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (o) { if (!(o && o.preventScroll) && document.activeElement !== this) window.scrollTo(0, 2573); return focus.call(this, o); };`);
+  const ys = [];
+  for (const text of ["senior", "junior"]) {
+    dom.scrollTo(0, 0);
+    const { o } = await select({ label_pattern: "level", text });
+    assert.equal(o.ok, true, text + " " + JSON.stringify(o));
+    ys.push(dom.scrollY);
+  }
+  assert.deepEqual(ys, [2573, 2573]);
+  assert.deepEqual([...dom.intoView], ["center", "center"]);
+});
+
+test("custom combobox: a control already in view is not scrolled by select", async () => {
+  const { dom } = onPage(CUSTOM, CUSTOM_JS + `
+    window.intoView = 0;
+    HTMLElement.prototype.scrollIntoView = function () { window.intoView++; };`);
+  assert.equal((await select({ label_pattern: "level", text: "senior" })).o.ok, true);
+  assert.equal(dom.intoView, 0);
+});
+
 test("custom combobox: a bare input re-rendered empty on pick in a form or body is ok:false", async () => {
   const input = `<label for=dest>Destination</label><input id=dest role=combobox aria-controls=l aria-expanded=true>`;
   const list = `<ul id=l role=listbox><li role=option>Alpha</li><li role=option>Bravo</li></ul>`;
