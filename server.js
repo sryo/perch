@@ -4190,7 +4190,7 @@ const pressFocus = function (target, el) {
   const on = function () { fired = true; };
   el.addEventListener("focus", on);
   press(target);
-  if (document.activeElement !== el && el.focus) el.focus({ preventScroll: true });
+  if (document.activeElement !== el && el.focus) el.focus();
   el.removeEventListener("focus", on);
   if (fired || was === el || document.activeElement !== el) return;
   el.dispatchEvent(new FocusEvent("focus"));
@@ -4725,32 +4725,38 @@ function census(f) {
   return { fields: fields, loose: loose, empty: els(function (e) { return e.req && !e.on; }), left: els(function (e) { return e.req && !e.on || e.loose; }) };
 }
 `;
-const TYPEAHEAD_LIB = TA_BOX_LIB + String.raw`
-// Typed with input events and no blur, so the widget runs its own lookup. The
-// window and el's scrolled ancestors end where they were: focus() would scroll
-// el into view, and a page may scroll on focus or input itself.
+// Every scroll offset that can move el: its ancestors' (across shadow roots) and
+// the window's. scrollBack puts them back, instantly even under
+// scroll-behavior: smooth.
+const SCROLL_LIB = String.raw`
+function scrollsAt(el) {
+  const els = [];
+  for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
+  return { els: els, x: window.scrollX, y: window.scrollY };
+}
+function scrollBack(s) {
+  const to = function (n, x, y) {
+    if (n.scrollLeft === x && n.scrollTop === y) return;
+    try { n.scrollTo({ left: x, top: y, behavior: "instant" }); } catch (e) { n.scrollLeft = x; n.scrollTop = y; }
+  };
+  s.els.forEach(function (e) { to(e[0], e[1], e[2]); });
+  if (window.scrollX !== s.x || window.scrollY !== s.y) window.scrollTo({ left: s.x, top: s.y, behavior: "instant" });
+}
+`;
+const TYPEAHEAD_LIB = TA_BOX_LIB + SCROLL_LIB + String.raw`
+// Typed with input events and no blur, so the widget runs its own lookup.
+// Focusing leaves the window and el's scrolled ancestors where they were, a page
+// that scrolls on focus included; a scroll the page makes as the text comes in
+// (to show its suggestions) stays.
 function taType(el, text) {
-  const back = scrollsOf(el);
+  const at = scrollsAt(el);
   if (el.focus) el.focus({ preventScroll: true });
+  scrollBack(at);
   setNativeValue(el, text);
   const key = text.slice(-1);
   el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: key }));
   el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
   el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: key }));
-  back();
-}
-// -> a function that puts the window's and el's ancestors' scroll offsets back.
-function scrollsOf(el) {
-  const els = [], x = window.scrollX, y = window.scrollY;
-  for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
-  return function () {
-    els.forEach(function (e) {
-      const n = e[0];
-      if (n.scrollLeft === e[1] && n.scrollTop === e[2]) return;
-      try { n.scrollTo({ left: e[1], top: e[2], behavior: "instant" }); } catch (err) { n.scrollLeft = e[1]; n.scrollTop = e[2]; }
-    });
-    if (window.scrollX !== x || window.scrollY !== y) window.scrollTo({ left: x, top: y, behavior: "instant" });
-  };
 }
 `;
 
@@ -5675,18 +5681,6 @@ return {
 };`;
 
 export const SHOT_BUSY = "screenshot: another perch call on this tab is mid-screenshot; nothing was scrolled or captured, retry";
-// Puts back the scroll positions a shot_clip record kept, instantly even under
-// scroll-behavior: smooth.
-const SHOT_LIB = String.raw`
-function shotBack(s) {
-  const to = function (n, x, y) {
-    if (n.scrollLeft === x && n.scrollTop === y) return;
-    try { n.scrollTo({ left: x, top: y, behavior: "instant" }); } catch (e) { n.scrollLeft = x; n.scrollTop = y; }
-  };
-  s.els.forEach(function (e) { to(e[0], e[1], e[2]); });
-  if (window.scrollX !== s.x || window.scrollY !== s.y) window.scrollTo({ left: s.x, top: s.y, behavior: "instant" });
-}
-`;
 
 export const PAGE_SCRIPTS = {
   get_text: String.raw`
@@ -7117,7 +7111,7 @@ return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ide
   // document after a scroll (a covered or minimized window paints nothing), a
   // throw. A visible one counts two animation frames for shot_painted, and a
   // timer marks the record late if they have not come by then.
-  shot_clip: SHOT_LIB + String.raw`
+  shot_clip: SCROLL_LIB + String.raw`
 const held = window.__perch_shot;
 if (held && Date.now() - held.at < 10000) return { ok: false, error: ${JSON.stringify(SHOT_BUSY)} };
 const r = resolveEl(A);
@@ -7128,12 +7122,12 @@ const b = el.getBoundingClientRect();
 if (!b.width || !b.height) return { ok: false, error: ident(el) + " has no size (hidden or offscreen)" };
 const iw = innerWidth, ih = innerHeight;
 if (b.width > iw || b.height > ih) return { ok: false, error: "screenshot: the element is larger than the viewport (" + Math.round(b.width) + "x" + Math.round(b.height) + " CSS px in " + iw + "x" + ih + "); nothing was captured; screenshot without ref or selector" };
-if (held) shotBack(held);
-const els = [];
-for (let n = el.parentNode; n; n = n.parentNode || n.host) if (n.nodeType === 1) els.push([n, n.scrollLeft, n.scrollTop]);
+if (held) scrollBack(held);
 window.__perch_shot_n = (window.__perch_shot_n || 0) + 1;
-const st = window.__perch_shot = { els: els, x: window.scrollX, y: window.scrollY, at: Date.now(), token: window.__perch_shot_n + "." + Math.random().toString(36).slice(2, 10) };
-const undo = function () { shotBack(st); if (window.__perch_shot === st) window.__perch_shot = null; };
+const st = window.__perch_shot = scrollsAt(el), els = st.els;
+st.at = Date.now();
+st.token = window.__perch_shot_n + "." + Math.random().toString(36).slice(2, 10);
+const undo = function () { scrollBack(st); if (window.__perch_shot === st) window.__perch_shot = null; };
 try {
   try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); } catch (e) {}
   const c = el.getBoundingClientRect();
@@ -7164,11 +7158,11 @@ const s = window.__perch_shot;
 return s ? { painted: s.painted === true, late: s.late === true, token: s.token } : { painted: false, gone: true };
 `,
   // Puts back what shot_clip kept and says whose record it was.
-  shot_restore: SHOT_LIB + String.raw`
+  shot_restore: SCROLL_LIB + String.raw`
 const s = window.__perch_shot;
 window.__perch_shot = null;
 if (!s) return { ok: false };
-shotBack(s);
+scrollBack(s);
 return { ok: true, token: s.token };
 `,
 

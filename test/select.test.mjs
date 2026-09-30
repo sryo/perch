@@ -464,3 +464,15 @@ test("custom combobox: a page-wide form or main around the bare input is not its
     assert.equal(dom.document.getElementById("dest").value, "", html);
   }
 });
+
+// select opens a custom control by pressing and focusing it; that focus brings
+// an offscreen control into view, as a person reaching for it would, so the
+// list opens where the pick can land.
+test("custom combobox: select brings an offscreen control into view through its focus", async () => {
+  const { dom } = onPage(CUSTOM, CUSTOM_JS + `
+    const focus = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (o) { if (!(o && o.preventScroll)) window.scrollTo(0, 900); return focus.call(this, o); };`);
+  const { o } = await select({ label_pattern: "level", text: "senior" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(dom.scrollY, 900);
+});
