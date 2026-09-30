@@ -573,6 +573,34 @@ test("custom combobox: a control already in view is not scrolled by select", asy
   assert.equal(dom.intoView, 0);
 });
 
+// A bare input with no aria-controls, its own box inside a page-wide form, whose
+// listbox follows it and is rendered before select opens it (collapsed by CSS,
+// so its options already have boxes): the list is found by where it sits.
+test("custom combobox: a bare input's following listbox in a page-wide form is its own list", async () => {
+  const list = `<ul id=cl role=listbox><li role=option>Rosario</li><li role=option>Cordoba</li></ul>`;
+  const js = `const i = document.getElementById('city'), l = document.getElementById('cl');
+    window.opens = 0;
+    i.addEventListener('click', () => { window.opens++; i.setAttribute('aria-expanded', 'true'); });
+    l.querySelectorAll('li').forEach((o) => o.addEventListener('mousedown', (e) => { e.preventDefault(); if (i.getAttribute('aria-expanded') === 'true') { i.value = o.textContent; i.setAttribute('aria-expanded', 'false'); } }));`;
+  const input = `<input id=city role=combobox aria-expanded=false autocomplete=off>`;
+  for (const html of [
+    `<form><label>Name <input name=n></label><label>Email <input name=e></label><label for=city>City</label>${input}${list}<button>Send</button></form>`,
+    `<form><label>Name <input name=n></label><label>Email <input name=e></label><label>City ${input}</label>${list}</form>`,
+  ]) {
+    const { dom } = onPage(html, js);
+    const { o } = await select({ label_pattern: "city", text: "Cordoba" });
+    assert.equal(o.ok, true, html + " " + JSON.stringify(o));
+    assert.equal(o.selected, "Cordoba");
+    assert.equal(dom.document.getElementById("city").value, "Cordoba");
+    assert.equal(dom.opens, 1, html);
+  }
+  // A listbox past another field is that field's, never this input's.
+  const { dom } = onPage(`<form><label>Name <input name=n></label><label for=city>City</label>${input}<label>Zip <input name=z></label>${list}</form>`, js);
+  const { o } = await select({ label_pattern: "city", text: "Cordoba" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(dom.document.getElementById("city").value, "");
+});
+
 test("custom combobox: a bare input re-rendered empty on pick in a form or body is ok:false", async () => {
   const input = `<label for=dest>Destination</label><input id=dest role=combobox aria-controls=l aria-expanded=true>`;
   const list = `<ul id=l role=listbox><li role=option>Alpha</li><li role=option>Bravo</li></ul>`;
