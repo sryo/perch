@@ -4623,9 +4623,12 @@ function escapeOwn(s) {
 }
 // The open modal holding the control, unless it is the control's own popup.
 function modalOf(s) {
-  const m = s.ctl.closest && s.ctl.closest("dialog, [aria-modal=true]");
-  if (!m || !modalUp(m) || m === s.pop || linkedLists(s).indexOf(m) >= 0) return null;
-  return m;
+  const m = modalAt(s.ctl);
+  return !m || m === s.pop || linkedLists(s).indexOf(m) >= 0 ? null : m;
+}
+function modalAt(el) {
+  const m = el && el.closest && el.closest("dialog, [aria-modal=true]");
+  return m && modalUp(m) ? m : null;
 }
 function modalUp(m) { return m.isConnected && (m.tagName === "DIALOG" ? m.hasAttribute("open") : attr(m, "aria-modal") === "true") && vis(m); }
 function dlgSays(s, o) { if (s.dlgGone) o.dialogClosed = true; return o; }
@@ -6756,10 +6759,13 @@ const s = { key: selKey, tok: rbTok(), ctl: ctl, input: input, box: box, polls: 
 // closing a typeahead may clear the text it holds.
 if (input && input.tagName === "INPUT") { s.prior = input.value; s.comp = taParts(input).comp; s.priorComp = s.comp && s.comp.value; }
 // Other open menus would cover this one or grab its keys: Escape them first, but
-// not a combobox inside this control's own popup (cmdk's search box).
+// not a combobox inside this control's own popup (cmdk's search box), and not
+// while the control or that menu sits in an open modal, whose close-on-Escape
+// handler would take the dialog and its form down too; there the menu stays open.
 const popups = named;
+const inModal = !!modalOf(s);
 document.querySelectorAll("[role=combobox][aria-expanded=true], [aria-haspopup][aria-expanded=true]").forEach(function (o) {
-  if (mine(s, o) || popups.some(function (p) { return p.contains(o); })) return;
+  if (mine(s, o) || popups.some(function (p) { return p.contains(o); }) || inModal || modalAt(o)) return;
   pressEscape(o);
   if (document.activeElement === o && o.blur) o.blur();
 });

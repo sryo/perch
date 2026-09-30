@@ -1080,3 +1080,26 @@ test("custom combobox: outside a modal a refusal still Escapes the control; a ve
   assert.deepEqual(v, { ok: true, selected: "Blue", el: `combobox "Color"` });
   assert.equal(dlgOpen(ok.dom, "aria"), true);
 });
+
+// select_start closes other open menus with Escape first; inside a modal whose
+// handler closes it on any Escape, that would take the dialog down on a pick
+// that verifies, so a menu there is left alone.
+test("custom combobox in a modal: another open menu gets no Escape the dialog hears, and the pick holds", async () => {
+  for (const kind of ["aria", "dialog"]) {
+    for (const dlgEsc of ["document", "dialog"]) {
+      const html = MODAL(kind).replace("<input name=other>", "<input name=other role=combobox aria-expanded=true aria-label=Other>");
+      const { dom } = onPage(html, MODAL_JS({ toggles: true, listEsc: "document", dlgEsc, kind }).replace("'Something else'", "o.textContent") +
+        "m.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => { m.hidden = true; c.setAttribute('aria-expanded', 'false'); }));");
+      const { o } = await select({ label_pattern: "color", text: "Blue" });
+      const at = `${kind} ${dlgEsc}`;
+      assert.deepEqual(o, { ok: true, selected: "Blue", el: `combobox "Color"` }, at);
+      assert.equal(dlgOpen(dom, kind), true, at);
+      assert.equal(dom.dlgCloses, 0, at);
+    }
+  }
+  // Outside a modal the other menu still gets its Escape.
+  const { dom } = onPage(`<label>Other <input role=combobox aria-expanded=true id=oth></label>` + MODAL("aria").replace("role=dialog aria-modal=true", ""),
+    MODAL_JS({ toggles: true, listEsc: "none", dlgEsc: "dialog", kind: "aria" }) + "window.othEsc = 0; document.getElementById('oth').addEventListener('keydown', (e) => { if (e.key === 'Escape') window.othEsc++; });");
+  await select({ label_pattern: "^color", text: "Blue" });
+  assert.equal(dom.othEsc, 1);
+});
