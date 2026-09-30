@@ -8148,11 +8148,13 @@ async function fillFields(fields, target, only) {
   }
   if (fr) {
     // A page may undo a write a task after the pass that made it; one light
-    // page call reads the landed fields again. One that can't run, or finds a
-    // new document, leaves the pass's answer.
+    // page call reads the landed fields again. One that could not run (no
+    // bounded page call, a dropped reply, a failure) leaves the record for the
+    // next call's check; one that finds no record (a new document) leaves the
+    // pass's answer.
     const x = rereadOf(fr.rr);
-    if (unread(x)) results.forEach((y, i) => { if (y.ok === true && !y.skipped) results[i] = addNote(y, unread(x)); });
-    else if (x) recheck(x, true);
+    if (!x || x.unbounded || x.dropped) lateKeep(target, fr.fr);
+    else recheck(x, true);
   } else if (from === A.length && watch) {
     // The combobox ended the batch, so no page pass has re-read the fields
     // before it. A navigated page has nothing to re-read; a re-read that failed
@@ -8253,16 +8255,11 @@ function keepLate(r, target) {
 }
 const addNote = (o, n) => ({ ...o, note: o.note ? `${o.note}; ${n}` : n });
 // fill_reread's answer, {dropped} when its reply never came (the page may be
-// leaving), or null when it could not run.
+// leaving), {unbounded} where none could be sent, or null when it failed.
 const rereadOf = (x) => x && typeof x === "object" && x.__perch_error == null ? x : null;
 // The re-read script, its token left for the runtime to fill in (FR_TOK).
 let rereadJs = null;
 const REREAD_JS = () => rereadJs || (rereadJs = buildEvalWrapper(pageScript("fill_reread", { tok: "@perch_fr_tok@" })));
-const NO_REREAD = "not read again after the write: the page gave no reply (it may be navigating); check it";
-const NO_BOUND = "not read again after the write: this browser has no bounded page call; check it if the page may undo it";
-// Why a re-read that ran, or was skipped, checked nothing: its note, else "".
-const unread = (x) => !x ? "" : x.dropped ? NO_REREAD : x.unbounded ? NO_BOUND
-  : x.lost ? "not read again after the write: the page no longer held its record (a new document, or another tab); check it" : "";
 
 // A perch page script that threw, by error name only: its message and stack
 // are page internals the agent can't act on. eval_js's own errors never come here.

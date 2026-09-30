@@ -229,3 +229,31 @@ test("navigate and wait carry the check too", async () => {
     assert.deepEqual(lateOf(next), [ZIP_LATE], `${tool}: ${JSON.stringify(next.o)}`);
   }
 });
+
+// A batch keeps its own re-read where one is bounded (Chrome). On Arc and
+// Safari none can run, so the batch's record waits for the next call's check,
+// as a single fill's does; the fields carry no note.
+for (const browser of ["arc", "safari"]) {
+  test(`${browser}: a fill {fields} field the page undoes later is late on the next call, with no note on the batch`, async () => {
+    onPage(ZIP, ZIP_CLEARS, browser);
+    const f = await call("fill", { fields: [{ label_pattern: "zip", text: "2000" }, { label_pattern: "city", text: "Rosario" }] });
+    assert.deepEqual(f.o.results, [{ ok: true, kind: "plain", el: `textbox "Zip"`, len: 4 }, { ok: true, kind: "plain", el: `textbox "City"`, len: 7 }]);
+    assert.equal(f.o.ok, true);
+    assert.deepEqual(lateOf(await call("get_text", {})), [ZIP_LATE]);
+  });
+}
+
+// A re-read whose reply never came (the page may be navigating) leaves the
+// record for the next call's check too; one that finds no record says nothing.
+test("fill {fields}: a dropped re-read defers to the next call; a missing record is silent", async () => {
+  const { world, dom } = onPage(ZIP, ZIP_CLEARS);
+  world.state.hangIf = (js) => js.includes("items = m && m[A.tok]");
+  const f = await call("fill", { fields: [{ label_pattern: "zip", text: "2000" }, { label_pattern: "city", text: "Rosario" }] });
+  assert.deepEqual(f.o.results.map((r) => [r.ok, r.note]), [[true, undefined], [true, undefined]], JSON.stringify(f.o));
+  world.state.hangIf = null;
+  assert.deepEqual(lateOf(await call("get_text", {})), [ZIP_LATE]);
+  assert.deepEqual(Object.keys(dom.__perch_fr), []);
+  onPage(ZIP, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
+  const g = await call("fill", { fields: [{ label_pattern: "zip", text: "2000" }, { label_pattern: "city", text: "Rosario" }] });
+  assert.deepEqual(g.o.results.map((r) => [r.ok, r.note]), [[true, undefined], [true, undefined]], JSON.stringify(g.o));
+});

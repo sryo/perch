@@ -754,13 +754,13 @@ test("fill {fields}: a radio checked by label that the page moves back a task la
 // A write whose change handler navigates (a jump menu, a form.submit()) leaves
 // the re-read unanswered: Chrome drops an execute that lands while a new
 // document replaces the old. The re-read is bounded like select's reads, and a
-// dropped one keeps the write's answer with a note, never a two-minute wait.
+// dropped one keeps the write's answer, never a two-minute wait; the record
+// waits for the next call's check (late.test.mjs).
 const isReread = (js) => js.includes("items = m && m[A.tok]");
-const NO_REREAD = "not read again after the write: the page gave no reply (it may be navigating); check it";
 for (const [name, html, args, check] of [
   ["fill {fields}", `<form><label>Search <input id=q></label><label>Sort <select id=so><option>Name</option><option>Price</option></select></label></form>`,
     ["fill", { fields: [{ label_pattern: "search", text: "shoes" }, { label_pattern: "sort", option: "Price" }] }],
-    (o) => { assert.equal(o.ok, true, JSON.stringify(o)); assert.deepEqual(o.results.map((r) => r.note), [NO_REREAD, NO_REREAD]); }],
+    (o) => { assert.equal(o.ok, true, JSON.stringify(o)); assert.deepEqual(o.results.map((r) => r.note), [undefined, undefined]); }],
 ]) {
   test(`${name}: a re-read whose reply the page drops returns within the poll bound, keeping the write's answer`, async () => {
     for (const target of [undefined, { tabId: "chrome:x" }]) {
@@ -806,12 +806,11 @@ for (const [name, browser] of [
   });
 }
 
-const NO_RECORD = "not read again after the write: the page no longer held its record (a new document, or another tab); check it";
-test("fill {fields}: a re-read that finds no record (a new document) keeps the write's answer, with a note", async () => {
+test("fill {fields}: a re-read that finds no record (a new document) keeps the write's answer, with no note", async () => {
   onPage(LATE_REVERT, `document.getElementById('city').addEventListener('input', () => { later(() => { delete window.__perch_fr; }, 1); });`);
   const f = await fill({ fields: [{ label_pattern: "zip", text: "2000" }, { label_pattern: "city", text: "Rosario" }] });
   assert.equal(f.ok, true, JSON.stringify(f));
-  assert.deepEqual(f.results.map((r) => r.note), [NO_RECORD, NO_RECORD]);
+  assert.deepEqual(f.results.map((r) => r.note), [undefined, undefined]);
 });
 
 test("typeahead: a trusted fill types through the editing command and picks the suggestion", async () => {
