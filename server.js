@@ -4493,6 +4493,16 @@ const wantL = Array.isArray(A.text) ? A.text.map(norm) : [norm(A.text)];
 const wantN = wantL[0];
 const wantT = String(Array.isArray(A.text) ? A.text[0] : A.text);
 const OPT = "[role=option], [cmdk-item]";
+// A react-select style shell: the nearest ancestor, at most 6 up, holding the
+// control's live region; a pick's value lands in its hidden inputs.
+function shellOf(s) {
+  for (let p = s.ctl.parentElement, k = 0; p && k < 6; p = p.parentElement, k++) if (p.querySelector("[role=log]")) return p;
+  return null;
+}
+function shellHid(s) {
+  const sh = shellOf(s), h = sh ? Array.from(sh.querySelectorAll("input[type=hidden]")) : [];
+  return h.length ? h.map(function (i) { return i.value; }).join("\n") : null;
+}
 const press = function (el) {
   ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (t) {
     const C = t.indexOf("pointer") === 0 && window.PointerEvent ? PointerEvent : MouseEvent;
@@ -6847,6 +6857,7 @@ if (opt) {
   s.selBefore = attr(opt, "aria-selected") === "true";
   s.expAtPick = [s.ctl, s.input].some(function (e) { return e && attr(e, "aria-expanded") === "true"; });
   s.compAtPick = s.comp ? s.comp.value : null;
+  s.hidAtPick = shellHid(s);
   if (chosenAlready(s, opt, s.pickedN)) s.already = true;
   else press(opt);
   return { picked: s.picked, tok: tok };
@@ -7030,6 +7041,26 @@ const asPicked = function (n) {
     !(s.others || []).some(function (o) { return o.length > s.pickedN.length && n.indexOf(o) === 0; });
 };
 const has = function (t) { return s.multi ? norm(t).indexOf(s.pickedN) >= 0 : asPicked(norm(t)); };
+// A control may show only the pick's detail: a phone country picker shows "+1"
+// for "United States +1". A detail is set off by a space before "+", "(", "["
+// or a digit, or by a spaced dash, bar or dot. It counts only once the display
+// moved to it, when it is no other option's whole text, when a hidden companion
+// (if any) moved too, and when a live region naming a selection names no other
+// option.
+const partOf = function (n) {
+  if (s.multi || !s.pickedN || !n || n.length > 12 || (s.was || []).indexOf(n) >= 0 || (s.others || []).indexOf(n) >= 0) return false;
+  const bare = function (b) { return b.replace(/^[(\[]\s*|\s*[)\]]$/g, ""); };
+  const bits = function (t) { return t.split(/\s+(?=[+(\[\d])|\s+[-|\/\u00b7\u2022]\s+/).slice(1).map(bare); };
+  if (bits(s.pickedN).indexOf(bare(n)) < 0) return false;
+  const moved = (s.comp && s.comp.isConnected && s.comp.value !== s.compAtPick) || (s.hidAtPick != null && shellHid(s) !== s.hidAtPick);
+  if ((s.comp && s.comp.isConnected && !moved) || (s.hidAtPick != null && !moved)) return false;
+  const sh = shellOf(s), logs = sh ? Array.from(sh.querySelectorAll("[role=log]")).map(textOf).map(norm).join(" ") : "";
+  const named = /selected/.test(logs) && logs.indexOf(s.pickedN) >= 0;
+  if (/selected/.test(logs) && !named && (s.others || []).some(function (o) { return o && s.pickedN.indexOf(o) < 0 && logs.indexOf(o) >= 0; })) return false;
+  // A detail other options share (Canada's "+1", "full time") needs the pick
+  // named or a companion moved.
+  return moved || named || !(s.others || []).some(function (o) { return bits(o).indexOf(bare(n)) >= 0; });
+};
 const full = (iv && has(iv) ? iv : textOf(s.box)) || iv;
 const parts = full === iv ? [] : shownParts(s.box);
 // An empty input whose box holds only the control's own label shows nothing.
@@ -7044,7 +7075,7 @@ const grew = !s.multi && s.whole && now !== s.whole && now.indexOf(s.whole) === 
 // typeahead requires).
 const typedOnly = s.typed === s.input && s.typedQ != null && full === iv && norm(iv) === norm(s.typedQ) &&
   !(s.shut || (s.comp && s.comp.value !== s.compAtPick) || (s.optEl && !s.selBefore && attr(s.optEl, "aria-selected") === "true"));
-const seen = !typedOnly && (has(full) || (!s.multi && parts.some(function (t) { return asPicked(norm(t)); })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; }))));
+const seen = !typedOnly && (has(full) || partOf(now) ||(!s.multi && parts.some(function (t) { return asPicked(norm(t)); })) || (grew && (commaParts(now.slice(s.whole.length)).indexOf(s.pickedN) >= 0 || parts.some(function (t) { return norm(t) === s.pickedN && s.shown.indexOf(t) < 0; }))));
 if (!seen && !A.final) return { pending: true, tok: s.tok };
 // The held Escape goes out on the returning read, final or verified; a value
 // it changed was not the page's answer, so the pick is read again.

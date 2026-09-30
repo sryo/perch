@@ -1131,3 +1131,110 @@ test("custom combobox: a formatted or value display that was already there befor
   onPage(ignore(["Red", "Blue", "Green"], "Red - #f00"), FMT_JS("(t) => t + ' - #00f'"));
   assert.equal((await select({ label_pattern: "fruit", text: "Blue" })).o.ok, true);
 });
+
+// Greenhouse's phone country picker (react-select): each option reads
+// "United States +1", but the control shows only the dial code "+1" once
+// picked. No hidden companion; a required dummy input goes away on a pick, and
+// the live region logs the choice while the control has focus. show(label, code)
+// is what the control displays; log(label) what the live region says.
+const DIAL = [["United States", "+1"], ["Canada", "+1"], ["United Kingdom", "+44"], ["Uruguay", "+598"]];
+const PHONE_CC = (before = "", companion = "") => `<div class="select"><div class="select__container"><label id="country-label" for="country" class="label select__label">Country<span aria-hidden="true">*</span></label>
+  <div class="select-shell remix-css-b62m3t-container"><span id="react-select-country-live-region"></span><span aria-live="polite" aria-atomic="false" aria-relevant="additions text" role="log"></span>
+  <div class="select__control remix-css-13cymwt-control"><div class="select__value-container"><div class="select__placeholder" id="react-select-country-placeholder"></div>${before ? `<div class="select__single-value">${before}</div>` : ""}
+  <div class="select__input-container" data-value=""><input class="select__input" autocomplete="off" id="country" type="text" aria-autocomplete="list" aria-expanded="false" aria-haspopup="true" aria-labelledby="country-label" aria-required="true" role="combobox" value=""></div></div>
+  <div class="select__indicators"><button type="button" aria-label="Toggle flyout" tabindex="-1"><svg></svg></button></div></div>
+  <input required="" tabindex="-1" aria-hidden="true" class="requiredInput" value="">${companion}</div></div></div>
+  <label for=phone>Phone</label><input id=phone type=tel>`;
+const PHONE_CC_JS = ({ show = "(l, c) => c", log = "(l) => 'option ' + l + ', selected.'", pickAs = null, comp = "(l) => l" } = {}) => `
+  const shell = document.querySelector('.select-shell'), ctl = document.querySelector('.select__control'), inp = document.getElementById('country');
+  const dial = ${JSON.stringify(DIAL)};
+  let menu = null;
+  const close = () => { if (menu) menu.remove(); menu = null; inp.setAttribute('aria-expanded', 'false'); inp.removeAttribute('aria-controls'); };
+  ctl.addEventListener('mousedown', () => {
+    if (menu) return close();
+    menu = document.createElement('div'); menu.className = 'select__menu';
+    menu.innerHTML = '<div class="select__menu-list" role="listbox" id="react-select-country-listbox">' +
+      dial.map(([l, c], i) => '<div role="option" class="select__option" id="react-select-country-option-' + i + '" aria-selected="false"><span>' + l + '</span> <span>' + c + '</span></div>').join('') + '</div>';
+    shell.appendChild(menu);
+    inp.setAttribute('aria-expanded', 'true'); inp.setAttribute('aria-controls', 'react-select-country-listbox');
+    menu.querySelectorAll('[role=option]').forEach((o, i) => o.addEventListener('click', () => {
+      const [l, c] = ${pickAs ? `dial.find(([x]) => x === ${JSON.stringify(pickAs)})` : "dial[i]"};
+      const vc = document.querySelector('.select__value-container');
+      vc.querySelector('.select__single-value')?.remove();
+      const sv = document.createElement('div'); sv.className = 'select__single-value'; sv.textContent = (${show})(l, c);
+      vc.insertBefore(sv, vc.querySelector('.select__input-container'));
+      document.querySelector('.requiredInput')?.remove();
+      const hid = document.querySelector('input[type=hidden]'); if (hid) hid.value = (${comp})(l);
+      shell.querySelector('[role=log]').textContent = (${log})(l + ' ' + c);
+      close();
+    }));
+  });`;
+
+test("custom combobox: a phone country picker that shows only the pick's dial code holds", async () => {
+  for (const [what, js] of [
+    ["live region names the pick", PHONE_CC_JS()],
+    ["live region names the pick, a hidden input moves", PHONE_CC_JS()],
+  ]) {
+    const { dom } = onPage(PHONE_CC("", what.includes("hidden") ? "<input type=hidden name=cc value=''>" : ""), js);
+    const { o } = await select({ label_pattern: "^country", text: "United States" });
+    assert.deepEqual(o, { ok: true, selected: "United States +1", el: `combobox "Country*"`, value: "+1" }, what);
+    assert.equal(dom.document.querySelector(".select__single-value").textContent, "+1", what);
+  }
+  // A code no other option shares needs neither.
+  onPage(PHONE_CC(), PHONE_CC_JS({ log: "() => ''" }));
+  assert.deepEqual((await select({ label_pattern: "^country", text: "United Kingdom" })).o.value, "+44");
+  // A hidden companion that moved to the pick settles US against Canada's shared +1.
+  onPage(PHONE_CC("", "<input type=hidden name=cc value=''>"), PHONE_CC_JS());
+  assert.equal((await select({ label_pattern: "^country", text: "United States" })).o.ok, true, "companion moved");
+  // fill {fields} takes the same pick.
+  onPage(PHONE_CC(), PHONE_CC_JS());
+  const r = JSON.parse((await handleCall("fill", { fields: [{ label_pattern: "^country", option: "United States" }, { label_pattern: "^phone", text: "2125550100" }] })).content[0].text);
+  assert.equal(r.results[0].ok, true, JSON.stringify(r));
+});
+
+test("custom combobox: a dial code display that is not the pick's own part, or did not move, is not verified", async () => {
+  for (const [what, html, js] of [
+    // The display was already "+1" before the press and the press did nothing.
+    ["unmoved", PHONE_CC("+1"), PHONE_CC_JS().replace("o.addEventListener('click'", "o.addEventListener('x-none'")],
+    // Another option took the press: its code differs.
+    ["other code", PHONE_CC(), PHONE_CC_JS({ pickAs: "United Kingdom" })],
+    // Canada took the press: same "+1", but the live region names Canada.
+    ["live region names another option", PHONE_CC(), PHONE_CC_JS({ pickAs: "Canada" })],
+    // A hidden companion that did not move proves nothing moved.
+    ["companion unmoved", PHONE_CC("", "<input type=hidden name=cc value=''>"), PHONE_CC_JS({ comp: "() => ''" })],
+    // A word of the option's name is not a detail of it.
+    ["a word of the name", PHONE_CC(), PHONE_CC_JS({ show: "(l) => l.split(' ')[1]" })],
+    // "+1" is Canada's too: with no companion and a silent live region the moved display proves nothing.
+    ["shared code, nothing else", PHONE_CC(), PHONE_CC_JS({ log: "() => ''" })],
+  ]) {
+    onPage(html, js);
+    const { o } = await select({ label_pattern: "^country", text: "United States" });
+    assert.equal(o.ok, false, what + " " + JSON.stringify(o));
+    assert.match(o.error, /^pressed "United States \+1" but the control shows /, what);
+  }
+});
+
+// Canada shares the United States' "+1": a press the page ignored under a
+// default "+1", or one the page mapped to the United States, is never Canada.
+test("custom combobox: a shared dial code is not taken for the option pressed", async () => {
+  for (const [what, html, js] of [
+    ["press ignored under the default +1", PHONE_CC("+1"), PHONE_CC_JS().replace("o.addEventListener('click'", "o.addEventListener('x-none'")],
+    ["the page set the United States", PHONE_CC(), PHONE_CC_JS({ pickAs: "United States" })],
+    ["the page set the United States, silent live region", PHONE_CC(), PHONE_CC_JS({ pickAs: "United States", log: "() => ''" })],
+  ]) {
+    onPage(html, js);
+    const { o } = await select({ label_pattern: "^country", text: "Canada" });
+    assert.equal(o.ok, false, what + " " + JSON.stringify(o));
+  }
+});
+
+// A worded detail is taken alone only when no other option shares it: "full
+// time" after "Yes - full time" may as well be "No - full time".
+test("custom combobox: a worded detail shown alone holds only when it is the pick's own", async () => {
+  onPage(FMT(["Junior (0-2 years)", "Senior (5+ years)"]), FMT_JS("(t) => t.replace(/^.*\\((.*)\\)$/, '$1')"));
+  const { o } = await select({ label_pattern: "fruit", text: "Senior" });
+  assert.deepEqual([o.ok, o.selected, o.value], [true, "Senior (5+ years)", "5+ years"], JSON.stringify(o));
+  onPage(FMT(["Yes - full time", "No - full time"]), FMT_JS("() => 'full time'"));
+  const { o: x } = await select({ label_pattern: "fruit", text: "Yes" });
+  assert.equal(x.ok, false, JSON.stringify(x));
+});
