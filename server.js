@@ -3786,11 +3786,6 @@ function trapLike(el, labelled) {
   return honeypot(el, labelled) || (attr(el, "tabindex") === "-1" && attr(el, "autocomplete") === "off")
     || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"));
 }
-// fill's note on text it put in a field that looks like a bot trap.
-function trapWarning(el) {
-  return ident(el) + " looks like a bot trap (" + (LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name")) ? "its label or name says to leave it blank" : "it is out of the tab order with autofill off")
-    + ") and was filled anyway; clear it with text \"\" if the form should leave it empty";
-}
 // A required field named by visible text (a <label>, or aria-labelledby) is one
 // the form wants filled, so fill takes a pixel or clip on it for sr-only styling,
 // unless it is untabbable or its label says to leave it blank.
@@ -4887,6 +4882,12 @@ function holdsText(v, text) {
 `;
 
 const FILL_LIB = TOK_LIB + TYPEAHEAD_LIB + EMBED_LIB + HOLDS_LIB + String.raw`
+// fill's note on text it put in a field that looks like a bot trap.
+function trapWarning(el) {
+  const why = LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name")) ? "its label or name says to leave it blank"
+    : honeypot(el, wanted(el)) ? "it sits where no one can see it" : "it is out of the tab order with autofill off";
+  return ident(el) + " looks like a bot trap (" + why + ") and was filled anyway; clear it with text \"\" if the form should leave it empty";
+}
 // Keeps fields that landed for fill_reread under a fresh owner token, at most
 // 20 records a document, and returns the token.
 function frRecord(items) {
@@ -5062,6 +5063,7 @@ function fillOne(a, only, onLand) {
     if (!out) return { ok: false, error: ident(r.el) + " is not fillable or rejected the text" };
     if (out.ok === false) return out;
     if (!fieldVis(r.el)) out.hidden = true;
+    if (text !== "" && trapLike(r.el, wanted(r.el))) out.warning = trapWarning(r.el);
     if (a.selector) {
       const hits = Array.from(document.querySelectorAll(a.selector)).filter(fieldVis);
       if (hits.length > 1) out.ambiguous = hits.slice(0, 3).map(ident);

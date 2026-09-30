@@ -304,6 +304,23 @@ test("fill by label into the only, visible trap-like match keeps filling it but 
   assert.match(o.warning, /bot trap/);
 });
 
+test("fill by selector or ref into a trap-shaped field fills it, with a warning", () => {
+  for (const [attrs, why] of [
+    [`name=email_confirm aria-label="Leave this field blank"`, /leave it blank/],
+    [`name=website tabindex=-1 autocomplete=off`, /out of the tab order/],
+    [`name=email2 data-rect="-9999,0,100,20"`, /where no one can see it/],
+  ]) {
+    const w = page(`<form><input id=t ${attrs}><label>Email <input id=e></label></form>`);
+    const o = run(w, "fill", { selector: "#t", text: "x" });
+    assert.equal(o.ok, true, attrs + " " + JSON.stringify(o));
+    assert.equal(w.document.getElementById("t").value, "x", attrs);
+    assert.match(o.warning, /looks like a bot trap/, attrs);
+    assert.match(o.warning, why, attrs);
+    const plain = run(w, "fill", { selector: "#e", text: "a@x.test" });
+    assert.equal(plain.warning, undefined, JSON.stringify(plain));
+  }
+});
+
 test("fill by label prefers a plainly visible field over a faded combobox decoy before it", () => {
   const w = page(`<div class=ctl><label for=d>Email</label><input id=d aria-autocomplete=list style=opacity:0></div><label for=e>Email</label><input id=e>`);
   const o = run(w, "fill", { label_pattern: "email", text: "ada@x.test" });
