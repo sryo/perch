@@ -320,6 +320,17 @@ test("fill by label keeps an untabbable autofill-off field that is the better la
   }
 });
 
+// An untabbable, autofill-off field tied with one not named for the pattern
+// either may be the one asked for: it keeps its place and the tie is reported.
+test("fill by label reports a tie between a date picker shape and a field not named for the pattern", () => {
+  for (const req of ["", "required"]) {
+    const w = page(`<form onsubmit="return false"><label for=d>Date of birth</label><input id=d tabindex=-1 autocomplete=off ${req}><label for=p>Place of birth</label><input id=p name=pob></form>`);
+    const o = run(w, "fill", { label_pattern: "birth", text: "x" });
+    assert.equal(o.ok, true, req + " " + JSON.stringify(o));
+    assert.equal(o.ambiguous && o.ambiguous.length, 2, req + " " + JSON.stringify(o));
+  }
+});
+
 // The textbook honeypot's label is the whole pattern, but the real field's
 // name, type or autocomplete token is too: the label is no better match there.
 test("fill by label passes over an exactly labelled honeypot when the real field's name, type or token is the pattern", () => {

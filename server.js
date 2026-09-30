@@ -5220,17 +5220,16 @@ function fillOne(a, only, onLand) {
   // off, even when required, or named to be left blank) yields to a normal match scoring
   // within 10 of it; one outscoring every normal match by more, or alone, takes
   // the text with a warning. Untabbable with autofill off alone is also how
-  // date pickers look, so such a field whose own label is the whole pattern
-  // ranks as a normal one (still warned about when it wins) while every normal
-  // match it ties with only contains the pattern in its label, name, type and
-  // autocomplete token.
+  // date pickers look, so such a field ranks as a normal one (still warned
+  // about when it wins) unless a normal match it ties with is named for the
+  // pattern whole: by its label, name, type or autocomplete token.
   const whole = function (el) { return acWhole.test(labelText(el).replace(/[\s*:]+$/, "").trim()); };
   const named = function (el) { return whole(el) || acWhole.test(attr(el, "name")) || (el.tagName === "INPUT" && acWhole.test(el.type || "")) || acWhole.test(acToken(el) || ""); };
   const flagged = shown.filter(function (c) { return trapLike(c.el, wanted(c.el)); });
   const normal = shown.filter(function (c) { return flagged.indexOf(c) < 0; });
   const betterLabel = function (c) {
     const tied = normal.filter(function (n) { return Math.abs(n.s - c.s) <= 10; });
-    return tied.length > 0 && whole(c.el) && !tied.some(function (n) { return named(n.el); });
+    return tied.length > 0 && !tied.some(function (n) { return named(n.el); });
   };
   const trap = function (c) {
     return flagged.indexOf(c) >= 0 && !(!honeypot(c.el, wanted(c.el)) && !LEAVE_BLANK.test(labelText(c.el) + " " + attr(c.el, "name")) && betterLabel(c));
