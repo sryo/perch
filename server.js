@@ -4361,8 +4361,24 @@ function stillOpen(s) {
 // one hears it too): the focused element there, else its search box, else the control.
 function escapeOwn(s) {
   const a = document.activeElement;
-  const inPop = a && (linkedLists(s).some(function (m) { return m.contains(a); }) || (s.pop && s.pop.contains(a)));
-  pressEscape(inPop ? a : s.filter && s.filter.isConnected ? s.filter : s.input || s.ctl);
+  pressEscape(inPop(s, a) ? a : s.filter && s.filter.isConnected ? s.filter : s.input || s.ctl);
+}
+function inPop(s, a) { return !!a && (linkedLists(s).some(function (m) { return m.contains(a); }) || (!!s.pop && s.pop.contains(a))); }
+// A background tab's blur() fires no events, so send them when the page lacks focus.
+function taBlur(el) {
+  const had = el.ownerDocument.activeElement === el;
+  if (had) el.blur();
+  if (!had || !el.ownerDocument.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
+}
+// After a refusal's Escape, a popup select opened that open() still calls open
+// has no Escape handler: the control or popup element holding focus loses it,
+// then, if still open, the page outside is pressed, as a person clicks away.
+// Never that press inside a dialog, whose own outside press would close it.
+function unstick(s, open) {
+  if (!open()) return;
+  const a = document.activeElement;
+  if (a && (mine(s, a) || inPop(s, a))) taBlur(a);
+  if (open() && !(s.input || s.ctl).closest("[role=dialog], [role=alertdialog], dialog, [aria-modal=true]")) press(document.body);
 }
 // The lists a control names as its own: aria-controls/aria-owns targets, and
 // react-select's listbox, whose id derives from its input id.
@@ -4842,12 +4858,6 @@ function taShown(el) {
   if (el.value) return el.value;
   const ctl = el.closest('.select__control, [class*="-control"], [class*="__control"]');
   return ctl ? shownValue(el) || textOf(ctl) : "";
-}
-// A background tab's blur() fires no events, so send them when the page lacks focus.
-function taBlur(el) {
-  const had = el.ownerDocument.activeElement === el;
-  if (had) el.blur();
-  if (!had || !el.ownerDocument.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
 }
 `;
 
@@ -6525,7 +6535,7 @@ else if (s.typed) { setNativeValue(s.typed, ""); fire(s.typed, ["input"]); }
 if (s.prior != null && s.input.value !== s.prior) { setNativeValue(s.input, s.prior); fire(s.input, ["input", "change"]); }
 if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
 // Escape on a closed Downshift menu clears its selection, so only an open one gets it.
-if (s.opened && stillOpen(s)) escapeOwn(s);
+if (s.opened && stillOpen(s)) { escapeOwn(s); unstick(s, function () { return stillOpen(s); }); }
 if (s.disabled) return { ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands, tok: s.tok };
 if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [], tok: s.tok };
 const out = { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands, tok: s.tok };
@@ -6605,11 +6615,19 @@ if (typedIn && !s.closed && (!stillOpen(s) || (s.expAtPick && ![s.ctl, s.input].
 // on an Escape while closed. aria-expanded says so only once it went from true
 // at the pick to not (options may stay mounted through a leave transition); a
 // value that never said true is stale, and the own list still showing decides.
+const openNow = function () {
+  const said = [s.ctl, s.input].some(function (e) { return e && attr(e, "aria-expanded") === "true"; });
+  return s.expAtPick ? said : stillOpen(s);
+};
 const escOwn = function () {
   if (!s.opened || s.closed || A.keep) return;
   s.closed = true;
-  const said = [s.ctl, s.input].some(function (e) { return e && attr(e, "aria-expanded") === "true"; });
-  if (!s.shut && (s.expAtPick ? said : stillOpen(s))) escapeOwn(s);
+  if (!s.shut && openNow()) escapeOwn(s);
+};
+// A refusal leaves nothing open that select opened.
+const refuse = function (o) {
+  if (s.opened && !s.shut && !A.keep) unstick(s, openNow);
+  return o;
 };
 if (!typedIn) escOwn();
 // An input's own value first: its wrapper may hold only its label.
@@ -6641,7 +6659,7 @@ if (typedIn) {
   }
 }
 if (s.dropped && !(seen && s.input.value === iv)) {
-  return { ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control dropped it when its popup was closed (it shows ' + (s.input.value ? JSON.stringify(clip(s.input.value, 60)) : "nothing") + "); not verified", pressed: s.picked, el: ident(s.ctl), value: clip(s.input.value, 120), tok: s.tok };
+  return refuse({ ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control dropped it when its popup was closed (it shows ' + (s.input.value ? JSON.stringify(clip(s.input.value, 60)) : "nothing") + "); not verified", pressed: s.picked, el: ident(s.ctl), value: clip(s.input.value, 120), tok: s.tok });
 }
 // A widget that fills the input and keeps its list open on pick (MUI's
 // disableCloseOnSelect, free solo) shows the same, so the error says how to check.
@@ -6651,7 +6669,7 @@ const out = seen
     (typedOnly ? ": " + (A.trusted ? "" : "retry with select {trusted:true}, or ") + "check the field (a list that stays open on pick shows this too)" : ""), pressed: s.picked, el: ident(s.ctl), value: shown, tok: s.tok };
 if (s.pref) out.pref = s.pref;
 if (s.already) out.note = "already chosen; not pressed again, since a press would toggle it off";
-return out;
+return seen ? out : refuse(out);
 `,
 
   // A.probe: a click that opens a new tab stops before clicking, keeping a

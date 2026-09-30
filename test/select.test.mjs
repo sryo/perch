@@ -625,6 +625,53 @@ test("custom combobox: a bare input's pre-rendered neighbour listbox in a page-w
   }
 });
 
+// A refusal closes what select opened. Escape goes first; a popup still open
+// after it (a widget with no Escape handler) is closed as a person would: the
+// control select focused loses focus, then a press on the page outside it.
+// A popup that closes on Escape gets neither, and one in a dialog never gets
+// the outside press, which would close the dialog too.
+test("custom combobox: a refused select closes the popup it opened, however the widget closes", async () => {
+  const list = `<ul id=cl role=listbox><li role=option>Rosario</li><li role=option>Cordoba</li></ul>`;
+  const input = `<input id=city role=combobox aria-expanded=false autocomplete=off>`, hid = list.replace("listbox>", "listbox hidden>");
+  const pageWide = (inner) => `<form><label>Name <input name=n></label><label>Email <input name=e></label><label for=city>City</label>${inner}<button type=button>Send</button></form>`;
+  const base = `const i = document.getElementById('city'), l = document.getElementById('cl');
+    window.blurs = 0; window.outside = 0; window.escs = 0;
+    const shut = () => { i.setAttribute('aria-expanded', 'false'); l.hidden = true; };
+    i.addEventListener('click', () => { i.setAttribute('aria-expanded', 'true'); l.hidden = false; });
+    i.addEventListener('blur', () => { window.blurs++; });
+    document.addEventListener('mousedown', (e) => { if (!i.contains(e.target) && !l.contains(e.target)) window.outside++; });
+    i.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.escs++; });`;
+  for (const [name, closes, want] of [
+    ["on Escape", "i.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });", { blurs: 0, outside: 0 }],
+    ["on blur", "i.addEventListener('blur', shut);", { blurs: 1, outside: 0 }],
+    ["on an outside press", "document.addEventListener('mousedown', (e) => { if (!i.contains(e.target) && !l.contains(e.target)) shut(); });", { blurs: 1, outside: 1 }],
+  ]) {
+    for (const [shape, html, text, error] of [
+      ["pre-rendered list, no aria-controls", pageWide(input + list), "Cordoba", /^the control's option list did not open or is empty/],
+      ["own list, nothing matching", pageWide(input.replace("autocomplete", "aria-controls=cl autocomplete") + hid), "Mendoza", /^no option of this control matched/],
+      ["own list, pick not shown", pageWide(input.replace("autocomplete", "aria-controls=cl autocomplete") + hid), "Cordoba", /^pressed "Cordoba" but the control shows nothing/],
+    ]) {
+      const { dom } = onPage(html, base + closes);
+      const { o } = await select({ label_pattern: "city", text });
+      const at = `${name}, ${shape}`;
+      assert.equal(o.ok, false, at + " " + JSON.stringify(o));
+      assert.match(o.error, error, at);
+      assert.equal(dom.document.getElementById("city").getAttribute("aria-expanded"), "false", at);
+      assert.deepEqual([dom.escs, dom.blurs, dom.outside], [1, want.blurs, want.outside], at);
+    }
+  }
+  // In a dialog, an outside press would close the dialog: the popup is left
+  // open rather than risk it.
+  const { dom } = onPage(`<div role=dialog aria-modal=true>${pageWide(input + list)}</div>`, base);
+  assert.equal((await select({ label_pattern: "city", text: "Cordoba" })).o.ok, false);
+  assert.deepEqual([dom.escs, dom.blurs, dom.outside], [1, 1, 0]);
+  // A popup that was open before select pressed anything is the page's: left open.
+  const { dom: d2 } = onPage(pageWide(input.replace("aria-expanded=false", "aria-expanded=true") + list), base);
+  assert.equal((await select({ label_pattern: "city", text: "Cordoba" })).o.ok, false);
+  assert.equal(d2.document.getElementById("city").getAttribute("aria-expanded"), "true");
+  assert.deepEqual([d2.escs, d2.blurs, d2.outside], [0, 0, 0]);
+});
+
 // A bare input whose real list is a portal appended to body on open, followed
 // by a neighbour listbox of its own form (a chips list of what is chosen, a
 // "Recent" list): the portal's options are the ones that appeared, so the
