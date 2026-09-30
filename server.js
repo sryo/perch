@@ -3957,12 +3957,13 @@ function role(el) {
   return "generic";
 }
 function ident(el) { return role(el) + " " + JSON.stringify(accName(el)) + (fieldVis(el) ? "" : " hidden"); }
-// The prototype setter reaches React-controlled fields whose instance setter is patched.
-function setNativeValue(el, v) {
+// The prototype setter reaches React-controlled fields whose instance setter is
+// patched. k: the property, value unless given.
+function setNativeValue(el, v, k) {
   const V = viewOf(el);
   const P = el.tagName === "TEXTAREA" ? V.HTMLTextAreaElement : el.tagName === "SELECT" ? V.HTMLSelectElement : V.HTMLInputElement;
-  const d = Object.getOwnPropertyDescriptor(P.prototype, "value");
-  if (d && d.set) d.set.call(el, v); else el.value = v;
+  const d = Object.getOwnPropertyDescriptor(P.prototype, k = k || "value");
+  if (d && d.set) d.set.call(el, v); else el[k] = v;
 }
 // A form control the form leaves out of its submission: disabled itself or by a fieldset.
 function unsent(el) {
@@ -4179,10 +4180,8 @@ function nativeMatch(nat, opts, text) {
 function setNative(nat, opts, opt, pref) {
   const prior = nat.selectedIndex;
   // Setting .value selects the first option holding it, so a later twin goes by index.
-  if (opts.some(function (o) { return o.index < opt.index && o.value === opt.value; })) {
-    const d = Object.getOwnPropertyDescriptor(viewOf(nat).HTMLSelectElement.prototype, "selectedIndex");
-    if (d && d.set) d.set.call(nat, opt.index); else nat.selectedIndex = opt.index;
-  } else setNativeValue(nat, opt.value);
+  if (opts.some(function (o) { return o.index < opt.index && o.value === opt.value; })) setNativeValue(nat, opt.index, "selectedIndex");
+  else setNativeValue(nat, opt.value);
   fire(nat, ["input", "change"]);
   const shown = nat.options[nat.selectedIndex];
   const ok = { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
@@ -5042,9 +5041,9 @@ function revealers(re, nearHit) {
     let tier = re.test(name) ? 0 : re.test(nearText(el)) ? 1 : -1;
     for (let p = el.parentElement, d = 0; tier < 0 && d < 4 && p && !outside(p); d++, p = p.parentElement) if (nearHit(p)) tier = 1;
     if (tier < 0) return;
-    found.push({ line: role(el) + " " + JSON.stringify(clip(name, 40)), rank: [tier, tier && !REVEAL_TYPING.test(name) ? 1 : 0, i] });
+    found.push({ line: role(el) + " " + JSON.stringify(clip(name, 40)), rank: (tier * 2 + (tier && !REVEAL_TYPING.test(name) ? 1 : 0)) * 1e9 + i });
   });
-  found.sort(function (x, y) { return x.rank[0] - y.rank[0] || x.rank[1] - y.rank[1] || x.rank[2] - y.rank[2]; });
+  found.sort(function (x, y) { return x.rank - y.rank; });
   return found.slice(0, 2).map(function (f) { return f.line; });
 }
 // WHATWG autofill field names, minus payment (cc-*) and credential ones.
@@ -5085,7 +5084,7 @@ function fillOne(a, only, onLand) {
   };
   const isField = function (el) { return el.tagName === "TEXTAREA" || el.tagName === "INPUT"; };
   function isRich(el) {
-    return !!el && (editable(el) || !!(el.classList && (el.classList.contains("fr-element") || el.classList.contains("ql-editor") || el.classList.contains("ProseMirror"))));
+    return !!el && (editable(el) || (!!el.matches && el.matches(".fr-element, .ql-editor, .ProseMirror")));
   }
   // Input types whose value the browser sanitizes on set: only the exact value
   // counts, and a miss names the format the type accepts.
@@ -6300,7 +6299,7 @@ function stepMoved(x) {
   return d;
 }
 function drift(it, again) {
-  const el = it.el, miss = function (why, o) { return Object.assign({ ok: false, kind: it.kind, el: it.id }, o, { error: it.id + why + AFTER }); };
+  const el = it.el, miss = function (why, o) { return Object.assign({ ok: false, kind: it.kind, el: it.id }, o, it.by >= 0 ? { by: it.by } : null, { error: it.id + why + AFTER }); };
   if (!el.isConnected) {
     const t = !again && twin(it), n = Object.assign({}, it, t);
     if (t && !t.group && it.group) n.group = radioGroups().find(function (x) { return x.opts.indexOf(t.el) >= 0; });
@@ -6321,6 +6320,14 @@ function drift(it, again) {
   const kept = clip(now, 60);
   return miss(kept ? " changed to " + JSON.stringify(kept) : " was cleared", { kept: kept });
 }
+// Which later field an item first drifted after (by, for Node to name): one
+// landed in this pass, a text field, select or radio group, since a checkbox
+// drives no other field's value (-1: unnamed); at a pass's start, the deferred
+// field before it.
+const blame = function (by, before) {
+  for (const k in ff.items) { const x = ff.items[k]; if (+k < before && x.by == null && drift(x)) x.by = by; }
+};
+if (ff && A.from) blame(A.from - 1, A.from);
 const results = [];
 const stop = function (i, tok) {
   const out = { results: results, defer: i };
@@ -6372,6 +6379,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     ff.items[i] = got;
     if (kind !== "text" && i < A.fields.length - 1 && stepMoved(got)) return { results: results.concat(o), gone: true, at: i };
   }
+  if (ff) blame(ff.items[i] && (!("checked" in got) || role(got.el) === "radio") ? i : -1, i);
   results.push(o);
 }
 const recheck = {};
@@ -7943,8 +7951,14 @@ async function fillFields(fields, target, only) {
     }
   };
   // A late re-read only speaks for fields the pass before it still found landed.
+  // A drift the page pinned on a later field (by) names it, as the re-read
+  // names the field that may have rebuilt a list.
+  const named = ({ by, ...x }) => {
+    const b = results[by];
+    return b && b.el ? { ...x, error: x.error.replace(/; fill it again$/, `, and fields[${by}] (${b.el}) may have changed it; fill it again`) } : x;
+  };
   const recheck = (r, late) => {
-    for (const [i, x] of Object.entries(r.recheck || {})) if (results[i] && (!late || results[i].ok === true)) results[i] = x;
+    for (const [i, x] of Object.entries(r.recheck || {})) if (results[i] && (!late || results[i].ok === true)) results[i] = named(x);
     for (const [i, n] of Object.entries(r.notes || {})) if (results[i] && results[i].ok === true) results[i] = addNote(results[i], n);
   };
   let watch = false, warning = null, form, fr = null;

@@ -1128,7 +1128,7 @@ test("fill_fields: a state a later country change clears comes back ok:false", (
   const o = run(w, "fill_fields", { fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "country", option: "Argentina" }] });
   assert.deepEqual(o.results.map((r) => r.ok), [true, true]);
   assert.deepEqual(Object.keys(o.recheck), ["0"]);
-  assert.deepEqual(o.recheck[0], { ok: false, kind: "plain", el: `textbox "State"`, kept: "", error: `textbox "State" was cleared after a later field changed; fill it again` });
+  assert.deepEqual(o.recheck[0], { ok: false, kind: "plain", el: `textbox "State"`, kept: "", by: 1, error: `textbox "State" was cleared after a later field changed; fill it again` });
 });
 
 test("fill {fields}: the cleared state fails the batch and the country stays ok", async () => {
@@ -1137,10 +1137,27 @@ test("fill {fields}: the cleared state fails the batch and the country stays ok"
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.results.length, 2);
   assert.equal(o.results[0].ok, false);
-  assert.match(o.results[0].error, /cleared after a later field changed/);
+  assert.equal(o.results[0].error, `textbox "State" was cleared after a later field changed, and fields[1] (combobox "Country") may have changed it; fill it again`);
+  assert.equal(o.results[0].by, undefined);
   assert.equal(o.results[1].ok, true);
   assert.equal(o.results[1].selected, "Argentina");
   assert.equal(o.recheck, undefined);
+});
+
+// The later field named is the first after whose write the drift showed, and
+// only a text field, select or radio group: a checkbox drives no other field's
+// value, so a drift after one is left unnamed.
+test("fill {fields}: a drift is pinned on the field after which it showed, never on a checkbox", async () => {
+  onPage(`<label>State <input id=st></label><label>Zip <input id=z></label>
+    <label>Country <select id=co><option value="">Select...</option><option>Chile</option></select></label>
+    <label><input type=checkbox id=re> Reset city</label><label>City <input id=ci></label>`, CLEARS_ST + `
+    document.getElementById('re').addEventListener('click', () => { document.getElementById('ci').value = ''; });`);
+  const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "zip", text: "5000" }, { label_pattern: "country", option: "Chile" },
+    { label_pattern: "city", text: "Rosario" }, { label_pattern: "reset", checked: true }] });
+  assert.equal(o.results[0].error, `textbox "State" was cleared after a later field changed, and fields[2] (combobox "Country") may have changed it; fill it again`);
+  assert.equal(o.results[3].error, `textbox "City" was cleared after a later field changed; fill it again`);
+  assert.deepEqual(o.results.map((r) => r.ok), [false, true, true, false, true]);
+  assert.ok(o.results.every((r) => !("by" in r)), JSON.stringify(o));
 });
 
 test("fill {fields}: order-independent fields stay ok and nothing extra leaks into the result", async () => {
