@@ -4461,12 +4461,13 @@ function taBlur(el) {
   if (!had || !el.ownerDocument.hasFocus()) { el.dispatchEvent(new FocusEvent("blur")); el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); }
 }
 // A popup select opened that open() still calls open after a refusal's Escape
-// (a widget with no Escape handler) is left open, and the refusal says so. A
+// (a widget with no Escape handler) is left open, and the refusal says so
+// (open: true). A
 // refusal changes nothing else: a blur lets a widget commit its first option,
 // and a press outside fires every outside-click handler on the page (a drawer
 // the form sits in). -> o.
 function saysOpen(open, o) {
-  if (open()) { o.open = true; o.note = (o.note ? o.note + "; " : "") + "its popup is still open"; }
+  if (open()) o.open = true;
   return o;
 }
 // The lists a control names as its own: aria-controls/aria-owns targets, and

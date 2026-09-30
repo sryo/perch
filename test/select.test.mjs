@@ -688,7 +688,7 @@ test("custom combobox: a refused select closes the popup it opened by Escape, el
       assert.equal(dom.document.getElementById("city").getAttribute("aria-expanded"), String(open), at);
       assert.deepEqual([dom.escs, dom.blurs, dom.outside], [1, blurs, 0], at);
       assert.equal(o.open, open || undefined, at);
-      assert.equal(o.note, open ? "its popup is still open" : undefined, at);
+      assert.equal(o.note, undefined, `${at}: open:true says it, with no note`);
     }
   }
   // A popup that was open before select pressed anything is the page's: left open.
