@@ -489,7 +489,7 @@ test("page scripts have no backticks, block comments or line continuations, and 
 test("page scripts define every split-out helper they call", () => {
   const helpers = ["CLICKABLE", "inertCtl", "inertOut", "clickableByLabel", "resolveClick", "tabbables", "wantL", "wantN", "wantT", "OPT",
     "press", "pressFocus", "pressEscape", "bestMatch", "optOff", "shownEls", "ownText", "shownParts", "commaParts", "chipLike", "multiBox",
-    "isMulti", "chosenAlready", "loadingIn", "stillOpen", "escapeOwn", "linkedLists", "byIdNear", "ownOptions", "popSearch", "mine",
+    "isMulti", "shownWhole", "chosenAlready", "loadingIn", "stillOpen", "escapeOwn", "linkedLists", "byIdNear", "ownOptions", "popSearch", "mine",
     "taNorm", "taShown", "taBlur", "snapVis", "unpicked", "reqEmpty", "census"];
   for (const name of Object.keys(PAGE_SCRIPTS)) {
     const js = pageScript(name, {});

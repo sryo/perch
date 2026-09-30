@@ -3819,26 +3819,29 @@ function honeypot(el, labelled) {
   const v = viewOf(el);
   if (r.right + (v.scrollX || 0) <= 0 || r.bottom + (v.scrollY || 0) <= 0) return true;
   if (labelled || attr(el, "role") === "combobox" || el.hasAttribute("aria-autocomplete")) return false;
-  if (r.width <= 1 || r.height <= 1) return true;
+  return r.width <= 1 || r.height <= 1 || pxClip(el);
+}
+// A CSS clip rect that leaves at most a pixel showing.
+function pxClip(el) {
   const m = /rect\(([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px/.exec(getComputedStyle(el).clip || "");
   return !!m && (m[2] - m[4] <= 1 || m[3] - m[1] <= 1);
 }
 // A honeypot, an untabbable field with autofill off, or one whose name says to
 // leave it empty.
 // Words may be joined by spaces, underscores or dashes (leave_blank, do-not-fill).
-const LEAVE_BLANK = /(^|[^a-z0-9])(leave[ _-](this[ _-]|it[ _-])?(field[ _-])?(blank|empty)|do[ _-]not[ _-]fill)($|[^a-z0-9])/i;
+function leaveBlank(el) { return /(^|[^a-z0-9])(leave[ _-](this[ _-]|it[ _-])?(field[ _-])?(blank|empty)|do[ _-]not[ _-]fill)($|[^a-z0-9])/i.test(labelText(el) + " " + attr(el, "name")); }
 // tabindex below 0 takes a field out of the tab order.
 function untabbable(el) { return el.hasAttribute("tabindex") && el.tabIndex < 0; }
 function trapLike(el, labelled) {
   return honeypot(el, labelled) || (attr(el, "tabindex") === "-1" && attr(el, "autocomplete") === "off")
-    || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"));
+    || leaveBlank(el);
 }
 // A required field named by visible text (a <label>, or aria-labelledby) is one
 // the form wants filled, so fill takes a pixel or clip on it for sr-only styling,
 // unless it is untabbable or its label says to leave it blank.
 function wanted(el) {
   if (!el || (!el.required && attr(el, "aria-required") !== "true")) return false;
-  if (untabbable(el) || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"))) return false;
+  if (untabbable(el) || leaveBlank(el)) return false;
   return (!!el.labels && Array.prototype.some.call(el.labels, vis))
     || attr(el, "aria-labelledby").split(/\s+/).some(function (id) { const t = id && el.ownerDocument.getElementById(id); return !!t && vis(t) && !!t.textContent.trim(); });
 }
@@ -3909,12 +3912,15 @@ function sibText(sib) {
 // Question text laid out before an unlabeled field: the nearest earlier sibling
 // of the field or of one of its 3 nearest ancestors, not crossing a list item,
 // fieldset or form, and stopping at a sibling that holds a control (that text
-// names the other control).
-function nearText(el) {
+// names the other control). skip: siblings passed over uncounted; stop: the
+// ancestor tags not crossed, in place of list item, fieldset and form.
+function nearText(el, skip, stop) {
   let n = el;
-  for (let up = 0; up < 4 && n && !/^(LI|FIELDSET|FORM|BODY)$/.test(n.tagName); up++, n = n.parentElement) {
+  for (let up = 0; up < 4 && n && !(stop || /^(LI|FIELDSET|FORM|BODY)$/).test(n.tagName); up++, n = n.parentElement) {
     let sib = n.previousElementSibling;
-    for (let k = 0; sib && k < 3; k++, sib = sib.previousElementSibling) {
+    for (let k = 0; sib && k < 3; sib = sib.previousElementSibling) {
+      if (skip && skip(sib)) continue;
+      k++;
       if (sib.matches(FIELD_CTL) || sib.querySelector(FIELD_CTL)) return "";
       if (!vis(sib)) continue;
       const t = sibText(sib);
@@ -4074,6 +4080,8 @@ function inOrder(have, want) {
   }
   return want.length > 0;
 }
+// A radio group as results name it.
+function groupId(g) { return "radiogroup " + JSON.stringify(clip(g.q, 80)); }
 // The best tier's hits: exact text, then a whole-word hit, then a word prefix,
 // then every typed word whole and in order; never mid-word. -> {hits, exact}
 function matchTier(list, key, want) {
@@ -4090,11 +4098,6 @@ function matchTier(list, key, want) {
     if (hits.length) return { hits: hits, exact: i === 0 };
   }
   return { hits: [], exact: false };
-}
-// Ties go to the shortest.
-function bestMatch(list, key, want) {
-  const hits = matchTier(list, key, want).hits;
-  return hits.length ? hits.sort(function (a, b) { return key(a).length - key(b).length; })[0] : null;
 }
 // -> {el} (the select or combobox), {group} (a radio group, only when groups,
 // a function listing them, is given) or {out}. A select and a radio group both
@@ -4115,7 +4118,7 @@ function findCtl(a, groups, only) {
   const sel = el && (!anyShown || vis(el)) ? el : null;
   const pool = anyShown ? shownGs : gs;
   if ((sel ? 1 : 0) + pool.length > 1) {
-    const c = (sel ? [ident(sel)] : []).concat(pool.map(function (g) { return "radiogroup " + JSON.stringify(clip(g.q, 80)); }));
+    const c = (sel ? [ident(sel)] : []).concat(pool.map(groupId));
     return { out: { ok: false, ambiguous: true, error: "several controls matched /" + a.label_pattern + "/i; give a more specific label_pattern", candidates: c.slice(0, 30) } };
   }
   if (sel) return { el: sel };
@@ -4124,6 +4127,8 @@ function findCtl(a, groups, only) {
   if (only) out.absent = true;
   return { out: out };
 }
+// The first 30 options' texts, for a miss's candidates.
+function optTexts(os) { return os.slice(0, 30).map(function (o) { return clip(o.text, 60); }); }
 function nativeOf(ctl) { return ctl.tagName === "SELECT" ? ctl : (ctl.querySelector && ctl.querySelector("select")) || null; }
 // text may be an ordered preference list: a missing or disabled one moves on to
 // the next, a tie stops there, and when all miss the first one's error says so.
@@ -4140,7 +4145,7 @@ function pickNative(nat, text) {
   }
   if (Array.isArray(text)) {
     first.tried = prefs;
-    if (!first.candidates) first.candidates = opts.slice(0, 30).map(function (o) { return clip(o.text, 60); });
+    if (!first.candidates) first.candidates = optTexts(opts);
   }
   return first;
 }
@@ -4152,7 +4157,7 @@ function nativeMatch(nat, opts, text) {
   // traded for a weaker enabled one; an enabled twin of equal rank still wins.
   const offOut = function (hits) {
     return { ok: false, el: ident(nat), error: "option " + JSON.stringify(clip(hits[0].text, 60)) + " is disabled in " + ident(nat) + "; the form will not submit it",
-      disabled: hits.slice(0, 5).map(function (o) { return clip(o.text, 60); }) };
+      disabled: optTexts(hits).slice(0, 5) };
   };
   const byValue = w ? opts.filter(function (o) { return norm(o.value) === w; }) : [];
   let opt = byValue.filter(on)[0];
@@ -4165,11 +4170,11 @@ function nativeMatch(nat, opts, text) {
     if (m.hits.length && !hits.length) return { out: offOut(m.hits) };
     if (hits.length > 1 && !m.exact) {
       return { out: { ok: false, ambiguous: true, error: "several options matched " + JSON.stringify(String(text)) + " equally; give a more specific text",
-        candidates: hits.slice(0, 30).map(function (o) { return clip(o.text, 60); }) } };
+        candidates: optTexts(hits) } };
     }
     opt = hits.find(function (o) { return norm(o.text) === w; }) || hits[0];
   }
-  return opt ? { opt: opt } : { out: { ok: false, error: "no matching option", candidates: opts.slice(0, 30).map(function (o) { return clip(o.text, 60); }) } };
+  return opt ? { opt: opt } : { out: { ok: false, error: "no matching option", candidates: optTexts(opts) } };
 }
 function setNative(nat, opts, opt, pref) {
   const prior = nat.selectedIndex;
@@ -4180,13 +4185,13 @@ function setNative(nat, opts, opt, pref) {
   } else setNativeValue(nat, opt.value);
   fire(nat, ["input", "change"]);
   const shown = nat.options[nat.selectedIndex];
-  if (shown === opt) return pref ? { ok: true, selected: clip(opt.text, 80), el: ident(nat), pref: pref } : { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
+  const ok = { ok: true, selected: clip(opt.text, 80), el: ident(nat) };
+  if (pref) ok.pref = pref;
+  if (shown === opt) return ok;
   const kept = clip(shown ? shown.text : "", 80);
   return { ok: false, el: ident(nat), kept: kept, error: ident(nat) + " kept " + JSON.stringify(kept) + (nat.selectedIndex === prior
     ? " instead of " + JSON.stringify(clip(opt.text, 60)) + "; the page reverted the pick" : "; the page changed the pick to another option") };
 }
-// What the box shows as a whole, or "" while it shows a placeholder.
-function shownWhole(box) { return !box || box.tagName === "INPUT" || box.querySelector("[class*=placeholder], [data-placeholder]") ? "" : norm(textOf(box)); }
 `;
 
 // select's own phases, not typeahead's: whether window.__perch_select is this
@@ -4234,6 +4239,13 @@ function rbTok() {
 
 // What select's picker steps use beyond the matching that fill_fields shares.
 const SELECT_PICK_LIB = String.raw`
+// Ties go to the shortest.
+function bestMatch(list, key, want) {
+  const hits = matchTier(list, key, want).hits;
+  return hits.length ? hits.sort(function (a, b) { return key(a).length - key(b).length; })[0] : null;
+}
+// What the box shows as a whole, or "" while it shows a placeholder.
+function shownWhole(box) { return !box || box.tagName === "INPUT" || box.querySelector("[class*=placeholder], [data-placeholder]") ? "" : norm(textOf(box)); }
 // fill may pass an ordered preference list; the first is the one typed as a filter.
 const wantL = Array.isArray(A.text) ? A.text.map(norm) : [norm(A.text)];
 const wantN = wantL[0];
@@ -4437,8 +4449,7 @@ function offDoc(el) {
 function checkTrap(el) {
   if (trapLike(el)) return true;
   if (!offDoc(el)) return false;
-  const ls = Array.from(el.labels || []).concat(el.closest("label") || []);
-  return !ls.some(labelSeen);
+  return !labelsOf(el).some(labelSeen);
 }
 // A checkbox or radio hidden under a visible, on-page <label> it names: a styled
 // box (display:none input, the label draws it), clicked like a shown one.
@@ -4447,9 +4458,7 @@ function checkTrap(el) {
 function labelSeen(l) {
   if (!vis(l) || offDoc(l) || l.closest("[aria-hidden=true]")) return false;
   const r = l.getBoundingClientRect();
-  if (r.width <= 1 || r.height <= 1) return false;
-  const m = /rect\(([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px,?\s*([-\d.]+)px/.exec(getComputedStyle(l).clip || "");
-  if (m && (m[2] - m[4] <= 1 || m[3] - m[1] <= 1)) return false;
+  if (r.width <= 1 || r.height <= 1 || pxClip(l)) return false;
   for (let p = l.parentElement, i = 0; p && i < 4; p = p.parentElement, i++) if (getComputedStyle(p).opacity === "0") return false;
   return true;
 }
@@ -4508,7 +4517,7 @@ function checkOne(a, only, onLand) {
   if (r.out) return r.out;
   const el = r.el;
   if (!el.matches(CHECKABLE)) return { ok: false, error: ident(el) + " is not a checkbox or radio" };
-  if (isDisabled(el) || el.closest("fieldset[disabled]")) return only ? { ok: true, kind: "check", el: ident(el), skipped: "disabled" } : { ok: false, kind: "check", el: ident(el), error: ident(el) + " is disabled; the form will not submit it" };
+  if (isDisabled(el) || el.closest("fieldset[disabled]")) return only ? { ok: true, kind: "check", el: ident(el), skipped: "disabled" } : Object.assign({ ok: false, kind: "check" }, unsentOut(el));
   const want = !!a.checked, was = isOn(el);
   const prev = onLand && role(el) === "radio" ? radioMates(el).filter(isOn)[0] || null : null;
   const out = { ok: true, kind: "check", el: ident(el), checked: want };
@@ -4549,7 +4558,7 @@ function radioGroups() {
 }
 function radioGroup(box, opts) {
   const names = opts.map(optName);
-  const shown = opts.some(function (o) { return vis(o) || Array.from(o.labels || []).concat(o.closest("label") || []).some(vis); });
+  const shown = opts.some(function (o) { return vis(o) || labelsOf(o).some(vis); });
   return { box: box, opts: opts, names: names, shown: shown, q: groupQuestion(box, opts) };
 }
 function optName(o) {
@@ -4565,7 +4574,7 @@ function groupQuestion(box, opts) {
   for (let n = box, up = 0; n && up < 4 && n !== document.body && !others(n); n = n.parentElement, up++) {
     if (attr(n, "aria-labelledby") || attr(n, "aria-label")) { const t = labelText(n); if (t) return t; }
     if (n.tagName === "FIELDSET") {
-      const lg = Array.prototype.find.call(n.children, function (c) { return c.tagName === "LEGEND"; });
+      const lg = legendOf(n);
       if (lg && textOf(lg).trim()) return clip(textOf(lg), 120);
     }
     if (n.tagName === "FORM") break;
@@ -4576,18 +4585,7 @@ function groupQuestion(box, opts) {
   };
   let n = opts[0];
   while (n.parentElement && n.parentElement !== box) n = n.parentElement;
-  for (let up = 0; n && up < 4 && !/^(FIELDSET|FORM|BODY)$/.test(n.tagName); up++, n = n.parentElement) {
-    let sib = n.previousElementSibling;
-    for (let k = 0; sib && k < 3; sib = sib.previousElementSibling) {
-      if (isOpt(sib)) continue;
-      k++;
-      if (sib.matches(FIELD_CTL) || sib.querySelector(FIELD_CTL)) return "";
-      if (!vis(sib)) continue;
-      const t = sibText(sib);
-      if (t) return t;
-    }
-  }
-  return "";
+  return nearText(n, isOpt, /^(FIELDSET|FORM|BODY)$/);
 }
 // The group el is an option of, or the box of.
 function groupOf(el, gs) {
@@ -4597,7 +4595,7 @@ function groupOf(el, gs) {
 // handlers run, then reads back which option the group shows checked.
 // A preference list is tried in order before anything is clicked; a tie stops.
 function pickRadio(g, text) {
-  const el = "radiogroup " + JSON.stringify(clip(g.q, 80));
+  const el = groupId(g);
   const prefs = Array.isArray(text) ? text : [text];
   let m = null, p = 0;
   for (; p < prefs.length; p++) {
@@ -4616,7 +4614,9 @@ function pickRadio(g, text) {
   const i = m.hits[0], o = g.opts[i];
   if (!isOn(o)) o.click();
   const on = g.opts.filter(isOn);
-  if (on.length === 1 && on[0] === o) return p ? { ok: true, kind: "radio", selected: clip(g.names[i], 80), el: el, pref: p } : { ok: true, kind: "radio", selected: clip(g.names[i], 80), el: el };
+  const ok = { ok: true, kind: "radio", selected: clip(g.names[i], 80), el: el };
+  if (p) ok.pref = p;
+  if (on.length === 1 && on[0] === o) return ok;
   return { ok: false, kind: "radio", el: el, error: "clicked " + JSON.stringify(clip(g.names[i], 80)) + " but it did not stick; the group reverted it",
     selected: on.length ? clip(g.names[g.opts.indexOf(on[0])], 80) : null };
 }
@@ -4676,14 +4676,12 @@ function snapVis(el) {
   const t = (el.type || "").toLowerCase();
   const tick = t === "radio" || t === "checkbox";
   if (!tick && attr(el, "role") !== "combobox") return false;
-  if (getComputedStyle(el).visibility === "hidden") return false;
-  for (let p = el; p; p = p.parentElement) if (getComputedStyle(p).display === "none") return false;
+  if (getComputedStyle(el).visibility === "hidden" || noneShown(el)) return false;
   if (!tick) { const c = ctlOf(el); return !!c && vis(c); }
-  const ls = el.labels ? Array.from(el.labels) : [];
-  const wrap = el.closest("label");
-  if (wrap) ls.push(wrap);
-  return ls.some(vis);
+  return labelsOf(el).some(vis);
 }
+// Its labels, and a <label> wrapping it.
+function labelsOf(el) { return Array.from(el.labels || []).concat(el.closest("label") || []); }
 // Typed text a typeahead has not taken: the hidden input in its own box, where
 // a pick lands, is still empty. An empty field is ruled out before the typeahead
 // checks, which query its ancestors.
@@ -4985,11 +4983,11 @@ const FILL_LIB = TOK_LIB + TYPEAHEAD_LIB + EMBED_LIB + HOLDS_LIB + FR_LIB + Stri
 function trapShaped(el) {
   if (!trapLike(el, wanted(el))) return false;
   if (!el.required && attr(el, "aria-required") !== "true") return true;
-  return honeypot(el, wanted(el)) || LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name"));
+  return honeypot(el, wanted(el)) || leaveBlank(el);
 }
 // fill's note on text it put in a field that looks like a bot trap.
 function trapWarning(el) {
-  const why = LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name")) ? "its label or name says to leave it blank"
+  const why = leaveBlank(el) ? "its label or name says to leave it blank"
     : honeypot(el, wanted(el)) ? "it sits where no one can see it" : "";
   // Date pickers and masks are out of the tab order with autofill off too, so
   // that alone never advises clearing what may be a right date.
@@ -5035,6 +5033,12 @@ function acToken(el) {
   for (let i = t.length - 1; i >= 0; i--) if (AC_TOKENS.test(t[i])) return t[i];
   return "";
 }
+const REVEAL_HOW = "after clicking one of reveal (click {label_pattern} it, then fill again)";
+// A field text can go in: no button, box or file input, no contenteditable=false.
+function fillable(el) {
+  if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return false;
+  return !el.hasAttribute("contenteditable") || editable(el);
+}
 // -> fill's result for one field {ref|selector|label_pattern, text}. only:
 // write nothing to a field that is absent, a trap, ambiguous or already set.
 // onLand(el, rich, prior) hears of each field or editor root that took the
@@ -5052,10 +5056,9 @@ function fillOne(a, only, onLand) {
   const text = a.text;
   // Compare non-whitespace counts: rich editors normalize whitespace on the way in.
   const want = Math.floor(text.replace(/\s/g, "").length * 0.9);
-  const sameNum = function (s) { return sameNumber(s, text); };
   const landed = function (s) {
     if (text === "") return String(s || "").trim() === "";
-    return String(s || "").replace(/\s/g, "").length >= want || sameNum(s);
+    return String(s || "").replace(/\s/g, "").length >= want || sameNumber(s, text);
   };
   const isField = function (el) { return el.tagName === "TEXTAREA" || el.tagName === "INPUT"; };
   function isRich(el) {
@@ -5092,12 +5095,10 @@ function fillOne(a, only, onLand) {
     if (!Object.prototype.hasOwnProperty.call(FORMATS, t)) {
       const v = el.value;
       if (text === "") return v === "";
-      const norm = function (s) { return s.trim().replace(/\s+/g, " "); };
-      if (norm(v).indexOf(norm(text)) >= 0) return true;
+      // A mask that puts back the number it held, in its own format, holds the text.
+      if (holdsText(v, text)) return true;
       // Length and digit-suffix checks can't tell a revert from a landed value.
       if (v !== prior) return landed(v);
-      // A mask that puts back the number it held, in its own format, holds the text.
-      if (sameNum(v)) return true;
       return { ok: false, el: ident(el), kept: clip(v, 60), error: ident(el) + " kept its previous value " + JSON.stringify(clip(v, 60)) + " instead of the text; the page reverted the write" };
     }
     if (exact(t, el.value)) return true;
@@ -5187,10 +5188,6 @@ function fillOne(a, only, onLand) {
     return near.get(p);
   };
   const EDITABLES = "textarea, input, [contenteditable], .fr-element, .ql-editor, .ProseMirror, .tox-edit-area iframe";
-  const fillable = function (el) {
-    if (el.tagName === "INPUT" && INPUT_SKIP.indexOf((el.type || "text").toLowerCase()) >= 0) return false;
-    return !el.hasAttribute("contenteditable") || editable(el);
-  };
   const inFrame = function (d) { try { return !!d && deepAll(EDITABLES, d).some(fillable); } catch (e) { return false; } };
   const crowd = new Map();
   const fieldsIn = function (p) {
@@ -5241,12 +5238,12 @@ function fillOne(a, only, onLand) {
   scored.sort(function (a, b) { return b.s - a.s; });
   if (only && !scored.length && !passed.length) return { ok: true, skipped: "absent" };
   if (!scored.length) {
-    const miss = "no fillable field matched /" + a.label_pattern + "/i; it may appear ";
+    const none = "no fillable field matched /" + a.label_pattern + "/i", miss = none + "; it may appear ";
     const reveal = revealers(re, nearHit);
     const framed = !reveal.length && frameHint(inFrame);
-    const out = framed ? { ok: false, error: "no fillable field matched /" + a.label_pattern + "/i" + framed }
+    const out = framed ? { ok: false, error: none + framed }
       : !reveal.length ? { ok: false, error: miss + "only after clicking a button" }
-      : { ok: false, error: miss + "after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
+      : { ok: false, error: miss + REVEAL_HOW, reveal: reveal };
     if (passed.length) {
       out.error += "; candidates sit near matching text but carry other labels";
       out.candidates = passed.slice(0, 5).map(function (el) {
@@ -5258,14 +5255,14 @@ function fillOne(a, only, onLand) {
   }
   let shown = scored.filter(function (c) { return fieldVis(c.el); });
   if (!shown.length) {
-    const el = ident(scored[0].el);
-    if (scored.every(function (c) { return trapLike(c.el); })) return only ? { ok: true, skipped: "trap", el: el } : { ok: false, el: el, error: el + " matched /" + a.label_pattern + "/i but it looks like a bot trap; leave it empty" };
+    const el = ident(scored[0].el), hit = el + " matched /" + a.label_pattern + "/i but ";
+    if (scored.every(function (c) { return trapLike(c.el); })) return only ? { ok: true, skipped: "trap", el: el } : { ok: false, el: el, error: hit + "it looks like a bot trap; leave it empty" };
     const reveal = revealers(re, nearHit);
-    const why = el + " matched /" + a.label_pattern + "/i but the field is hidden; ";
+    const why = hit + "the field is hidden; ", any = ", or pass its ref or selector to fill it anyway";
     const framed = !reveal.length && frameHint(inFrame);
-    if (framed) return { ok: false, el: el, error: why + framed.slice(2) + ", or pass its ref or selector to fill it anyway" };
-    return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button, or pass its ref or selector to fill it anyway" }
-      : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
+    if (framed) return { ok: false, el: el, error: why + framed.slice(2) + any };
+    return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button" + any }
+      : { ok: false, el: el, error: why + "it may show " + REVEAL_HOW, reveal: reveal };
   }
   // A shown field that looks like a trap (trapLike: untabbable with autofill
   // off, even when required, or named to be left blank) yields to a normal match scoring
@@ -5283,7 +5280,7 @@ function fillOne(a, only, onLand) {
     return tied.length > 0 && !tied.some(function (n) { return named(n.el); });
   };
   const trap = function (c) {
-    return flagged.indexOf(c) >= 0 && !(!honeypot(c.el, wanted(c.el)) && !LEAVE_BLANK.test(labelText(c.el) + " " + attr(c.el, "name")) && betterLabel(c));
+    return flagged.indexOf(c) >= 0 && !(!honeypot(c.el, wanted(c.el)) && !leaveBlank(c.el) && betterLabel(c));
   };
   const firstNormal = shown.find(function (c) { return !trap(c); });
   if (firstNormal) shown = shown.filter(function (c) { return !trap(c) || c.s - firstNormal.s > 10; });
@@ -6195,7 +6192,7 @@ function chosen(c) {
     return on ? c.group.names[c.group.opts.indexOf(on)] : "";
   }
   const nat = nativeOf(c.el);
-  if (nat) return nothingChosen(nat) ? "" : nat.options[nat.selectedIndex].text.trim();
+  if (nat) return nothingChosen(nat) ? "" : optText(nat);
   const ctl = c.el;
   if (ctl.tagName === "INPUT") {
     const comp = taParts(ctl).comp;
@@ -6258,9 +6255,7 @@ function twin(it) {
     return nat ? { el: nat } : null;
   }
   const re = new RegExp(f.label_pattern, "i");
-  const all = Array.prototype.filter.call(document.querySelectorAll("textarea, input, [contenteditable]"), function (e) {
-    return (e.tagName !== "INPUT" || INPUT_SKIP.indexOf((e.type || "text").toLowerCase()) < 0) && (!e.hasAttribute("contenteditable") || editable(e));
-  });
+  const all = Array.prototype.filter.call(document.querySelectorAll("textarea, input, [contenteditable]"), fillable);
   const hits = all.filter(function (e) { return re.test(labelText(e)); }).concat(all.filter(function (e) { return !re.test(labelText(e)) && re.test(hintText(e)); }));
   x = hits.filter(fieldVis)[0] || hits[0];
   return ok(x) ? { el: x } : null;
@@ -6282,22 +6277,13 @@ function stepMoved(x) {
   return d;
 }
 function drift(it, again) {
-  let el = it.el;
+  const el = it.el, miss = function (why, o) { return Object.assign({ ok: false, kind: it.kind, el: it.id }, o, { error: it.id + why + AFTER }); };
   if (!el.isConnected) {
-    const t = !again && twin(it);
-    if (!t) return { ok: false, kind: it.kind, el: it.id, error: it.id + " was removed" + AFTER };
-    const n = Object.assign({}, it, t);
-    if (!t.group && it.group) {
-      const g = radioGroups().find(function (x) { return x.opts.indexOf(t.el) >= 0; });
-      if (!g) return { ok: false, kind: it.kind, el: it.id, error: it.id + " was removed" + AFTER };
-      n.group = g;
-    }
-    return drift(n, true);
+    const t = !again && twin(it), n = Object.assign({}, it, t);
+    if (t && !t.group && it.group) n.group = radioGroups().find(function (x) { return x.opts.indexOf(t.el) >= 0; });
+    return t && (n.group || !it.group) ? drift(n, true) : miss(" was removed");
   }
-  if ("checked" in it) {
-    if (isOn(el) === it.checked) return null;
-    return { ok: false, kind: it.kind, el: it.id, checked: !it.checked, error: it.id + (it.checked ? " was cleared" : ' changed to "checked"') + AFTER };
-  }
+  if ("checked" in it) return isOn(el) === it.checked ? null : miss(it.checked ? " was cleared" : ' changed to "checked"', { checked: !it.checked });
   let now;
   if (it.group) {
     if (isOn(el)) return null;
@@ -6310,7 +6296,7 @@ function drift(it, again) {
     if (now.trim() && (now === it.want || holdsText(now, it.text))) return null;
   }
   const kept = clip(now, 60);
-  return { ok: false, kind: it.kind, el: it.id, kept: kept, error: it.id + (kept ? " changed to " + JSON.stringify(kept) : " was cleared") + AFTER };
+  return miss(kept ? " changed to " + JSON.stringify(kept) : " was cleared", { kept: kept });
 }
 const results = [];
 const stop = function (i, tok) {
@@ -6327,7 +6313,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
     const c = findCtl(f, radioGroups, A.only);
     const v = !c.out && A.only && chosen(c);
     if (c.out) o = c.out.absent ? { ok: true, skipped: "absent" } : c.out;
-    else if (v) o = { ok: true, skipped: "has value", el: c.group ? "radiogroup " + JSON.stringify(clip(c.group.q, 80)) : ident(nativeOf(c.el) || c.el), value: clip(v, 60) };
+    else if (v) o = { ok: true, skipped: "has value", el: c.group ? groupId(c.group) : ident(nativeOf(c.el) || c.el), value: clip(v, 60) };
     else if (c.group) {
       const prev = c.group.opts.filter(isOn)[0] || null;
       o = pickRadio(c.group, f.option);
