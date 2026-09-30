@@ -996,3 +996,87 @@ test("custom combobox: another option whose text starts like the pick is not the
     assert.match(o.error, /^pressed "Blue" but the control shows /, what);
   }
 });
+
+// A control inside a modal: the page's own Escape handler (on the dialog or on
+// the document) closes the whole dialog, so an Escape of select's own to close
+// its popup would take the form with it. The popup is closed another way, and
+// a dialog that closed anyway is reported.
+const MODAL = (kind) => `${kind === "dialog" ? "<dialog id=dlg open>" : "<div id=dlg role=dialog aria-modal=true>"}<label id=ml>Color</label><div id=mc role=combobox aria-labelledby=ml aria-expanded=false aria-controls=mm tabindex=0><span class=v>Choose</span></div><input name=other>${kind === "dialog" ? "</dialog>" : "</div>"}
+  <ul id=mm role=listbox hidden><li role=option>Red</li><li role=option>Blue</li></ul>`;
+// toggles: a press on the open control closes it. listEsc: where the page's
+// list hears Escape ("document", "list", or none). dlgEsc: where the dialog's
+// close-on-Escape handler listens ("document" or "dialog").
+const MODAL_JS = ({ toggles, listEsc, dlgEsc, kind }) => `const c = document.getElementById('mc'), m = document.getElementById('mm'), d = document.getElementById('dlg');
+  const shut = () => { m.hidden = true; c.setAttribute('aria-expanded', 'false'); };
+  window.dlgCloses = 0;
+  c.addEventListener('click', () => { if (${toggles} && !m.hidden) return shut(); m.hidden = false; c.setAttribute('aria-expanded', 'true'); });
+  m.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => { c.querySelector('.v').textContent = 'Something else'; }));
+  ${listEsc === "document" ? "document" : listEsc === "list" ? "m" : "null"}?.addEventListener('keydown', (e) => { if (e.key === 'Escape') shut(); });
+  ${dlgEsc === "document" ? "document" : "d"}.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    window.dlgCloses++;
+    ${kind === "dialog" ? "d.removeAttribute('open');" : "d.hidden = true;"}
+  });`;
+const dlgOpen = (dom, kind) => { const d = dom.document.getElementById("dlg"); return kind === "dialog" ? d.hasAttribute("open") : !d.hidden; };
+
+test("custom combobox in a modal: a refusal closes the popup without closing the dialog", async () => {
+  for (const kind of ["aria", "dialog"]) {
+    for (const dlgEsc of ["document", "dialog"]) {
+      for (const [what, text] of [["unshown pick", "Blue"], ["miss", "Zebra"]]) {
+        const at = `${kind} ${dlgEsc} ${what}`;
+        const { dom } = onPage(MODAL(kind), MODAL_JS({ toggles: true, listEsc: "document", dlgEsc, kind }));
+        const { o } = await select({ label_pattern: "color", text });
+        assert.equal(o.ok, false, at + " " + JSON.stringify(o));
+        assert.equal(dlgOpen(dom, kind), true, at);
+        assert.equal(dom.dlgCloses, 0, at);
+        assert.equal(dom.document.getElementById("mm").hidden, true, at);
+        assert.equal(o.dialogClosed, undefined, at);
+        assert.equal(o.open, undefined, at);
+      }
+    }
+  }
+});
+
+test("custom combobox in a modal: a popup that won't toggle gets Escape on its own list, and a dialog that closes anyway is reported", async () => {
+  for (const kind of ["aria", "dialog"]) {
+    // The list hears Escape itself and sits outside the dialog: the dialog's own handler never hears it.
+    for (const listEsc of ["list", "document"]) {
+      const { dom } = onPage(MODAL(kind), MODAL_JS({ toggles: false, listEsc, dlgEsc: "dialog", kind }));
+      const { o } = await select({ label_pattern: "color", text: "Blue" });
+      const at = `${kind} list heard at ${listEsc}`;
+      assert.equal(o.ok, false, at + " " + JSON.stringify(o));
+      assert.equal(dlgOpen(dom, kind), true, at);
+      assert.equal(dom.document.getElementById("mm").hidden, true, at);
+      assert.equal(o.dialogClosed, undefined, at);
+    }
+    // A document-level handler closes the dialog on any Escape: the refusal says so.
+    const { dom } = onPage(MODAL(kind), MODAL_JS({ toggles: false, listEsc: "document", dlgEsc: "document", kind }));
+    const { o } = await select({ label_pattern: "color", text: "Blue" });
+    assert.equal(o.ok, false, kind + " " + JSON.stringify(o));
+    assert.equal(dlgOpen(dom, kind), false, kind);
+    assert.equal(o.dialogClosed, true, kind);
+    assert.match(o.error, /^pressed "Blue" but the control shows "Something else"; not verified/);
+    // A list inside the dialog gets no Escape at all: it is left open, and the refusal says so.
+    const inside = MODAL(kind).replace(/(<\/dialog>|<\/div>)\n(\s*<ul id=mm[^]*<\/ul>)/, "$2$1");
+    assert.notEqual(inside, MODAL(kind));
+    const w = onPage(inside, MODAL_JS({ toggles: false, listEsc: "document", dlgEsc: "dialog", kind }));
+    const { o: x } = await select({ label_pattern: "color", text: "Blue" });
+    assert.equal(x.ok, false, kind + " inside " + JSON.stringify(x));
+    assert.equal(x.open, true, kind + " inside");
+    assert.equal(x.dialogClosed, undefined, kind + " inside");
+    assert.equal(dlgOpen(w.dom, kind), true, kind + " inside");
+    assert.equal(w.dom.dlgCloses, 0, kind + " inside");
+  }
+});
+
+// The modal rule never costs a pick outside a modal or a verified pick inside one.
+test("custom combobox: outside a modal a refusal still Escapes the control; a verified pick in a modal answers as before", async () => {
+  const { dom } = onPage(MODAL("aria").replace("role=dialog aria-modal=true", ""), MODAL_JS({ toggles: true, listEsc: "document", dlgEsc: "dialog", kind: "aria" }) + "window.escs = 0; document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.escs++; });");
+  const { o } = await select({ label_pattern: "color", text: "Blue" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(dom.escs, 1);
+  const ok = onPage(MODAL("aria"), MODAL_JS({ toggles: true, listEsc: "document", dlgEsc: "document", kind: "aria" }).replace("'Something else'", "o.textContent") + "m.querySelectorAll('li').forEach((o) => o.addEventListener('click', () => { m.hidden = true; c.setAttribute('aria-expanded', 'false'); }));");
+  const { o: v } = await select({ label_pattern: "color", text: "Blue" });
+  assert.deepEqual(v, { ok: true, selected: "Blue", el: `combobox "Color"` });
+  assert.equal(dlgOpen(ok.dom, "aria"), true);
+});

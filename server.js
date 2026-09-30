@@ -4601,10 +4601,34 @@ function stillOpen(s) {
 }
 // Escape inside the open popup, where its own key handler listens (a document-level
 // one hears it too): the focused element there, else its search box, else the control.
+// A control inside a modal is the exception: the dialog's own Escape handler, on
+// the dialog or the document, may close the whole dialog, form and all. There the
+// popup closes by a second press on what select pressed to open it (a toggle), else
+// by Escape on the popup's own list or focused element when that sits outside the
+// dialog, and never by Escape inside it. A dialog that closed anyway sets s.dlgGone,
+// which the refusal reports (dialogClosed: true).
 function escapeOwn(s) {
-  const a = document.activeElement;
-  pressEscape(inPop(s, a) ? a : s.filter && s.filter.isConnected ? s.filter : s.input || s.ctl);
+  const a = document.activeElement, m = modalOf(s);
+  if (!m) return pressEscape(inPop(s, a) ? a : s.filter && s.filter.isConnected ? s.filter : s.input || s.ctl);
+  const said = function () { return [s.ctl, s.input].some(function (e) { return e && attr(e, "aria-expanded") === "true"; }); };
+  const saidOpen = said();
+  if (s.opened && s.openEl && s.openEl.isConnected) {
+    press(s.openEl);
+    if (saidOpen ? !said() : !stillOpen(s)) return;
+  }
+  const opt = ownOptions(s)[0];
+  const list = inPop(s, a) ? a : linkedLists(s)[0] || s.pop || (opt && (opt.closest("[role=listbox]") || opt.parentElement));
+  if (list && list.isConnected && !m.contains(list)) pressEscape(list);
+  if (!modalUp(m)) s.dlgGone = true;
 }
+// The open modal holding the control, unless it is the control's own popup.
+function modalOf(s) {
+  const m = s.ctl.closest && s.ctl.closest("dialog, [aria-modal=true]");
+  if (!m || !modalUp(m) || m === s.pop || linkedLists(s).indexOf(m) >= 0) return null;
+  return m;
+}
+function modalUp(m) { return m.isConnected && (m.tagName === "DIALOG" ? m.hasAttribute("open") : attr(m, "aria-modal") === "true") && vis(m); }
+function dlgSays(s, o) { if (s.dlgGone) o.dialogClosed = true; return o; }
 function inPop(s, a) { return !!a && (linkedLists(s).some(function (m) { return m.contains(a); }) || (!!s.pop && s.pop.contains(a))); }
 // A background tab's blur() fires no events, so send them when the page lacks focus.
 function taBlur(el) {
@@ -6857,7 +6881,7 @@ untype(s);
 const shut = s.opened && stillOpen(s);
 if (shut) escapeOwn(s);
 scrollHome(s);
-const told = function (o) { return shut ? saysOpen(function () { return stillOpen(s); }, o) : o; };
+const told = function (o) { return dlgSays(s, shut ? saysOpen(function () { return stillOpen(s); }, o) : o); };
 if (s.disabled) return told({ ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands, tok: s.tok });
 if (!cands.length) return told({ ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [], tok: s.tok });
 const out = { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands, tok: s.tok };
@@ -6960,7 +6984,7 @@ const answer = function (o) {
     }
   }
   scrollHome(s);
-  return o;
+  return dlgSays(s, o);
 };
 if (!typedIn) escOwn();
 // An input's own value first: its wrapper may hold only its label.
