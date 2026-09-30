@@ -1103,3 +1103,31 @@ test("custom combobox in a modal: another open menu gets no Escape the dialog he
   await select({ label_pattern: "^color", text: "Blue" });
   assert.equal(dom.othEsc, 1);
 });
+
+// The control's own format proves the pick only when the display moved: a
+// control that already showed "New York - Brooklyn" (or a placeholder like
+// "Cherry (none)") and ignores the press shows the same text after it.
+test("custom combobox: a formatted or value display that was already there before the press is not the pick", async () => {
+  const ignore = (items, before, attrs = "") => FMT(items, attrs).replace("<span class=placeholder>Pick one</span>", `<span class=v>${before}</span>`);
+  const js = `const c = document.getElementById('fc'), m = document.getElementById('fm');
+    c.addEventListener('click', () => { m.hidden = false; c.setAttribute('aria-expanded', 'true'); });`;
+  for (const [what, html, pick] of [
+    ["separator form", ignore(["New York", "Newark"], "New York - Brooklyn"), "New York"],
+    ["placeholder text", ignore(["Cherry", "Apple"], "Cherry (none)"), "Cherry"],
+    ["placeholder class", FMT(["Cherry", "Apple"]).replace("Pick one", "Cherry (none)"), "Cherry"],
+    ["value form", ignore(["Red", "Blue"], "blue-1", "value=$v-1"), "Blue"],
+  ]) {
+    onPage(html, js);
+    const { o } = await select({ label_pattern: "fruit", text: pick });
+    assert.equal(o.ok, false, what + " " + JSON.stringify(o));
+  }
+  // An input that already held the formatted value.
+  const { dom } = onPage(`<form><label for=t>Team</label><input id=t role=combobox aria-controls=tl aria-expanded=true value="Bravo (b)"><input name=a><input name=b></form>
+    <ul id=tl role=listbox><li role=option>Alpha</li><li role=option>Bravo</li></ul>`);
+  const { o } = await select({ label_pattern: "team", text: "Bravo" });
+  assert.equal(o.ok, false, "input " + JSON.stringify(o));
+  assert.equal(dom.document.getElementById("t").value, "Bravo (b)");
+  // A display that moved into the format still holds, from an older formatted value too.
+  onPage(ignore(["Red", "Blue", "Green"], "Red - #f00"), FMT_JS("(t) => t + ' - #00f'"));
+  assert.equal((await select({ label_pattern: "fruit", text: "Blue" })).o.ok, true);
+});

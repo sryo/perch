@@ -6758,6 +6758,9 @@ const s = { key: selKey, tok: rbTok(), ctl: ctl, input: input, box: box, polls: 
 // A text input's value and hidden companion go back after a miss: opening or
 // closing a typeahead may clear the text it holds.
 if (input && input.tagName === "INPUT") { s.prior = input.value; s.comp = taParts(input).comp; s.priorComp = s.comp && s.comp.value; }
+// Every text the control showed before the press, placeholders included:
+// select_read's formatted forms of the pick count only once the display moved.
+s.was = [box].concat(Array.from(box.querySelectorAll ? box.querySelectorAll("*") : []).slice(0, 200)).map(ownText).concat(textOf(box), s.prior || "").map(norm).filter(Boolean);
 // Other open menus would cover this one or grab its keys: Escape them first, but
 // not a combobox inside this control's own popup (cmdk's search box), and not
 // while the control or that menu sits in an open modal, whose close-on-Escape
@@ -6998,10 +7001,12 @@ const iv = (s.input && s.input.value) || "";
 // A single pick may show in the control's own format: the option's text, then a
 // separator and detail ("Cherry (cherry)", "Blue - #00f", "Blue · primary"),
 // or the option's value or data-value. Never text that another option of the
-// list, longer than the pick, equals or starts ("Blue Jay" beside "Blue").
+// list, longer than the pick, equals or starts ("Blue Jay" beside "Blue"), nor
+// text the control already showed before the press (s.was): a control that
+// ignored the press still shows it.
 const asPicked = function (n) {
   if (n === s.pickedN) return true;
-  if (s.multi || !s.pickedN) return false;
+  if (s.multi || !s.pickedN || (s.was || []).indexOf(n) >= 0) return false;
   if ((s.optVals || []).indexOf(n) >= 0) return true;
   return n.indexOf(s.pickedN) === 0 && /^(\s*[(\[]|\s+[-|\/#\u00b7\u2022]\s*\S|:\s)/.test(n.slice(s.pickedN.length)) &&
     !(s.others || []).some(function (o) { return o.length > s.pickedN.length && n.indexOf(o) === 0; });
