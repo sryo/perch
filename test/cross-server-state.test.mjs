@@ -993,3 +993,15 @@ test("screenshot scripts are byte-identical across calls, with no token in A", a
   assert.equal(runs[0].size, 3, "clip, paint poll and restore");
   for (const js of runs[0]) assert.ok(!/\d+\.[a-z0-9]{8}/.test(js.match(/\nconst A = (.*);\n/)[1]), "no token in A");
 });
+
+test("file_upload: a page that navigated before the drop says the zone left, not that another call took over", async (t) => {
+  const path = upFile(t);
+  const { dom } = onPage(ZONES, ZONES_JS);
+  beforeEvals(dom, (n, js) => {
+    if (js.includes(DROP) && !js.includes(SHOWN)) { delete dom.__perch_up; delete dom.__perch_tok_n; dom.document.body.innerHTML = "<p>next page</p>"; }
+  });
+  const { o } = await call("file_upload", { path, selector: "#za" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.ok(!o.error.startsWith(UPLOAD_TAKEN), o.error);
+  assert.match(o.error, /left the page/);
+});

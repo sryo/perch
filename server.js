@@ -7454,7 +7454,7 @@ async function fileUpload(args = {}) {
     const drop = await runPage("file_upload", "file_upload_drop", key, target);
     if (drop && drop.__perch_error != null) return drop;
     if (drop && drop.lost) return taken("no drop was made");
-    if (drop && drop.tok !== tok) return taken("the drop ran on the other call's state");
+    if (drop && drop.tok !== undefined && drop.tok !== tok) return taken("the drop ran on the other call's state");
     if (drop) delete drop.tok;
     r = { ...r, ...drop };
   }
