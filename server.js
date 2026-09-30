@@ -4832,6 +4832,19 @@ function scrollBack(s) {
   if (window.scrollX !== s.x || window.scrollY !== s.y) window.scrollTo({ left: s.x, top: s.y, behavior: "instant" });
 }
 `;
+// select's scroll to press a control, undone once the call answers: s.scroll
+// holds the offsets before (from) and after (to) select_start's open. Any of
+// them moved since means the page scrolled on its own, and its scroll stays.
+// Needs SCROLL_LIB.
+const SCROLL_HOME_LIB = String.raw`
+function scrollMoved(snap) {
+  return window.scrollX !== snap.x || window.scrollY !== snap.y || snap.els.some(function (e) { return e[0].scrollLeft !== e[1] || e[0].scrollTop !== e[2]; });
+}
+function scrollHome(s) {
+  if (s.scroll && !scrollMoved(s.scroll.to)) scrollBack(s.scroll.from);
+  s.scroll = null;
+}
+`;
 const TYPEAHEAD_LIB = TA_BOX_LIB + SCROLL_LIB + String.raw`
 // Typed with input events and no blur, so the widget runs its own lookup.
 // Focusing leaves the window and el's scrolled ancestors where they were, a page
@@ -6395,7 +6408,7 @@ return out;
 
   // select runs in phases polled from JXA (runtime `select`), never with page
   // timers: Chrome throttles those to ~1/s in background tabs.
-  select_start: TOK_LIB + TYPEAHEAD_LIB + SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + HOLDS_LIB + FR_LIB + String.raw`
+  select_start: TOK_LIB + TYPEAHEAD_LIB + SCROLL_HOME_LIB + SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + HOLDS_LIB + FR_LIB + String.raw`
 const c = findCtl(A);
 if (c.out) return c.out;
 const ctl = c.el;
@@ -6435,7 +6448,7 @@ if (!open) {
   // earlier select would otherwise stay offscreen on an identical call.
   // Only above or below the viewport: one wider than it, or a slide off to the
   // side, is where the page put it, and so is one an ancestor clips.
-  const at = (wrap || ctl).getBoundingClientRect();
+  const at = (wrap || ctl).getBoundingClientRect(), from = scrollsAt(wrap || ctl);
   let clipped = false;
   for (let p = (wrap || ctl).parentElement; p && p !== document.body && !clipped; p = p.parentElement) { const cs = getComputedStyle(p); clipped = /^(hidden|clip)$/.test(cs.overflowY || cs.overflow); }
   if ((at.top < 0 || at.bottom > window.innerHeight) && !clipped) {
@@ -6443,6 +6456,7 @@ if (!open) {
   }
   pressFocus(wrap || ctl, input || ctl);
   s.opened = true;
+  if (scrollMoved(from)) s.scroll = { from: from, to: scrollsAt(wrap || ctl) };
 }
 s.openEl = wrap || ctl;
 window.__perch_select = s;
@@ -6524,7 +6538,7 @@ return wait;
 
   // Candidates come from the control's own list, unfiltered when it was seen; the
   // typed filter is cleared and a menu select opened is closed again.
-  select_miss: TYPEAHEAD_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + EDIT_LIB + SELECT_OWN_LIB + String.raw`
+  select_miss: TYPEAHEAD_LIB + SCROLL_HOME_LIB + TA_UI_LIB + SELECT_LIB + SELECT_PICK_LIB + EDIT_LIB + SELECT_OWN_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "select state lost (did the page navigate?)" };
 if (selLost) return selLost;
@@ -6536,6 +6550,7 @@ if (s.prior != null && s.input.value !== s.prior) { setNativeValue(s.input, s.pr
 if (s.comp && s.comp.value !== s.priorComp) setNativeValue(s.comp, s.priorComp);
 // Escape on a closed Downshift menu clears its selection, so only an open one gets it.
 if (s.opened && stillOpen(s)) { escapeOwn(s); unstick(s, function () { return stillOpen(s); }); }
+scrollHome(s);
 if (s.disabled) return { ok: false, error: "the matching option " + JSON.stringify(s.disabled) + " is disabled", candidates: cands, tok: s.tok };
 if (!cands.length) return { ok: false, error: "the control's option list did not open or is empty" + (A.trusted ? "" : "; retry with select {trusted:true}"), candidates: [], tok: s.tok };
 const out = { ok: false, error: wantN ? "no option of this control matched" : "empty text: candidates lists this control's options", candidates: cands, tok: s.tok };
@@ -6586,7 +6601,7 @@ return { ok: true, tok: s.tok };
 
   // Until the control shows the choice: {pending} (keep polling); A.final answers ok:false.
   // A.keep leaves an open popup alone, so a pick that didn't show can still be clicked.
-  select_read: SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + String.raw`
+  select_read: SCROLL_LIB + SCROLL_HOME_LIB + SELECT_LIB + SELECT_PICK_LIB + SELECT_OWN_LIB + String.raw`
 const s = window.__perch_select;
 if (!s) return { ok: false, error: "the page changed after the pick was pressed; not verified" };
 if (selLost) return selLost;
@@ -6624,9 +6639,11 @@ const escOwn = function () {
   s.closed = true;
   if (!s.shut && openNow()) escapeOwn(s);
 };
-// A refusal leaves nothing open that select opened.
-const refuse = function (o) {
-  if (s.opened && !s.shut && !A.keep) unstick(s, openNow);
+// A refusal leaves nothing open that select opened; any answer puts back the
+// scroll select made to press the control.
+const answer = function (o) {
+  if (o.ok === false && s.opened && !s.shut && !A.keep) unstick(s, openNow);
+  scrollHome(s);
   return o;
 };
 if (!typedIn) escOwn();
@@ -6659,7 +6676,7 @@ if (typedIn) {
   }
 }
 if (s.dropped && !(seen && s.input.value === iv)) {
-  return refuse({ ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control dropped it when its popup was closed (it shows ' + (s.input.value ? JSON.stringify(clip(s.input.value, 60)) : "nothing") + "); not verified", pressed: s.picked, el: ident(s.ctl), value: clip(s.input.value, 120), tok: s.tok });
+  return answer({ ok: false, error: 'pressed "' + clip(s.picked, 60) + '" but the control dropped it when its popup was closed (it shows ' + (s.input.value ? JSON.stringify(clip(s.input.value, 60)) : "nothing") + "); not verified", pressed: s.picked, el: ident(s.ctl), value: clip(s.input.value, 120), tok: s.tok });
 }
 // A widget that fills the input and keeps its list open on pick (MUI's
 // disableCloseOnSelect, free solo) shows the same, so the error says how to check.
@@ -6669,7 +6686,7 @@ const out = seen
     (typedOnly ? ": " + (A.trusted ? "" : "retry with select {trusted:true}, or ") + "check the field (a list that stays open on pick shows this too)" : ""), pressed: s.picked, el: ident(s.ctl), value: shown, tok: s.tok };
 if (s.pref) out.pref = s.pref;
 if (s.already) out.note = "already chosen; not pressed again, since a press would toggle it off";
-return seen ? out : refuse(out);
+return answer(out);
 `,
 
   // A.probe: a click that opens a new tab stops before clicking, keeping a

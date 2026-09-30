@@ -540,39 +540,71 @@ test("custom combobox: a page-wide form or main around the bare input is not its
 
 // select opens a custom control by pressing and focusing it; that focus brings
 // an offscreen control into view, as a person reaching for it would, so the
-// list opens where the pick can land.
-test("custom combobox: select brings an offscreen control into view through its focus", async () => {
-  const { dom } = onPage(CUSTOM, CUSTOM_JS + `
+// list opens where the pick can land. Once the call answers, the page goes
+// back where it was.
+test("custom combobox: select brings an offscreen control into view through its focus, then scrolls back", async () => {
+  const { dom } = onPage(CUSTOM, CUSTOM_JS.replace("cb.querySelector('.v').textContent = o.textContent;", "cb.querySelector('.v').textContent = o.textContent; window.atPick = window.scrollY;") + `
     const focus = HTMLElement.prototype.focus;
     HTMLElement.prototype.focus = function (o) { if (!(o && o.preventScroll)) window.scrollTo(0, 900); return focus.call(this, o); };`);
   const { o } = await select({ label_pattern: "level", text: "senior" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(dom.scrollY, 900);
+  assert.equal(dom.atPick, 900);
+  assert.equal(dom.scrollY, 0);
 });
 
-// A page that swaps the input for an empty clone on pick: the new node's box is
-// chosen by the same rule as at start, so a form's or body's text never reads
-// as the pick.
+// select may scroll a control into view to press it (centered, every call:
 // Chrome scrolls on focus() only when focus moves, so a control still focused
-// from an earlier select stayed offscreen while a first call brought it into
-// view. select centers an offscreen control itself before pressing it, every call.
-test("custom combobox: two identical selects on an offscreen control leave the page scrolled the same", async () => {
-  const closes = CUSTOM_JS.replace("cb.querySelector('.v').textContent = o.textContent;",
-    "cb.querySelector('.v').textContent = o.textContent; cb.setAttribute('aria-expanded', 'false'); document.getElementById('menu').innerHTML = '';");
-  const { dom } = onPage(CUSTOM.replace("tabindex=0", "tabindex=0 data-rect=0,3000,100,20").replace('<div class="select__control">', '<div class="select__control" data-rect="0,3000,100,20">'), closes + `
-    window.intoView = [];
-    HTMLElement.prototype.scrollIntoView = function (o) { window.intoView.push(o && o.block); window.scrollTo(0, 2573); };
+// from an earlier select would stay offscreen), and once the pick is verified
+// or refused puts every offset it moved back, unless the page moved one since.
+// Repeated identical calls end where each started.
+const SCROLLS = (y) => `
+    window.intoView = []; window.atPick = [];
+    HTMLElement.prototype.scrollIntoView = function (o) { window.intoView.push(o && o.block); window.scrollTo(0, ${y}); };
     const focus = HTMLElement.prototype.focus;
-    HTMLElement.prototype.focus = function (o) { if (!(o && o.preventScroll) && document.activeElement !== this) window.scrollTo(0, 2573); return focus.call(this, o); };`);
+    HTMLElement.prototype.focus = function (o) { if (!(o && o.preventScroll) && document.activeElement !== this) window.scrollTo(0, ${y}); return focus.call(this, o); };`;
+const placed = (rect) => CUSTOM.replace("tabindex=0", `tabindex=0 data-rect=${rect}`).replace('<div class="select__control">', `<div class="select__control" data-rect="${rect}">`);
+const closesOn = (extra = "") => CUSTOM_JS.replace("cb.querySelector('.v').textContent = o.textContent;",
+  "cb.querySelector('.v').textContent = o.textContent; cb.setAttribute('aria-expanded', 'false'); document.getElementById('menu').innerHTML = ''; window.atPick.push(window.scrollY);" + extra);
+
+test("custom combobox: repeated selects on a control below the viewport scroll to it and back, every call alike", async () => {
+  const { dom } = onPage(placed("0,3000,100,20"), closesOn() + SCROLLS(2573));
   const ys = [];
-  for (const text of ["senior", "junior"]) {
+  for (const text of ["senior", "junior", "senior"]) {
     dom.scrollTo(0, 0);
     const { o } = await select({ label_pattern: "level", text });
     assert.equal(o.ok, true, text + " " + JSON.stringify(o));
     ys.push(dom.scrollY);
   }
-  assert.deepEqual(ys, [2573, 2573]);
-  assert.deepEqual([...dom.intoView], ["center", "center"]);
+  assert.deepEqual(ys, [0, 0, 0]);
+  assert.deepEqual([...dom.atPick], [2573, 2573, 2573]);
+  assert.deepEqual([...dom.intoView], ["center", "center", "center"]);
+});
+
+test("custom combobox: a control above the viewport is scrolled to and the page goes back, every call alike", async () => {
+  const { dom } = onPage(placed("0,-380,100,20"), closesOn() + SCROLLS(0));
+  const ys = [];
+  for (const text of ["senior", "junior"]) {
+    dom.scrollTo(0, 400);
+    assert.equal((await select({ label_pattern: "level", text })).o.ok, true, text);
+    ys.push(dom.scrollY);
+  }
+  assert.deepEqual(ys, [400, 400]);
+  assert.deepEqual([...dom.atPick], [0, 0]);
+});
+
+test("custom combobox: a refused select scrolls back too", async () => {
+  const { dom } = onPage(placed("0,3000,100,20"), closesOn() + SCROLLS(2573));
+  const { o } = await select({ label_pattern: "level", text: "principal" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(dom.scrollY, 0);
+});
+
+// A page that scrolls on its own after the press (a wizard moving to its next
+// step) keeps its scroll: select puts back only what nothing moved since.
+test("custom combobox: a scroll the page made after select's own is kept", async () => {
+  const { dom } = onPage(placed("0,3000,100,20"), closesOn(" window.scrollTo(0, 1200);") + SCROLLS(2573));
+  assert.equal((await select({ label_pattern: "level", text: "senior" })).o.ok, true);
+  assert.equal(dom.scrollY, 1200);
 });
 
 // Only a control above or below the viewport is scrolled to: one wider than
