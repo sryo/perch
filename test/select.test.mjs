@@ -490,4 +490,17 @@ test("custom combobox: a bare input re-rendered empty on pick in a form or body 
     assert.equal(o.ok, false, html + " " + JSON.stringify(o));
     assert.equal(dom.document.getElementById("dest").value, "", html);
   }
+  // A clone that drops aria-controls (set only while open) keeps the start's box,
+  // so the wrapper holding the list is never read as the pick.
+  const bare = js.replace("d.cloneNode(false)", "(() => { const c = d.cloneNode(false); c.removeAttribute('aria-controls'); return c; })()");
+  for (const html of [
+    `<form><div class=combo>${input}${list}</div><input name=a></form>`,
+    `<form><label for=dest>Destination</label><div class=combo><input id=dest role=combobox aria-controls=l aria-expanded=true>${list}</div><input name=a></form>`,
+    `<form><div class=combo>${input}<ul id=l role=listbox><li role=option>Bravo</li></ul></div><input name=a></form>`,
+  ]) {
+    const { dom } = onPage(html, bare);
+    const { o } = await select({ label_pattern: "destination", text: "Bravo" });
+    assert.equal(o.ok, false, html + " " + JSON.stringify(o));
+    assert.equal(dom.document.getElementById("dest").value, "", html);
+  }
 });

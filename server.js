@@ -4931,7 +4931,10 @@ function trapShaped(el) {
 // fill's note on text it put in a field that looks like a bot trap.
 function trapWarning(el) {
   const why = LEAVE_BLANK.test(labelText(el) + " " + attr(el, "name")) ? "its label or name says to leave it blank"
-    : honeypot(el, wanted(el)) ? "it sits where no one can see it" : "it is out of the tab order with autofill off";
+    : honeypot(el, wanted(el)) ? "it sits where no one can see it" : "";
+  // Date pickers and masks are out of the tab order with autofill off too, so
+  // that alone never advises clearing what may be a right date.
+  if (!why) return ident(el) + " is untabbable, autofill off: bot trap or date picker?";
   return ident(el) + " looks like a bot trap (" + why + ") and was filled anyway; clear it with text \"\" if the form should leave it empty";
 }
 // Keeps fields that landed for fill_reread under a fresh owner token, at most
@@ -5213,8 +5216,8 @@ function fillOne(a, only, onLand) {
     return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button, or pass its ref or selector to fill it anyway" }
       : { ok: false, el: el, error: why + "it may show after clicking one of reveal (click {label_pattern} it, then fill again)", reveal: reveal };
   }
-  // A shown field that still looks like a trap (trapShaped: untabbable with
-  // autofill off, or named to be left blank) yields to a normal match scoring
+  // A shown field that looks like a trap (trapLike: untabbable with autofill
+  // off, even when required, or named to be left blank) yields to a normal match scoring
   // within 10 of it; one outscoring every normal match by more, or alone, takes
   // the text with a warning. Untabbable with autofill off alone is also how
   // date pickers look, so such a field whose own label is the whole pattern
@@ -5223,7 +5226,7 @@ function fillOne(a, only, onLand) {
   // autocomplete token.
   const whole = function (el) { return acWhole.test(labelText(el).replace(/[\s*:]+$/, "").trim()); };
   const named = function (el) { return whole(el) || acWhole.test(attr(el, "name")) || (el.tagName === "INPUT" && acWhole.test(el.type || "")) || acWhole.test(acToken(el) || ""); };
-  const flagged = shown.filter(function (c) { return trapShaped(c.el); });
+  const flagged = shown.filter(function (c) { return trapLike(c.el, wanted(c.el)); });
   const normal = shown.filter(function (c) { return flagged.indexOf(c) < 0; });
   const betterLabel = function (c) {
     const tied = normal.filter(function (n) { return Math.abs(n.s - c.s) <= 10; });
@@ -5250,7 +5253,7 @@ function fillOne(a, only, onLand) {
   if (out.ok === false) return out;
   const rivals = shown.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
   if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
-  if (flagged.indexOf(best) >= 0) out.warning = trapWarning(best.el);
+  if (flagged.indexOf(best) >= 0 && trapShaped(best.el)) out.warning = trapWarning(best.el);
   return out;
 }
 `;
@@ -6516,9 +6519,12 @@ if (!s.ctl.isConnected) {
   let again = s.ctl.id ? document.getElementById(s.ctl.id) : null;
   if (!again && (A.selector || A.label_pattern)) { try { again = findCtl({ selector: A.selector, label_pattern: A.label_pattern }).el; } catch (e) {} }
   if (again && again.isConnected && !nativeOf(again)) {
+    // A control that was its own box stays so: the new node may have dropped the
+    // aria-controls that kept its wrapper, list and all, from being read as the pick.
+    const own = s.box === s.ctl;
     s.ctl = again;
     s.input = again.tagName === "INPUT" ? again : again.querySelector && again.querySelector("input");
-    s.box = ctlBox(again, s.input).box;
+    s.box = own ? again : ctlBox(again, s.input).box;
   }
 }
 // A popup select opened and a pick left open (a multi-select) closes again.

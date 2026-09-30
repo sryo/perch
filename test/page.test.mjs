@@ -313,7 +313,9 @@ test("fill by label keeps an untabbable autofill-off field that is the better la
     assert.equal(w.document.getElementById("d").value, "1990-01-02", html);
     assert.equal(w.document.getElementById("u").value, "", html);
     assert.ok(o.ambiguous, html + " " + JSON.stringify(o));
-    if (warned) assert.match(o.warning || "", /bot trap/, html);
+    // Only the untabbable, autofill-off pair: the warning names date pickers
+    // too and never advises clearing a date that may be right.
+    if (warned) { assert.match(o.warning || "", /date picker/, html); assert.doesNotMatch(o.warning, /clear it/, html); }
     else assert.equal(o.warning, undefined, html);
   }
 });
@@ -321,8 +323,8 @@ test("fill by label keeps an untabbable autofill-off field that is the better la
 // The textbook honeypot's label is the whole pattern, but the real field's
 // name, type or autocomplete token is too: the label is no better match there.
 test("fill by label passes over an exactly labelled honeypot when the real field's name, type or token is the pattern", () => {
-  for (const real of [`name=email type=email required`, `name=email`, `type=email`, `autocomplete=email`]) {
-    const w = page(`<form onsubmit="return false"><label for=t>Email</label><input id=t name=email_c tabindex=-1 autocomplete=off><label for=r>Email address</label><input id=r ${real}></form>`);
+  for (const [real, trap] of [[`name=email type=email required`, ""], [`name=email`, ""], [`type=email`, ""], [`autocomplete=email`, ""], [`name=email type=email`, "required"]]) {
+    const w = page(`<form onsubmit="return false"><label for=t>Email</label><input id=t name=email_c tabindex=-1 autocomplete=off ${trap}><label for=r>Email address</label><input id=r ${real}></form>`);
     const o = run(w, "fill", { label_pattern: "email", text: "ada@x.test" });
     assert.equal(o.ok, true, real + " " + JSON.stringify(o));
     assert.equal(w.document.getElementById("t").value, "", real);
@@ -353,14 +355,14 @@ test("fill by label into the only, visible trap-like match keeps filling it but 
 test("fill by selector or ref into a trap-shaped field fills it, with a warning", () => {
   for (const [attrs, why] of [
     [`name=email_confirm aria-label="Leave this field blank"`, /leave it blank/],
-    [`name=website tabindex=-1 autocomplete=off`, /out of the tab order/],
+    [`name=website tabindex=-1 autocomplete=off`, /untabbable/],
     [`name=email2 data-rect="-9999,0,100,20"`, /where no one can see it/],
   ]) {
     const w = page(`<form><input id=t ${attrs}><label>Email <input id=e></label></form>`);
     const o = run(w, "fill", { selector: "#t", text: "x" });
     assert.equal(o.ok, true, attrs + " " + JSON.stringify(o));
     assert.equal(w.document.getElementById("t").value, "x", attrs);
-    assert.match(o.warning, /looks like a bot trap/, attrs);
+    assert.match(o.warning, /bot trap/, attrs);
     assert.match(o.warning, why, attrs);
     const plain = run(w, "fill", { selector: "#e", text: "a@x.test" });
     assert.equal(plain.warning, undefined, JSON.stringify(plain));
