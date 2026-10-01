@@ -311,7 +311,8 @@ test("a combobox input sharing its wrapper with its label reads back its own val
 // spl-select-option children of spl-select, slotted into that listbox, each
 // rendering its role=option two shadow roots down, its text slotted back in from
 // the light DOM. The trigger shows the choice as a flag image and "+code", also
-// slotted. Their own text is only Lit's whitespace. A click on the button
+// slotted. Their own text is only Lit's whitespace; each row also holds text
+// it never shows (visibility:hidden, opacity:0). A click on the button
 // opens it; a click on an option picks it.
 // o.never: the button ignores page events (opens only on a trusted click).
 // o.slow: the list renders only when the test calls window.splShow() (aria-expanded true at once).
@@ -320,7 +321,7 @@ const SPL_JS = (o = {}) => `
   const C = [["EG", "Egypt", "20"], ["CA", "Canada", "1"], ["US", "United States", "1"], ["UM", "United States Minor Outlying Islands", "1"], ["GB", "United Kingdom", "44"]];
   const shadow = (el, html) => { const r = el.attachShadow({ mode: "open" }); r.innerHTML = html; return r; };
   const pf = shadow(document.getElementById("pf"), '<div class=wrap><spl-select id=sel value=EG><div slot=triggerPrefix class=sel-shown></div>' +
-    C.map(c => '<spl-select-option value=' + c[0] + ' label="' + c[1] + '"><div class=row><spl-country-flag alt=""></spl-country-flag> <span>' + c[1] + '</span> <span>+' + c[2] + '</span></div></spl-select-option>').join("") +
+    C.map(c => '<spl-select-option value=' + c[0] + ' label="' + c[1] + '"><div class=row><spl-country-flag alt=""></spl-country-flag> <span>' + c[1] + '</span> <span>+' + c[2] + '</span> <span style="visibility:hidden">tooltip</span><span style="opacity:0">focus ring</span></div></spl-select-option>').join("") +
     '</spl-select></div>');
   const sel = pf.querySelector("#sel");
   const flag = (el, alt) => shadow(el, '<img alt="' + alt + '" src="data:,">');
@@ -382,3 +383,30 @@ test("a control the press leaves shut, with no list anywhere, misses after a sho
   assert.deepEqual([...dom.log], []);
   assert.ok(ms < 1000, "waited " + ms + "ms");
 });
+
+// A custom dropdown that never says whether it is open (no aria-expanded) and
+// renders its list a while after the press, with no loading sign: a slow list,
+// not a shut control, so it keeps the full bound.
+for (const n of [15, 25, 40]) {
+  test(`a control without aria-expanded whose list shows ${n} page calls after the press is still picked`, async () => {
+    const dom = onPage(`<form><label id=pl>Plan</label><div class=dd><div role=button tabindex=0 aria-haspopup=listbox aria-labelledby=pl class=trig>Choose</div></div><input name=other></form>`);
+    const trig = $(dom, ".trig");
+    let pressed = false;
+    trig.addEventListener("click", () => { pressed = true; });
+    const orig = dom.eval.bind(dom);
+    let k = 0;
+    dom.eval = (js) => {
+      if (pressed && ++k === n) {
+        const ul = dom.document.createElement("ul");
+        ul.setAttribute("role", "listbox");
+        ul.innerHTML = "<li role=option>Basic</li><li role=option>Pro</li>";
+        ul.querySelectorAll("li").forEach((li) => li.addEventListener("click", () => { trig.textContent = li.textContent; ul.remove(); }));
+        $(dom, ".dd").appendChild(ul);
+      }
+      return orig(js);
+    };
+    const o = await select({ selector: ".trig", text: "Pro" });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    assert.equal(trig.textContent, "Pro");
+  });
+}

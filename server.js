@@ -4873,7 +4873,9 @@ function flatText(n) {
     if (++k > 3000) return;
     if (x.nodeType === 3) { s += x.nodeValue; return; }
     if (x.nodeType === 1) {
-      if (/^(STYLE|SCRIPT|TEMPLATE)$/.test(x.tagName) || x.hidden || getComputedStyle(x).display === "none") return;
+      if (/^(STYLE|SCRIPT|TEMPLATE)$/.test(x.tagName) || x.hidden) return;
+      const cs = getComputedStyle(x);
+      if (cs.display === "none" || cs.visibility === "hidden" || cs.opacity === "0") return;
       if (x.tagName === "IMG") { s += " " + attr(x, "alt") + " "; return; }
     }
     const a = x.tagName === "SLOT" ? x.assignedNodes({ flatten: true }) : [];
@@ -7191,11 +7193,12 @@ if (s.opened && !all.length && !s.keyed && !s.typed && s.polls >= 2 && kb.tagNam
   s.keyed = true;
   return wait;
 }
-// A press that left a control with no text box shut, with no option shown
-// anywhere (open shadow roots too) and nothing loading, opened nothing: that
-// miss settles after 12 polls (about 0.6s) rather than the full bound.
+// A press that left a control with no text box saying aria-expanded="false",
+// with no option shown anywhere (open shadow roots too) and nothing loading,
+// opened nothing: that miss settles after 12 polls (about 0.6s) rather than
+// the full bound. A control that never says whether it is open may be slow.
 const roots = [s.ctl, s.input, s.box, s.pop, s.listRoot].concat(linkedLists(s));
-if (s.opened && !all.length && !box && s.polls >= 12 && !s.seenAny) {
+if (s.opened && !all.length && !box && s.polls >= 12 && !s.seenAny && attr(s.ctl, "aria-expanded") === "false") {
   if (stillOpen(s) || loadingIn(roots) || deepAll(OPT).some(function (o) { return s.before.indexOf(o) < 0 && vis(o); })) s.seenAny = true;
   else return { settled: true, tok: tok };
 }
