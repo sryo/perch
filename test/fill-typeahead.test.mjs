@@ -1601,3 +1601,30 @@ test("typeahead: a local tie followed by the lookup's exact suggestion waits for
     assert.deepEqual([...dom.picks], ["Cordoba"], String(n));
   }
 });
+
+// A suggestion whose text starts with "Loading" is a suggestion, not a busy list.
+test("typeahead: a suggestion named \"Loading ...\" is picked at once, never taken for a loading row", async () => {
+  const { dom, world } = onPage(`<label for=job>Role</label><input id=job role=combobox aria-autocomplete=list aria-controls=job-list><ul id=job-list role=listbox></ul><input type=hidden name=jobId>`, `
+    const inp = document.getElementById('job'), ul = document.getElementById('job-list'), hid = document.querySelector('[name=jobId]');
+    inp.addEventListener('input', () => { window.__q = []; later(() => {
+      ul.innerHTML = ['Loading Dock Worker', 'Warehouse Lead'].map((t) => '<li class=item>' + t + '</li>').join('');
+      ul.querySelectorAll('li').forEach((li) => li.addEventListener('click', () => { inp.value = li.textContent; hid.value = li.textContent; ul.innerHTML = ''; }));
+    }, 2); });`);
+  const t0 = world.clock.t;
+  const o = await fill({ label_pattern: "role", text: "Loading Dock Worker" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Loading Dock Worker");
+  assert.equal($(dom, "[name=jobId]").value, "Loading Dock Worker");
+  assert.ok(world.clock.t - t0 < 1000, "waited " + (world.clock.t - t0) + "ms");
+});
+
+// A results wrapper holding only a "No results" note offers no suggestion.
+test("typeahead: a no-results note is never a suggestion or a candidate", async () => {
+  const { dom } = onPage(LOCATION, LOCATION_JS().replace(
+    "dd.innerHTML = cities.filter((c) => q && c.toLowerCase().startsWith(q)).map((c) => '<div class=dropdown-item data-id=' + cities.indexOf(c) + '>' + c + '</div>').join('');",
+    "dd.innerHTML = '<div class=dropdown-results><div>No results for ' + q + '</div></div>';"));
+  const o = await fill({ label_pattern: "location", text: "Zzyzx" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.ok(!(o.candidates || []).some((c) => /no results/i.test(c)), JSON.stringify(o));
+  assert.equal($(dom, "#loc").value, "");
+});

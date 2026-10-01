@@ -5223,8 +5223,20 @@ function taOptions(s) {
       if ((kids.length > 1 || (kids.length === 1 && /results/i.test(String(opts[0].className)))) && texts.every(function (t, i) { return texts.indexOf(t) === i; }) &&
           !opts[0].querySelector("input, select, textarea, button")) opts = kids;
     }
-    return out.concat(opts.filter(function (o) { return shown(o) && !loadingIn([o]); }));
+    return out.concat(opts.filter(function (o) { return shown(o) && !taBusyRow(o) && !NONE_SAID.test(norm(o.textContent)); }));
   }, []);
+}
+// A loading row: a busy sign (aria-busy, a progressbar, a loading or spinner
+// class) or text that is only the word ("Loading..."); never an option row,
+// so a suggestion named "Loading Dock Worker" is matched like any other.
+function taBusyRow(e) {
+  if (!vis(e) || attr(e, "role") === "option" || e.closest("[role=option]")) return false;
+  const cls = String(e.className && e.className.baseVal != null ? e.className.baseVal : e.className || "");
+  return attr(e, "aria-busy") === "true" || attr(e, "role") === "progressbar" || /loading|spinner/i.test(cls) ||
+    /^(loading|searching|fetching)\b[\s.\u2026]*$/i.test(taNorm(e.textContent));
+}
+function taBusy(scopes) {
+  return scopes.some(function (r) { return r && r.isConnected && [r].concat(Array.from(r.querySelectorAll("*")).slice(0, 300)).some(taBusyRow); });
 }
 // The options best matching text, most specific tier first: exact; each typed
 // comma part equal to one of the option's parts, in order, as written, then as
@@ -6498,7 +6510,7 @@ if (A.probe) return !!(s.comp || attr(s.el, "aria-expanded") === "true" || attr(
   taScopes(s).some(function (r) { return vis(r) && taNorm(r.textContent); }));
 // A list showing a loading row may still hold the last lookup's results, which
 // some widgets ignore a press on: nothing is matched until the row goes.
-if (loadingIn(taScopes(s))) return { pending: true, tok: s.tok };
+if (taBusy(taScopes(s))) return { pending: true, tok: s.tok };
 const opts = taOptions(s);
 const m = taMatch(opts, s.text);
 // Several equal hits short of exact are a tie, never settled by list order.
