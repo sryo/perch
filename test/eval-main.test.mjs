@@ -341,3 +341,23 @@ test("world main: a part lost mid-read drops the slot", async () => {
   assert.match(t, /lost its result while reading it; the code ran/);
   assert.deepEqual(slots(dom), []);
 });
+
+test("world main on a Trusted Types page is tab_not_scriptable naming Trusted Types, with nothing run", async () => {
+  const { dom } = install({ tt: true });
+  const { r, t } = await call({ script: "window.ran = 1; return 1", world: "main" });
+  assert.equal(r.isError, true);
+  assert.match(t, /^error: tab_not_scriptable: eval_js world:"main" can't run on this page: its Trusted Types policy \(require-trusted-types-for 'script'\) blocks injected scripts; nothing ran/);
+  assert.equal(dom.doc.inserted, 0);
+  assert.equal(dom.main.ran, undefined);
+  assert.equal(dom.iso.ran, undefined);
+});
+
+test("world main on a non-HTML document says so, not CSP", async () => {
+  const { dom } = install({ xml: true });
+  const { r, t } = await call({ script: "window.ran = 1; return 1", world: "main", awaitPromise: true });
+  assert.equal(r.isError, true);
+  assert.match(t, /^error: tab_not_scriptable: eval_js world:"main" can't run on this page: it isn't an HTML document; nothing ran/);
+  assert.doesNotMatch(t, /Content-Security-Policy/);
+  assert.equal(dom.doc.attached.size, 0);
+  assert.equal(dom.main.ran, undefined);
+});

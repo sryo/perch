@@ -707,6 +707,11 @@ function jxaRuntime(BROWSERS, HANG) {
   // Where eval_js {world:"main"}'s read takes the offset to read from, and how
   // long reading a long result's parts may run past the call's timeout.
   const MW_OFF = '"@perch_off@"', MW_READ_MS = 60000;
+  const MW_BLOCKED = {
+    csp: "its Content-Security-Policy blocks inline scripts",
+    tt: "its Trusted Types policy (require-trusted-types-for 'script') blocks injected scripts",
+    xml: "it isn't an HTML document",
+  };
   const asQuote = function (s) { return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; };
   const NO_REPLY = "timeout: " + HANG.noReply;
   const isNoReply = function (e) { return !!e && e.message.indexOf(NO_REPLY) === 0; };
@@ -2602,7 +2607,7 @@ function jxaRuntime(BROWSERS, HANG) {
         v = r.value;
       }
       if (v.__perch_gone) throw new Error("timeout: eval_js (world main) lost its result before it settled" + MAY_HAVE_RUN);
-      if (v.__perch_blocked) throw new Error("tab_not_scriptable: eval_js world:\"main\" can't run on this page: its Content-Security-Policy blocks inline scripts; nothing ran");
+      if (v.__perch_blocked) throw new Error("tab_not_scriptable: eval_js world:\"main\" can't run on this page: " + (MW_BLOCKED[v.__perch_blocked] || MW_BLOCKED.csp) + "; nothing ran");
       if (v.p == null) return "i" + JSON.stringify(v);
       const parts = [v.p];
       for (let end = v.end; end < v.len;) {
@@ -3783,7 +3788,9 @@ function buildAsyncPoll(key) {
 // through window[key] in the isolated world. A constant probe script runs first:
 // when it doesn't, the page's CSP blocks inline scripts, which the isolated world
 // records as a string in window[key] in place of the element (the page can write
-// the element's attributes, never perch's globals); when it does and the
+// the element's attributes, never perch's globals), as it does a non-HTML
+// document (its createElement("script") makes a script that never runs) and
+// Trusted Types refusing the script's text; when it does and the
 // code's script doesn't, the code failed to parse, and compiling it here (only
 // then) names the SyntaxError, since the page's error event never reaches us. Slots join the awaitPromise
 // sweep list once fully read. A read answers at most MW_PART chars from an
@@ -3809,10 +3816,12 @@ export function buildMainKick(js, key, awaitPromise) {
   const k = JSON.stringify(key);
   return `(function(){var __E=${ERROR_SHAPE},__M=${MW_ERROR_SHAPE};(${ASYNC_DONE}||[]).forEach(function(d){delete window[d]});${ASYNC_DONE}=[];` +
     `try{var root=document.head||document.documentElement,q=document.createElement("script"),s=document.createElement("script"),m;` +
-    `q.textContent=${JSON.stringify(MW_PROBE)};s.textContent=${JSON.stringify(main)};window[${k}]=s;root.appendChild(q);q.remove();` +
+    `if(q.namespaceURI!=="http://www.w3.org/1999/xhtml")window[${k}]="xml";` +
+    `else try{q.textContent=${JSON.stringify(MW_PROBE)};s.textContent=${JSON.stringify(main)}}catch(e){if(!/trusted/i.test(String(e&&e.message)))throw e;window[${k}]="tt"}` +
+    `if(window[${k}]===undefined){window[${k}]=s;root.appendChild(q);q.remove();` +
     `if(!q.hasAttribute("data-perch-ran"))window[${k}]="csp";` +
     `else{root.appendChild(s);s.remove();` +
-    `if(!s.hasAttribute("data-perch-ran")){try{Function(s.textContent);m={message:"the script did not run",name:"Error"}}catch(e){m=e}s.setAttribute("data-perch-r",JSON.stringify(__M(m)))}}` +
+    `if(!s.hasAttribute("data-perch-ran")){try{Function(s.textContent);m={message:"the script did not run",name:"Error"}}catch(e){m=e}s.setAttribute("data-perch-r",JSON.stringify(__M(m)))}}}` +
     `}catch(e){return JSON.stringify(__E(e))}return (${MW_READ})(${k},0)})()`;
 }
 

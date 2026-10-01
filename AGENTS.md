@@ -90,7 +90,7 @@ Chrome runs Apple Events JS in an isolated world: the DOM and `location` are sha
 - The page's own globals, listeners, timers and promises are invisible: probe page state through the DOM.
 - A plain `click` still fires main-world handlers, because DOM events cross worlds. Event fields like `keyCode` must go in the event init: a property defined on the event in the isolated world reads 0 to page handlers.
 - `window.open` wrapping only sees Safari's page handlers; Chromium's call the main world's.
-- `eval_js {world:"main"}` reaches page globals through an injected `<script>` and reads its result off that element in bounded parts; a CSP that blocks inline scripts is `tab_not_scriptable`, never an isolated-world fallback. The page can rewrite that element, so the verdict lives in perch's world and Node takes only `{value}` or a `{__perch_error, __perch_error_name}` error from it (else `tab_not_scriptable`, the page altered it); a value shaped like an image or error block comes back as text. Pinned by `test/eval-main.test.mjs`.
+- `eval_js {world:"main"}` reaches page globals through an injected `<script>` and reads its result off that element in bounded parts; a CSP that blocks inline scripts, Trusted Types and a non-HTML document are `tab_not_scriptable` naming which, never an isolated-world fallback. The page can rewrite that element, so the verdict lives in perch's world and Node takes only `{value}` or a `{__perch_error, __perch_error_name}` error from it (else `tab_not_scriptable`, the page altered it); a value shaped like an image or error block comes back as text. Pinned by `test/eval-main.test.mjs`.
 
 ### Second instances
 
