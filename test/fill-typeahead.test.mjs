@@ -525,6 +525,58 @@ test("typeahead: of suggestions naming the typed place, the one that starts with
   assert.equal($(dom, "#selected-location").value, "loc-0");
 });
 
+// Lever's location field: a lookup per input shows a spinner row (text
+// "Loading") while the request runs and leaves the last results on screen; a
+// press lands only on results of the current request, by index into them.
+const LEVER = `<div class=application-field><input id=location-input name=location type=text>
+  <input type=hidden id=selected-location name=selectedLocation>
+  <div class=dropdown-container style="display:none"><div class=dropdown-results></div>
+  <div class=dropdown-no-results style="display:none">No location found. Try entering a different location</div>
+  <div class=dropdown-loading-results style="display:none"><svg class="icon icon-loading-spinner"></svg><span>Loading</span></div></div></div>
+  <label>Name <input name=name></label>`;
+const LEVER_JS = (answer, ticks = 6) => `
+  const inp = document.getElementById('location-input'), hid = document.getElementById('selected-location');
+  const box = document.querySelector('.dropdown-container'), res = box.querySelector('.dropdown-results');
+  const none = box.querySelector('.dropdown-no-results'), spin = box.querySelector('.dropdown-loading-results');
+  let results = [];
+  window.presses = 0;
+  const show = (list) => {
+    results = list;
+    res.innerHTML = list.map((t, i) => '<div class=dropdown-location id=location-' + i + '>' + t + '</div>').join('');
+    none.style.display = list.length ? 'none' : 'block';
+  };
+  res.addEventListener('click', (e) => {
+    window.presses++;
+    const i = Number(String(e.target.id).replace('location-', ''));
+    if (!results[i]) return;
+    inp.value = results[i]; hid.value = JSON.stringify({ name: results[i] }); box.style.display = 'none';
+  });
+  inp.addEventListener('input', () => {
+    results = []; hid.value = ''; window.__q = [];
+    box.style.display = 'flex'; spin.style.display = 'block'; none.style.display = 'none';
+    later(() => { spin.style.display = 'none'; show(${JSON.stringify(answer)}); }, ${ticks});
+  });
+  // The results of an earlier search, still on screen.
+  box.style.display = 'flex'; show(['Tuscaloosa, AL, USA']);`;
+
+test("typeahead: suggestions are not read while the list shows a loading row, so a stale result is never pressed", async () => {
+  const { dom } = onPage(LEVER, LEVER_JS(["Tuscaloosa, AL, USA"]));
+  const o = await fill({ selector: "#location-input", text: "Tuscaloosa, Alabama, United States" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Tuscaloosa, AL, USA");
+  assert.equal($(dom, "#selected-location").value, JSON.stringify({ name: "Tuscaloosa, AL, USA" }));
+  assert.equal(dom.presses, 1);
+});
+
+test("typeahead: a loading row is never a candidate", async () => {
+  const { dom } = onPage(LEVER, LEVER_JS(["Birmingham, AL, USA"], 30));
+  const o = await fill({ selector: "#location-input", text: "Tuscaloosa, Alabama, United States" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.ok(!(o.candidates || []).includes("Loading"), JSON.stringify(o));
+  assert.equal(dom.presses, 0);
+  assert.equal($(dom, "#selected-location").value, "");
+});
+
 test("typeahead: a tie that holds through a debounce still waits for the fresh list", async () => {
   // The tied list sits unchanged for several polls (a stale list during a
   // debounce) before the exact suggestion arrives.

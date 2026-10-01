@@ -5221,7 +5221,7 @@ function taOptions(s) {
       if (kids.length > 1 && texts.every(function (t, i) { return texts.indexOf(t) === i; }) &&
           !opts[0].querySelector("input, select, textarea, button")) opts = kids;
     }
-    return out.concat(opts.filter(shown));
+    return out.concat(opts.filter(function (o) { return shown(o) && !loadingIn([o]); }));
   }, []);
 }
 // The options best matching text, most specific tier first: exact; each typed
@@ -6492,6 +6492,9 @@ const s = window.__perch_ta;
 if (!s) return { ok: false, kind: "typeahead", error: "fill state lost (did the page navigate?)" };
 if (taLost) return taLost;
 if (A.probe) return !!(s.comp || attr(s.el, "aria-expanded") === "true" || taScopes(s).some(function (r) { return vis(r) && taNorm(r.textContent); }));
+// A list showing a loading row may still hold the last lookup's results, which
+// some widgets ignore a press on: nothing is matched until the row goes.
+if (loadingIn(taScopes(s))) return { pending: true, tok: s.tok };
 const opts = taOptions(s);
 const m = taMatch(opts, s.text);
 // Several equal hits short of exact are a tie, never settled by list order.
