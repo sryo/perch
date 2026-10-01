@@ -305,3 +305,80 @@ test("a combobox input sharing its wrapper with its label reads back its own val
   assert.equal(o.value ?? o.selected, "Design");
   assert.equal(o.unverified, undefined, JSON.stringify(o));
 });
+
+// SmartRecruiters' phone country picker (spl-select, Lit): the combobox button and
+// the listbox it names sit in spl-select's shadow root; the options are
+// spl-select-option children of spl-select, slotted into that listbox, each
+// rendering its role=option two shadow roots down, its text slotted back in from
+// the light DOM. The trigger shows the choice as a flag image and "+code", also
+// slotted. Their own text is only Lit's whitespace. A click on the button
+// opens it; a click on an option picks it.
+// o.never: the button ignores page events (opens only on a trusted click).
+// o.slow: the list renders only when the test calls window.splShow() (aria-expanded true at once).
+const SPL = `<form><label>Phone number</label><spl-phone-field id=pf></spl-phone-field><input type=tel aria-label="Phone number"></form>`;
+const SPL_JS = (o = {}) => `
+  const C = [["EG", "Egypt", "20"], ["CA", "Canada", "1"], ["US", "United States", "1"], ["UM", "United States Minor Outlying Islands", "1"], ["GB", "United Kingdom", "44"]];
+  const shadow = (el, html) => { const r = el.attachShadow({ mode: "open" }); r.innerHTML = html; return r; };
+  const pf = shadow(document.getElementById("pf"), '<div class=wrap><spl-select id=sel value=EG><div slot=triggerPrefix class=sel-shown></div>' +
+    C.map(c => '<spl-select-option value=' + c[0] + ' label="' + c[1] + '"><div class=row><spl-country-flag alt=""></spl-country-flag> <span>' + c[1] + '</span> <span>+' + c[2] + '</span></div></spl-select-option>').join("") +
+    '</spl-select></div>');
+  const sel = pf.querySelector("#sel");
+  const flag = (el, alt) => shadow(el, '<img alt="' + alt + '" src="data:,">');
+  const show = (code) => {
+    const c = C.find(x => x[0] === code);
+    sel.setAttribute("value", code);
+    const t = sel.querySelector(".sel-shown");
+    t.innerHTML = '<spl-country-flag></spl-country-flag><spl-typography-body>+' + c[2] + '</spl-typography-body>';
+    flag(t.querySelector("spl-country-flag"), c[1]);
+    shadow(t.querySelector("spl-typography-body"), "<span><slot></slot></span>");
+  };
+  show("EG");
+  const sr = shadow(sel, '<spl-dropdown><button role=combobox slot=trigger aria-haspopup=listbox aria-label="Country code" aria-controls=sel-menu aria-expanded=false>  <div><slot name=triggerPrefix></slot></div>  </button><div slot=menu id=sel-menu role=listbox><slot></slot></div></spl-dropdown>');
+  const dd = shadow(sr.querySelector("spl-dropdown"), '<span><slot name=trigger></slot></span><div class=menu style="display:none"><slot name=menu></slot></div>');
+  const btn = sr.querySelector("button"), menu = dd.querySelector(".menu");
+  window.log = [];
+  window.splCalls = 0;
+  const close = () => { menu.style.display = "none"; btn.setAttribute("aria-expanded", "false"); };
+  const open = () => { btn.setAttribute("aria-expanded", "true"); if (${!!o.slow}) window.splShow = () => { menu.style.display = ""; }; else menu.style.display = ""; };
+  sel.querySelectorAll("spl-select-option").forEach(opt => {
+    const item = shadow(opt, '<spl-dropdown-item><slot><span>' + opt.getAttribute("label") + '</span></slot></spl-dropdown-item>').querySelector("spl-dropdown-item");
+    const ir = shadow(item, '<div role=option aria-selected=false aria-disabled=false>  <slot name=prefix></slot>  <spl-typography-body><slot></slot></spl-typography-body>  </div>');
+    shadow(ir.querySelector("spl-typography-body"), "<span><slot></slot></span>");
+    ir.querySelector("[role=option]").addEventListener("click", () => { window.log.push(opt.getAttribute("value")); show(opt.getAttribute("value")); close(); });
+  });
+  btn.addEventListener("click", () => { if (${!!o.never}) return; if (btn.getAttribute("aria-expanded") === "true") close(); else open(); });
+  btn.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });`;
+const splBtn = (dom) => dom.document.getElementById("pf").shadowRoot.querySelector("#sel").shadowRoot.querySelector("button");
+
+test("a web component's list in its shadow root, options slotted in from the light DOM, is opened, picked and read back", async () => {
+  const dom = onPage(SPL, SPL_JS());
+  let o = await select({ selector: '[aria-label="Country code"]', text: "" });
+  assert.deepEqual(o.candidates, ["Egypt +20", "Canada +1", "United States +1", "United States Minor Outlying Islands +1", "United Kingdom +44"], JSON.stringify(o));
+  assert.equal(splBtn(dom).getAttribute("aria-expanded"), "false", "the list it opened is closed again");
+  o = await select({ selector: '[aria-label="Country code"]', text: "United States" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "United States +1");
+  assert.deepEqual([...dom.log], ["US"]);
+  assert.equal(dom.document.getElementById("pf").shadowRoot.querySelector("#sel").getAttribute("value"), "US");
+});
+
+test("a shadow-root list that renders a second after the press is still picked", async () => {
+  const dom = onPage(SPL, SPL_JS({ slow: true }));
+  const orig = dom.eval.bind(dom);
+  let n = 0;
+  dom.eval = (js) => { if (dom.splShow && ++n === 20) dom.splShow(); return orig(js); };
+  const o = await select({ selector: '[aria-label="Country code"]', text: "United Kingdom" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual([...dom.log], ["GB"]);
+});
+
+test("a control the press leaves shut, with no list anywhere, misses after a short step, not the full bound", async () => {
+  const dom = onPage(SPL, SPL_JS({ never: true }));
+  const t0 = dom.world.clock.t;
+  const o = await select({ selector: '[aria-label="Country code"]', text: "United States" });
+  const ms = dom.world.clock.t - t0;
+  assert.equal(o.ok, false);
+  assert.match(o.error, /did not open.*trusted/);
+  assert.deepEqual([...dom.log], []);
+  assert.ok(ms < 1000, "waited " + ms + "ms");
+});

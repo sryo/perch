@@ -4602,13 +4602,35 @@ const SELECT_OWN_LIB = String.raw`
 // control's own, and its text as the pick. Such an input is its own box.
 function ctlBox(ctl, input) {
   const wrap = ctl.closest && ctl.closest('.select__control, [class*="-control"], [class*="__control"]');
-  const named = [ctl, input].filter(Boolean).map(function (e) { return document.getElementById(attr(e, "aria-controls")); }).filter(Boolean);
+  const named = [ctl, input].filter(Boolean).map(function (e) { return idNear(attr(e, "aria-controls"), e); }).filter(Boolean);
   const up = ctl.parentElement;
   const pageLevel = function (p) {
     if (/^(BODY|HTML)$/.test(p.tagName) || named.some(function (l) { return p.contains(l); })) return true;
     return Array.prototype.filter.call(p.querySelectorAll("input:not([type=hidden]), select, textarea"), function (x) { return x !== ctl && x !== input; }).length >= 2;
   };
   return { wrap: wrap, named: named, box: wrap || (ctl.tagName === "INPUT" && up && !pageLevel(up) ? up : ctl) };
+}
+// The text a node shows through slots and open shadow roots, which innerText
+// and textContent leave out (a web component's option or trigger), image alt
+// text included as an accessible name reads it. In select scripts textOf
+// falls back to it.
+const lightText = textOf;
+textOf = function (n) { const t = lightText(n); return t.trim() ? t : flatText(n) || t; };
+function flatText(n) {
+  if (!n || n.nodeType !== 1 || !(n.shadowRoot || n.querySelector("slot"))) return "";
+  let s = "", k = 0;
+  (function walk(x) {
+    if (++k > 3000) return;
+    if (x.nodeType === 3) { s += x.nodeValue; return; }
+    if (x.nodeType === 1) {
+      if (/^(STYLE|SCRIPT|TEMPLATE)$/.test(x.tagName) || x.hidden || getComputedStyle(x).display === "none") return;
+      if (x.tagName === "IMG") { s += " " + attr(x, "alt") + " "; return; }
+    }
+    const a = x.tagName === "SLOT" ? x.assignedNodes({ flatten: true }) : [];
+    Array.prototype.forEach.call(a.length ? a : (x.shadowRoot || x).childNodes, walk);
+    if (/^(DIV|P|LI|TD|BR)$/.test(x.tagName)) s += " ";
+  })(n);
+  return s.replace(/\s+/g, " ").trim();
 }
 const selKey = JSON.stringify([A.ref, A.selector, A.label_pattern, A.text, !!A.trusted]);
 const selNow = window.__perch_select;
@@ -4832,8 +4854,9 @@ function linkedLists(s) {
   return ids.map(function (id, i) { return id && ids.indexOf(id) === i && byIdNear(id, s.input || s.ctl); }).filter(function (m) { return m && !mine(s, m); });
 }
 // Separate React roots can repeat an id; take the copy that shares the deepest
-// ancestor with the control.
+// ancestor with the control. A control in a shadow root names ids in that root.
 function byIdNear(id, near) {
+  if (near && near.getRootNode && near.getRootNode() !== document) return idNear(id, near);
   let all;
   try { all = document.querySelectorAll(typeof CSS !== "undefined" && CSS.escape ? "#" + CSS.escape(id) : '[id="' + id.replace(/["\\]/g, "\\$&") + '"]'); }
   catch (e) { all = Array.prototype.filter.call(document.querySelectorAll("[id]"), function (m) { return m.id === id; }); }
@@ -4847,11 +4870,29 @@ function byIdNear(id, near) {
   });
   return best;
 }
+// The element with this id in near's own tree (a shadow root's), else the document's.
+function idNear(id, near) {
+  const r = id && near && near.getRootNode ? near.getRootNode() : null;
+  return !id ? null : (r && r !== document && r.getElementById && r.getElementById(id)) || document.getElementById(id);
+}
+// Matches of sel below root in the rendered tree: through open shadow roots and
+// into whatever each slot shows (a web component's options, slotted into its list).
+function flatAll(sel, root) {
+  const out = [];
+  (function walk(x) {
+    const a = x.tagName === "SLOT" ? x.assignedElements({ flatten: true }) : [];
+    Array.prototype.forEach.call(a.length ? a : (x.shadowRoot || x).children, function (c) { if (c.matches(sel)) out.push(c); walk(c); });
+  })(root);
+  return out;
+}
 // The control's own options: its linked lists, else a list beside it in a wrapper
 // that holds no other control, else options that appeared after select opened it.
 // Never the rest of the page. Sets s.filter to a search box inside a linked popup.
 function ownOptions(s) {
-  const within = function (root) { return Array.from(root.querySelectorAll(OPT)).filter(vis); };
+  const within = function (root) {
+    const o = Array.from(root.querySelectorAll(OPT));
+    return (o.length || !(root.shadowRoot || root.querySelector("slot")) ? o : flatAll(OPT, root)).filter(vis);
+  };
   if (attr(s.ctl, "role") === "listbox") return within(s.ctl);
   const lists = linkedLists(s);
   if (lists.length) {
@@ -7137,6 +7178,14 @@ if (s.opened && !all.length && !s.keyed && !s.typed && s.polls >= 2 && kb.tagNam
   s.keyed = true;
   return wait;
 }
+// A press that left a control with no text box shut, with no option shown
+// anywhere (open shadow roots too) and nothing loading, opened nothing: that
+// miss settles after 12 polls (about 0.6s) rather than the full bound.
+const roots = [s.ctl, s.input, s.box, s.pop, s.listRoot].concat(linkedLists(s));
+if (s.opened && !all.length && !box && s.polls >= 12 && !s.seenAny) {
+  if (stillOpen(s) || loadingIn(roots) || deepAll(OPT).some(function (o) { return s.before.indexOf(o) < 0 && vis(o); })) s.seenAny = true;
+  else return { settled: true, tok: tok };
+}
 // A miss settles ({settled}) once the list has held: text:"" after 3 polls; a
 // no-match after 8 (about 400ms), and after a typed filter only once the list
 // has changed since typing, so a debounce's stale list is not the answer. An
@@ -7151,7 +7200,6 @@ if (s.typed && sig !== s.typedSig) s.answered = true;
 // nothing, is the page's own filter, not a debounce or lookup: that answer
 // holds after 2 polls. A narrowed list keeps 8, since a local filter may
 // still be followed by a lookup's results.
-const roots = [s.ctl, s.input, s.box, s.pop, s.listRoot].concat(linkedLists(s));
 if (s.typed && s.sync == null) s.sync = sig !== s.typedSig;
 if (sig && s.same >= (wantN ? 8 : 3) && (!wantN || s.answered || !box)) return { settled: true, tok: tok };
 if (s.typed && s.typedSig && !sig) {

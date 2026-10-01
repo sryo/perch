@@ -2,12 +2,27 @@
 // buildEvalWrapper (sync) or the async kickoff, with JSON on the way out.
 // Layout is stubbed: every element is 100x20 unless it carries data-zero or sits
 // in a display:none or [hidden] subtree, which Chrome lays out as an empty 0x0
-// box (happy-dom has no user-agent rule for [hidden]).
+// box (happy-dom has no user-agent rule for [hidden]). The subtree is the
+// rendered one: a shadow root's content sits in its host, and a host's light
+// child in the slot it is assigned to, or nowhere when no slot takes it.
 // data-rect="left,top,width,height" places an element anywhere, offscreen too.
 // performance.timeOrigin is the page's own (happy-dom shares the process's). It
 // seeds snapshot refs; the default seeds them from 1 on every run.
 import { Window } from "happy-dom";
 import { buildEvalWrapper, pageScript, takeRefsId } from "../../server.js";
+
+// happy-dom has no assignedSlot, so the slot is found from the host's side.
+const GONE = {};
+function flatParent(el) {
+  const p = el.parentElement;
+  if (p && p.shadowRoot) {
+    const slot = Array.from(p.shadowRoot.querySelectorAll("slot")).find((x) => x.assignedNodes().includes(el));
+    return slot || GONE;
+  }
+  if (p) return p;
+  const r = el.parentNode;
+  return r && r.host ? r.host : null;
+}
 
 export function page(html, { url = "https://a.test/p", timeOrigin = 1790000001000.25 } = {}) {
   const w = new Window({ url, settings: { enableJavaScriptEvaluation: true, suppressInsecureJavaScriptEnvironmentWarning: true, navigation: { disableChildPageNavigation: true } } });
@@ -20,7 +35,7 @@ export function page(html, { url = "https://a.test/p", timeOrigin = 179000000100
       return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height };
     }
     let z = this.hasAttribute("data-zero");
-    for (let el = this; el && !z; el = el.parentElement) z = el.hidden || w.getComputedStyle(el).display === "none";
+    for (let el = this; el && !z; el = flatParent(el)) z = el === GONE || el.hidden || w.getComputedStyle(el).display === "none";
     return { x: 0, y: 0, left: 0, top: 0, width: z ? 0 : 100, height: z ? 0 : 20, right: z ? 0 : 100, bottom: z ? 0 : 20 };
   };
   // happy-dom follows a link through window.open, which browsers never show page
