@@ -3009,8 +3009,17 @@ function jxaRuntime(BROWSERS, HANG) {
         if (lost) return done(null);
         // a.short: give up early unless a.probe says a list or companion is there.
         // A pick step answering {settled} has found nothing more worth waiting for.
+        // "declared" (a list named but not shown yet) earns one a.step more, then asks again.
         let picked = until(a.pick, a.short || a.wait || 2500, true);
-        if (!picked && !lost && a.short && once(readExec(t, a.probe)) === true) picked = until(a.pick, a.wait - a.short, true);
+        if (!picked && !lost && a.short) {
+          let p = once(readExec(t, a.probe)), spent = a.short;
+          if (p === "declared" && a.step) {
+            picked = until(a.pick, a.step, true);
+            spent += a.step;
+            if (!picked && !lost) p = once(readExec(t, a.probe));
+          }
+          if (!picked && !lost && p === true) picked = until(a.pick, a.wait - spent, true);
+        }
         if (lost) return done(null);
         if (picked && picked.value.settled) picked = null;
         if (!picked && !a.missFinal) return done(once(readExec(t, a.miss)));
@@ -6500,14 +6509,19 @@ return A.hold && l.length ? { l: l, f: f, h: 1 } : { l: l, f: f };
 `,
 
   // {pending} = keep polling; the best tier of taMatch. A.probe: is a pick worth
-  // waiting longer for (a hidden companion, an open, declared or non-empty
-  // list; a slow lookup declares its list before rendering it)?
+  // waiting longer for? true for a hidden companion, an open or busy list, or
+  // one showing anything but a no-results notice; "declared" for a field that
+  // names a list it has not shown yet (a slow lookup declares it first).
   fill_ta_pick: TA_PICK_LIB + TA_OWN_LIB + String.raw`
 const s = window.__perch_ta;
 if (!s) return { ok: false, kind: "typeahead", error: "fill state lost (did the page navigate?)" };
 if (taLost) return taLost;
-if (A.probe) return !!(s.comp || attr(s.el, "aria-expanded") === "true" || attr(s.el, "aria-haspopup") === "listbox" || attr(s.el, "aria-controls") || attr(s.el, "aria-owns") ||
-  taScopes(s).some(function (r) { return vis(r) && taNorm(r.textContent); }));
+if (A.probe) {
+  const sc = taScopes(s);
+  if (s.comp || attr(s.el, "aria-expanded") === "true" || taBusy(sc)) return true;
+  if (sc.some(function (r) { return vis(r) && taNorm(r.textContent); })) return !noneIn(sc);
+  return attr(s.el, "aria-haspopup") === "listbox" || attr(s.el, "aria-controls") || attr(s.el, "aria-owns") ? "declared" : false;
+}
 // A list showing a loading row may still hold the last lookup's results, which
 // some widgets ignore a press on: nothing is matched until the row goes.
 if (taBusy(taScopes(s))) return { pending: true, tok: s.tok };
@@ -8757,7 +8771,7 @@ const pickSuggestion = async (target, tok, key) => pageFault(await rt("select", 
   target, tool: "fill", wait: 3000, tok,
   pick: pageFn("fill_ta_pick", key), miss: pageFn("fill_ta_miss", key), missFinal: pageFn("fill_ta_miss", { ...key, final: true }), settle: 300,
   read: pageFn("fill_ta_read", key), readFinal: pageFn("fill_ta_read", { ...key, final: true }),
-  short: 1000, probe: pageFn("fill_ta_pick", { ...key, probe: true }),
+  short: 1000, step: 750, probe: pageFn("fill_ta_pick", { ...key, probe: true }),
 }, { lane: "slow" }), "typeahead");
 export const TA_TAKEN = "another perch call on this tab took over this fill's suggestions; not verified";
 const taTaken = (extra) => ({ ok: false, kind: "typeahead", ...extra, error: TA_TAKEN });

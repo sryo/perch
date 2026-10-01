@@ -1480,7 +1480,7 @@ test("fill {fields}: a typeahead entry gets the short-query retry too", async ()
 
 test("typeahead: a pick that throws is ok:false with the error name only", async () => {
   const { dom } = onPage(LOCATION, LOCATION_JS());
-  const threw = throwAt(dom, "if (A.probe) return !!(s.comp");
+  const threw = throwAt(dom, "if (A.probe) {");
   const o = await fill({ label_pattern: "location", text: "Rosario" });
   assert.ok(threw() > 0);
   assert.equal(o.ok, false, JSON.stringify(o));
@@ -1616,6 +1616,17 @@ test("typeahead: a suggestion named \"Loading ...\" is picked at once, never tak
   assert.equal(o.selected, "Loading Dock Worker");
   assert.equal($(dom, "[name=jobId]").value, "Loading Dock Worker");
   assert.ok(world.clock.t - t0 < 1000, "waited " + (world.clock.t - t0) + "ms");
+});
+
+// A combobox declaring a list it never renders waits one short step more, not the full bound.
+test("typeahead: a declared list that never appears keeps the text after a short extra step", async () => {
+  const { dom, world } = onPage(`<form><label for=t>Job title</label><input id=t role=combobox aria-autocomplete=list aria-haspopup=listbox aria-controls=t-list aria-expanded=false></form>`);
+  const t0 = world.clock.t;
+  const o = await fill({ label_pattern: "job title", text: "Staff Engineer" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.kind, "plain");
+  assert.equal($(dom, "#t").value, "Staff Engineer");
+  assert.ok(world.clock.t - t0 < 2200, "waited " + (world.clock.t - t0) + "ms");
 });
 
 // A results wrapper holding only a "No results" note offers no suggestion.
