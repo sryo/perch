@@ -95,14 +95,17 @@ test("a timeout up to 30s stays on the slow lane and is honoured", async () => {
   assert.equal(lanes.find(([, fn]) => fn === "evalAsync")[0], "slow");
 });
 
-test("a timeout over 300s, or one that isn't a positive number, is bad_args before any Apple Event", async () => {
+test("a timeout over 300s, under 1s, or not a number, is bad_args before any Apple Event", async () => {
   install();
   for (const [args, re] of [
     [{ awaitPromise: true, timeout: AWAIT_MAX_MS + 1 }, /^error: bad_args: eval_js awaits at most 300000ms \(5 min\); got 300001\. /],
     [{ awaitPromise: true, timeout: 1e9, world: "main" }, /^error: bad_args: eval_js awaits at most 300000ms/],
-    [{ awaitPromise: true, timeout: 0 }, /^error: bad_args: eval_js `timeout` must be a positive number of ms/],
-    [{ awaitPromise: true, timeout: "60000" }, /^error: bad_args: eval_js `timeout` must be a positive number of ms/],
-    [{ awaitPromise: true, timeout: NaN }, /^error: bad_args: eval_js `timeout` must be a positive number of ms/],
+    // Seconds given by mistake would time out at once, and a re-run repeats side effects.
+    [{ awaitPromise: true, timeout: 60 }, /^error: bad_args: eval_js timeout is in milliseconds \(1000 to 300000\); got 60$/],
+    [{ awaitPromise: true, timeout: 999, world: "main" }, /^error: bad_args: eval_js timeout is in milliseconds \(1000 to 300000\); got 999$/],
+    [{ awaitPromise: true, timeout: 0 }, /^error: bad_args: eval_js timeout is in milliseconds \(1000 to 300000\); got 0$/],
+    [{ awaitPromise: true, timeout: "60000" }, /^error: bad_args: eval_js timeout is in milliseconds \(1000 to 300000\); got "60000"$/],
+    [{ awaitPromise: true, timeout: NaN }, /^error: bad_args: eval_js timeout is in milliseconds \(1000 to 300000\); got NaN$/],
     [{ timeout: 60000 }, /^error: bad_args: eval_js `timeout` bounds awaitPromise; pass awaitPromise:true or drop it/],
   ]) {
     world.reset();
@@ -112,8 +115,10 @@ test("a timeout over 300s, or one that isn't a positive number, is bad_args befo
     assert.equal(pg().ran, undefined);
     assert.equal(execs(), 0, JSON.stringify(args));
   }
-  const ok = await call("eval_js", { script: "return 3", awaitPromise: true, timeout: AWAIT_MAX_MS, target: { tabId: H } });
-  assert.equal(ok.t, "3");
+  for (const timeout of [1000, AWAIT_MAX_MS]) {
+    const ok = await call("eval_js", { script: "return 3", awaitPromise: true, timeout, target: { tabId: H } });
+    assert.equal(ok.t, "3", `timeout ${timeout}`);
+  }
 });
 
 test("a long await polls every 50ms for 3s, then backs off to one poll a second", async () => {

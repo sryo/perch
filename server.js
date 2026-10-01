@@ -3554,7 +3554,7 @@ export class OsaDaemon {
 
 const JXA_DEFAULT_TIMEOUT = 30000;
 // The longest eval_js {awaitPromise} a caller may ask for; the default is JXA_DEFAULT_TIMEOUT.
-export const AWAIT_MAX_MS = 300000;
+export const AWAIT_MAX_MS = 300000, AWAIT_MIN_MS = 1000;
 // Tools that poll inside one call (wait, awaitPromise) pass their own timeout plus
 // this margin so the outer kill never races the inner loop.
 const JXA_OVERHEAD = 5000;
@@ -9120,7 +9120,7 @@ const TOOLS = [
     script: { type: "string" },
     script_path: { type: "string", description: "Local .js file." },
     awaitPromise: { type: "boolean", description: "Await async code." },
-    timeout: { type: "number", description: "ms to await, default 30000, max 300000." },
+    timeout: { type: "number", description: "ms to await, 1000 to 300000, default 30000." },
     ref: { type: "string", description: "Binds `el` to this ref." },
     world: { type: "string", enum: ["main"], description: "Run in the page's own JS world (its globals); no ref." },
     target: TARGET,
@@ -9221,7 +9221,9 @@ export const SCHEMA_BUDGET = 9600;
 function awaitTimeout({ timeout, awaitPromise }) {
   if (timeout == null) return JXA_DEFAULT_TIMEOUT;
   if (!awaitPromise) throw new Error("bad_args: eval_js `timeout` bounds awaitPromise; pass awaitPromise:true or drop it");
-  if (typeof timeout !== "number" || !(timeout > 0)) throw new Error(`bad_args: eval_js \`timeout\` must be a positive number of ms; got ${JSON.stringify(timeout)}`);
+  // Under a second is most likely seconds given by mistake: it would time out at
+  // once, and a re-run repeats the code's side effects.
+  if (typeof timeout !== "number" || !(timeout >= AWAIT_MIN_MS)) throw new Error(`bad_args: eval_js timeout is in milliseconds (${AWAIT_MIN_MS} to ${AWAIT_MAX_MS}); got ${typeof timeout === "number" ? String(timeout) : JSON.stringify(timeout)}`);
   if (timeout > AWAIT_MAX_MS) throw new Error(`bad_args: eval_js awaits at most ${AWAIT_MAX_MS}ms (5 min); got ${timeout}. Start a longer job without awaiting it, then check on it with wait {expression}`);
   return timeout;
 }
