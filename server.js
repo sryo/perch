@@ -2581,7 +2581,8 @@ function jxaRuntime(BROWSERS, HANG) {
     // eval_js {world:"main"}: the kick injects the code as a <script> and answers
     // the result's first part when it settled at once; otherwise reads poll. A
     // result longer than a part is read on from each part's end, so no reply
-    // carries more than one part. Returns the result's JSON text.
+    // carries more than one part. Returns "m" and the JSON text the page's world
+    // wrote, or "i" and perch's own error from the isolated world.
     evalMain(a) {
       const t = pageTarget(a.target, "eval_js"), start = Date.now();
       const read = function (off) { return a.read.split(MW_OFF).join(String(off)); };
@@ -2594,8 +2595,8 @@ function jxaRuntime(BROWSERS, HANG) {
         v = r.value;
       }
       if (v.__perch_gone) throw new Error("timeout: eval_js (world main) lost its result before it settled" + MAY_HAVE_RUN);
-      if (v.__perch_csp) throw new Error("tab_not_scriptable: eval_js world:\"main\" can't run on this page: its Content-Security-Policy blocks inline scripts; nothing ran");
-      if (v.p == null) return JSON.stringify(v);
+      if (v.__perch_blocked) throw new Error("tab_not_scriptable: eval_js world:\"main\" can't run on this page: its Content-Security-Policy blocks inline scripts; nothing ran");
+      if (v.p == null) return "i" + JSON.stringify(v);
       const parts = [v.p];
       for (let end = v.end; end < v.len;) {
         if (Date.now() - start > a.timeout + MW_READ_MS) throw new Error("timeout: eval_js (world main) could not read its " + v.len + "-char result in time; the code ran");
@@ -2604,7 +2605,7 @@ function jxaRuntime(BROWSERS, HANG) {
         parts.push(x.p);
         end = x.end;
       }
-      return parts.join("");
+      return "m" + parts.join("");
     },
     // One event when the page is already there; then polls every 50ms.
     wait(a) {
@@ -3771,38 +3772,62 @@ function buildAsyncPoll(key) {
 // the kick injects the code as a <script>, which runs in the page's own world,
 // and the result comes back as an attribute on that (removed) element, found
 // through window[key] in the isolated world. A constant probe script runs first:
-// when it doesn't, the page's CSP blocks inline scripts; when it does and the
+// when it doesn't, the page's CSP blocks inline scripts, which the isolated world
+// records as a string in window[key] in place of the element (the page can write
+// the element's attributes, never perch's globals); when it does and the
 // code's script doesn't, the code failed to parse, and compiling it here (only
 // then) names the SyntaxError, since the page's error event never reaches us. Slots join the awaitPromise
 // sweep list once fully read. A read answers at most MW_PART chars from an
 // offset (never splitting a surrogate pair), so a long result (a PNG as base64)
-// takes several bounded replies.
+// takes several bounded replies. Everything on the element is the page's to
+// write, so Node takes from it only `{value}` or the two-key error shape.
 export const MW_PART = 2000000;
 const MW_READ = `function(K,o){var s=window[K];if(s===undefined)return '{"__perch_gone":1}';var d=${ASYNC_DONE}=${ASYNC_DONE}||[];` +
-  `if(s.hasAttribute("data-perch-csp")){if(d.indexOf(K)<0)d.push(K);return '{"__perch_csp":1}'}` +
+  `if(typeof s==="string"){if(d.indexOf(K)<0)d.push(K);return JSON.stringify({__perch_blocked:s})}` +
   `var j=s.getAttribute("data-perch-r");if(j==null)return "null";` +
   `var e=Math.min(j.length,o+${MW_PART});if(e<j.length){var c=j.charCodeAt(e-1);if(c>=55296&&c<56320)e--}` +
   `if(e>=j.length&&d.indexOf(K)<0)d.push(K);return JSON.stringify({p:j.slice(o,e),end:e,len:j.length})}`;
 const MW_PROBE = `document.currentScript.setAttribute("data-perch-ran","")`;
 
+const MW_ERROR_SHAPE = `function(e){return {__perch_error:(e&&e.message)?String(e.message):String(e),__perch_error_name:(e&&e.name)?String(e.name):'Error'}}`;
+
 export function buildMainKick(js, key, awaitPromise) {
   const run = awaitPromise
     ? `(async function(){${js}\n})().then(function(r){p({value:r===undefined?null:r})},function(e){p(E(e))})`
     : `try{var r=(function(){${js}\n})();p({value:r===undefined?null:r})}catch(e){p(E(e))}`;
-  const main = `(function(){var s=document.currentScript;if(!s)return;s.setAttribute("data-perch-ran","");var E=${ERROR_SHAPE};` +
+  const main = `(function(){var s=document.currentScript;if(!s)return;s.setAttribute("data-perch-ran","");var E=${MW_ERROR_SHAPE};` +
     `var p=function(o){var j;try{j=JSON.stringify(o)}catch(e){j=JSON.stringify(E(e))}s.setAttribute("data-perch-r",j)};${run}})()`;
   const k = JSON.stringify(key);
-  return `(function(){var __E=${ERROR_SHAPE};(${ASYNC_DONE}||[]).forEach(function(d){delete window[d]});${ASYNC_DONE}=[];` +
+  return `(function(){var __E=${ERROR_SHAPE},__M=${MW_ERROR_SHAPE};(${ASYNC_DONE}||[]).forEach(function(d){delete window[d]});${ASYNC_DONE}=[];` +
     `try{var root=document.head||document.documentElement,q=document.createElement("script"),s=document.createElement("script"),m;` +
     `q.textContent=${JSON.stringify(MW_PROBE)};s.textContent=${JSON.stringify(main)};window[${k}]=s;root.appendChild(q);q.remove();` +
-    `if(!q.hasAttribute("data-perch-ran"))s.setAttribute("data-perch-csp","");` +
+    `if(!q.hasAttribute("data-perch-ran"))window[${k}]="csp";` +
     `else{root.appendChild(s);s.remove();` +
-    `if(!s.hasAttribute("data-perch-ran")){try{Function(s.textContent);m={message:"the script did not run",name:"Error"}}catch(e){m=e}s.setAttribute("data-perch-r",JSON.stringify(__E(m)))}}` +
+    `if(!s.hasAttribute("data-perch-ran")){try{Function(s.textContent);m={message:"the script did not run",name:"Error"}}catch(e){m=e}s.setAttribute("data-perch-r",JSON.stringify(__M(m)))}}` +
     `}catch(e){return JSON.stringify(__E(e))}return (${MW_READ})(${k},0)})()`;
 }
 
 export function buildMainRead(key) {
   return `(function(){return (${MW_READ})(${JSON.stringify(key)},"@perch_off@")})()`;
+}
+
+// The JSON text eval_js {world:"main"} read off its element, which the page can
+// rewrite (hooking setAttribute or JSON.stringify there): only `{value}` or the
+// two-key error shape is taken, and a value shaped like one of perch's own
+// blocks (an image, a ref miss, an error) goes back as its JSON text, so the
+// page's data never becomes one.
+const MW_ALTERED = 'tab_not_scriptable: eval_js world:"main" got back a result the page altered; the code ran, so check the page before running it again';
+const PERCH_BLOCK_KEYS = ["__image", "__perch_ref_miss", "__perch_error"];
+function mainResult(text) {
+  let o;
+  try { o = JSON.parse(text); } catch { throw new Error(MW_ALTERED); }
+  const keys = o && typeof o === "object" && !Array.isArray(o) ? Object.keys(o) : [];
+  if (keys.length === 1 && keys[0] === "value") {
+    const v = o.value;
+    return v && typeof v === "object" && !Array.isArray(v) && PERCH_BLOCK_KEYS.some((k) => Object.hasOwn(v, k)) ? JSON.stringify(v) : v;
+  }
+  if (keys.length === 2 && typeof o.__perch_error === "string" && typeof o.__perch_error_name === "string") return o;
+  throw new Error(MW_ALTERED);
 }
 
 const parsePage = (raw) => { if (raw === "") return null; try { return JSON.parse(raw); } catch { return raw; } };
@@ -3845,8 +3870,7 @@ async function evalJs(script, target, { awaitPromise = false, timeout = 30000, t
     const key = `__perch_mw_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const raw = await rt("evalMain", { target, kick: buildMainKick(script, key, awaitPromise), read: buildMainRead(key), timeout },
       { raw: true, lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + MW_READ_MS + JXA_OVERHEAD });
-    const r = parsePage(raw);
-    return r && typeof r === "object" && Object.hasOwn(r, "value") ? r.value : r;
+    return raw[0] === "m" ? mainResult(raw.slice(1)) : parsePage(raw.slice(1));
   }
   if (!awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
   const key = `__perch_async_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
