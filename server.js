@@ -4610,28 +4610,10 @@ function ctlBox(ctl, input) {
   };
   return { wrap: wrap, named: named, box: wrap || (ctl.tagName === "INPUT" && up && !pageLevel(up) ? up : ctl) };
 }
-// The text a node shows through slots and open shadow roots, which innerText
-// and textContent leave out (a web component's option or trigger), image alt
-// text included as an accessible name reads it. In select scripts textOf
-// falls back to it.
+// In select scripts textOf reads a node whose own text is blank through
+// slots and shadow roots (flatText).
 const lightText = textOf;
 textOf = function (n) { const t = lightText(n); return t.trim() ? t : flatText(n) || t; };
-function flatText(n) {
-  if (!n || n.nodeType !== 1 || !(n.shadowRoot || n.querySelector("slot"))) return "";
-  let s = "", k = 0;
-  (function walk(x) {
-    if (++k > 3000) return;
-    if (x.nodeType === 3) { s += x.nodeValue; return; }
-    if (x.nodeType === 1) {
-      if (/^(STYLE|SCRIPT|TEMPLATE)$/.test(x.tagName) || x.hidden || getComputedStyle(x).display === "none") return;
-      if (x.tagName === "IMG") { s += " " + attr(x, "alt") + " "; return; }
-    }
-    const a = x.tagName === "SLOT" ? x.assignedNodes({ flatten: true }) : [];
-    Array.prototype.forEach.call(a.length ? a : (x.shadowRoot || x).childNodes, walk);
-    if (/^(DIV|P|LI|TD|BR)$/.test(x.tagName)) s += " ";
-  })(n);
-  return s.replace(/\s+/g, " ").trim();
-}
 const selKey = JSON.stringify([A.ref, A.selector, A.label_pattern, A.text, !!A.trusted]);
 const selNow = window.__perch_select;
 const selLost = selNow && selNow.key !== selKey ? { lost: true, tok: selNow.tok } : null;
@@ -4870,11 +4852,40 @@ function byIdNear(id, near) {
   });
   return best;
 }
-// The element with this id in near's own tree (a shadow root's), else the document's.
+// The element with this id in near's own tree (a shadow root's), else in each
+// enclosing host's tree out to the document: a web component's input may name
+// a list its outer component renders.
 function idNear(id, near) {
-  const r = id && near && near.getRootNode ? near.getRootNode() : null;
-  return !id ? null : (r && r !== document && r.getElementById && r.getElementById(id)) || document.getElementById(id);
+  if (!id) return null;
+  for (let r = near && near.getRootNode ? near.getRootNode() : document; r && r !== document; r = r.host && r.host.getRootNode()) {
+    const m = r.getElementById && r.getElementById(id);
+    if (m) return m;
+  }
+  return document.getElementById(id);
 }
+// The text a node shows through slots and open shadow roots, which innerText
+// and textContent leave out (a web component's option or trigger), image alt
+// text included as an accessible name reads it.
+function flatText(n) {
+  if (!n || n.nodeType !== 1 || !shadowy(n)) return "";
+  let s = "", k = 0;
+  (function walk(x) {
+    if (++k > 3000) return;
+    if (x.nodeType === 3) { s += x.nodeValue; return; }
+    if (x.nodeType === 1) {
+      if (/^(STYLE|SCRIPT|TEMPLATE)$/.test(x.tagName) || x.hidden || getComputedStyle(x).display === "none") return;
+      if (x.tagName === "IMG") { s += " " + attr(x, "alt") + " "; return; }
+    }
+    const a = x.tagName === "SLOT" ? x.assignedNodes({ flatten: true }) : [];
+    Array.prototype.forEach.call(a.length ? a : (x.shadowRoot || x).childNodes, walk);
+    if (/^(DIV|P|LI|TD|BR)$/.test(x.tagName)) s += " ";
+  })(n);
+  return s.replace(/\s+/g, " ").trim();
+}
+// Whether a list may render its options through slots or shadow roots.
+function shadowy(r) { return !!(r.shadowRoot || r.querySelector("slot") || Array.prototype.some.call(r.children, function (c) { return c.shadowRoot; })); }
+// A node's textContent, else, when that is blank, its flatText.
+function tcOf(n) { const t = n.textContent; return t.trim() ? t : flatText(n) || t; }
 // Matches of sel below root in the rendered tree: through open shadow roots and
 // into whatever each slot shows (a web component's options, slotted into its list).
 function flatAll(sel, root) {
@@ -4891,7 +4902,7 @@ function flatAll(sel, root) {
 function ownOptions(s) {
   const within = function (root) {
     const o = Array.from(root.querySelectorAll(OPT));
-    return (o.length || !(root.shadowRoot || root.querySelector("slot")) ? o : flatAll(OPT, root)).filter(vis);
+    return (o.length || !shadowy(root) ? o : flatAll(OPT, root)).filter(vis);
   };
   if (attr(s.ctl, "role") === "listbox") return within(s.ctl);
   const lists = linkedLists(s);
@@ -5385,9 +5396,10 @@ function taScopes(s) {
 }
 function taOptions(s) {
   const ITEM = "[role=option], li, [class*=option], [class*=item], [class*=result]";
-  const shown = function (o) { return vis(o) && taNorm(o.textContent); };
+  const shown = function (o) { return vis(o) && taNorm(tcOf(o)); };
   return taScopes(s).reduce(function (out, scope) {
     let opts = scope.matches("[role=option]") ? [scope] : Array.from(scope.querySelectorAll("[role=option]"));
+    if (!opts.length && shadowy(scope)) opts = flatAll("[role=option]", scope);
     if (!opts.length) {
       opts = Array.from(scope.querySelectorAll(ITEM)).filter(function (o) { return !o.querySelector(ITEM); }).filter(shown);
       // A lone match can be the results wrapper ("results" in its class) around
@@ -5399,7 +5411,7 @@ function taOptions(s) {
       if ((kids.length > 1 || (kids.length === 1 && /results/i.test(String(opts[0].className)))) && texts.every(function (t, i) { return texts.indexOf(t) === i; }) &&
           !opts[0].querySelector("input, select, textarea, button")) opts = kids;
     }
-    return out.concat(opts.filter(function (o) { return shown(o) && !taBusyRow(o) && !NONE_SAID.test(norm(o.textContent)); }));
+    return out.concat(opts.filter(function (o) { return shown(o) && !taBusyRow(o) && !NONE_SAID.test(norm(tcOf(o))); }));
   }, []);
 }
 // A loading row: a busy sign (aria-busy, a progressbar, a loading or spinner
@@ -5428,7 +5440,7 @@ function taMatch(opts, text) {
   const tiers = [function (t) { return t === w; }, function (t) { return inOrder(parts(t), wp); }, function (t) { return inOrder(placesOf(t), wa); },
     function (t) { return t.indexOf(w) === 0; }, function (t) { return pre.test(t); }, function (t) { return inOrder(wordsOf(t), ws); }];
   const lead = [null, function (t) { return parts(t)[0] === wp[0]; }, function (t) { return placesOf(t)[0] === wa[0]; }];
-  const keys = w ? opts.map(function (o) { return fold(taNorm(o.textContent)); }) : [];
+  const keys = w ? opts.map(function (o) { return fold(taNorm(tcOf(o))); }) : [];
   let tie = null;
   if (w) for (let i = 0; i < tiers.length; i++) {
     let hits = opts.filter(function (o, j) { return tiers[i](keys[j]); });
@@ -6697,20 +6709,21 @@ const m = taMatch(opts, s.text);
 // Several equal hits short of exact are a tie, never settled by list order.
 const opt = m.hits.length === 1 || m.exact ? m.hits[0] : null;
 if (!opt) {
-  if (opts.length) { s.cands = opts.slice(0, 8).map(function (o) { return clip(o.textContent, 60); }); s.tied = m.hits.length > 1; }
+  if (opts.length) { s.cands = opts.slice(0, 8).map(function (o) { return clip(tcOf(o), 60); }); s.tied = m.hits.length > 1; }
   // A list unchanged for 8 polls (about 400ms, past a typical debounce that
   // shows a stale list) is settled, so the miss runs now ({settled}): a tie at
   // once, a list without a hit only once it changed from the first one seen
   // after typing, which may be the stale one. An empty list keeps waiting.
-  const sig = opts.length ? opts.map(function (o) { return taNorm(o.textContent); }).join("\n") : null;
+  const sig = opts.length ? opts.map(function (o) { return taNorm(tcOf(o)); }).join("\n") : null;
   if (!("sig0" in s)) s.sig0 = sig;
   if (sig !== s.sig0) s.answered = true;
   s.same = sig && sig === s.sig ? s.same + 1 : 0;
   s.sig = sig;
   return sig && s.same >= 8 && (s.tied || s.answered) ? { settled: true, tok: s.tok } : { pending: true, tok: s.tok };
 }
-s.picked = clip(textOf(opt), 80);
-s.pickedN = fold(taNorm(textOf(opt)));
+const optT = textOf(opt).trim() ? textOf(opt) : tcOf(opt);
+s.picked = clip(optT, 80);
+s.pickedN = fold(taNorm(optT));
 s.before = taNorm(taShown(s.el));
 s.ownBefore = taOwn(s.el);
 // The labels the option renders as its own leading unit, which a control may
@@ -6752,7 +6765,7 @@ if (taLost) return taLost;
 const el = s.el;
 if (!s.missed) {
   s.missed = true;
-  const c = taOptions(s).slice(0, 8).map(function (o) { return clip(o.textContent, 60); });
+  const c = taOptions(s).slice(0, 8).map(function (o) { return clip(tcOf(o), 60); });
   if (c.length) s.cands = c;
   if (!s.comp && !s.cands) { taBlur(el); return { pending: true, tok: s.tok }; }
 }

@@ -1639,3 +1639,45 @@ test("typeahead: a no-results note is never a suggestion or a candidate", async 
   assert.ok(!(o.candidates || []).some((c) => /no results/i.test(c)), JSON.stringify(o));
   assert.equal($(dom, "#loc").value, "");
 });
+
+// SmartRecruiters' City (spl-autocomplete, Lit): the combobox input sits in
+// spl-input's shadow root and names a listbox that the outer spl-autocomplete
+// renders in its own shadow root. Suggestions are spl-select-option children of
+// that listbox, each rendering its role=option two shadow roots down, its text
+// slotted back in; their own text is only Lit's whitespace. A lookup answers a
+// few page calls after typing; a click on a suggestion's option picks it.
+const SPL_CITY = `<form><spl-autocomplete id=ac></spl-autocomplete></form>`;
+const SPL_CITY_JS = `
+  const shadow = (el, html) => { const r = el.attachShadow({ mode: "open" }); r.innerHTML = html; return r; };
+  const ac = shadow(document.getElementById("ac"), '<spl-dropdown><div slot=trigger><spl-input></spl-input></div><div slot=menu id=menu-x role=listbox></div></spl-dropdown>');
+  const dd = shadow(ac.querySelector("spl-dropdown"), '<slot name=trigger></slot><div class=menu style="display:none"><slot name=menu></slot></div>');
+  const si = shadow(ac.querySelector("spl-input"), '<label for=x>City</label><input id=x type=text role=combobox aria-autocomplete=list aria-haspopup=listbox aria-controls=menu-x aria-expanded=false>');
+  const inp = si.querySelector("input"), menu = ac.querySelector("#menu-x"), wrap = dd.querySelector(".menu");
+  const places = ["Tuscaloosa, AL, US", "Tuscola, IL, US"];
+  window.log = [];
+  const close = () => { wrap.style.display = "none"; inp.setAttribute("aria-expanded", "false"); menu.innerHTML = ""; };
+  inp.addEventListener("input", () => {
+    const q = inp.value.toLowerCase();
+    later(() => {
+      const hits = places.filter((p) => q && p.toLowerCase().startsWith(q.split(",")[0].slice(0, 4)));
+      menu.innerHTML = hits.concat(["Cannot find your city? Click here to fill in manually"]).map((p) => '<spl-select-option value="' + p + '">  ' + p + '  </spl-select-option>').join("");
+      menu.querySelectorAll("spl-select-option").forEach((opt) => {
+        const item = shadow(opt, '<spl-dropdown-item><slot></slot></spl-dropdown-item>').querySelector("spl-dropdown-item");
+        const ir = shadow(item, '<div role=option aria-selected=false>  <slot name=prefix></slot>  <spl-typography-body><slot></slot></spl-typography-body>  </div>');
+        shadow(ir.querySelector("spl-typography-body"), "<p><slot></slot></p>");
+        ir.querySelector("[role=option]").addEventListener("click", () => { window.log.push(opt.getAttribute("value")); inp.value = opt.getAttribute("value"); close(); });
+      });
+      wrap.style.display = "";
+      inp.setAttribute("aria-expanded", "true");
+    }, 3);
+  });`;
+
+test("typeahead: a web component's suggestions, in an outer component's shadow root and slotted, are picked", async () => {
+  const { dom } = onPage(SPL_CITY, SPL_CITY_JS);
+  const o = await fill({ selector: "#x", text: "Tuscaloosa, Alabama" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.kind, "typeahead", JSON.stringify(o));
+  assert.deepEqual([...dom.log], ["Tuscaloosa, AL, US"]);
+  const inp = dom.document.getElementById("ac").shadowRoot.querySelector("spl-input").shadowRoot.querySelector("input");
+  assert.equal(inp.value, "Tuscaloosa, AL, US");
+});
