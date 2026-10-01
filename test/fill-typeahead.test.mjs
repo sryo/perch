@@ -577,6 +577,30 @@ test("typeahead: a loading row is never a candidate", async () => {
   assert.equal($(dom, "#selected-location").value, "");
 });
 
+// Rippling's location field: no role and no aria-expanded, only
+// aria-haspopup=listbox; a slow lookup renders the list (and aria-controls)
+// well past a second.
+const RIPPLING = `<label id=loc-label for=loc>Location</label><div class=a><span class=icon></span>
+  <input id=loc aria-labelledby=loc-label aria-autocomplete=list aria-haspopup=listbox autocomplete=off></div><div class=b></div>
+  <input type=hidden name=externalPlaceId><label>Name <input name=name></label>`;
+const RIPPLING_JS = (ticks) => `
+  const inp = document.getElementById('loc'), hold = document.querySelector('.b'), hid = document.querySelector('[name=externalPlaceId]');
+  const places = ${JSON.stringify(["Tuscaloosa, Alabama, EE. UU.", "Cottondale, Tuscaloosa, Alabama, EE. UU.", "Northport, Tuscaloosa, Alabama, EE. UU."])};
+  inp.addEventListener('input', () => { window.__q = []; hold.innerHTML = ''; later(() => {
+    inp.setAttribute('aria-controls', 'loc-list');
+    hold.innerHTML = '<ul id=loc-list role=listbox>' + places.map((p, i) => '<li role=option id=loc-list-option-' + i + '><p>' + p + '</p></li>').join('') + '</ul>';
+    hold.querySelectorAll('li').forEach((li) => li.addEventListener('click', () => { inp.value = li.textContent; hid.value = 'place-' + li.id.slice(-1); hold.innerHTML = ''; }));
+  }, ${ticks}); });`;
+
+test("typeahead: a field that declares a popup list waits past the short bound for a slow lookup", async () => {
+  const { dom } = onPage(RIPPLING, RIPPLING_JS(30));
+  const o = await fill({ label_pattern: "^location", text: "Tuscaloosa, Alabama" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Tuscaloosa, Alabama, EE. UU.");
+  assert.equal($(dom, "#loc").value, "Tuscaloosa, Alabama, EE. UU.");
+  assert.equal($(dom, "[name=externalPlaceId]").value, "place-0");
+});
+
 test("typeahead: a tie that holds through a debounce still waits for the fresh list", async () => {
   // The tied list sits unchanged for several polls (a stale list during a
   // debounce) before the exact suggestion arrives.

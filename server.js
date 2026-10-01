@@ -6486,12 +6486,14 @@ return A.hold && l.length ? { l: l, f: f, h: 1 } : { l: l, f: f };
 `,
 
   // {pending} = keep polling; the best tier of taMatch. A.probe: is a pick worth
-  // waiting longer for (a hidden companion, an open or non-empty list)?
+  // waiting longer for (a hidden companion, an open, declared or non-empty
+  // list; a slow lookup declares its list before rendering it)?
   fill_ta_pick: TA_PICK_LIB + TA_OWN_LIB + String.raw`
 const s = window.__perch_ta;
 if (!s) return { ok: false, kind: "typeahead", error: "fill state lost (did the page navigate?)" };
 if (taLost) return taLost;
-if (A.probe) return !!(s.comp || attr(s.el, "aria-expanded") === "true" || taScopes(s).some(function (r) { return vis(r) && taNorm(r.textContent); }));
+if (A.probe) return !!(s.comp || attr(s.el, "aria-expanded") === "true" || attr(s.el, "aria-haspopup") === "listbox" || attr(s.el, "aria-controls") || attr(s.el, "aria-owns") ||
+  taScopes(s).some(function (r) { return vis(r) && taNorm(r.textContent); }));
 // A list showing a loading row may still hold the last lookup's results, which
 // some widgets ignore a press on: nothing is matched until the row goes.
 if (loadingIn(taScopes(s))) return { pending: true, tok: s.tok };
