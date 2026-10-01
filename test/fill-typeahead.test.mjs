@@ -525,10 +525,13 @@ test("typeahead: of suggestions naming the typed place, the one that starts with
   assert.equal($(dom, "#selected-location").value, "loc-0");
 });
 
-// Lever's location field: a lookup per input shows a spinner row (text
-// "Loading") while the request runs and leaves the last results on screen; a
-// press lands only on results of the current request, by index into them.
-const LEVER = `<div class=application-field><input id=location-input name=location type=text>
+// Lever's location field (its retrieveLocations.js): a keydown starts a
+// debounced lookup that empties the results, shows a spinner row (text
+// "Loading") while the request runs, then appends one div per result inside a
+// .dropdown-results wrapper. A pick is a document-level mousedown delegated to
+// .dropdown-location, read from event.target's id and text; blur with the list
+// shown clears both fields.
+const LEVER = `<div class=application-field><input id=location-input class=location-input name=location type=text>
   <input type=hidden id=selected-location name=selectedLocation>
   <div class=dropdown-container style="display:none"><div class=dropdown-results></div>
   <div class=dropdown-no-results style="display:none">No location found. Try entering a different location</div>
@@ -538,42 +541,58 @@ const LEVER_JS = (answer, ticks = 6) => `
   const inp = document.getElementById('location-input'), hid = document.getElementById('selected-location');
   const box = document.querySelector('.dropdown-container'), res = box.querySelector('.dropdown-results');
   const none = box.querySelector('.dropdown-no-results'), spin = box.querySelector('.dropdown-loading-results');
-  let results = [];
-  window.presses = 0;
-  const show = (list) => {
-    results = list;
-    res.innerHTML = list.map((t, i) => '<div class=dropdown-location id=location-' + i + '>' + t + '</div>').join('');
-    none.style.display = list.length ? 'none' : 'block';
-  };
-  res.addEventListener('click', (e) => {
-    window.presses++;
-    const i = Number(String(e.target.id).replace('location-', ''));
-    if (!results[i]) return;
-    inp.value = results[i]; hid.value = JSON.stringify({ name: results[i] }); box.style.display = 'none';
+  let searched;
+  window.picks = 0;
+  const empty = () => { res.innerHTML = ''; none.style.display = 'none'; spin.style.display = 'none'; searched = undefined; };
+  inp.addEventListener('input', () => { box.style.display = 'flex'; });
+  inp.addEventListener('keydown', () => {
+    window.__q = [];
+    later(() => {
+      empty();
+      if (!inp.value) return;
+      spin.style.display = 'flex';
+      later(() => {
+        spin.style.display = 'none';
+        searched = ${JSON.stringify(answer)}.map((name, i) => ({ name, id: 'id' + i }));
+        searched.forEach((l, i) => res.insertAdjacentHTML('beforeend', '<div class="break-word dropdown-location" id="location-' + i + '">' + l.name + '</div>'));
+        if (!searched.length) none.style.display = 'flex';
+      }, ${ticks});
+    }, 2);
   });
-  inp.addEventListener('input', () => {
-    results = []; hid.value = ''; window.__q = [];
-    box.style.display = 'flex'; spin.style.display = 'block'; none.style.display = 'none';
-    later(() => { spin.style.display = 'none'; show(${JSON.stringify(answer)}); }, ${ticks});
-  });
-  // The results of an earlier search, still on screen.
-  box.style.display = 'flex'; show(['Tuscaloosa, AL, USA']);`;
+  inp.addEventListener('blur', () => { if (box.style.display !== 'none') { box.style.display = 'none'; empty(); inp.value = ''; hid.value = ''; } });
+  document.addEventListener('mousedown', (e) => {
+    if (!e.target.classList || !e.target.classList.contains('dropdown-location')) return;
+    window.picks++;
+    box.style.display = 'none';
+    inp.value = e.target.textContent;
+    hid.value = JSON.stringify(searched[e.target.id.split('-')[1]]);
+    empty();
+  });`;
 
-test("typeahead: suggestions are not read while the list shows a loading row, so a stale result is never pressed", async () => {
+test("typeahead: a lone suggestion inside a results wrapper is pressed itself, not the wrapper", async () => {
   const { dom } = onPage(LEVER, LEVER_JS(["Tuscaloosa, AL, USA"]));
   const o = await fill({ selector: "#location-input", text: "Tuscaloosa, Alabama, United States" });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.selected, "Tuscaloosa, AL, USA");
-  assert.equal($(dom, "#selected-location").value, JSON.stringify({ name: "Tuscaloosa, AL, USA" }));
-  assert.equal(dom.presses, 1);
+  assert.equal($(dom, "#location-input").value, "Tuscaloosa, AL, USA");
+  assert.equal($(dom, "#selected-location").value, JSON.stringify({ name: "Tuscaloosa, AL, USA", id: "id0" }));
+  assert.equal(dom.picks, 1);
+});
+
+test("typeahead: suggestions are not read while the list shows a loading row", async () => {
+  const { dom } = onPage(LEVER, LEVER_JS(["Tuscaloosa, AL, USA", "Tuscaloosa County, AL, USA"], 25));
+  const o = await fill({ selector: "#location-input", text: "Tuscaloosa, Alabama, United States" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Tuscaloosa, AL, USA");
+  assert.equal(dom.picks, 1);
 });
 
 test("typeahead: a loading row is never a candidate", async () => {
-  const { dom } = onPage(LEVER, LEVER_JS(["Birmingham, AL, USA"], 30));
+  const { dom } = onPage(LEVER, LEVER_JS(["Birmingham, AL, USA"], 80));
   const o = await fill({ selector: "#location-input", text: "Tuscaloosa, Alabama, United States" });
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.ok(!(o.candidates || []).includes("Loading"), JSON.stringify(o));
-  assert.equal(dom.presses, 0);
+  assert.equal(dom.picks, 0);
   assert.equal($(dom, "#selected-location").value, "");
 });
 

@@ -5215,10 +5215,12 @@ function taOptions(s) {
     if (!opts.length) {
       opts = Array.from(scope.querySelectorAll(ITEM)).filter(function (o) { return !o.querySelector(ITEM); }).filter(shown);
       // A lone match can be the results wrapper ("results" in its class) around
-      // plain item elements: its repeated children are the suggestions.
+      // plain item elements: its repeated children are the suggestions, and so
+      // is its only child when its class says "results" (Lever's pick reads the
+      // pressed item itself).
       const kids = opts.length === 1 ? Array.from(opts[0].children).filter(shown) : [];
       const texts = kids.map(function (k) { return taNorm(k.textContent); });
-      if (kids.length > 1 && texts.every(function (t, i) { return texts.indexOf(t) === i; }) &&
+      if ((kids.length > 1 || (kids.length === 1 && /results/i.test(String(opts[0].className)))) && texts.every(function (t, i) { return texts.indexOf(t) === i; }) &&
           !opts[0].querySelector("input, select, textarea, button")) opts = kids;
     }
     return out.concat(opts.filter(function (o) { return shown(o) && !loadingIn([o]); }));
