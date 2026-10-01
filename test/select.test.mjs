@@ -1265,3 +1265,53 @@ test("custom combobox: a worded detail shown alone holds only when it is the pic
   const { o: x } = await select({ label_pattern: "fruit", text: "Yes" });
   assert.equal(x.ok, false, JSON.stringify(x));
 });
+
+// Ashby's autocomplete: an input combobox whose menu opens on ArrowDown or on
+// typing, never on a press, a click or focus; its toggle button names no list.
+// The menu filters by the input's text; Escape closes it, and blur puts back
+// the chosen text.
+const KEYOPEN = `<fieldset><label for=hear>How did you hear about this job?</label><div class=wrap>
+  <input id=hear role=combobox aria-autocomplete=list aria-haspopup=listbox aria-expanded=false placeholder="Start typing...">
+  <button type=button class=toggle>v</button></div></fieldset>`;
+const KEYOPEN_JS = `
+  const inp = document.getElementById('hear'), wrap = inp.parentElement;
+  const items = ['LinkedIn', 'Job Board', 'Friend or colleague', 'Other'];
+  window.ko = { open: false, chosen: null, keys: [] };
+  const render = () => {
+    inp.setAttribute('aria-expanded', String(ko.open));
+    const old = wrap.querySelector('[role=listbox]'); if (old) old.remove();
+    if (!ko.open) return;
+    const q = inp.value.toLowerCase();
+    wrap.insertAdjacentHTML('beforeend', '<div role=listbox>' + items.filter((t) => t.toLowerCase().includes(q)).map((t) => '<div role=option>' + t + '</div>').join('') + '</div>');
+    wrap.querySelectorAll('[role=option]').forEach((o) => o.addEventListener('click', () => { ko.chosen = o.textContent; inp.value = o.textContent; ko.open = false; render(); }));
+  };
+  inp.addEventListener('keydown', (e) => { ko.keys.push(e.key); if (e.key === 'ArrowDown') ko.open = true; if (e.key === 'Escape') ko.open = false; render(); });
+  inp.addEventListener('input', () => { ko.open = true; render(); });
+  inp.addEventListener('blur', () => { ko.open = false; inp.value = ko.chosen || ''; render(); });`;
+
+test("custom combobox: a menu that opens only on ArrowDown is opened with it, listed, picked, and a miss closes it", async () => {
+  let { dom } = onPage(KEYOPEN, KEYOPEN_JS);
+  let { o } = await select({ label_pattern: "how did you hear", text: "" });
+  assert.deepEqual(o.candidates, ["LinkedIn", "Job Board", "Friend or colleague", "Other"], JSON.stringify(o));
+  assert.equal(dom.document.getElementById("hear").getAttribute("aria-expanded"), "false");
+  ({ o } = await select({ label_pattern: "how did you hear", text: "Job Board" }));
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(dom.ko.chosen, "Job Board");
+  assert.equal([...dom.ko.keys].filter((k) => k === "ArrowDown").length, 2, "one ArrowDown per call");
+  ({ dom } = onPage(KEYOPEN, KEYOPEN_JS));
+  ({ o } = await select({ label_pattern: "how did you hear", text: "Newspaper" }));
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.deepEqual(o.candidates, ["LinkedIn", "Job Board", "Friend or colleague", "Other"]);
+  assert.equal(dom.ko.chosen, null);
+  assert.equal(dom.document.getElementById("hear").value, "");
+  assert.equal(dom.document.getElementById("hear").getAttribute("aria-expanded"), "false");
+});
+
+// A menu that opens on a press never gets an ArrowDown, which on some widgets
+// moves the choice.
+test("custom combobox: a menu the press opened gets no ArrowDown", async () => {
+  const { dom } = onPage(KEYOPEN, KEYOPEN_JS + "inp.addEventListener('mousedown', () => { ko.open = true; render(); });");
+  const { o } = await select({ label_pattern: "how did you hear", text: "Other" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual([...dom.ko.keys].filter((k) => k === "ArrowDown"), []);
+});

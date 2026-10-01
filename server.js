@@ -6970,6 +6970,14 @@ if (s.opened && !all.length && !s.toggled && s.polls >= 2 && !stillOpen(s)) {
   const tog = ids.length && Array.from(document.querySelectorAll("button[aria-controls]")).find(function (b) { return b !== s.ctl && ids.indexOf(attr(b, "aria-controls")) >= 0; });
   if (tog) { press(tog); s.toggled = true; return wait; }
 }
+// A combobox that opens only on keys (Ashby's autocomplete) gets one ArrowDown,
+// which opens a closed list without choosing, once the press has shown nothing.
+const kb = s.input || s.ctl;
+if (s.opened && !all.length && !s.keyed && !s.typed && s.polls >= 2 && attr(kb, "role") === "combobox" && !stillOpen(s)) {
+  ["keydown", "keyup"].forEach(function (t) { kb.dispatchEvent(new KeyboardEvent(t, { key: "ArrowDown", code: "ArrowDown", keyCode: 40, bubbles: true, cancelable: true })); });
+  s.keyed = true;
+  return wait;
+}
 // A miss settles ({settled}) once the list has held: text:"" after 3 polls; a
 // no-match after 8 (about 400ms), and after a typed filter only once the list
 // has changed since typing, so a debounce's stale list is not the answer. An
