@@ -6973,7 +6973,7 @@ if (s.opened && !all.length && !s.toggled && s.polls >= 2 && !stillOpen(s)) {
 // A combobox that opens only on keys (Ashby's autocomplete) gets one ArrowDown,
 // which opens a closed list without choosing, once the press has shown nothing.
 const kb = s.input || s.ctl;
-if (s.opened && !all.length && !s.keyed && !s.typed && s.polls >= 2 && attr(kb, "role") === "combobox" && !stillOpen(s)) {
+if (s.opened && !all.length && !s.keyed && !s.typed && s.polls >= 2 && kb.tagName === "INPUT" && attr(kb, "role") === "combobox" && !stillOpen(s)) {
   ["keydown", "keyup"].forEach(function (t) { kb.dispatchEvent(new KeyboardEvent(t, { key: "ArrowDown", code: "ArrowDown", keyCode: 40, bubbles: true, cancelable: true })); });
   s.keyed = true;
   return wait;

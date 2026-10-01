@@ -1315,3 +1315,15 @@ test("custom combobox: a menu the press opened gets no ArrowDown", async () => {
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.deepEqual([...dom.ko.keys].filter((k) => k === "ArrowDown"), []);
 });
+
+// A select-only div combobox may change its value on ArrowDown while closed:
+// the nudge goes only to a text input, so such a box keeps its value on a miss.
+test("a select-only div combobox gets no ArrowDown nudge and keeps its value on a miss", async () => {
+  const { dom } = onPage(`<label id=sl>Size</label><div id=c role=combobox aria-labelledby=sl aria-expanded=false tabindex=0>Small</div>`, `
+    const c = document.getElementById("c"), v = ["Small", "Medium", "Large"]; window.keys = 0;
+    c.addEventListener("keydown", (e) => { if (e.key === "ArrowDown") { window.keys++; c.textContent = v[Math.min(v.indexOf(c.textContent) + 1, 2)]; } });`);
+  const { o } = await select({ label_pattern: "^size$", text: "Large" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(dom.keys, 0);
+  assert.equal(dom.document.getElementById("c").textContent, "Small");
+});
