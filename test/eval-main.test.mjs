@@ -34,6 +34,7 @@ function twoWorlds() {
     setAttribute(k, v) { this.attrs.set(k, String(v)); }
     getAttribute(k) { return this.attrs.has(k) ? this.attrs.get(k) : null; }
     hasAttribute(k) { return this.attrs.has(k); }
+    removeAttribute(k) { this.attrs.delete(k); }
     remove() { doc.attached.delete(this); }
   }
   const root = {
@@ -299,4 +300,44 @@ test("world main: the page marking the element as CSP-blocked is not believed", 
   const { r, t } = await call({ script: "return 5", world: "main" });
   assert.equal(r.isError, undefined, t);
   assert.equal(t, "5");
+});
+
+// A slot holds a detached element and its result (up to tens of MB), so every
+// way a call ends lets it go, not only a full read; another call's slot stays.
+const heldResults = (dom) => [...new Set(slots(dom).map((k) => dom.iso[k]))].filter((s) => s && typeof s === "object" && s.getAttribute("data-perch-r") != null);
+const otherServerPending = (dom) => {
+  vm.runInContext("window.__other = new Promise(() => {})", dom.main);
+  dom.eval(buildMainKick("await __other; return 1", "__perch_mw_other", true));
+};
+
+test("world main: a promise that never settles drops its slot when the call times out", async () => {
+  const { dom } = install();
+  vm.runInContext("window.__never = new Promise(() => {})", dom.main);
+  otherServerPending(dom);
+  const { r, t } = await call({ script: "await __never", world: "main", awaitPromise: true });
+  assert.match(t, /^error: timeout: eval_js \(world main\) timed out/);
+  assert.equal(r.isError, true);
+  assert.deepEqual(slots(dom), ["__perch_mw_other"], "only the other server's slot, still pending, is kept");
+});
+
+test("world main: a long read that runs out of time drops its slot and its result", async () => {
+  const { world, dom } = install();
+  otherServerPending(dom);
+  world.state.afterExecute = () => { world.clock.t += 120000; };
+  const { r, t } = await call({ script: `return 'd'.repeat(${MW_PART + 9})`, world: "main" });
+  assert.equal(r.isError, true);
+  assert.match(t, /could not read its \d+-char result in time; the code ran/);
+  assert.deepEqual(slots(dom), ["__perch_mw_other"]);
+  assert.equal(heldResults(dom).length, 0);
+});
+
+test("world main: a part lost mid-read drops the slot", async () => {
+  const { world, dom } = install();
+  world.state.afterExecute = () => {
+    for (const k of slots(dom)) dom.El.prototype.setAttribute.call(dom.iso[k], "data-perch-r", "x".repeat(10));
+  };
+  const { r, t } = await call({ script: `return 'e'.repeat(${MW_PART + 9})`, world: "main" });
+  assert.equal(r.isError, true);
+  assert.match(t, /lost its result while reading it; the code ran/);
+  assert.deepEqual(slots(dom), []);
 });

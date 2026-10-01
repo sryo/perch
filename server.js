@@ -2582,16 +2582,23 @@ function jxaRuntime(BROWSERS, HANG) {
     // the result's first part when it settled at once; otherwise reads poll. A
     // result longer than a part is read on from each part's end, so no reply
     // carries more than one part. Returns "m" and the JSON text the page's world
-    // wrote, or "i" and perch's own error from the isolated world.
+    // wrote, or "i" and perch's own error from the isolated world. A call that
+    // ends before reading its result in full drops its own slot (a.drop), which
+    // otherwise keeps the element and its result alive until the page unloads;
+    // not when the page stopped answering, where the drop could hang too.
     evalMain(a) {
       const t = pageTarget(a.target, "eval_js"), start = Date.now();
       const read = function (off) { return a.read.split(MW_OFF).join(String(off)); };
+      const dropped = function (err) { try { pollExec(t, a.drop, POLL_EXEC_SECS); } catch (e) {} return err; };
       let ran = true, v = null;
       try { v = pollValue(pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000)))); }
       catch (e) { if (!isNoReply(e)) throw e; ran = false; }
       if (v == null) {
         const r = poll(t, read(0), a.timeout, 50, false, null, start);
-        if (!r) throw ranOut("timeout: eval_js (world main) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again");
+        if (!r) {
+          const err = ranOut("timeout: eval_js (world main) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again");
+          throw pollSilent ? err : dropped(err);
+        }
         v = r.value;
       }
       if (v.__perch_gone) throw new Error("timeout: eval_js (world main) lost its result before it settled" + MAY_HAVE_RUN);
@@ -2599,9 +2606,11 @@ function jxaRuntime(BROWSERS, HANG) {
       if (v.p == null) return "i" + JSON.stringify(v);
       const parts = [v.p];
       for (let end = v.end; end < v.len;) {
-        if (Date.now() - start > a.timeout + MW_READ_MS) throw new Error("timeout: eval_js (world main) could not read its " + v.len + "-char result in time; the code ran");
-        const x = readExec(t, read(end));
-        if (!x || x.p == null || x.len !== v.len) throw new Error("timeout: eval_js (world main) lost its result while reading it; the code ran");
+        if (Date.now() - start > a.timeout + MW_READ_MS) throw dropped(new Error("timeout: eval_js (world main) could not read its " + v.len + "-char result in time; the code ran"));
+        let x;
+        try { x = readExec(t, read(end)); }
+        catch (e) { throw isStale(e) || held(e) || isNoReply(e) ? e : dropped(e); }
+        if (!x || x.p == null || x.len !== v.len) throw dropped(new Error("timeout: eval_js (world main) lost its result while reading it; the code ran"));
         parts.push(x.p);
         end = x.end;
       }
@@ -3807,6 +3816,11 @@ export function buildMainKick(js, key, awaitPromise) {
     `}catch(e){return JSON.stringify(__E(e))}return (${MW_READ})(${k},0)})()`;
 }
 
+export function buildMainDrop(key) {
+  const k = JSON.stringify(key);
+  return `(function(){var s=window[${k}];if(s&&typeof s==="object")s.removeAttribute("data-perch-r");delete window[${k}];return "1"})()`;
+}
+
 export function buildMainRead(key) {
   return `(function(){return (${MW_READ})(${JSON.stringify(key)},"@perch_off@")})()`;
 }
@@ -3868,7 +3882,7 @@ async function evalJs(script, target, { awaitPromise = false, timeout = 30000, t
   if (world != null && world !== "main") throw new Error(`eval_js: unknown world '${world}' (expected main)`);
   if (world === "main") {
     const key = `__perch_mw_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    const raw = await rt("evalMain", { target, kick: buildMainKick(script, key, awaitPromise), read: buildMainRead(key), timeout },
+    const raw = await rt("evalMain", { target, kick: buildMainKick(script, key, awaitPromise), read: buildMainRead(key), drop: buildMainDrop(key), timeout },
       { raw: true, lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + MW_READ_MS + JXA_OVERHEAD });
     return raw[0] === "m" ? mainResult(raw.slice(1)) : parsePage(raw.slice(1));
   }
