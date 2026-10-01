@@ -122,6 +122,24 @@ test("world main {awaitPromise} polls until the promise settles, and rejections 
   assert.equal(JSON.parse(bad.t).__perch_error, "export failed");
 });
 
+test("world main {awaitPromise, timeout} waits past 30s, on the long lane", async () => {
+  const { world, dom } = install();
+  const long = DAEMONS.long;
+  let lane = null;
+  DAEMONS.long = { run: (script) => { lane = "long"; return world.daemon.run(script); } };
+  try {
+    vm.runInContext("window.__wait = () => new Promise((res) => { window.__go = res; })", dom.main);
+    const t0 = world.clock.t;
+    let fired = false;
+    world.state.onExecute = () => { if (!fired && world.clock.t - t0 >= 200000) { fired = true; dom.main.__go("late"); } };
+    const { r, t } = await call({ script: "return await __wait()", world: "main", awaitPromise: true, timeout: 300000 });
+    assert.equal(r.isError, undefined, t);
+    assert.equal(t, "late");
+    assert.equal(lane, "long");
+    assert.ok(world.clock.t - t0 <= 200000 * 1.05 + 100, `took ${world.clock.t - t0}ms`);
+  } finally { DAEMONS.long = long; }
+});
+
 test("world main under a CSP that blocks inline scripts is coded, runs nothing and never falls back", async () => {
   const { dom } = install({ csp: true });
   const { r, t } = await call({ script: "window.ran = 1; return 1", world: "main", awaitPromise: true });

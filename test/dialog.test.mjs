@@ -454,6 +454,39 @@ test("the watchdog keeps probing every 2s and stays quiet while the target has n
   assert.match(out.t, /^error: dialog_open: a confirm/);
 });
 
+test("a long await is watched for dialogs on its own lane, and the Node-side kill waits out its timeout", async (t) => {
+  onFakeTime(t);
+  const long = DAEMONS.long;
+  t.after(() => { DAEMONS.long.kill(); DAEMONS.long = long; });
+  for (const dialogAt of [null, 100000]) {
+    const { d, f } = hung();
+    DAEMONS.long = d;
+    let now = 0;
+    deps.dialogs = async () => (dialogAt != null && now >= dialogAt ? OPEN : []);
+    let out = null;
+    call("eval_js", { script: "return await new Promise(() => {})", awaitPromise: true, timeout: 200000, target: A }).then((x) => { out = x; });
+    await settle();
+    assert.equal(f.spawned.length, 1, "the long lane spawned its own REPL");
+    const until = dialogAt ?? 205000;
+    for (const step of [1500, ...Array(200).fill(2000)]) {
+      if (now + step > until) { mock.timers.tick(until - now); now = until; await settle(); break; }
+      mock.timers.tick(step);
+      now += step;
+      await settle();
+      assert.equal(out, null, `ended early at ${now}ms: ${out && out.t}`);
+    }
+    if (dialogAt == null) {
+      assert.ok(out, "the kill fired at the timeout plus the overhead");
+      assert.match(out.t, /^error: timeout: osascript gave up after 205000ms/);
+    } else {
+      // The probe due at or after 100s finds it.
+      for (let i = 0; i < 2 && !out; i++) { mock.timers.tick(2000); await settle(); }
+      assert.match(out.t, /^error: dialog_open: a confirm/);
+    }
+    assert.equal(f.spawned[0].killed, true);
+  }
+});
+
 test("probeDialogs asks the runtime about the target, and any failure is no hit", { timeout: 10000 }, async () => {
   const { d } = hung();
   DAEMONS.fast = d;

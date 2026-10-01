@@ -707,6 +707,11 @@ function jxaRuntime(BROWSERS, HANG) {
   // Where eval_js {world:"main"}'s read takes the offset to read from, and how
   // long reading a long result's parts may run past the call's timeout.
   const MW_OFF = '"@perch_off@"', MW_READ_MS = 60000;
+  // An awaitPromise polls every 50ms for its first 3s, then pauses 5% of the time
+  // waited, at most 1s: a job of minutes costs about one Apple Event a second, not
+  // 20, and its result is seen at most 5% late. A background tab's timers run
+  // about once a second anyway.
+  const awaitEvery = function (waited) { return waited < 3000 ? 50 : Math.min(1000, Math.round(waited / 20)); };
   const MW_BLOCKED = {
     csp: "its Content-Security-Policy blocks inline scripts",
     tt: "its Trusted Types policy (require-trusted-types-for 'script') blocks injected scripts",
@@ -842,7 +847,8 @@ function jxaRuntime(BROWSERS, HANG) {
   // `done(v)`, if given, decides instead and sees every run, a failed one as null.
   // `start` (default now) is when the caller's clock began: the deadline is
   // start + timeout, and the first run happens even if setup already spent it.
-  // `js` may be a function giving each run's script.
+  // `js` may be a function giving each run's script, and `interval` one giving
+  // the pause after a run from the time waited so far.
   function poll(t, js, timeout, interval, step, done, start) {
     if (start == null) start = Date.now();
     const deadline = start + timeout;
@@ -862,7 +868,7 @@ function jxaRuntime(BROWSERS, HANG) {
       if (!silent) answered = Date.now();
       if (done ? done(v) : v !== null && v !== false) return { value: v, waited: Date.now() - start };
       const left = deadline - Date.now();
-      if (left > 0) delay(Math.min(interval, left) / 1000);
+      if (left > 0) delay(Math.min(typeof interval === "function" ? interval(Date.now() - start) : interval, left) / 1000);
       if (Date.now() >= deadline) { pollSilent = silent && (answered == null || Date.now() - answered >= SILENT_MS); return null; }
     }
   }
@@ -2627,7 +2633,7 @@ function jxaRuntime(BROWSERS, HANG) {
       let ran = true;
       try { pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000))); }
       catch (e) { if (!isNoReply(e)) throw e; ran = false; }
-      const r = poll(t, a.poll, a.timeout, 50, false, null, start);
+      const r = poll(t, a.poll, a.timeout, awaitEvery, false, null, start);
       if (!r) throw ranOut("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again; background tabs throttle timers, so avoid page sleeps or activate the tab");
       if (r.value.__perch_gone) throw new Error("timeout: eval_js (awaitPromise) lost its result before the promise settled" + MAY_HAVE_RUN);
       return r.value;
@@ -2648,7 +2654,7 @@ function jxaRuntime(BROWSERS, HANG) {
       try { v = pollValue(pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000)))); }
       catch (e) { if (!isNoReply(e)) throw e; ran = false; }
       if (v == null) {
-        const r = poll(t, read(0), a.timeout, 50, false, null, start);
+        const r = poll(t, read(0), a.timeout, awaitEvery, false, null, start);
         if (!r) {
           const err = ranOut("timeout: eval_js (world main) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again");
           throw pollSilent ? err : dropped(err);
@@ -3346,7 +3352,7 @@ const OSA_CODES = {
 };
 // Wordings seen without their number.
 const OSA_WORDS = [[/Application isn't running/i, "-600"], [/Connection is invalid/i, "-609"], [/AppleEvent timed out/i, "-1712"]];
-const CODED = /^(tab_not_visible|stale_tab|window_offscreen|no_browser|timeout|dialog_open|tab_not_scriptable|bad_url): /;
+const CODED = /^(tab_not_visible|stale_tab|window_offscreen|no_browser|timeout|dialog_open|tab_not_scriptable|bad_url|bad_args): /;
 const EXITED = "osascript exited mid-call";
 
 // A raw osascript failure as the caller sees it: a coded message, the permission
@@ -3370,6 +3376,8 @@ export function codeOsaError(msg) {
 // A warm REPL runs a realistic script in ~25ms vs ~90ms cold, dominated by JXA
 // bridge startup.
 // Two lanes so a long `wait`/awaitPromise poll (slow) never blocks quick calls (fast).
+// An awaitPromise allowed past JXA_DEFAULT_TIMEOUT gets a third (long), spawned on
+// first use, so a job of minutes never holds up the slow lane's waits either.
 //
 // Framing: each script is URI-encoded (one ASCII line, no quotes, no newlines) and
 // sent as `eval(decodeURIComponent("..."))` inside an IIFE that prints a result
@@ -3545,6 +3553,8 @@ export class OsaDaemon {
 }
 
 const JXA_DEFAULT_TIMEOUT = 30000;
+// The longest eval_js {awaitPromise} a caller may ask for; the default is JXA_DEFAULT_TIMEOUT.
+export const AWAIT_MAX_MS = 300000;
 // Tools that poll inside one call (wait, awaitPromise) pass their own timeout plus
 // this margin so the outer kill never races the inner loop.
 const JXA_OVERHEAD = 5000;
@@ -3554,6 +3564,7 @@ const MW_READ_MS = 60000;
 export const DAEMONS = process.env.PERCH_DAEMON === "0" ? {} : {
   fast: new OsaDaemon({ prelude: DAEMON_PRELUDE }),
   slow: new OsaDaemon({ prelude: DAEMON_PRELUDE }),
+  long: new OsaDaemon({ prelude: DAEMON_PRELUDE }),
 };
 
 export async function jxa(script, { timeout = JXA_DEFAULT_TIMEOUT, lane = "fast", daemons = DAEMONS, oneShot = jxaOneShot, token } = {}) {
@@ -3936,18 +3947,19 @@ async function listTabs(args = {}) {
   return out;
 }
 
-async function evalJs(script, target, { awaitPromise = false, timeout = 30000, tool = "eval_js", reread, world } = {}) {
+async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFAULT_TIMEOUT, tool = "eval_js", reread, world } = {}) {
   if (world != null && world !== "main") throw new Error(`eval_js: unknown world '${world}' (expected main)`);
+  const lane = timeout > JXA_DEFAULT_TIMEOUT ? "long" : "slow";
   if (world === "main") {
     const key = `__perch_mw_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const raw = await rt("evalMain", { target, kick: buildMainKick(script, key, awaitPromise), read: buildMainRead(key), drop: buildMainDrop(key), timeout },
-      { raw: true, lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + MW_READ_MS + JXA_OVERHEAD });
+      { raw: true, lane, timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + MW_READ_MS + JXA_OVERHEAD });
     return raw[0] === "m" ? mainResult(raw.slice(1)) : parsePage(raw.slice(1));
   }
   if (!awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
   const key = `__perch_async_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const r = await rt("evalAsync", { target, kick: buildAsyncKickoff(script, key), poll: buildAsyncPoll(key), timeout },
-    { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+    { lane, timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
   return r && Object.hasOwn(r, "value") ? r.value : r;
 }
 
@@ -9080,7 +9092,7 @@ export const INSTRUCTIONS = `perch drives the user's own macOS browsers over App
 Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With no target, tools use the active tab of the topmost browser window.
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
-Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS alert/confirm/prompt is open: press {dialog}), bad_url (only http(s), file or about:blank). Only activate_tab and raise:true take focus.`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS alert/confirm/prompt is open: press {dialog}), bad_url (only http(s), file or about:blank), bad_args (fix the call). Only activate_tab and raise:true take focus.`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
 const TARGET = { type: "object", properties: { tabId: { type: "string" }, app: { type: "string" } } };
@@ -9107,7 +9119,8 @@ const TOOLS = [
   tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. Given both, `script_path` runs before `script`.", {
     script: { type: "string" },
     script_path: { type: "string", description: "Local .js file." },
-    awaitPromise: { type: "boolean", description: "Await async code (30s cap)." },
+    awaitPromise: { type: "boolean", description: "Await async code." },
+    timeout: { type: "number", description: "ms to await, default 30000, max 300000." },
     ref: { type: "string", description: "Binds `el` to this ref." },
     world: { type: "string", enum: ["main"], description: "Run in the page's own JS world (its globals); no ref." },
     target: TARGET,
@@ -9205,6 +9218,14 @@ const TOOLS = [
 
 export const SCHEMA_BUDGET = 9600;
 
+function awaitTimeout({ timeout, awaitPromise }) {
+  if (timeout == null) return JXA_DEFAULT_TIMEOUT;
+  if (!awaitPromise) throw new Error("bad_args: eval_js `timeout` bounds awaitPromise; pass awaitPromise:true or drop it");
+  if (typeof timeout !== "number" || !(timeout > 0)) throw new Error(`bad_args: eval_js \`timeout\` must be a positive number of ms; got ${JSON.stringify(timeout)}`);
+  if (timeout > AWAIT_MAX_MS) throw new Error(`bad_args: eval_js awaits at most ${AWAIT_MAX_MS}ms (5 min); got ${timeout}. Start a longer job without awaiting it, then check on it with wait {expression}`);
+  return timeout;
+}
+
 export const HANDLERS = {
   list_tabs:     (a) => listTabs(a),
   new_tab:       (a) => newTab(a.url, a.app),
@@ -9213,7 +9234,8 @@ export const HANDLERS = {
   navigate:      (a) => navigate(a.url, a.target, a.raise),
   eval_js:       async (a) => {
     if (a.world === "main" && a.ref != null && a.ref !== "") throw new Error("eval_js: ref binds an element in perch's own world, so it can't go with world:\"main\"; find the element in the script instead");
-    return evalJs(await composeEvalScript(a.ref == null || a.ref === "" ? a : { ...a, ...pageRef(a.ref, callNotes.getStore()?.refs) }), a.target, { awaitPromise: a.awaitPromise, world: a.world });
+    const timeout = awaitTimeout(a);
+    return evalJs(await composeEvalScript(a.ref == null || a.ref === "" ? a : { ...a, ...pageRef(a.ref, callNotes.getStore()?.refs) }), a.target, { awaitPromise: a.awaitPromise, world: a.world, timeout });
   },
   wait:          (a) => wait(a),
   screenshot:    (a) => screenshot(a),
@@ -9375,5 +9397,5 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(sig, shutdown);
   await server.connect(new StdioServerTransport());
   // Pays the JXA bridge startup now instead of on each lane's first call.
-  for (const d of Object.values(DAEMONS)) d.warm();
+  for (const lane of ["fast", "slow"]) DAEMONS[lane]?.warm();
 }
