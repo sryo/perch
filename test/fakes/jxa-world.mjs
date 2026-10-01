@@ -23,7 +23,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   // state.aeFail = {errorNumber, message, key?, app?}: every Apple Event to a
   // browser (only `app`, only keys matching `key`) throws that AppleScript error,
   // as a browser that quit (-600), dropped its connection (-609) or timed out (-1712) would.
+  // state.afterAe(app, key): a test's world change landing after that Apple
+  // Event's reply and before the next event (the user opening or closing a tab or
+  // window mid-read), so it runs as the next event starts.
   const ae = (app, k) => {
+    if (state.afterAe && aeLog.length) state.afterAe(...aeLog[aeLog.length - 1]);
     const f = state.aeFail;
     if (f && (!f.key || f.key.test(k)) && (!f.app || f.app === app)) throw Object.assign(new Error(f.message), { errorNumber: f.errorNumber });
     aeLog.push([app, k]);
@@ -907,6 +911,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       log.push(["opened", name, url]);
       return id;
     },
+    // The user closes tab t of window w, or the whole window, with no Apple Event.
+    closeTab: (name, w, t) => { const W = winsByApp[name][w]; W.tabs.splice(t, 1); W.spec.active = Math.min(W.spec.active, W.tabs.length - 1); },
+    closeWindow: (name, w) => { winsByApp[name].splice(w, 1); },
+    // The user opens a window in front of the others.
+    openWindow: (name, spec) => { winsByApp[name].unshift(makeWindow(spec, browsers.find((b) => b.name === name))); },
     reset() { for (const o of [counts, geom]) for (const k of Object.keys(o)) delete o[k]; log.length = 0; aeLog.length = 0; },
     state,
     page: (name, w, t) => winsByApp[name][w].tabs[t].page.ctx,

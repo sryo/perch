@@ -2340,35 +2340,62 @@ function jxaRuntime(BROWSERS, HANG) {
   // Reads each Arc window on its own; a window sharing an earlier one's tabs
   // reuses its reads. Yields after each Apple Event; returns the windows.
   function* arcWindows(ap) {
-    const wins = [];
+    const wins = [], seen = {};
     let n = 0;
     try { n = ap.windows.length; } catch (e) {}
     yield;
     for (let w = 0; w < n; w++) {
-      const win = ap.windows[w];
-      let ids = null, loc = [], side = [], act = null;
-      try { ids = win.tabs.id(); } catch (e) {}
-      yield;
-      if (!ids) continue;
-      try { loc = win.tabs.location(); } catch (e) {}
-      yield;
-      try { side = win.activeSpace.tabs.id(); } catch (e) {}
-      yield;
-      try { act = win.activeTab.id(); } catch (e) {}
-      yield;
-      const same = wins.filter(function (x) { return x.o.ids.join() === ids.join(); })[0];
-      let urls = null, titles = [];
-      if (same) { urls = same.urls; titles = same.titles; }
-      else {
-        try { urls = win.tabs.url(); } catch (e) {}
+      const at = yield* pinWindow(ap, w, seen);
+      if (!at) continue;
+      const win = at.win;
+      // A window whose tabs change between its reads is read once more, then left out.
+      let ids = null, loc = null, side = [], act = null, urls = null, titles = null, off = true;
+      for (let t = 0; t < 2 && off; t++) {
+        ids = null; loc = null; side = []; act = null; urls = null; titles = null;
+        try { ids = win.tabs.id(); } catch (e) {}
         yield;
-        if (!urls) continue;
-        try { titles = win.tabs.title(); } catch (e) {}
+        if (!ids) break;
+        try { loc = win.tabs.location(); } catch (e) {}
         yield;
+        try { side = win.activeSpace.tabs.id(); } catch (e) {}
+        yield;
+        try { act = win.activeTab.id(); } catch (e) {}
+        yield;
+        const same = wins.filter(function (x) { return x.o.ids.join() === ids.join(); })[0];
+        if (same) { urls = same.urls; titles = same.titles; }
+        else {
+          try { urls = win.tabs.url(); } catch (e) {}
+          yield;
+          if (!urls) break;
+          try { titles = win.tabs.title(); } catch (e) {}
+          yield;
+        }
+        off = !aligned(ids, [urls, titles, loc]);
       }
-      wins.push({ o: arcSort(ids, loc, side), act: act, urls: urls, titles: titles, w: w });
+      if (!ids || !urls || off) continue;
+      wins.push({ o: arcSort(ids, loc || [], side), act: act, urls: urls, titles: titles || [], w: w });
     }
     return wins;
+  }
+
+  // Whether every list read is as long as `base`; null is a read that failed,
+  // which the rows treat as missing.
+  function aligned(base, lists) {
+    return Array.isArray(base) && lists.every(function (l) { return l == null || (Array.isArray(l) && l.length === base.length); });
+  }
+
+  // Window w of a walk pinned by its id, so a window opening or closing between
+  // reads can't swap which window the later reads hit (windows[w] is positional
+  // and lazy). One event. null for a window already walked (one opened in front
+  // shifted it here) or gone; `seen` holds the walked ids.
+  function* pinWindow(ap, w, seen) {
+    let id = null;
+    try { id = ap.windows[w].id(); } catch (e) {}
+    yield;
+    if (id == null) return { id: w, win: ap.windows[w] };
+    if (seen[id]) return null;
+    seen[id] = true;
+    return { id: id, win: ap.windows.byId(id) };
   }
 
   // One row per Arc tab, in sidebar order. Windows on one space share their tabs,
@@ -2392,12 +2419,21 @@ function jxaRuntime(BROWSERS, HANG) {
   }
 
   // Chromium and Safari rows from the bulk reads; false (nothing pushed) when
-  // the per-window arrays don't line up.
+  // the reads don't line up window by window and tab by tab. Each read is its own
+  // Apple Event, so a tab or window the user opens or closes between them shifts
+  // one list against another; a row then takes the walk, never a neighbour's
+  // id, title or a window id that was never read.
   function bulkRows(name, kind, r, out) {
     const n = r.url.length;
     const lined = function (x) { return Array.isArray(x) && x.length === n; };
     if (!lined(r.url) || !lined(r.title) || !lined(r.act) || (r.id && !lined(r.id)) || (r.wid && !lined(r.wid))) return false;
-    for (let w = 0; w < n; w++) if (!Array.isArray(r.url[w])) return false;
+    for (let w = 0; w < n; w++) {
+      const u = r.url[w], same = function (x) { return Array.isArray(x) && x.length === u.length; };
+      if (!Array.isArray(u) || (r.title[w] != null && !same(r.title[w]))) return false;
+      if (r.id && r.id[w] != null && !same(r.id[w])) return false;
+      const idless = !r.id || r.id[w] == null || r.id[w].some(function (v) { return v == null; });
+      if ((kind === "safari" || idless) && !r.wid) return false;
+    }
     for (let w = 0; w < n; w++) {
       const u = r.url[w], ti = r.title[w] || [], ids = r.id ? r.id[w] || [] : [];
       const tally = kind === "safari" ? tallyOf(u) : null;
@@ -2420,19 +2456,29 @@ function jxaRuntime(BROWSERS, HANG) {
     let n = 0;
     try { n = ap.windows.length; } catch (e) {}
     yield;
+    const seen = {};
     for (let w = 0; w < n; w++) {
-      const win = ap.windows[w];
-      let id; try { id = win.id(); } catch (e) { id = w; }
-      yield;
-      let urls = null, titles = [], tabIds = [];
-      try { urls = win.tabs.url(); } catch (e) {}
-      yield;
-      if (!urls) continue;
-      try { titles = kind === "safari" ? win.tabs.name() : win.tabs.title(); } catch (e) {}
-      yield;
-      if (kind === "chrome") { try { tabIds = win.tabs.id(); } catch (e) {} yield; }
+      const at = yield* pinWindow(ap, w, seen);
+      if (!at) continue;
+      const win = at.win, id = at.id;
+      // A window whose tabs change between its reads is read once more, then
+      // left out rather than listed with one tab's id or title on another.
+      let urls = null, titles = null, tabIds = null, off = true;
+      for (let t = 0; t < 2 && off; t++) {
+        urls = null; titles = null; tabIds = null;
+        try { urls = win.tabs.url(); } catch (e) {}
+        yield;
+        if (!urls) break;
+        try { titles = kind === "safari" ? win.tabs.name() : win.tabs.title(); } catch (e) {}
+        yield;
+        if (kind === "chrome") { try { tabIds = win.tabs.id(); } catch (e) {} yield; }
+        off = !aligned(urls, [titles, tabIds]);
+      }
+      if (!urls || off) continue;
+      titles = titles || []; tabIds = tabIds || [];
       // `active` marks the tab each window shows (one extra read per window).
-      const act = activeIndex(kind, win, win.tabs);
+      let act = -1;
+      try { act = activeIndex(kind, win, win.tabs); } catch (e) {}
       yield;
       const tally = kind === "safari" ? tallyOf(urls) : null;
       for (let i = 0; i < urls.length; i++) {
@@ -2479,8 +2525,11 @@ function jxaRuntime(BROWSERS, HANG) {
       let wins = null;
       if (bulk) {
         try {
+          // Every read covers the same windows, or a window opened or closed between them.
+          if (["url", "title", "loc", "side", "act"].some(function (k) { return !Array.isArray(r[k]) || r[k].length !== r.id.length; })) throw new Error("misaligned");
           wins = r.id.map(function (x, w) {
-            if (!Array.isArray(r.url[w]) || r.url[w].length !== x.length) throw new Error("misaligned");
+            const off = function (l) { return l != null && (!Array.isArray(l) || l.length !== x.length); };
+            if (!Array.isArray(x) || !Array.isArray(r.url[w]) || r.url[w].length !== x.length || off(r.title[w]) || off(r.loc[w])) throw new Error("misaligned");
             return { o: arcSort(x, r.loc[w] || [], r.side[w] || []), act: r.act[w], urls: r.url[w], titles: r.title[w] || [], w: w };
           });
         } catch (e) { wins = null; }

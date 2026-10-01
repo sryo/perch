@@ -168,3 +168,124 @@ test("list_tabs rows and total match one full listing per browser, in random wor
     assert.deepEqual(cut, { tabs: want.slice(0, args.limit), total: want.length }, `seed ${seed} ${JSON.stringify(args)}`);
   }
 });
+
+// The user opens and closes tabs and windows while list_tabs reads, and each
+// bulk read is its own Apple Event, so the lists can disagree. A browser whose
+// lists don't line up window by window, tab by tab, is walked window by window
+// instead: never a throw, never a handle on another tab's url.
+const midRead = (app, key, change) => {
+  let done = false;
+  world.state.afterAe = (a, k) => { if (!done && a === app && k === key) { done = true; change(); } };
+};
+const rowsAreTabs = (o) => {
+  for (const t of o.tabs) if (t.tabId && t.tabId.startsWith("canary:")) assert.equal(t.url, `https://${t.tabId.slice(7)}.test/`, JSON.stringify(t));
+  for (const t of o.tabs) if (t.title && t.app !== "Safari") assert.equal(t.url, `https://${t.title}.test/`, JSON.stringify(t));
+};
+
+test("a Chromium tab closing between the url and id reads lists the tabs still open", async () => {
+  install({ browsers: [canary([{ id: 1, active: 0, tabs: tabs(3, "c") }, { id: 2, active: 0, tabs: tabs(2, "d") }])], cg: [{ owner: "Google Chrome Canary" }] });
+  midRead("Google Chrome Canary", "tabs.url()", () => world.closeTab("Google Chrome Canary", 0, 1));
+  const o = await list({});
+  assert.deepEqual(o.tabs.map((t) => t.url), ["https://c0.test/", "https://c2.test/", "https://d0.test/", "https://d1.test/"]);
+  assert.equal(o.total, 4);
+  rowsAreTabs(o);
+});
+
+test("a Chromium tab opening between the title and id reads never pairs a handle with another tab's url", async () => {
+  install({ browsers: [canary([{ id: 1, active: 0, tabs: tabs(3, "c") }])], cg: [{ owner: "Google Chrome Canary" }] });
+  midRead("Google Chrome Canary", "tabs.title()", () => {
+    world.openTab("Google Chrome Canary", 0, "https://pop3.test/");
+    const T = world.tabsOf("Google Chrome Canary", 0);
+    T.unshift(T.pop());
+    T[0].spec.title = "pop3"; T[0].spec.id = "pop3";
+  });
+  const o = await list({});
+  assert.deepEqual(o.tabs.map((t) => t.url), ["https://pop3.test/", "https://c0.test/", "https://c1.test/", "https://c2.test/"]);
+  rowsAreTabs(o);
+});
+
+test("a Chromium window opening or closing between bulk reads never throws", async () => {
+  for (const key of ["tabs.url()", "tabs.title()", "tabs.id()"]) {
+    for (const change of ["open", "close"]) {
+      install({ browsers: [canary([{ id: 1, active: 0, tabs: tabs(3, "c") }, { id: 2, active: 1, tabs: tabs(2, "d") }])], cg: [{ owner: "Google Chrome Canary" }] });
+      midRead("Google Chrome Canary", key, () => change === "open"
+        ? world.openWindow("Google Chrome Canary", { id: 7, active: 0, tabs: tabs(1, "e") })
+        : world.closeWindow("Google Chrome Canary", 0));
+      const o = await list({});
+      const want = change === "open" ? ["e0", "c0", "c1", "c2", "d0", "d1"] : ["d0", "d1"];
+      assert.deepEqual(o.tabs.map((t) => t.title), want, `${change} after ${key}`);
+      rowsAreTabs(o);
+    }
+  }
+});
+
+test("a Safari tab closing between the url and title reads keeps titles on their own tabs", async () => {
+  install({ browsers: [safari([{ id: 3, active: 0, tabs: tabs(3, "s") }])], cg: [{ owner: "Safari" }] });
+  midRead("Safari", "tabs.url()", () => world.closeTab("Safari", 0, 0));
+  const o = await list({});
+  assert.deepEqual(o.tabs.map((t) => [t.url, t.title]), [["https://s1.test/", "s1"], ["https://s2.test/", "s2"]]);
+});
+
+test("a list whose lists line up costs no extra Apple Event", async () => {
+  install({ browsers: [canary([{ id: 1, active: 0, tabs: tabs(3, "c") }]), safari([{ id: 3, active: 0, tabs: tabs(2, "s") }])], cg: [{ owner: "Google Chrome Canary" }, { owner: "Safari" }] });
+  await list({});
+  assert.equal(world.aeBy("Google Chrome Canary").length, 4);
+  assert.equal(world.aeBy("Safari").length, 4);
+});
+
+test("the window walk re-reads a window whose tabs change between its reads", async () => {
+  for (const [nth, tries] of [[2, 1], [2, 2]]) {
+    install({ browsers: [canary([{ id: 1, active: 0, tabs: tabs(3, "c") }, { id: 2, active: 0, tabs: tabs(2, "d") }])], cg: [{ owner: "Google Chrome Canary" }] });
+    const a = world.apps["Google Chrome Canary"], W = a.windows;
+    a.windows = new Proxy(W, { get: (_, k) => (k === "activeTabIndex" ? () => { world.aeLog.push(["Google Chrome Canary", "windows.activeTabIndex()"]); throw new Error("Can't convert types"); } : W[k]) });
+    // The walk's url read of the first window is the second url read; the change
+    // lands after it, and again after the re-read when tries is 2.
+    let urls = 0, left = tries;
+    world.state.afterAe = (app, k) => {
+      if (k !== "tabs.url()" || ++urls < nth || !left) return;
+      left--;
+      world.closeTab("Google Chrome Canary", 0, 0);
+    };
+    const o = await list({});
+    rowsAreTabs(o);
+    // A window still changing after one re-read is left out rather than misread.
+    assert.deepEqual(o.tabs.map((t) => t.title), tries === 1 ? ["c1", "c2", "d0", "d1"] : ["d0", "d1"], `tries ${tries}`);
+  }
+});
+
+test("an Arc tab closing between the title and location reads keeps pinned marks on their own tabs", async () => {
+  const ts = tabs(3, "a");
+  ts[2].location = "pinned";
+  install({ browsers: [arc([{ id: "W1", active: 0, tabs: ts }])], cg: [{ owner: "Arc" }] });
+  midRead("Arc", "tabs.title()", () => world.closeTab("Arc", 0, 0));
+  const o = await list({});
+  assert.deepEqual(o.tabs.map((t) => [t.title, !!t.pinned]), [["a1", false], ["a2", true]]);
+});
+
+test("list_tabs never throws and never pairs a row with another tab's data while tabs and windows come and go, in random worlds", async () => {
+  for (let seed = 1; seed <= 300; seed++) {
+    const r = rng(seed);
+    const { spec, args } = randomWorld(r);
+    // Titles that name their own url, so a row read across a change shows it.
+    for (const b of spec.browsers) for (const w of b.windows) for (const t of w.tabs) t.title = t.id;
+    for (const b of spec.browsers) for (const w of b.windows) w.tabs.forEach((t) => { t.url = `https://${t.id}.test/`; });
+    install(spec);
+    const names = spec.browsers.map((b) => b.name);
+    let changes = 0;
+    world.state.afterAe = (app) => {
+      if (changes > 3 || r() > 0.3 || !names.includes(app)) return;
+      changes++;
+      const live = (() => { try { return world.tabsOf(app, 0); } catch { return null; } })();
+      const roll = r();
+      if (roll < 0.4 && live && live.length) world.closeTab(app, 0, Math.floor(r() * live.length));
+      else if (roll < 0.7 && live) { const id = `n-${seed}-${changes}`; world.openTab(app, 0, `https://${id}.test/`); Object.assign(live[live.length - 1].spec, { id, title: id }); }
+      else if (roll < 0.85 && live) world.closeWindow(app, 0);
+      else world.openWindow(app, { id: `nw${changes}`, active: 0, tabs: [{ id: `nw-${seed}-${changes}`, url: `https://nw-${seed}-${changes}.test/`, title: `nw-${seed}-${changes}` }] });
+    };
+    const res = await handleCall("list_tabs", { ...args, limit: 10000 });
+    assert.equal(res.isError, undefined, `seed ${seed}: ${res.content[0].text}`);
+    const o = JSON.parse(res.content[0].text);
+    for (const t of o.tabs) if (t.title) assert.equal(t.url, `https://${t.title}.test/`, `seed ${seed}: ${JSON.stringify(t)}`);
+    for (const t of o.tabs) if (t.tabId && !t.tabId.startsWith("safari:")) assert.equal(t.tabId.slice(t.tabId.indexOf(":") + 1), t.title, `seed ${seed}: ${JSON.stringify(t)}`);
+  }
+});
