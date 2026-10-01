@@ -704,6 +704,9 @@ function jxaRuntime(BROWSERS, HANG) {
   const POLL_EXEC_SECS = 2;
   // Where fill {fields}' re-read script takes the token its write answered with.
   const FR_TOK = '"@perch_fr_tok@"';
+  // Where eval_js {world:"main"}'s read takes the offset to read from, and how
+  // long reading a long result's parts may run past the call's timeout.
+  const MW_OFF = '"@perch_off@"', MW_READ_MS = 60000;
   const asQuote = function (s) { return '"' + String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; };
   const NO_REPLY = "timeout: " + HANG.noReply;
   const isNoReply = function (e) { return !!e && e.message.indexOf(NO_REPLY) === 0; };
@@ -2575,6 +2578,34 @@ function jxaRuntime(BROWSERS, HANG) {
       if (r.value.__perch_gone) throw new Error("timeout: eval_js (awaitPromise) lost its result before the promise settled" + MAY_HAVE_RUN);
       return r.value;
     },
+    // eval_js {world:"main"}: the kick injects the code as a <script> and answers
+    // the result's first part when it settled at once; otherwise reads poll. A
+    // result longer than a part is read on from each part's end, so no reply
+    // carries more than one part. Returns the result's JSON text.
+    evalMain(a) {
+      const t = pageTarget(a.target, "eval_js"), start = Date.now();
+      const read = function (off) { return a.read.split(MW_OFF).join(String(off)); };
+      let ran = true, v = null;
+      try { v = pollValue(pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000)))); }
+      catch (e) { if (!isNoReply(e)) throw e; ran = false; }
+      if (v == null) {
+        const r = poll(t, read(0), a.timeout, 50, false, null, start);
+        if (!r) throw ranOut("timeout: eval_js (world main) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again");
+        v = r.value;
+      }
+      if (v.__perch_gone) throw new Error("timeout: eval_js (world main) lost its result before it settled" + MAY_HAVE_RUN);
+      if (v.__perch_csp) throw new Error("tab_not_scriptable: eval_js world:\"main\" can't run on this page: its Content-Security-Policy blocks inline scripts; nothing ran");
+      if (v.p == null) return JSON.stringify(v);
+      const parts = [v.p];
+      for (let end = v.end; end < v.len;) {
+        if (Date.now() - start > a.timeout + MW_READ_MS) throw new Error("timeout: eval_js (world main) could not read its " + v.len + "-char result in time; the code ran");
+        const x = readExec(t, read(end));
+        if (!x || x.p == null || x.len !== v.len) throw new Error("timeout: eval_js (world main) lost its result while reading it; the code ran");
+        parts.push(x.p);
+        end = x.end;
+      }
+      return parts.join("");
+    },
     // One event when the page is already there; then polls every 50ms.
     wait(a) {
       const start = Date.now(), interval = a.interval || 50;
@@ -3453,6 +3484,8 @@ const JXA_DEFAULT_TIMEOUT = 30000;
 // Tools that poll inside one call (wait, awaitPromise) pass their own timeout plus
 // this margin so the outer kill never races the inner loop.
 const JXA_OVERHEAD = 5000;
+// The runtime's MW_READ_MS: reading a long eval_js {world:"main"} result's parts.
+const MW_READ_MS = 60000;
 
 export const DAEMONS = process.env.PERCH_DAEMON === "0" ? {} : {
   fast: new OsaDaemon({ prelude: DAEMON_PRELUDE }),
@@ -3734,6 +3767,44 @@ function buildAsyncPoll(key) {
   return `(function(){var v=window[${k}];if(v===undefined)return '{"__perch_gone":1}';if(v===0)return "null";var d=${ASYNC_DONE}=${ASYNC_DONE}||[];if(d.indexOf(${k})<0)d.push(${k});return JSON.stringify(v)})()`;
 }
 
+// eval_js {world:"main"}: Chrome runs Apple Events JS in an isolated world, so
+// the kick injects the code as a <script>, which runs in the page's own world,
+// and the result comes back as an attribute on that (removed) element, found
+// through window[key] in the isolated world. A constant probe script runs first:
+// when it doesn't, the page's CSP blocks inline scripts; when it does and the
+// code's script doesn't, the code failed to parse, and compiling it here (only
+// then) names the SyntaxError, since the page's error event never reaches us. Slots join the awaitPromise
+// sweep list once fully read. A read answers at most MW_PART chars from an
+// offset (never splitting a surrogate pair), so a long result (a PNG as base64)
+// takes several bounded replies.
+export const MW_PART = 2000000;
+const MW_READ = `function(K,o){var s=window[K];if(s===undefined)return '{"__perch_gone":1}';var d=${ASYNC_DONE}=${ASYNC_DONE}||[];` +
+  `if(s.hasAttribute("data-perch-csp")){if(d.indexOf(K)<0)d.push(K);return '{"__perch_csp":1}'}` +
+  `var j=s.getAttribute("data-perch-r");if(j==null)return "null";` +
+  `var e=Math.min(j.length,o+${MW_PART});if(e<j.length){var c=j.charCodeAt(e-1);if(c>=55296&&c<56320)e--}` +
+  `if(e>=j.length&&d.indexOf(K)<0)d.push(K);return JSON.stringify({p:j.slice(o,e),end:e,len:j.length})}`;
+const MW_PROBE = `document.currentScript.setAttribute("data-perch-ran","")`;
+
+export function buildMainKick(js, key, awaitPromise) {
+  const run = awaitPromise
+    ? `(async function(){${js}\n})().then(function(r){p({value:r===undefined?null:r})},function(e){p(E(e))})`
+    : `try{var r=(function(){${js}\n})();p({value:r===undefined?null:r})}catch(e){p(E(e))}`;
+  const main = `(function(){var s=document.currentScript;if(!s)return;s.setAttribute("data-perch-ran","");var E=${ERROR_SHAPE};` +
+    `var p=function(o){var j;try{j=JSON.stringify(o)}catch(e){j=JSON.stringify(E(e))}s.setAttribute("data-perch-r",j)};${run}})()`;
+  const k = JSON.stringify(key);
+  return `(function(){var __E=${ERROR_SHAPE};(${ASYNC_DONE}||[]).forEach(function(d){delete window[d]});${ASYNC_DONE}=[];` +
+    `try{var root=document.head||document.documentElement,q=document.createElement("script"),s=document.createElement("script"),m;` +
+    `q.textContent=${JSON.stringify(MW_PROBE)};s.textContent=${JSON.stringify(main)};window[${k}]=s;root.appendChild(q);q.remove();` +
+    `if(!q.hasAttribute("data-perch-ran"))s.setAttribute("data-perch-csp","");` +
+    `else{root.appendChild(s);s.remove();` +
+    `if(!s.hasAttribute("data-perch-ran")){try{Function(s.textContent);m={message:"the script did not run",name:"Error"}}catch(e){m=e}s.setAttribute("data-perch-r",JSON.stringify(__E(m)))}}` +
+    `}catch(e){return JSON.stringify(__E(e))}return (${MW_READ})(${k},0)})()`;
+}
+
+export function buildMainRead(key) {
+  return `(function(){return (${MW_READ})(${JSON.stringify(key)},"@perch_off@")})()`;
+}
+
 const parsePage = (raw) => { if (raw === "") return null; try { return JSON.parse(raw); } catch { return raw; } };
 
 // ---- tools ----
@@ -3768,7 +3839,15 @@ async function listTabs(args = {}) {
   return out;
 }
 
-async function evalJs(script, target, { awaitPromise = false, timeout = 30000, tool = "eval_js", reread } = {}) {
+async function evalJs(script, target, { awaitPromise = false, timeout = 30000, tool = "eval_js", reread, world } = {}) {
+  if (world != null && world !== "main") throw new Error(`eval_js: unknown world '${world}' (expected main)`);
+  if (world === "main") {
+    const key = `__perch_mw_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const raw = await rt("evalMain", { target, kick: buildMainKick(script, key, awaitPromise), read: buildMainRead(key), timeout },
+      { raw: true, lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + MW_READ_MS + JXA_OVERHEAD });
+    const r = parsePage(raw);
+    return r && typeof r === "object" && Object.hasOwn(r, "value") ? r.value : r;
+  }
   if (!awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
   const key = `__perch_async_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const r = await rt("evalAsync", { target, kick: buildAsyncKickoff(script, key), poll: buildAsyncPoll(key), timeout },
@@ -8870,6 +8949,7 @@ const TOOLS = [
     script_path: { type: "string", description: "Local .js file." },
     awaitPromise: { type: "boolean", description: "Await async code (30s cap)." },
     ref: { type: "string", description: "Binds `el` to this ref." },
+    world: { type: "string", enum: ["main"], description: "Run in the page's own JS world (its globals); no ref." },
     target: TARGET,
   }),
   tool("wait", "Wait until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`), or `quiet`.", {
@@ -8971,7 +9051,10 @@ export const HANDLERS = {
   activate_tab:  (a) => activateTab(a.target),
   close_tab:     (a) => closeTab(a),
   navigate:      (a) => navigate(a.url, a.target, a.raise),
-  eval_js:       async (a) => evalJs(await composeEvalScript(a.ref == null || a.ref === "" ? a : { ...a, ...pageRef(a.ref, callNotes.getStore()?.refs) }), a.target, { awaitPromise: a.awaitPromise }),
+  eval_js:       async (a) => {
+    if (a.world === "main" && a.ref != null && a.ref !== "") throw new Error("eval_js: ref binds an element in perch's own world, so it can't go with world:\"main\"; find the element in the script instead");
+    return evalJs(await composeEvalScript(a.ref == null || a.ref === "" ? a : { ...a, ...pageRef(a.ref, callNotes.getStore()?.refs) }), a.target, { awaitPromise: a.awaitPromise, world: a.world });
+  },
   wait:          (a) => wait(a),
   screenshot:    (a) => screenshot(a),
   get_text:      (a) => getText(a),
