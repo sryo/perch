@@ -5953,13 +5953,13 @@ function fillOne(a, only, onLand) {
   });
   scored.sort(function (a, b) { return b.s - a.s; });
   if (only && !scored.length && !passed.length) return { ok: true, skipped: "absent" };
+  let shown = scored.filter(function (c) { return fieldVis(c.el); });
+  // With nothing shown to fill: buttons that may show the field, or the frame it may sit in.
+  const reveal = shown.length ? [] : revealers(re, nearHit), framed = !shown.length && !reveal.length && frameHint(inFrame);
   if (!scored.length) {
-    const none = "no fillable field matched /" + a.label_pattern + "/i", miss = none + "; it may appear ";
-    const reveal = revealers(re, nearHit);
-    const framed = !reveal.length && frameHint(inFrame);
-    const out = framed ? { ok: false, error: none + framed }
-      : !reveal.length ? { ok: false, error: miss + "only after clicking a button" }
-      : { ok: false, error: miss + REVEAL_HOW, reveal: reveal };
+    const none = "no fillable field matched /" + a.label_pattern + "/i";
+    const out = { ok: false, error: framed ? none + framed : none + "; it may appear " + (reveal.length ? REVEAL_HOW : "only after clicking a button") };
+    if (reveal.length) out.reveal = reveal;
     if (passed.length) {
       out.error += "; candidates sit near matching text but carry other labels";
       out.candidates = passed.slice(0, 5).map(function (el) {
@@ -5969,16 +5969,12 @@ function fillOne(a, only, onLand) {
     }
     return out;
   }
-  let shown = scored.filter(function (c) { return fieldVis(c.el); });
   if (!shown.length) {
     const el = ident(scored[0].el), hit = el + " matched /" + a.label_pattern + "/i but ";
     if (scored.every(function (c) { return trapLike(c.el); })) return only ? { ok: true, skipped: "trap", el: el } : { ok: false, el: el, error: hit + "it looks like a bot trap; leave it empty" };
-    const reveal = revealers(re, nearHit);
-    const why = hit + "the field is hidden; ", any = ", or pass its ref or selector to fill it anyway";
-    const framed = !reveal.length && frameHint(inFrame);
-    if (framed) return { ok: false, el: el, error: why + framed.slice(2) + any };
-    return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button" + any }
-      : { ok: false, el: el, error: why + "it may show " + REVEAL_HOW, reveal: reveal };
+    const out = { ok: false, el: el, error: hit + "the field is hidden; " + (framed ? framed.slice(2) : "it may show " + (reveal.length ? REVEAL_HOW : "only after clicking a button")) + (reveal.length ? "" : ", or pass its ref or selector to fill it anyway") };
+    if (reveal.length) out.reveal = reveal;
+    return out;
   }
   // A shown field that looks like a trap (trapLike: untabbable with autofill
   // off, even when required, or named to be left blank) yields to a normal match scoring
@@ -6003,19 +5999,19 @@ function fillOne(a, only, onLand) {
   // A disabled winner refuses the fill; only an enabled field of equal score stands in.
   const best = shown.find(function (c) { return c.s === shown[0].s && !unsent(c.el); }) || shown[0];
   if (unsent(best.el)) return refuse(best.el);
-  if (only) {
-    // Two fields each named by their own label, neither favoured: guessing would
-    // put the value in the wrong one.
-    const tied = shown.filter(function (c) { return c.s >= 100 && c.s === best.s && (c === best || (!c.el.contains(best.el) && !best.el.contains(c.el))); });
-    if (tied.length > 1) return { ok: true, skipped: "ambiguous", candidates: tied.slice(0, 3).map(function (c) { return ident(c.el); }) };
-    const kept = keep(isField(best.el) ? best.el : best.root, best.el);
-    if (kept) return kept;
-  }
-  const out = tryFill(isField(best.el) ? best.el : best.root, best.el);
+  // Two fields each named by their own label, neither favoured: guessing would
+  // put the value in the wrong one. only_empty skips them; trusted typing posts
+  // real input, so it types nothing.
+  const cid = function (c) { return ident(c.el); };
+  const tied = shown.filter(function (c) { return c.s >= 100 && c.s === best.s && (c === best || (!c.el.contains(best.el) && !best.el.contains(c.el))); }).slice(0, 3).map(cid);
+  if (tied.length > 1 && (only || a.trusted)) return only ? { ok: true, skipped: "ambiguous", candidates: tied } : { ok: false, ambiguous: true, error: "several fields matched /" + a.label_pattern + "/i equally; narrow it, or use a selector or ref", candidates: tied };
+  const host = isField(best.el) ? best.el : best.root, kept = keep(host, best.el);
+  if (kept) return kept;
+  const out = tryFill(host, best.el);
   if (!out) return { ok: false, error: ident(best.el) + " did not accept the text" };
   if (out.ok === false) return out;
   const rivals = shown.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
-  if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
+  if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(cid);
   if (flagged.indexOf(best) >= 0 && trapShaped(best.el)) out.warning = trapWarning(best.el);
   return out;
 }
@@ -6462,15 +6458,12 @@ if (A.select) {
   const off = !A.forFill && inertCtl(el);
   if (off) return inertOut(off);
 } else {
-  const re = new RegExp(A.label_pattern, "i");
-  const fields = Array.from(document.querySelectorAll("input, textarea")).filter(function (e) {
-    return !(e.tagName === "INPUT" && INPUT_SKIP.indexOf((e.type || "text").toLowerCase()) >= 0) && !e.disabled && !e.readOnly;
-  });
-  const hit = function (e) { return re.test(labelText(e)) || re.test(hintText(e)); };
-  el = fields.filter(vis).find(hit) || fields.find(hit);
-  if (!el) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
+  // fill by label: the field TRUSTED_LABEL_LIB held.
+  el = taNow && !taLost && taNow.held ? taNow.el : null;
+  if (!el || !el.isConnected) return { ok: false, error: "the page changed before the trusted entry; not filled" };
 }
 if (A.forFill && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, error: "fill {trusted:true} types into plain inputs/textareas only; rich editors work without trusted" };
+if (A.forFill && (el.disabled || el.readOnly)) return { ok: false, error: ident(el) + " is disabled or read-only" };
 const FRAMED = " is or lies under an embedded frame; reach frame controls through accessibility_snapshot {frames:true} and click an fN ref with trusted:true";
 const inFrame = function (e) { return !!(e && e.closest && e.closest("iframe, frame, object, embed")); };
 if (inFrame(el)) return { ok: false, error: ident(el) + FRAMED };
@@ -6525,6 +6518,69 @@ return {
   ih: window.innerHeight,
   tok: selTok,
 };`;
+
+// fill's probe also records a typeahead (as TRUSTED_FILL_BG does) before the
+// field is cleared, so the check can hand it to the pick. Its answer's tok is
+// that state's owner token.
+const TRUSTED_FILL_PROBE_TA = String.raw`
+if (A.forFill) {
+  const ta = isTypeahead(el) && taParts(el);
+  if (ta) {
+    selTok = rbTok();
+    window.__perch_ta = { key: taKey, tok: selTok, el: el, comp: ta.comp, pop: ta.pop, prior: el.value, priorComp: ta.comp && ta.comp.value };
+  } else if (taNow && !taLost) window.__perch_ta = null;
+}
+`;
+
+// fill {trusted, label_pattern}: plain fill's ranking (fillOne) picks the field
+// and holds it on __perch_ta, or answers its miss, refusal or tie, before
+// TA_OWN_LIB reads the state. The trusted scripts after it take the held field.
+const TRUSTED_LABEL_LIB = FILL_LIB + String.raw`
+const lpHeld = fillOne(A);
+if (!lpHeld.pending) return lpHeld;
+`;
+
+// Background trusted fill through the editing command (EDIT_LIB).
+// A.held: the field a fill_fields pass resolved for a trusted entry and
+// held on __perch_ta, taken once. A plain one that lands joins that batch's
+// __perch_ff at A.at, so later passes recheck it as they do their own.
+// A held entry's answers carry the held state's owner token, which a
+// typeahead's own state keeps. By label, TRUSTED_LABEL_LIB holds the field
+// first, as a fill_fields pass does.
+const TRUSTED_FILL_BG = String.raw`
+let el;
+const holding = A.held || (!!A.label_pattern && !A.ref && !A.selector);
+const h = holding ? taNow : null;
+if (holding) {
+  if (taLost) return taLost;
+  el = h && h.held && h.el;
+  if (!el || !el.isConnected) return { ok: false, error: "the page changed before the trusted entry; not filled" };
+  h.held = false;
+} else {
+  const r = resolveEl(A);
+  if (r.out) return r.out;
+  el = r.el;
+}
+if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, el: ident(el), error: "fill {trusted:true} supports plain inputs/textareas only" };
+if (el.disabled || el.readOnly) return { ok: false, error: ident(el) + " is disabled or read-only" };
+// A typeahead keeps only a picked suggestion: Node picks after the lookup.
+const ta = isTypeahead(el) && taParts(el);
+const tok = h ? h.tok : ta ? rbTok() : undefined;
+if (ta) window.__perch_ta = { key: taKey, tok: tok, el: el, comp: ta.comp, pop: ta.pop, text: A.text, prior: el.value, priorComp: ta.comp && ta.comp.value };
+const e = editType(el, A.text);
+if (!e.focused) return { ok: false, error: ident(el) + " did not accept focus" };
+if (e.ok && ta) {
+  el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: A.text.slice(-1) }));
+  return { pending: true, trusted: true, tok: tok };
+}
+const ff = A.held && e.ok && window.__perch_ff;
+if (ff) {
+  for (const k in ff.items) if (ff.items[k].el === el) delete ff.items[k];
+  ff.items[A.at] = { el: el, want: el.value, text: A.text, id: ident(el), kind: "plain", f: A.f, key: { id: el.id, name: el.name, form: el.form }, shown: vis(el) };
+  if (!("form" in ff)) ff.form = el.form || el.closest("form");
+}
+return { ok: e.ok, trusted: e.trusted, value: e.value, el: ident(el), ...(h ? { tok: tok } : {}), ...(e.ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
+`;
 
 export const SHOT_BUSY = "screenshot: another perch call on this tab is mid-screenshot; nothing was scrolled or captured, retry";
 
@@ -7962,18 +8018,9 @@ return out;
 `,
 
   trusted_probe: TRUSTED_PROBE_HEAD + TRUSTED_PROBE_TAIL,
-  // fill's probe also records a typeahead (as trusted_fill_background does)
-  // before the field is cleared, so the check can hand it to the pick.
-  // Its answer's tok is that state's owner token.
-  trusted_fill_probe: TOK_LIB + TYPEAHEAD_LIB + TA_OWN_LIB + TRUSTED_PROBE_HEAD + String.raw`
-if (A.forFill) {
-  const ta = isTypeahead(el) && taParts(el);
-  if (ta) {
-    selTok = rbTok();
-    window.__perch_ta = { key: taKey, tok: selTok, el: el, comp: ta.comp, pop: ta.pop, prior: el.value, priorComp: ta.comp && ta.comp.value };
-  } else if (taNow && !taLost) window.__perch_ta = null;
-}
-` + TRUSTED_PROBE_TAIL,
+  // fill's probe; the _label forms resolve by label through TRUSTED_LABEL_LIB.
+  trusted_fill_probe: TOK_LIB + TYPEAHEAD_LIB + TA_OWN_LIB + TRUSTED_PROBE_HEAD + TRUSTED_FILL_PROBE_TA + TRUSTED_PROBE_TAIL,
+  trusted_fill_probe_label: TRUSTED_LABEL_LIB + TA_OWN_LIB + TRUSTED_PROBE_HEAD + TRUSTED_FILL_PROBE_TA + TRUSTED_PROBE_TAIL,
 
   // A click by point has no element to probe, so it takes the viewport rects of
   // the page's embedded frames, plus the page's own estimate of its screen origin
@@ -8008,53 +8055,8 @@ st.moves = [];
 return A.reset || !moves.length ? null : { moves: moves };
 `,
 
-  // Background trusted fill through the editing command (EDIT_LIB).
-  // A.held: the field a fill_fields pass resolved for a trusted entry and
-  // held on __perch_ta, taken once. A plain one that lands joins that batch's
-  // __perch_ff at A.at, so later passes recheck it as they do their own.
-  // A held entry's answers carry the held state's owner token, which a
-  // typeahead's own state keeps.
-  trusted_fill_background: TOK_LIB + TYPEAHEAD_LIB + EDIT_LIB + TA_OWN_LIB + String.raw`
-let el;
-const h = A.held ? taNow : null;
-if (A.held) {
-  if (taLost) return taLost;
-  el = h && h.held && h.el;
-  if (!el || !el.isConnected) return { ok: false, error: "the page changed before the trusted entry; not filled" };
-  h.held = false;
-} else if (A.ref || A.selector) {
-  const r = resolveEl(A);
-  if (r.out) return r.out;
-  el = r.el;
-} else {
-  const re = new RegExp(A.label_pattern, "i");
-  const fields = Array.from(document.querySelectorAll("input, textarea")).filter(function (e) {
-    return !(e.tagName === "INPUT" && INPUT_SKIP.indexOf((e.type || "text").toLowerCase()) >= 0) && !e.disabled && !e.readOnly;
-  });
-  const hit = function (e) { return re.test(labelText(e)) || re.test(hintText(e)); };
-  el = fields.filter(vis).find(hit) || fields.find(hit);
-  if (!el) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
-}
-if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, el: ident(el), error: "fill {trusted:true} supports plain inputs/textareas only" };
-if (el.disabled || el.readOnly) return { ok: false, error: ident(el) + " is disabled or read-only" };
-// A typeahead keeps only a picked suggestion: Node picks after the lookup.
-const ta = isTypeahead(el) && taParts(el);
-const tok = h ? h.tok : ta ? rbTok() : undefined;
-if (ta) window.__perch_ta = { key: taKey, tok: tok, el: el, comp: ta.comp, pop: ta.pop, text: A.text, prior: el.value, priorComp: ta.comp && ta.comp.value };
-const e = editType(el, A.text);
-if (!e.focused) return { ok: false, error: ident(el) + " did not accept focus" };
-if (e.ok && ta) {
-  el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: A.text.slice(-1) }));
-  return { pending: true, trusted: true, tok: tok };
-}
-const ff = A.held && e.ok && window.__perch_ff;
-if (ff) {
-  for (const k in ff.items) if (ff.items[k].el === el) delete ff.items[k];
-  ff.items[A.at] = { el: el, want: el.value, text: A.text, id: ident(el), kind: "plain", f: A.f, key: { id: el.id, name: el.name, form: el.form }, shown: vis(el) };
-  if (!("form" in ff)) ff.form = el.form || el.closest("form");
-}
-return { ok: e.ok, trusted: e.trusted, value: e.value, el: ident(el), ...(h ? { tok: tok } : {}), ...(e.ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
-`,
+  trusted_fill_background: TOK_LIB + TYPEAHEAD_LIB + EDIT_LIB + TA_OWN_LIB + TRUSTED_FILL_BG,
+  trusted_fill_background_label: TRUSTED_LABEL_LIB + EDIT_LIB + TA_OWN_LIB + TRUSTED_FILL_BG,
 
   // hit: the mousedown landed on the element (a click by point: on the page, at
   // `el`); null: no mousedown reached the page; missing: no recorder, a new document.
@@ -8594,10 +8596,11 @@ async function trustedClick({ ref, selector, label_pattern, x, y, raise, target,
 // foreground route keeps the hardware-style keystrokes. Both verify the value.
 async function trustedFill({ ref, selector, label_pattern, text, trusted, raise, target }) {
   const key = { ref, selector, label_pattern, text, trusted };
-  if (!raise) return runPage("fill", "trusted_fill_background", key, target);
+  const by = label_pattern && !ref && !selector ? "_label" : "";
+  if (!raise) return runPage("fill", "trusted_fill_background" + by, key, target);
   return rt("trustedFill", {
     target, raise,
-    probe: pageFn("trusted_fill_probe", { ...key, forFill: true, background: !raise }),
+    probe: pageFn("trusted_fill_probe" + by, { ...key, forFill: true, background: !raise }),
     cal: pageFn("trusted_cal", {}),
     calReset: pageFn("trusted_cal", { reset: true }),
     check: pageFn("trusted_check", { ...key, forFill: true }),

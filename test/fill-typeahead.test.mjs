@@ -1110,7 +1110,7 @@ test("trusted_fill_background {held}: the field fill_fields held is used once; a
 });
 test("fill {fields}: a trusted entry whose page script throws stays kind plain, in neutral words", async () => {
   const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
-  const threw = throwAt(dom, "if (A.held) {");
+  const threw = throwAt(dom, "if (holding) {");
   const o = await fill({ fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }, { label_pattern: "name", text: "Ada" }] });
   assert.equal(threw(), 1);
   assert.deepEqual(o.results[0], { ok: false, kind: "plain", error: "fill: the page script failed on this page (TypeError); nothing verified" });
