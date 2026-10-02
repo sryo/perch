@@ -874,7 +874,7 @@ test("fill typeahead: phase scripts are byte-identical across one call's polls, 
 });
 
 test("every typeahead script that stores fill state makes its token with one rbTok", () => {
-  for (const name of ["fill", "fill_fields", "trusted_fill_probe", "trusted_fill_background"]) {
+  for (const name of ["fill", "fill_fields", "trusted_fill_probe", "trusted_fill_probe_label", "trusted_fill_background", "trusted_fill_background_label"]) {
     const src = pageScript(name, { label_pattern: "x", text: "y", fields: [], forFill: true });
     assert.equal(src.split("function rbTok(").length - 1, 1, name);
   }
