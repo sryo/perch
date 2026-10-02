@@ -198,6 +198,18 @@ test("the snapshot counts each form's fields once to pick the biggest", () => {
   assert.deepEqual(seen, ["small", "big", "big"], "one count each, then the census");
 });
 
+// form.elements re-runs a document-wide search for form= fields on every read.
+test("the form census finds form= fields outside the form without reading form.elements", () => {
+  const w = page(`<form id=f1><input name=a required></form><input name=ph form=f1 required><input name=other form=f2 required>
+    <form><input name=b></form>`);
+  let n = 0;
+  const d = Object.getOwnPropertyDescriptor(w.HTMLFormElement.prototype, "elements");
+  Object.defineProperty(w.HTMLFormElement.prototype, "elements", { configurable: true, get() { n++; return d.get.call(this); } });
+  const head = JSON.parse(run(w, "snapshot", { max: 500 }).split("\n")[0].slice(2));
+  assert.deepEqual(head.form, { fields: 1, requiredEmpty: 2 });
+  assert.equal(n, 0);
+});
+
 test("the invalid-field census scans the document once, finding ARIA and native failures alike", () => {
   const w = page(`<form><input name=a aria-invalid=true><input type=email name=b value=nope><input name=c aria-invalid=true style="display:none"><input name=d></form>`);
   const seen = [];

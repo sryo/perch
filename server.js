@@ -4334,7 +4334,7 @@ function trapLike(el, labelled) {
 function wanted(el) {
   if (!el || (!el.required && attr(el, "aria-required") !== "true")) return false;
   if (untabbable(el) || leaveBlank(el)) return false;
-  return (!!el.labels && Array.prototype.some.call(el.labels, vis))
+  return Array.from(el.labels || []).some(vis)
     || attr(el, "aria-labelledby").split(/\s+/).some(function (id) { const t = id && el.ownerDocument.getElementById(id); return !!t && vis(t) && !!t.textContent.trim(); });
 }
 // vis(), plus a styled control's own input faded (opacity 0) or shrunk to a
@@ -5085,7 +5085,7 @@ function labelSeen(l) {
 function labelShown(el) {
   if (el.tagName !== "INPUT" || !/^(checkbox|radio)$/i.test(el.type || "")) return false;
   if (untabbable(el) || el.closest("[aria-hidden=true]")) return false;
-  return Array.prototype.some.call(el.labels || [], labelSeen);
+  return Array.from(el.labels || []).some(labelSeen);
 }
 // Best-named boxes for a.label_pattern: nameTier over accName, then over the
 // hint one tier group lower; a box wrapping another hit is that same hit.
@@ -5125,10 +5125,10 @@ function checkByLabel(a, only) {
 function radioMates(el) {
   if (el.tagName !== "INPUT") {
     const g = el.closest("[role=radiogroup]");
-    return g ? Array.prototype.slice.call(g.querySelectorAll("[role=radio]")) : [el];
+    return g ? Array.from(g.querySelectorAll("[role=radio]")) : [el];
   }
   if (!el.name) return [el];
-  return Array.prototype.filter.call((el.form || el.ownerDocument).querySelectorAll("input[type=radio]"), function (x) { return x.name === el.name && x.form === el.form; });
+  return Array.from((el.form || el.ownerDocument).querySelectorAll("input[type=radio]")).filter(function (x) { return x.name === el.name && x.form === el.form; });
 }
 // A click as a person's lands: a role=radio or role=checkbox box holding a
 // <label> for its own input gets it on that label, which activates the input
@@ -5203,7 +5203,7 @@ function optName(o) {
   return clip(t || o.value, 120);
 }
 function groupQuestion(box, opts) {
-  const others = function (n) { return Array.prototype.some.call(n.querySelectorAll(RADIO_OPT), function (r) { return opts.indexOf(r) < 0 && !opts.some(function (o) { return o.contains(r); }); }); };
+  const others = function (n) { return Array.from(n.querySelectorAll(RADIO_OPT)).some(function (r) { return opts.indexOf(r) < 0 && !opts.some(function (o) { return o.contains(r); }); }); };
   for (let n = box, up = 0; n && up < 4 && n !== document.body && !others(n); n = n.parentElement, up++) {
     if (attr(n, "aria-labelledby") || attr(n, "aria-label")) { const t = labelText(n); if (t) return t; }
     if (n.tagName === "FIELDSET") {
@@ -5280,7 +5280,7 @@ function ctlParts(el) {
   if (sv) { const one = [textOf(sv)]; one.single = true; return one; }
   let chips = c.querySelectorAll('[class*="multi-value__label"], [class*="multiValue__label"]');
   if (!chips.length) chips = c.querySelectorAll('[class*="multi-value"]:not([class*="__"]), [class*="multiValue"]:not([class*="__"])');
-  return Array.prototype.map.call(chips, textOf);
+  return Array.from(chips).map(textOf);
 }
 function shownValue(el) {
   const p = ctlParts(el);
@@ -5403,7 +5403,8 @@ function wantName(el) {
 function census(f) {
   const fields = Array.from(f.querySelectorAll(FIELDS)).filter(textish);
   let cands = Array.from(f.querySelectorAll(FIELDS + ", " + TICKS + ", " + BOXES));
-  const outside = Array.from(f.elements || []).filter(function (el) { return !f.contains(el) && el.matches(FIELDS); });
+  // Only a form= attribute ties a field outside the form to it.
+  const outside = f.id ? Array.from(f.getRootNode().querySelectorAll("[form]")).filter(function (el) { return el.form === f && !f.contains(el) && el.matches(FIELDS); }) : [];
   if (outside.length) cands = cands.concat(outside).sort(function (a, b) { return a.compareDocumentPosition(b) & 4 ? -1 : 1; });
   const want = [], loose = [], radios = new Map();
   cands.forEach(function (el) {
@@ -5754,7 +5755,7 @@ function revealers(re, nearHit) {
     }
     return wide.get(p);
   };
-  Array.prototype.forEach.call(document.querySelectorAll("button, [role=button], a[href], input[type=button]"), function (el, i) {
+  document.querySelectorAll("button, [role=button], a[href], input[type=button]").forEach(function (el, i) {
     if (!vis(el) || isDisabled(el) || attr(el, "type").toLowerCase() === "submit") return;
     const name = accName(el);
     if (!name || REVEAL_SKIP.test(name)) return;
@@ -5933,7 +5934,7 @@ function fillOne(a, only, onLand) {
   const inFrame = function (d) { try { return !!d && deepAll(EDITABLES, d).some(fillable); } catch (e) { return false; } };
   const crowd = new Map();
   const fieldsIn = function (p) {
-    if (!crowd.has(p)) crowd.set(p, Array.prototype.filter.call(p.querySelectorAll(EDITABLES), fillable).length);
+    if (!crowd.has(p)) crowd.set(p, Array.from(p.querySelectorAll(EDITABLES)).filter(fillable).length);
     return crowd.get(p);
   };
   // A placeholder names another field when it is a short name ("Name",
@@ -7120,7 +7121,7 @@ function twin(it) {
   let x = k.id && document.getElementById(k.id);
   if (ok(x)) return { el: x };
   if (k.name && k.form && k.form.isConnected) {
-    x = Array.prototype.find.call(k.form.elements, function (e) { return e.name === k.name && (!("value" in k) || e.value === k.value); });
+    x = Array.from(k.form.elements).find(function (e) { return e.name === k.name && (!("value" in k) || e.value === k.value); });
     if (ok(x)) return { el: x };
   }
   const f = it.f;
@@ -7133,7 +7134,7 @@ function twin(it) {
     return nat ? { el: nat } : null;
   }
   const re = new RegExp(f.label_pattern, "i");
-  const all = Array.prototype.filter.call(document.querySelectorAll("textarea, input, [contenteditable]"), fillable);
+  const all = Array.from(document.querySelectorAll("textarea, input, [contenteditable]")).filter(fillable);
   const hits = all.filter(function (e) { return re.test(labelText(e)); }).concat(all.filter(function (e) { return !re.test(labelText(e)) && re.test(hintText(e)); }));
   x = hits.filter(fieldVis)[0] || hits[0];
   return ok(x) ? { el: x } : null;
