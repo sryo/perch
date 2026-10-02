@@ -65,18 +65,20 @@ test("readback that never changes returns the current text with changed:false", 
 test("readback on a page gone quiet ends after 10 quiet polls, not the 2s cap", async () => {
   const { world } = onPage(FORM, "", { frameMs: 16 });
   const t0 = world.clock.t;
-  assert.equal((await click({ selector: "#b", readback: "#s" })).changed, false);
+  const o = await click({ selector: "#b", readback: "#s" });
+  assert.equal(o.changed, false);
+  assert.equal(o.settled, undefined, "a settled page carries no flag");
   const spent = world.clock.t - t0;
   assert.ok(spent >= 450 && spent <= 900, `spent ${spent}ms`);
 });
 
-test("DOM activity anywhere on the page keeps readback waiting, up to the 2s cap", async () => {
+test("DOM activity anywhere on the page keeps readback waiting, up to the 2s cap, then says settled:false", async () => {
   const { dom, world } = onPage(FORM + `<div id=spin></div>`);
   let n = 0;
   const orig = dom.eval.bind(dom);
   dom.eval = (js) => { dom.document.getElementById("spin").textContent = String(n++); return orig(js); };
   const t0 = world.clock.t;
-  assert.equal((await click({ selector: "#b", readback: "#s" })).changed, false);
+  assert.deepEqual(await click({ selector: "#b", readback: "#s" }), { ok: true, el: `button "Submit"`, readback: "Idle", changed: false, settled: false });
   const spent = world.clock.t - t0;
   assert.ok(spent >= 1900 && spent <= 2600, `spent ${spent}ms`);
 });
@@ -95,7 +97,9 @@ test("fetch or XHR requests completing keep readback waiting; other resources do
   let { dom, world } = onPage(FORM);
   fetches(dom, 3);
   let t0 = world.clock.t;
-  assert.equal((await click({ selector: "#b", readback: "#s" })).changed, false);
+  const busy = await click({ selector: "#b", readback: "#s" });
+  assert.equal(busy.changed, false);
+  assert.equal(busy.settled, false);
   assert.ok(world.clock.t - t0 >= 1900, `spent ${world.clock.t - t0}ms`);
   ({ dom, world } = onPage(FORM));
   const entries = [];
@@ -475,7 +479,7 @@ test("a quiet hidden tab settles after about 1.2s, not the 2s cap", async () => 
   const { dom, world } = onPage(FORM, "", { frameMs: 16 });
   hiddenTimer(dom, world, Infinity, () => {});
   const t0 = world.clock.t;
-  assert.equal((await click({ selector: "#b", readback: "#s" })).changed, false);
+  assert.deepEqual(await click({ selector: "#b", readback: "#s" }), { ok: true, el: `button "Submit"`, readback: "Idle", changed: false });
   const spent = world.clock.t - t0;
   assert.ok(spent >= 1200 && spent <= 1500, `spent ${spent}ms`);
 });

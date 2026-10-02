@@ -141,7 +141,7 @@ Result shapes callers depend on are pinned by `test/contract.test.mjs` (each tes
 ### Click readback (`click {readback}`)
 
 - The click arms a record on `window.__perch_rb` (the readback element's text, a state signature of it and its first 50 descendants' ARIA and checked/value state, the url, the invalid fields, the form scope, step and alerts) and JXA polls `readback_read` for up to 2s until something changes or the page has been quiet for 10 polls (no DOM mutation, no fetch/XHR completing). In a hidden tab the quiet stretch must also last 1200ms of page time, so a throttled validation timer still lands inside it. `class` is not in the signature.
-- **Result keys:** `changed`, `navigated`, `readback`; `invalid: ["Label: message", ...]` (fields that turned invalid or changed message, at most 5, `invalidCount` past that); `form: {gone?, step?, alert?}` when the clicked element's form scope moved; `page: {heading?, alert?}` after a new document.
+- **Result keys:** `changed`, `navigated`, `readback`; `settled: false` when the 2s cap's read finds the page still active (absent otherwise); `invalid: ["Label: message", ...]` (fields that turned invalid or changed message, at most 5, `invalidCount` past that); `form: {gone?, step?, alert?}` when the clicked element's form scope moved; `page: {heading?, alert?}` after a new document.
 - **Submitting controls:** a submit button whose own text or disabled state is the only change is mid-flight, so the poll keeps going; a form that only disables itself reads `changed:false`. Any other button's change reads `changed:true` at once, so an agent never re-clicks a toggle.
 - Pinned by `test/click-readback.test.mjs` and `test/cross-server-state.test.mjs`.
 

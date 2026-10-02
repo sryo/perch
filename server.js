@@ -7600,6 +7600,8 @@ if ((!changed || inFlight) && !A.final && !settled) return { pending: true, tok:
 rbStop(s);
 const out = { readback: text, changed: changed, tok: s.tok };
 if (moved) out.url = location.href;
+// The cap's read on a page still active: the outcome may still be coming.
+if (A.final && !settled) out.settled = false;
 if (invNew.length) {
   out.invalid = inv.slice(0, 5).map(function (c) { return clip(c.name + (c.msg ? ": " + c.msg : ""), 140); });
   if (inv.length > 5) out.invalidCount = inv.length;
