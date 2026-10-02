@@ -1129,7 +1129,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // box, cut before any downscale. A capture that gives no image in time is a
   // coded timeout, which the crop's restore still follows. `run` is a
   // screencapture startShot already began, which this call then owns; `points`
-  // is the window's width, for a shot with no map.
+  // is the window's {w, h}, for a shot with no map.
   const NO_IMAGE = { noImage: true }, NO_GRANT = { noGrant: true };
   function capture(wid, format, maxWidth, map, run, points) {
     let granted = !!run;
@@ -1144,7 +1144,7 @@ function jxaRuntime(BROWSERS, HANG) {
       }
       const src = awaitShot(run);
       if (!src) return NO_IMAGE;
-      if (run.type === "png" && !(maxWidth > 0 && Number($.CGImageGetWidth(src.CGImage)) > maxWidth)) {
+      if (run.type === "png" && !(maxWidth > 0 && Math.max(Number($.CGImageGetWidth(src.CGImage)), Number($.CGImageGetHeight(src.CGImage))) > maxWidth)) {
         const file = $.NSData.dataWithContentsOfFile(run.path);
         if (!file || file.isNil() || !Number(file.length)) return NO_IMAGE;
         return { data: file.base64EncodedStringWithOptions(0).js, image: { w: Number($.CGImageGetWidth(src.CGImage)), h: Number($.CGImageGetHeight(src.CGImage)) } };
@@ -1155,8 +1155,8 @@ function jxaRuntime(BROWSERS, HANG) {
       return granted ? NO_IMAGE : NO_GRANT;
     } finally { if (run) dropFile(run.path); }
   }
-  // A captured image cut to the map's box (before any downscale), scaled to
-  // maxWidth when wider, and encoded as PNG or JPEG at 0.8; NO_IMAGE when any
+  // A captured image cut to the map's box (before any downscale), scaled so its
+  // long edge is maxWidth when longer, and encoded as PNG or JPEG at 0.8; NO_IMAGE when any
   // step gives nothing.
   function encodeShot(img, format, maxWidth, map) {
     let w = Number($.CGImageGetWidth(img)), h = Number($.CGImageGetHeight(img));
@@ -1169,17 +1169,18 @@ function jxaRuntime(BROWSERS, HANG) {
       w = Number($.CGImageGetWidth(img)); h = Number($.CGImageGetHeight(img));
       if (w !== clip.w || h !== clip.h) return NO_IMAGE;
     }
-    if (maxWidth > 0 && w > maxWidth) {
-      const sh = Math.round(h * maxWidth / w);
+    if (maxWidth > 0 && Math.max(w, h) > maxWidth) {
+      const k = maxWidth / Math.max(w, h);
+      const sw = Math.max(1, Math.round(w * k)), sh = Math.max(1, Math.round(h * k));
       // kCGImageAlphaPremultipliedLast, kCGInterpolationHigh.
-      const ctx = $.CGBitmapContextCreate(null, maxWidth, sh, 8, 0, $.CGImageGetColorSpace(img), 1);
+      const ctx = $.CGBitmapContextCreate(null, sw, sh, 8, 0, $.CGImageGetColorSpace(img), 1);
       $.CGContextSetInterpolationQuality(ctx, 3);
-      $.CGContextDrawImage(ctx, $.CGRectMake(0, 0, maxWidth, sh), img);
+      $.CGContextDrawImage(ctx, $.CGRectMake(0, 0, sw, sh), img);
       const small = $.CGBitmapContextCreateImage(ctx);
       // A failed downscale hands the shot to screencapture and sips, which
-      // always shrink it, rather than returning one wider than asked.
-      if (Number($.CGImageGetWidth(small)) !== maxWidth) return NO_IMAGE;
-      img = small; w = maxWidth; h = sh;
+      // always shrink it, rather than returning one larger than asked.
+      if (Number($.CGImageGetWidth(small)) !== sw || Number($.CGImageGetHeight(small)) !== sh) return NO_IMAGE;
+      img = small; w = sw; h = sh;
     }
     const rep = $.NSBitmapImageRep.alloc.initWithCGImage(img);
     const data = format === "jpeg"
@@ -1334,9 +1335,10 @@ function jxaRuntime(BROWSERS, HANG) {
     ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]);
     return !!$.CGPreflightScreenCaptureAccess();
   }
-  // Whether a window `points` wide comes back no wider than maxWidth on the
-  // densest screen, so screencapture's own PNG can go back as it is. A wrong
-  // guess costs time, never the result: a PNG that turns out wider is scaled.
+  // Whether a window of `points` {w, h} comes back with no edge longer than
+  // maxWidth on the densest screen, so screencapture's own PNG can go back as
+  // it is. A wrong guess costs time, never the result: a PNG that turns out
+  // larger is scaled.
   function fitsAsIs(points, maxWidth) {
     if (!(maxWidth > 0)) return true;
     let k = 0;
@@ -1344,7 +1346,8 @@ function jxaRuntime(BROWSERS, HANG) {
       const s = $.NSScreen.screens;
       for (let i = 0; i < Number(s.count); i++) k = Math.max(k, Number(s.objectAtIndex(i).backingScaleFactor));
     } catch (e) { return false; }
-    return k > 0 && points > 0 && points * k <= maxWidth;
+    const edge = points ? Math.max(points.w, points.h) : 0;
+    return k > 0 && edge > 0 && edge * k <= maxWidth;
   }
   // When the capture helper can't take a shot, the screencapture binary does:
   // it exits after each shot, so it never holds replayd's proxy (see the
@@ -3046,7 +3049,7 @@ function jxaRuntime(BROWSERS, HANG) {
     shot(a) {
       helperOffCall = a.noHelper === true;
       if (a.clip) return shotClip(a);
-      const I = shotGeom(a), c = capture(I.windowNumber, a.format, a.maxWidth, null, null, (I.cgBounds || I.geom).w);
+      const I = shotGeom(a), c = capture(I.windowNumber, a.format, a.maxWidth, null, null, I.cgBounds || I.geom);
       if (c.noGrant) return { ok: false, error: SHOT_NO_GRANT };
       if (c.data) { I.data = c.data; I.image = c.image; }
       return I;
@@ -4159,11 +4162,11 @@ async function screenshot(args = {}) {
       clip = { x: c.x, y: c.y, w: c.w, h: c.h };
       clipped = clipped || c.cut;
     }
-    if (maxWidth > 0 && dims.w > maxWidth) {
+    if (maxWidth > 0 && Math.max(dims.w, dims.h) > maxWidth) {
       const src = files[files.length - 1];
       files.push(`${base}-s.${ext}`);
       // Best effort: if sips fails, the full-size capture still goes back.
-      img = await shotChild("sips", ["--resampleWidth", String(maxWidth), ...quality, src, "--out", files[files.length - 1]]);
+      img = await shotChild("sips", ["-Z", String(maxWidth), ...quality, src, "--out", files[files.length - 1]]);
       if (img && img !== "killed") ({ buf, dims } = img);
     }
     return { __image: true, data: buf.toString("base64"), mimeType: ext === "jpg" ? "image/jpeg" : "image/png", meta: meta(dims, clip, clipped) };
@@ -9137,7 +9140,7 @@ const TOOLS = [
     ref: REF,
     selector: SEL,
     raise: { type: "boolean" },
-    maxWidth: { type: "number", description: "Default 1568; 0 = full size." },
+    maxWidth: { type: "number", description: "Longest side, default 1568; 0 = full size." },
     format: { type: "string", enum: ["png", "jpeg"] },
     target: TARGET,
   }),
