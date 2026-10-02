@@ -20,7 +20,8 @@ async function cases(serverUrl) {
     "snapshot max 500": script("snapshot", { max: 500 }),
     "snapshot all": script("snapshot", { max: 100000 }),
     "get_text body": script("get_text", { offset: 0, maxChars: 1e7 }),
-    "fill label miss": script("fill", { label_pattern: "zzz", text: "x" }),
+    "wait selector miss": script("wait_check", { selector: "#zzz" }),
+    "fill label miss":script("fill", { label_pattern: "zzz", text: "x" }),
     "fill ancestor fallback": script("fill", { label_pattern: "customer", text: "x" }),
     "matchTier 1600 options, misses": body(`const l = Array.from(document.querySelectorAll("[role=option], option"));
       return ${MISS}.map(function (w) { return matchTier(l, function (x) { return norm(x.textContent); }, norm(w)).hits.length; })`, matchLib),

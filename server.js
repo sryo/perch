@@ -8223,9 +8223,15 @@ return { fresh: true, act: n.act, tok: n.tok };
 const order = { loading: 0, interactive: 1, complete: 2 };
 if (A.readyState && order[document.readyState] < order[A.readyState]) return false;
 if (!A.selector) return true;
-let el;
-try { el = document.querySelector(A.selector); } catch (e) { return { bad: true }; }
-return !!el;
+// Found as click and fill resolve a selector: the document, then open shadow
+// roots. Each root is queried whole rather than matching every element, as
+// this runs on every poll.
+function deepOne(root) {
+  if (root.querySelector(A.selector)) return true;
+  for (const h of root.querySelectorAll("*")) if (h.shadowRoot && deepOne(h.shadowRoot)) return true;
+  return false;
+}
+try { return deepOne(document); } catch (e) { return { bad: true }; }
 `,
 };
 
