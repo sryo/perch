@@ -879,6 +879,13 @@ function jxaRuntime(BROWSERS, HANG) {
   const SILENT_MS = 1000;
   const UNANSWERED = HANG.unanswered;
   const ranOut = function (msg) { return new Error(msg + (pollSilent ? UNANSWERED : "")); };
+  // A timed-out wait {expression}'s last answer: what it threw, or a falsy value
+  // other than false (the plain "not yet").
+  function lastSeen(v) {
+    if (!v) return "";
+    if (v.x != null) return "; the expression threw " + v.x;
+    return v.n === false ? "" : "; last value: " + JSON.stringify(v.n);
+  }
 
 
   // Window geometry plus the pid and CGWindowID that screencapture -l and CGEvent
@@ -2698,7 +2705,11 @@ function jxaRuntime(BROWSERS, HANG) {
       if (a.quiet) return waitQuiet(a, start, interval);
       // With a.tok the page answers {tok} while pending: only a seen, lost or
       // foreign-token answer ends the wait.
-      const done = a.tok ? function (v) { return !!v && (!!v.seen || !!v.lost || v.tok !== a.tok); } : null;
+      // With a.expr the page answers {y, v}, {n} or {x} (Node's waitExpr); `last`
+      // keeps the latest answer for the timeout.
+      let last = null;
+      const done = a.tok ? function (v) { return !!v && (!!v.seen || !!v.lost || v.tok !== a.tok); }
+        : a.expr ? function (v) { if (v) last = v; return !!v && !!v.y; } : null;
       let q = null, r = null;
       // A hinted Chromium handle's first poll is quickExec's one event, bounded.
       const w = a.target || {};
@@ -2712,7 +2723,7 @@ function jxaRuntime(BROWSERS, HANG) {
         r = poll(t, a.js, a.timeout, interval, false, done, start);
         if (r) r.waited = Date.now() - start;
       }
-      if (!r) throw ranOut("timeout: wait timed out after " + a.timeout + "ms");
+      if (!r) throw ranOut("timeout: wait timed out after " + a.timeout + "ms" + (a.expr ? lastSeen(last) : ""));
       if (r.value && r.value.bad && a.selector) throw new Error("wait: bad selector: " + a.selector);
       if (r.value && r.value.__perch_error) throw new Error("wait: the page script failed on this page (" + faultName(r.value) + "); nothing verified");
       return r;
@@ -3984,12 +3995,24 @@ async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFA
 
 async function wait(args = {}) {
   const { selector, readyState = "complete", expression, timeout = 10000, target, quiet } = args;
+  // Under 100 is most likely seconds given by mistake. Shorter waits than a
+  // second are real (a brief check), so the floor is lower than eval_js's.
+  if (typeof timeout !== "number" || !(timeout >= WAIT_MIN_MS)) throw new Error(`bad_args: wait timeout is in milliseconds (at least ${WAIT_MIN_MS}); got ${typeof timeout === "number" ? String(timeout) : JSON.stringify(timeout)}`);
   if (quiet != null) return waitQuiet(args, timeout);
-  const js = expression
-    ? `(function(){try{var __r=(${expression});return JSON.stringify(__r===undefined?null:__r)}catch(e){return "null"}})()`
-    : buildEvalWrapper(pageScript("wait_check", { selector, readyState }));
-  const r = await rt("wait", { target, js, timeout, selector: expression ? undefined : selector }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
-  return expression ? { ok: true, waited: r.waited, value: r.value } : { ok: true, waited: r.waited };
+  const js = expression ? waitExpr(expression) : buildEvalWrapper(pageScript("wait_check", { selector, readyState }));
+  const r = await rt("wait", { target, js, timeout, selector: expression ? undefined : selector, expr: !!expression }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+  return expression ? { ok: true, waited: r.waited, value: r.value.v } : { ok: true, waited: r.waited };
+}
+
+// Each poll answers {y, v} once the expression is truthy, {n} with a falsy value,
+// or {x} naming what it threw (serializing included), so the runtime tells "not
+// yet" from "broken" and a timeout can say which. The script is parsed here
+// first, as the page parses it, so a syntax error costs no Apple Event.
+const WAIT_SHOWN = 200, WAIT_MIN_MS = 100;
+function waitExpr(expression) {
+  const js = `(function(){var __r;try{__r=(${expression});return JSON.stringify(__r?{y:1,v:__r}:{n:__r===undefined?null:__r})}catch(e){return JSON.stringify({x:String(e&&e.name?e.name+": "+e.message:e).slice(0,${WAIT_SHOWN})})}})()`;
+  try { new Function(js); } catch (e) { throw new Error(`bad_args: wait \`expression\` does not parse: ${e.name}: ${e.message}`); }
+  return js;
 }
 
 async function waitQuiet({ quiet, selector, expression, target }, timeout) {
@@ -7658,6 +7681,8 @@ if ((!changed || inFlight) && !A.final && !settled) return { pending: true, tok:
 rbStop(s);
 const out = { readback: text, changed: changed, tok: s.tok };
 if (moved) out.url = location.href;
+// The cap's read on a page still active: the outcome may still be coming.
+if (A.final && !settled) out.settled = false;
 if (invNew.length) {
   out.invalid = inv.slice(0, 5).map(function (c) { return clip(c.name + (c.msg ? ": " + c.msg : ""), 140); });
   if (inv.length > 5) out.invalidCount = inv.length;
@@ -8227,9 +8252,15 @@ return { fresh: true, act: n.act, tok: n.tok };
 const order = { loading: 0, interactive: 1, complete: 2 };
 if (A.readyState && order[document.readyState] < order[A.readyState]) return false;
 if (!A.selector) return true;
-let el;
-try { el = document.querySelector(A.selector); } catch (e) { return { bad: true }; }
-return !!el;
+// Found as click and fill resolve a selector: the document, then open shadow
+// roots. Each root is queried whole rather than matching every element, as
+// this runs on every poll.
+function deepOne(root) {
+  if (root.querySelector(A.selector)) return true;
+  for (const h of root.querySelectorAll("*")) if (h.shadowRoot && deepOne(h.shadowRoot)) return true;
+  return false;
+}
+try { return deepOne(document); } catch (e) { return { bad: true }; }
 `,
 };
 

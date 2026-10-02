@@ -87,3 +87,13 @@ test("a bad query regex errors in Node before reaching the page", async () => {
   assert.equal(r.isError, true);
   assert.match(r.content[0].text, /accessibility_snapshot: invalid query/);
 });
+
+test("wait {selector} finds an element inside an open shadow root, never a closed one", () => {
+  const { w } = shadowPage();
+  assert.equal(run(w, "wait_check", { selector: "#deep" }), true);
+  assert.equal(run(w, "wait_check", { selector: "input#em" }), true, "two roots down");
+  assert.equal(run(w, "wait_check", { selector: "#nope" }), false);
+  w.document.querySelector("x-closed").id = "c";
+  assert.equal(run(w, "wait_check", { selector: "#c button" }), false);
+  assert.deepEqual(run(w, "wait_check", { selector: "##" }), { bad: true });
+});
