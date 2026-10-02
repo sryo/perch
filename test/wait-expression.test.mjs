@@ -1,7 +1,8 @@
 // wait {expression}: a broken expression is named rather than polled as "not
 // yet" (a syntax error is refused before any Apple Event, a throw is named on
 // timeout), "truthy" means JS truthiness, and a timeout carries the last falsy
-// value seen. Fake world, virtual clock.
+// value seen; wait {timeout} is refused below 100ms, naming the unit. Fake
+// world, virtual clock.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
@@ -76,4 +77,17 @@ test("an exception message is capped", async () => {
   const { t } = await call("wait", { expression: "(function () { throw new Error('x'.repeat(5000)); })()", timeout: 300 });
   assert.ok(t.length < 400, `length ${t.length}`);
   assert.match(t, /threw Error: x+/);
+});
+
+test("a timeout under 100ms is refused naming milliseconds, before any Apple Event", async () => {
+  install();
+  for (const timeout of [0, 5, 30, 99, -1, "5000", NaN]) {
+    const { r, t } = await call("wait", { expression: "true", timeout });
+    assert.equal(r.isError, true, String(timeout));
+    assert.match(t, /^error: bad_args: wait timeout is in milliseconds \(at least 100\); got /, String(timeout));
+  }
+  const { t } = await call("wait", { quiet: 50, timeout: 10 });
+  assert.match(t, /^error: bad_args: wait timeout is in milliseconds/);
+  assert.equal(executes(), 0);
+  assert.equal((await call("wait", { expression: "true", timeout: 100 })).o.ok, true);
 });

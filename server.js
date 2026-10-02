@@ -3976,6 +3976,9 @@ async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFA
 
 async function wait(args = {}) {
   const { selector, readyState = "complete", expression, timeout = 10000, target, quiet } = args;
+  // Under 100 is most likely seconds given by mistake. Shorter waits than a
+  // second are real (a brief check), so the floor is lower than eval_js's.
+  if (typeof timeout !== "number" || !(timeout >= WAIT_MIN_MS)) throw new Error(`bad_args: wait timeout is in milliseconds (at least ${WAIT_MIN_MS}); got ${typeof timeout === "number" ? String(timeout) : JSON.stringify(timeout)}`);
   if (quiet != null) return waitQuiet(args, timeout);
   const js = expression ? waitExpr(expression) : buildEvalWrapper(pageScript("wait_check", { selector, readyState }));
   const r = await rt("wait", { target, js, timeout, selector: expression ? undefined : selector, expr: !!expression }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
@@ -3986,7 +3989,7 @@ async function wait(args = {}) {
 // or {x} naming what it threw (serializing included), so the runtime tells "not
 // yet" from "broken" and a timeout can say which. The script is parsed here
 // first, as the page parses it, so a syntax error costs no Apple Event.
-const WAIT_SHOWN = 200;
+const WAIT_SHOWN = 200, WAIT_MIN_MS = 100;
 function waitExpr(expression) {
   const js = `(function(){var __r;try{__r=(${expression});return JSON.stringify(__r?{y:1,v:__r}:{n:__r===undefined?null:__r})}catch(e){return JSON.stringify({x:String(e&&e.name?e.name+": "+e.message:e).slice(0,${WAIT_SHOWN})})}})()`;
   try { new Function(js); } catch (e) { throw new Error(`bad_args: wait \`expression\` does not parse: ${e.name}: ${e.message}`); }
