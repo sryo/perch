@@ -140,3 +140,99 @@ test("fill's label fallback reads each shared ancestor's text once", () => {
     return [miss, reads, hit.ok, n];`);
   assert.deepEqual(r, [false, 1, true, 2]);
 });
+
+// el.labels is a document-wide label[for] lookup on every read.
+function countLabels(w) {
+  const c = { n: 0 };
+  for (const C of [w.HTMLInputElement, w.HTMLTextAreaElement]) {
+    const d = Object.getOwnPropertyDescriptor(C.prototype, "labels");
+    Object.defineProperty(C.prototype, "labels", { configurable: true, get() { c.n++; return d.get.call(this); } });
+  }
+  return c;
+}
+const rowsOf = (s) => s.split("\n").slice(1).map((l) => l.slice(l.indexOf(" ") + 1));
+
+test("a snapshot names fields from one label[for] scan, reading el.labels only where that can't settle it", () => {
+  const w = page(`<form><label for=a>Alpha</label><input id=a name=a><label>Beta <input name=b></label>
+    <label for=c>Gamma</label><textarea id=c></textarea><input name=d placeholder=Delta><input id=e placeholder=Echo></form>`);
+  const c = countLabels(w);
+  assert.deepEqual(rowsOf(run(w, "snapshot", { max: 500 })),
+    [`textbox "Alpha" name="a"`, `textbox "Beta" name="b"`, `textbox "Gamma" type="textarea"`, `textbox "Delta" name="d"`, `textbox "Echo"`]);
+  assert.equal(c.n, 2, "only the two fields without an id");
+  c.n = 0;
+  assert.deepEqual(runBody(w, `return [document.getElementById("a"), document.getElementById("c")].map(accName)`), ["Alpha", "Gamma"]);
+  assert.equal(c.n, 2, "other tools read el.labels once per name");
+});
+
+test("a snapshot's label scan names tricky fields as el.labels does", () => {
+  const w = page(`<label for=dup>First dup</label><input id=dup name=one><input id=dup name=two>
+    <label for=two>Two A</label><label for=two>Two B</label><input id=two>
+    <label for=wr>Outer for</label><label>Wrapped <input id=wr name=wr></label>
+    <label>Only wrap <input id=ow name=ow></label><div id=host></div>`);
+  const sr = w.document.getElementById("host").attachShadow({ mode: "open" });
+  sr.innerHTML = `<label for=s>Shadow label</label><input id=s name=s>`;
+  const want = runBody(w, `return deepAll("input").map(accName)`);
+  const got = rowsOf(run(w, "snapshot", { max: 500 })).map((l) => JSON.parse(l.slice(l.indexOf(" ") + 1).match(/^"(?:[^"\\]|\\.)*"/)[0]));
+  assert.deepEqual(got, want);
+});
+
+test("a snapshot checks native validity only on fields holding a value", () => {
+  const w = page(`<form><input name=a required pattern="[0-9]+"><input type=email name=b value="nope"><textarea name=c></textarea></form>`);
+  const seen = [];
+  for (const C of [w.HTMLInputElement, w.HTMLTextAreaElement]) {
+    const d = Object.getOwnPropertyDescriptor(C.prototype, "validity");
+    Object.defineProperty(C.prototype, "validity", { configurable: true, get() { seen.push(this.name); return d.get.call(this); } });
+  }
+  const lines = run(w, "snapshot", { max: 500 }).split("\n").slice(1);
+  assert.match(lines[1], / name="b" type="email" value="nope" invalid/);
+  assert.deepEqual([...new Set(seen)], ["b"]);
+});
+
+test("the snapshot counts each form's fields once to pick the biggest", () => {
+  const w = page(`<form id=small><input name=a></form><form id=big><input name=b><input name=c></form>`);
+  const seen = [];
+  const qsa = w.Element.prototype.querySelectorAll;
+  w.Element.prototype.querySelectorAll = function (s) { if (this.tagName === "FORM" && s === "input, textarea, select, [contenteditable]:not([contenteditable=false])") seen.push(this.id); return qsa.call(this, s); };
+  const head = JSON.parse(run(w, "snapshot", { max: 500 }).split("\n")[0].slice(2));
+  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 0 });
+  assert.deepEqual(seen, ["small", "big", "big"], "one count each, then the census");
+});
+
+test("the invalid-field census scans the document once, finding ARIA and native failures alike", () => {
+  const w = page(`<form><input name=a aria-invalid=true><input type=email name=b value=nope><input name=c aria-invalid=true style="display:none"><input name=d></form>`);
+  const seen = [];
+  const qsa = w.document.querySelectorAll;
+  w.document.querySelectorAll = function (s) { if (/aria-invalid|input, textarea, select/.test(s)) seen.push(s); return qsa.call(this, s); };
+  const head = JSON.parse(run(w, "snapshot", { max: 500 }).split("\n")[0].slice(2));
+  assert.equal(head.form.invalid, 2);
+  assert.equal(seen.length, 1, seen.join(" | "));
+});
+
+test("a snapshot reads a shown required-empty field's style no more often than an optional field's", () => {
+  const w = page(`<form><label for=r>Req</label><input id=r name=r required><label for=o>Opt</label><input id=o name=o></form>`);
+  const n = new Map(), gcs = w.getComputedStyle.bind(w);
+  w.getComputedStyle = (el, p) => { n.set(el.id, (n.get(el.id) || 0) + 1); return gcs(el, p); };
+  const head = JSON.parse(run(w, "snapshot", { max: 500 }).split("\n")[0].slice(2));
+  assert.deepEqual(head.form, { fields: 2, requiredEmpty: 1 });
+  assert.equal(n.get("r"), n.get("o"));
+});
+
+test("a snapshot finds the page's forms and dialogs in one document search", () => {
+  const w = page(`<form><input name=a></form><div role=dialog aria-label=Hi><button>Ok</button></div><form role=dialog aria-label=Both><input name=b></form>`);
+  const seen = [];
+  const qsa = w.document.querySelectorAll;
+  w.document.querySelectorAll = function (s) { if (/form|dialog/.test(s)) seen.push(s); return qsa.call(this, s); };
+  const head = JSON.parse(run(w, "snapshot", { max: 500 }).split("\n")[0].slice(2));
+  assert.deepEqual(head.dialogs, ["Hi", "Both"]);
+  assert.deepEqual(head.form, { fields: 1, requiredEmpty: 0 });
+  assert.equal(seen.length, 1, seen.join(" | "));
+});
+
+test("the step lookup searches the form's outermost scope once when the page has no step marker", () => {
+  const w = page(`<main><section><form><input name=a></form></section></main>`);
+  const seen = [];
+  const qs = w.Element.prototype.querySelector;
+  w.Element.prototype.querySelector = function (s) { if (/aria-current=step|progressbar/.test(s)) seen.push(this.tagName + " " + s); return qs.call(this, s); };
+  run(w, "snapshot", { max: 500 });
+  assert.deepEqual(seen, ["MAIN [aria-current=step], [role=progressbar][aria-valuenow][aria-valuemax]"]);
+});

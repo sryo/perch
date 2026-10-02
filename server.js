@@ -4372,19 +4372,22 @@ function paints(p, el) {
   }
   return false;
 }
+// el.labels, unless the script set LABELS to a cheaper lookup (the snapshot's).
+let LABELS = null;
 // Strong label sources, in accessible-name precedence order.
 function labelText(el) {
   const ids = attr(el, "aria-labelledby");
   if (ids) {
-    const root = el.getRootNode().getElementById ? el.getRootNode() : document;
+    const r = el.getRootNode(), root = r.getElementById ? r : document;
     const t = ids.split(/\s+/).map(function (id) { return textOf(root.getElementById(id)); }).join(" ");
     if (t.trim()) return clip(t, 120);
   }
   const al = attr(el, "aria-label");
   if (al.trim()) return clip(al, 120);
-  if (el.labels && el.labels[0] && labelWords(el.labels[0]).trim()) return clip(labelWords(el.labels[0]), 120);
+  const ls = LABELS ? LABELS(el) : el.labels, own = ls && ls[0] ? labelWords(ls[0]) : "";
+  if (own.trim()) return clip(own, 120);
   // Custom widgets aren't labelable; a wrapping <label> still names them.
-  const wrap = !el.labels && el.closest && el.closest("label");
+  const wrap = !ls && el.closest && el.closest("label");
   return wrap ? clip(labelWords(wrap), 120) : "";
 }
 function hintText(el) { return attr(el, "placeholder") || attr(el, "name") || attr(el, "data-tooltip") || attr(el, "title"); }
@@ -6055,7 +6058,7 @@ const invErrish = function (n) { return n.matches("[role=alert], [aria-live]:not
 const invStandin = function (x) { return attr(x, "aria-hidden") === "true" && attr(x, "tabindex") === "-1"; };
 function invNative(el) {
   if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || /^(checkbox|radio|file)$/i.test(el.type || "")) return false;
-  return el.willValidate !== false && !!el.validity && !el.validity.valid && String(el.value || "") !== "";
+  return String(el.value || "") !== "" && el.willValidate !== false && !!el.validity && !el.validity.valid;
 }
 // The element carrying aria-invalid for el (el itself, else the group or
 // combobox around it; up only when asked), or el when it fails natively.
@@ -6100,11 +6103,10 @@ function invalidSet(doc) {
   doc = doc || document;
   const seen = [];
   const add = function (c) { if (c && seen.indexOf(c) < 0) seen.push(c); };
-  doc.querySelectorAll("[aria-invalid=true]").forEach(function (c) {
-    if (invStandin(c) || !(vis(c) || (c.parentElement && vis(c.parentElement) && getComputedStyle(c).display !== "none"))) return;
-    add(c);
+  doc.querySelectorAll("[aria-invalid=true], input, textarea, select").forEach(function (c) {
+    if (attr(c, "aria-invalid") === "true" && !invStandin(c) && (vis(c) || (c.parentElement && vis(c.parentElement) && getComputedStyle(c).display !== "none"))) add(c);
+    else if (invNative(c) && vis(c)) add(c);
   });
-  doc.querySelectorAll("input, textarea, select").forEach(function (el) { if (invNative(el) && vis(el)) add(el); });
   const outer = seen.filter(function (c) { return !seen.some(function (o) { return o !== c && o.contains(c); }); });
   outer.sort(function (a, b) { return a.compareDocumentPosition(b) & 2 ? 1 : -1; });
   return outer.map(function (c) {
@@ -6226,7 +6228,9 @@ function stepRoots(scope) {
 function stepOf(scope) {
   if (!scope || !scope.isConnected) return null;
   const roots = stepRoots(scope);
-  for (const r of roots) {
+  // The outermost root holds every inner one, so a miss there settles them all.
+  const marked = roots[roots.length - 1].querySelector("[aria-current=step], [role=progressbar][aria-valuenow][aria-valuemax]") ? roots : [];
+  for (const r of marked) {
     const cur = r.querySelector("[aria-current=step]");
     if (!cur) continue;
     const li = cur.closest("li, [role=listitem]");
@@ -6237,7 +6241,7 @@ function stepOf(scope) {
     }
     return clip(textOf(cur), 40) || null;
   }
-  for (const r of roots) {
+  for (const r of marked) {
     const bar = r.querySelector("[role=progressbar][aria-valuenow][aria-valuemax]");
     if (bar) return attr(bar, "aria-valuenow") + "/" + attr(bar, "aria-valuemax");
   }
@@ -6620,6 +6624,26 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
   snapshot: INVALID_LIB + STEP_LIB + TA_BOX_LIB + CENSUS_LIB + EMBED_LIB + String.raw`
 const refs = {};
 window.__perch_refs = refs;
+// el.labels searches the whole tree for label[for] on every read. The snapshot
+// changes nothing, so a field with an id takes its labels from one scan per
+// root when that scan settles them: one label for its id, which is its own,
+// and no wrapping label.
+const labelMaps = new Map();
+LABELS = function (el) {
+  if (!el.id || !("labels" in el) || (el.tagName === "INPUT" && /^hidden$/i.test(el.type))) return el.labels;
+  const root = el.getRootNode();
+  if (root.nodeType !== 9 && root.nodeType !== 11) return el.labels;
+  let m = labelMaps.get(root);
+  if (!m) {
+    m = new Map();
+    for (const l of root.querySelectorAll("label[for]")) m.set(l.htmlFor, m.has(l.htmlFor) ? null : l);
+    labelMaps.set(root, m);
+  }
+  if (el.closest("label")) return el.labels;
+  if (!m.has(el.id)) return [];
+  const l = m.get(el.id);
+  return l && root.getElementById(el.id) === el ? [l] : el.labels;
+};
 // Names this map for the server that asked: its ref calls carry it back as
 // A.rid, so a ref meets only the map it came from.
 const rid = window.__perch_refsId = Math.random().toString(36).slice(2, 10) || "0";
@@ -6684,33 +6708,35 @@ for (let inner; act && (inner = embedded.some(function (e) { return e.same && e.
   act = inner.activeElement;
   while (act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
 }
-const dlgs = Array.from(document.querySelectorAll("[role=dialog], [aria-modal=true], dialog[open]")).filter(vis);
+const DLG = "[role=dialog], [aria-modal=true], dialog[open]", marks = Array.from(document.querySelectorAll("form, " + DLG));
+const dlgs = marks.filter(function (el) { return el.matches(DLG) && vis(el); });
 // Which rows a capped snapshot keeps first: 0, the focused element and an open
 // dialog's; 1, form fields, and checkboxes, radios and submit buttons of a form.
 function rank(el, r) {
   if (el === act || dlgs.some(function (d) { return d.contains(el); })) return 0;
   if (/^(textbox|searchbox|combobox|spinbutton|slider)$/.test(r)) return 1;
-  if (/^(checkbox|radio|switch)$/.test(r)) return el.closest("form") ? 1 : 2;
+  if (/^(checkbox|radio|switch)$/.test(r)) return (el.form !== undefined ? el.form : el.closest("form")) ? 1 : 2;
   return r === "button" && el.form && /^(submit|image)$/.test(el.type) ? 1 : 2;
 }
 // Rows are taken by rank, then document order, until max, and print in
 // document order. Without a query, once max rows are taken and one more shows,
 // the rest are counted unchecked, so omitted is at most that many rows.
 let n = n0, matched = 0, truncated = false, omitted = 0;
-const cands = [], kept = [], cut = new Set();
+const tiers = [[], [], []], kept = [], cut = new Set(), shown = new Set();
+let seq = 0;
 function walk(root) {
   for (const el of deepAll(SEL, root)) {
     const r = role(el);
     if (roles ? roles.indexOf(r) < 0 : INERT.test(r) && !el.matches(OWN)) continue;
-    cands.push({ el: el, r: r, t: rank(el, r), i: cands.length });
+    tiers[rank(el, r)].push({ el: el, r: r, i: seq++ });
   }
 }
 walk(null);
 frameDocs.forEach(function (i, d) { walk(d); });
-cands.sort(function (a, b) { return a.t - b.t || a.i - b.i; });
-for (const c of cands) {
+for (const c of tiers[0].concat(tiers[1], tiers[2])) {
   if (!re && omitted) { omitted++; cut.add(c.el.ownerDocument); continue; }
   if (!snapVis(c.el) || standIn(c.el)) continue;
+  shown.add(c.el);
   if (re) {
     c.line = describe(c.el, c.r, accName(c.el)) + frameTag(c.el);
     if (!re.test(c.line)) continue;
@@ -6791,12 +6817,12 @@ function hiddenRows(cands) {
   }
 }
 let form = null;
-let forms = Array.from(document.querySelectorAll("form"));
+let forms = marks.filter(function (el) { return el.tagName === "FORM"; });
 frameDocs.forEach(function (i, d) { forms = forms.concat(Array.from(d.querySelectorAll("form"))); });
 forms = forms.filter(vis);
 if (forms.length) {
-  let big = forms[0];
-  forms.forEach(function (f) { if (f.querySelectorAll(FIELDS).length > big.querySelectorAll(FIELDS).length) big = f; });
+  let big = forms[0], most = -1;
+  forms.forEach(function (f) { const k = f.querySelectorAll(FIELDS).length; if (k > most) { big = f; most = k; } });
   const c = census(big), loose = c.loose, empty = c.empty;
   form = { fields: c.fields.length, requiredEmpty: empty.length };
   if (loose.length) form.unpicked = loose.length;
@@ -6804,7 +6830,7 @@ if (forms.length) {
   if (inv) form.invalid = inv;
   const step = stepOf(big);
   if (step) form.step = step;
-  const unseen = empty.filter(function (el) { return !snapVis(el); });
+  const unseen = empty.filter(function (el) { return !shown.has(el) && !snapVis(el); });
   if (unseen.length) hiddenRows(unseen);
 }
 window.__perch_refN = n;
