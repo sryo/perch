@@ -1575,6 +1575,9 @@ function jxaRuntime(BROWSERS, HANG) {
       [true, false].forEach(function (down) {
         const e = $.CGEventCreateKeyboardEvent($(), 0, down);
         $.CGEventKeyboardSetUnicodeString(e, chunk.length, data.bytes);
+        // A modifier held on the real keyboard would otherwise ride on the text
+        // and turn it into shortcuts (Command-W, Command-Q).
+        $.CGEventSetFlags(e, 0);
         $.CGEventPost(1, e); // kCGSessionEventTap: foreground target
       });
       delay(0.005);

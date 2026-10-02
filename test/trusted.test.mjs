@@ -523,6 +523,18 @@ test("trusted fill types the whole text, emoji included, in surrogate-safe chunk
   assert.ok(keys.length && keys.every((e) => e.via === "tap1" && e.text && e.len === e.text.length));
 });
 
+// A key held on the real keyboard (Command, Option) would otherwise ride on the
+// typed text and turn it into shortcuts.
+test("raised trusted fill types with no modifier flags", async () => {
+  const { dom, world } = domTab(`<input id=i aria-label="Name">`, METRICS);
+  world.state.onPost = (e) => { if (e.kind === "key" && e.down) dom.document.getElementById("i").value += e.text; };
+  const r = await handleCall("fill", { trusted: true, raise: true, selector: "#i", text: "wq", target: { tabIndex: 1 } });
+  assert.equal(JSON.parse(r.content[0].text).ok, true, r.content[0].text);
+  const keys = world.posted.filter((e) => e.kind === "key");
+  assert.ok(keys.length);
+  assert.ok(keys.every((e) => e.flags === 0), JSON.stringify(keys.map((e) => e.flags)));
+});
+
 test("trusted fill edits a background browser without changing AppKit focus", async () => {
   const dom = page(`<input id=i aria-label="Name">`);
   withWindowMetrics(dom, METRICS);
