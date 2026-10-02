@@ -124,7 +124,7 @@ async function shoot(args, width = 3000) {
   deps.exec = async (cmd, a) => {
     calls.push([cmd, ...a]);
     if (cmd === "screencapture") await writeFile(a[a.length - 1], png);
-    if (cmd === "sips") { const out = Buffer.from(png); out.writeUInt32BE(Number(a[1]), 16); await writeFile(a[a.length - 1], out); }
+    if (cmd === "sips") { const out = Buffer.from(png), k = Number(a[1]) / Math.max(width, 1000); out.writeUInt32BE(Math.round(width * k), 16); out.writeUInt32BE(Math.round(1000 * k), 20); await writeFile(a[a.length - 1], out); }
     return { stdout: "" };
   };
   try { return { r: await handleCall("screenshot", args), calls }; } finally { deps.exec = real; }
@@ -143,9 +143,8 @@ test("screenshot: image block then {window,image} meta; 1568 default, maxWidth:0
     assert.equal(r.content[0].mimeType, "image/png");
     const meta = JSON.parse(r.content[1].text);
     assert.deepEqual(meta.window, { x: 10, y: 0, w: 800, h: 620 });
-    // The fake sips resamples the width alone.
-    assert.deepEqual(meta.image, { w: 1568, h: capture ? 1215 : 1000 });
-    if (!capture) assert.deepEqual(calls.find((c) => c[0] === "sips").slice(1, 3), ["--resampleWidth", "1568"]);
+    assert.deepEqual(meta.image, { w: 1568, h: capture ? 1215 : 523 });
+    if (!capture) assert.deepEqual(calls.find((c) => c[0] === "sips").slice(1, 3), ["-Z", "1568"]);
 
     ({ r, calls } = await shoot({ maxWidth: 0 }));
     assert.deepEqual(JSON.parse(r.content[1].text).image, full);

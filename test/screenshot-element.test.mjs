@@ -3,7 +3,7 @@
 // scroll position the page had is put back in the same runtime call.
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
 import { readdirSync } from "node:fs";
 import { NO_GRANT, BOUND, RAW, ownTmp, clean, hung, scrolled, where, still } from "./helpers/shot.mjs";
 import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
@@ -136,7 +136,10 @@ function spawns(width) {
     calls.push([cmd, ...a]);
     if (cmd === "screencapture") await writeFile(a[a.length - 1], png(width, 1400));
     if (cmd === "sips" && a[0] === "--cropToHeightWidth") await writeFile(a[a.length - 1], png(Number(a[2]), Number(a[1])));
-    else if (cmd === "sips") await writeFile(a[a.length - 1], png(Number(a[1]), 100));
+    else if (cmd === "sips" && a[0] === "-Z") {
+      const src = await readFile(a[a.length - 3]), w = src.readUInt32BE(16), h = src.readUInt32BE(20), k = Number(a[1]) / Math.max(w, h);
+      await writeFile(a[a.length - 1], png(Math.round(w * k), Math.round(h * k)));
+    }
     return { stdout: "" };
   };
   return calls;
@@ -278,6 +281,19 @@ test("the crop comes before the downscale", async () => {
   assert.equal(meta.clipped, undefined);
 });
 
+test("a tall narrow element's crop is capped on its long edge, its aspect kept", async () => {
+  const p = still({ rect: "100,0,100,600" });
+  install(p);
+  spawns(2000);
+  const { meta } = await shoot({ selector: "#t", maxWidth: 800 });
+  const [s] = world.state.shots;
+  // 92..208 x 0..608 CSS px at 2x, then scaled by 800/1216.
+  assert.deepEqual(s.crop, { x: 584, y: 160, w: 232, h: 1216 });
+  assert.deepEqual([s.scaled.w, s.scaled.h], [153, 800]);
+  assert.deepEqual(meta.image, { w: 153, h: 800 });
+  assert.deepEqual(meta.clip, { x: 584, y: 160, w: 232, h: 1216 });
+});
+
 test("a granted capture that gave no image leaves an element already in view to screencapture and sips, cropped before any resample", async () => {
   const p = still();
   install(p);
@@ -287,7 +303,7 @@ test("a granted capture that gave no image leaves an element already in view to 
   assert.deepEqual(calls.map((c) => c.slice(0, 7)), [
     ["screencapture", "-l", "77", "-x", "-o", "-t", "png"],
     ["sips", "--cropToHeightWidth", "132", "632", "--cropOffset", "544", "584"],
-    ["sips", "--resampleWidth", "400", calls[2][3], "--out", calls[2][5]],
+    ["sips", "-Z", "400", calls[2][3], "--out", calls[2][5]],
   ].map((c) => c.slice(0, 7)));
   assert.equal(calls[2][3], calls[1][calls[1].length - 1], "the resample reads the crop");
   assert.deepEqual(meta.clip, { x: 584, y: 544, w: 632, h: 132 });

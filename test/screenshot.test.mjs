@@ -4,7 +4,7 @@
 // window_offscreen, never another window of the same browser.
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
 import { readdirSync } from "node:fs";
 import { SHOT_NO_IMAGE, NO_GRANT, BOUND, RAW, ownTmp, clean, hung } from "./helpers/shot.mjs";
 import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
@@ -32,15 +32,21 @@ const arc = (windows, cg) => install({ browsers: [{ name: "Arc", kind: "arc", wi
 const geom = (target) => JSON.parse(world.run(`JSON.stringify(__perch.shotGeom(${JSON.stringify({ target })}))`));
 const geomErr = (target) => { try { geom(target); } catch (e) { return String(e.message); } return "no error"; };
 
-// Records spawns; screencapture writes a PNG `width` wide, sips resizes it.
-function spawns(width = 3000) {
+// Records spawns; screencapture writes a PNG `width` by `height`, and sips -Z
+// shrinks the file it reads so its long edge is the size asked.
+function spawns(width = 3000, height = 1000) {
   const calls = [];
   const png = Buffer.alloc(33);
-  png.writeUInt32BE(0x89504e47, 0); png.writeUInt32BE(width, 16); png.writeUInt32BE(1000, 20);
+  png.writeUInt32BE(0x89504e47, 0); png.writeUInt32BE(width, 16); png.writeUInt32BE(height, 20);
   deps.exec = async (cmd, a) => {
     calls.push([cmd, ...a]);
     if (cmd === "screencapture") await writeFile(a[a.length - 1], png);
-    if (cmd === "sips") { const out = Buffer.from(png); out.writeUInt32BE(Number(a[1]), 16); await writeFile(a[a.length - 1], out); }
+    if (cmd === "sips" && a[0] === "-Z") {
+      const out = await readFile(a[a.length - 3]);
+      const w = out.readUInt32BE(16), h = out.readUInt32BE(20), k = Number(a[1]) / Math.max(w, h);
+      out.writeUInt32BE(Math.round(w * k), 16); out.writeUInt32BE(Math.round(h * k), 20);
+      await writeFile(a[a.length - 1], out);
+    }
     return { stdout: "" };
   };
   return calls;
@@ -113,6 +119,45 @@ test("a PNG taken to be returned as is that turns out wider than maxWidth is sti
   assert.deepEqual(s.args.slice(-3, -1), ["-t", "png"]);
   assert.deepEqual(s.encoded, { type: 4, props: null, w: 1000, h: 775 });
   assert.deepEqual(meta.image, { w: 1000, h: 775 });
+});
+
+// A 700x1580pt window: 1400x3160 at 2x, narrower than maxWidth but far taller.
+const portrait = (h = 1580) => install({
+  browsers: [{ name: CANARY, kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 700, h: h - 20, tabs: tabs(1) }] }],
+  cg: [{ owner: CANARY, pid: 4242, wid: 77, x: 10, y: 0, w: 700, h }],
+});
+
+test("maxWidth caps the long edge: a portrait window comes back no taller than 1568, its aspect kept", async () => {
+  portrait();
+  spawns();
+  const { meta } = await shoot({});
+  const [s] = world.state.shots;
+  assert.deepEqual(s.args.slice(-3, -1), ["-t", "tiff"], "too tall to go back as is");
+  assert.deepEqual([s.scaled.w, s.scaled.h, s.scaled.rect], [695, 1568, { x: 0, y: 0, w: 695, h: 1568 }]);
+  assert.deepEqual(meta.image, { w: 695, h: 1568 });
+  assert.ok(Math.abs(meta.image.w / meta.image.h - 1400 / 3160) < 0.001);
+  assert.deepEqual((await shoot({ maxWidth: 0 })).meta.image, { w: 1400, h: 3160 });
+});
+
+test("a PNG taken to be returned as is that turns out taller than maxWidth is still downscaled", async () => {
+  portrait(1000);
+  spawns();
+  world.state.screenScale = 1;
+  const { meta } = await shoot({});
+  const [s] = world.state.shots;
+  assert.deepEqual(s.args.slice(-3, -1), ["-t", "png"]);
+  assert.deepEqual(s.encoded, { type: 4, props: null, w: 1098, h: 1568 });
+  assert.deepEqual(meta.image, { w: 1098, h: 1568 });
+});
+
+test("the screencapture fallback caps a portrait capture's long edge with sips -Z", async () => {
+  canary();
+  world.state.captureExit = 1;
+  const calls = spawns(1000, 3000);
+  const { meta } = await shoot({});
+  const sips = calls.find((c) => c[0] === "sips");
+  assert.deepEqual(sips.slice(1, 3), ["-Z", "1568"]);
+  assert.deepEqual(meta.image, { w: 523, h: 1568 });
 });
 
 test("a capture is polled every 2ms, not 10", async () => {
