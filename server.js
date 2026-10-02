@@ -2276,6 +2276,94 @@ function jxaRuntime(BROWSERS, HANG) {
     return r;
   }
 
+  // The native open panel a raised trusted click opened (file_upload {raise:true}).
+  // It is a sheet on the browser window, or, for a sandboxed browser, a window of
+  // the out-of-process panel service. Found by AXIdentifier open-panel, or as a
+  // sheet with a default button.
+  const PANEL_SERVICE = "Open and Save Panel Service";
+  function panelPids(I) {
+    const pids = [I.pid];
+    let list = [];
+    try { list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || []; } catch (e) {}
+    list.forEach(function (w) { if (w.kCGWindowOwnerName === PANEL_SERVICE && pids.indexOf(w.kCGWindowOwnerPID) < 0) pids.push(w.kCGWindowOwnerPID); });
+    return pids;
+  }
+  function isOpenPanel(ax, el) {
+    if (ax.str(el, "AXIdentifier") === "open-panel") return true;
+    return ax.str(el, "AXRole") === "AXSheet" && ax.attr(el, "AXDefaultButton") != null;
+  }
+  function findPanel(ax, I) {
+    const pids = panelPids(I);
+    for (let i = 0; i < pids.length; i++) {
+      const wins = ax.list(ax.attr($.AXUIElementCreateApplication(pids[i]), "AXWindows"));
+      for (let j = 0; j < wins.length; j++) {
+        if (isOpenPanel(ax, wins[j])) return wins[j];
+        const kids = ax.list(ax.attr(wins[j], "AXChildren"));
+        for (let k = 0; k < kids.length; k++) if (ax.str(kids[k], "AXRole") === "AXSheet" && isOpenPanel(ax, kids[k])) return kids[k];
+      }
+    }
+    return null;
+  }
+  // The Go to folder field: PathTextField, or a text field in a sheet inside the panel.
+  function gotoField(ax, panel) {
+    let found = null;
+    (function walk(el, depth, inSheet) {
+      if (found || depth > 6) return;
+      const role = ax.str(el, "AXRole");
+      if ((role === "AXTextField" || role === "AXComboBox") && (inSheet || ax.str(el, "AXIdentifier") === "PathTextField")) { found = el; return; }
+      const sheet = inSheet || (depth > 0 && role === "AXSheet");
+      ax.list(ax.attr(el, "AXChildren")).forEach(function (k) { walk(k, depth + 1, sheet); });
+    })(panel, 0, false);
+    return found;
+  }
+  // A key pair to the foreground app, which the raise made the browser.
+  function fgKey(vk, uni, flags) {
+    ObjC.bindFunction("CGEventKeyboardSetUnicodeString", ["void", ["void *", "unsigned long", "void *"]]);
+    const data = $(uni).dataUsingEncoding(0x94000100); // NSUTF16LittleEndianStringEncoding
+    [true, false].forEach(function (down) {
+      const e = $.CGEventCreateKeyboardEvent($(), vk, down);
+      $.CGEventKeyboardSetUnicodeString(e, uni.length, data.bytes);
+      $.CGEventSetFlags(e, flags);
+      $.CGEventPost(1, e); // kCGSessionEventTap: the foreground app
+      delay(0.01);
+    });
+  }
+  // a.probe: whether a chooser is open now. Otherwise wait for the one the click
+  // opened, type a.path into its Go to folder sheet and press its default button.
+  // Any failure once it is open presses its cancel button.
+  function chooser(a) {
+    const t = resolve(a.target);
+    requireAccessibility();
+    const I = ownWindow(ids(t)), ax = axInit();
+    if (a.probe) return { open: !!findPanel(ax, I) };
+    const until = function (ms, fn) {
+      const start = Date.now();
+      for (;;) { const v = fn(); if (v) return v; if (Date.now() - start >= ms) return null; delay(0.05); }
+    };
+    const panel = until(a.wait || 4000, function () { return findPanel(ax, I); });
+    if (!panel) return { ok: false, error: "no file chooser opened after the click" };
+    const gone = function (el) { return function () { return ax.attr(el, "AXRole") == null; }; };
+    const cancel = function (why) {
+      const c = ax.attr(panel, "AXCancelButton");
+      if (c) $.AXUIElementPerformAction(c, $("AXPress"));
+      return { ok: false, chooser: true, error: why + (c ? "; the chooser was cancelled" : "; the chooser is still open, hand it to the user") };
+    };
+    if (panelPids(I).indexOf(procs().frontPid) < 0) return cancel("the browser is not in front, so no key was typed");
+    fgKey(5, "g", 0x120000); // Cmd+Shift+G: Go to folder
+    const field = until(2000, function () { return gotoField(ax, panel); });
+    if (!field) return cancel("the chooser's Go to folder field never appeared");
+    $.AXUIElementSetAttributeValue(field, $("AXValue"), $(a.path));
+    if (ax.str(field, "AXValue") !== a.path) return cancel("the path did not land in the Go to folder field");
+    fgKey(36, "\r", 0);
+    if (!until(2000, gone(field))) return cancel("the Go to folder field did not close");
+    const open = ax.attr(panel, "AXDefaultButton");
+    if (!open) return cancel("the chooser has no default button");
+    if (/^(false|0)$/.test(ax.str(open, "AXEnabled"))) return cancel("the chooser's default button is disabled (the file may not match what the site accepts)");
+    $.AXUIElementPerformAction(open, $("AXPress"));
+    if (!until(3000, gone(panel))) return { ok: false, chooser: true, error: "the chooser is still open after pressing its default button; hand it to the user" };
+    return { ok: true, chooser: true };
+  }
+
   // The browser the user is using: topmost on screen, else the system default
   // browser if it runs, else any running browser.
   function defaultBrowser(P) {
@@ -2576,6 +2664,7 @@ function jxaRuntime(BROWSERS, HANG) {
       return provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
     },
     answerDialog: answerDialog,
+    chooser: chooser,
     // Node filters and cuts the rows at `limit`; `more` counts matches past it.
     listTabs(a) {
       const P = procs(), names = candidates(P, a.app);
@@ -7808,6 +7897,21 @@ U.input = null;
 return dropOn(U);
 `,
 
+  // file_upload {raise:true}: what of the file the page shows, counted before the
+  // chooser opens and polled after. media: img/video/source with a blob: or data:
+  // src (a composer's preview); held: file inputs holding the file; names: how
+  // often its name is on the page. upload_census_seen answers once one grew.
+  upload_census: UPLOAD_LIB + String.raw`
+const media = deepAll("img,video,source").filter(function (el) { return /^(blob|data):/.test(el.currentSrc || el.src || ""); }).length;
+return { media: media, held: deepAll("input[type=file]").filter(has).length, names: nameCount(A.name) };
+`,
+  upload_census_seen: UPLOAD_LIB + String.raw`
+const media = deepAll("img,video,source").filter(function (el) { return /^(blob|data):/.test(el.currentSrc || el.src || ""); }).length;
+const held = deepAll("input[type=file]").filter(has).length, names = nameCount(A.name), b = A.before;
+if (media > b.media || held > b.held || names > b.names) return { media: media > b.media, shown: names > b.names || held > b.held };
+return null;
+`,
+
   // Chrome runs this in an isolated world, whose console the page never calls. A
   // <script> patches the main world's console and relays entries as perch:console
   // events (DOM events cross worlds). If CSP blocks it, the local console is patched.
@@ -8626,14 +8730,16 @@ async function uploadShown(target, key, up, tok) {
   } catch { return { own: false }; }
 }
 async function fileUpload(args = {}) {
-  const { selector, ref, label_pattern, path, target } = args;
+  const { selector, ref, label_pattern, path, target, raise = false } = args;
   if (!path) throw new Error("file_upload requires `path`");
   if (label_pattern != null) {
     if (ref || selector) throw new Error("file_upload: pass `label_pattern` alone, without `ref` or `selector`");
     validateLabelPattern("file_upload", label_pattern);
   }
+  if (raise && !ref && !selector && !label_pattern) throw new Error("file_upload: raise:true needs the control that opens the chooser (`ref`, `selector` or `label_pattern`)");
   const { abs, data } = await readUserFile(path, undefined, uploadCap);
   const name = abs.split("/").pop();
+  if (raise) return chooserUpload({ selector, ref, label_pattern, target, abs, name });
   const mime = MIME_BY_EXT[name.split(".").pop().toLowerCase()] || "application/octet-stream";
   const key = { ref, selector, label_pattern, name };
   let r = await runPage("file_upload", "file_upload", { selector, ref, label_pattern, b64: data.toString("base64"), name, mime }, target);
@@ -8663,6 +8769,29 @@ async function fileUpload(args = {}) {
     if (r.dropped) { r.ok = true; delete r.error; }
   }
   return r;
+}
+
+// How long file_upload {raise:true} watches the page for the chosen file.
+const CHOOSER_SHOWN_WAIT = 5000;
+// A site with no file input of its own opens the native chooser from a click:
+// refuse if one is open already (the user's), click the control raised, type the
+// path into the chooser, then believe the page only when it shows the file.
+async function chooserUpload({ selector, ref, label_pattern, target, abs, name }) {
+  if ((await rt("chooser", { target, probe: true })).open) return { ok: false, error: "file_upload: a file chooser is already open in this browser; nothing was clicked, hand it to the user" };
+  const before = await runPage("file_upload", "upload_census", { name }, target);
+  if (!before || before.__perch_error != null || before.media == null) return before;
+  const clicked = await trustedClick({ ref, selector, label_pattern, raise: true, target });
+  if (!clicked || clicked.ok !== true) return { ...clicked, ok: false, error: (clicked && clicked.error) || "file_upload: the click on the control didn't land; no chooser was used" };
+  const el = clicked.el;
+  const picked = await rt("chooser", { target, path: abs }, { lane: "slow" });
+  if (!picked.ok) return { ok: false, el, ...picked, error: "file_upload: " + picked.error };
+  let seen = null;
+  try {
+    const r = await rt("wait", { target, js: pageFn("upload_census_seen", { name, before }), timeout: CHOOSER_SHOWN_WAIT, interval: 100 }, { lane: "slow" });
+    seen = r && r.value;
+  } catch {}
+  if (!seen) return { ok: false, el, chooser: true, shown: false, error: "file_upload: " + name + " was chosen in the chooser but the page showed no new preview or file name; not verified" };
+  return { ok: true, el, chooser: true, shown: true };
 }
 
 async function click(args = {}) {
@@ -9185,11 +9314,12 @@ const TOOLS = [
     subtitle: { type: "string" },
     sound: { type: "string", description: "Default Glass." },
   }, ["message"]),
-  tool("file_upload", "Put a local file on an <input type=file> without the bytes entering context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. {ok:false}: hand off, don't retry.", {
+  tool("file_upload", "Put a local file on an <input type=file> without the bytes entering context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. `raise:true`: click the control that opens the native chooser, in the foreground, and type the path into it (chooser:true). {ok:false}: hand off, don't retry.", {
     path: { type: "string" },
     ref: REF,
     selector: SEL,
     label_pattern: { type: "string", description: "Regex over a file input's label or a drop zone's text." },
+    raise: { type: "boolean" },
     target: TARGET,
   }, ["path"]),
   tool("click", "Click by ref/selector/label_pattern (el.click(); ties refuse); `hover`: hover events instead. `trusted`: real click without focus (needs Accessibility), `raise:true` in the foreground; check `hit`. Screen `x`/`y`: trusted only.", {

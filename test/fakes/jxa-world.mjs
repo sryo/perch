@@ -517,6 +517,34 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     return v === undefined ? null : v;
   }
 
+  // Native open panel: `state.panel = { pid, kind: "sheet" | "window", parent?, open, enabled? }`.
+  // Open, it is an AXSheet on the CG window `parent` (kind sheet) or a window of
+  // `pid` with AXIdentifier open-panel (kind window, the out-of-process panel
+  // service's). A posted Cmd+Shift+G opens its Go to sheet, whose PathTextField
+  // takes an AXValue; a posted Return closes that sheet keeping the path (`dir`);
+  // an AXPress on the default button, when `enabled` isn't false, chooses it
+  // (`chosen`, then state.onPanelChoose(path)) and closes the panel; on the cancel
+  // button it closes it with `cancelled`. Closed, its elements stop answering.
+  // undefined: not a panel part.
+  const kidsOf = (l) => Array.from({ length: l ? l.count : 0 }, (_, i) => l.objectAtIndex(i));
+  function panelAttr(el, name) {
+    const p = state.panel;
+    if (p && p.open && el.role === "AXApplication" && name === "AXWindows" && p.kind === "window" && p.pid === el.pid) {
+      return axList(kidsOf(axAttr(el, name)).concat([{ role: "AXWindow", subrole: "AXStandardWindow", pn: p }]));
+    }
+    if (p && p.open && el.role === "AXWindow" && el.c && name === "AXChildren" && p.kind === "sheet" && p.parent === el.c.wid) {
+      return axList(kidsOf(axAttr(el, name)).concat([{ role: "AXSheet", pn: p }]));
+    }
+    if (!el.pn) return undefined;
+    const pick = (o) => (o[name] === undefined ? null : o[name]);
+    if (el.btn) return pick({ AXRole: "AXButton", AXTitle: el.btn === "open" ? "Open" : "Cancel", AXEnabled: el.btn === "open" ? p.enabled !== false : true });
+    if (el.path) return pick({ AXRole: "AXTextField", AXIdentifier: "PathTextField", AXValue: p.field || "" });
+    if (el.goto) return pick({ AXRole: "AXSheet", AXChildren: axList([{ role: "AXTextField", pn: p, path: true, goto: true }]) });
+    return pick({ AXRole: el.role, AXIdentifier: "open-panel",
+      AXDefaultButton: { role: "AXButton", pn: p, btn: "open" }, AXCancelButton: { role: "AXButton", pn: p, btn: "cancel" },
+      AXChildren: axList((p.goto ? [{ role: "AXSheet", pn: p, goto: true }] : []).concat([{ role: "AXButton", pn: p, btn: "cancel" }, { role: "AXButton", pn: p, btn: "open" }])) });
+  }
+
   // Keyboard focus: `state.focus = { window: {x,y,w,h}, chain: [{role, box?}, ...] }`
   // is the application's AXFocusedWindow (by frame) and its AXFocusedUIElement,
   // chain[0], whose AXParent is chain[1], and so on up. No `state.focus`: neither
@@ -709,6 +737,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       CGEventPostToPid: (pid, e) => { posted.push({ via: "pid", pid, ...e }); if (state.onPost) state.onPost(e); },
       CGEventPost: (tap, e) => {
         posted.push({ via: tap === 0 ? "hid" : "tap" + tap, ...e });
+        const p = state.panel;
+        if (e.kind === "key" && e.down && p && p.open) {
+          if (e.vk === 5 && (e.flags & 0x120000) === 0x120000) { p.goto = true; p.field = ""; }
+          else if (e.vk === 36 && p.goto) { p.dir = p.field; p.goto = false; }
+        }
         if (e.kind === "mouse") state.cursor = e.pt;
         if (state.onPost) state.onPost(e);
       },
@@ -739,6 +772,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         if (el.d && !state.dialogs.includes(el.d)) return -25202;
         // A kid removed from its frame is gone, like a closed dialog's elements.
         if (el.fk && el.fk.gone) return -25202;
+        if (el.pn && (!el.pn.open || (el.goto && !el.pn.goto))) return -25202;
         // state.axThrow: reading a frame's web area throws it, as a bridge failure would.
         if (el.fr && state.axThrow) throw state.axThrow;
         if (name.js === "AXParent" && el.parent !== undefined) {
@@ -746,7 +780,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
           out[0] = el.parent;
           return 0;
         }
-        let f = focusAttr(el, name.js);
+        let f = panelAttr(el, name.js);
+        if (f === undefined) f = focusAttr(el, name.js);
         if (f === undefined) f = frameAttr(el, name.js);
         const v = f === undefined ? axAttr(el, name.js) : f === null ? undefined : f;
         if (v === undefined) return -25205; // kAXErrorAttributeUnsupported
@@ -758,6 +793,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       AXUIElementPerformAction: (el, action) => {
         bump("AXAction");
         state.axActions.push({ role: el.role, title: el.title, action: action.js });
+        if (el.pn && action.js === "AXPress") {
+          const p = el.pn;
+          if (el.btn === "open" && p.enabled !== false) { p.chosen = p.dir; p.open = false; if (state.onPanelChoose) state.onPanelChoose(p.chosen); }
+          else if (el.btn === "cancel") { p.open = false; p.cancelled = true; }
+          return 0;
+        }
         if (el.role === "AXButton" && action.js === "AXPress" && el.d && !el.d.sticky) {
           el.d.answer = el.title;
           state.dialogs.splice(state.dialogs.indexOf(el.d), 1);
@@ -767,6 +808,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       },
       AXUIElementSetAttributeValue: (el, name, value) => {
         bump("AXSet");
+        if (el.path && name.js === "AXValue") { el.pn.field = value.js; return 0; }
         if (el.role !== "AXTextField" || name.js !== "AXValue") return -25205;
         el.d.value = value.js;
         return 0;

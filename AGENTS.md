@@ -219,7 +219,8 @@ A popup blocker drops a synthetic click's new tab silently, so `click` reports b
 
 ### File upload and drop zones
 
-- `file_upload` reads the file in Node and ships it base64 in one page call, where a `DataTransfer` sets the input's `files`. It refuses a file over 25MB, or over 700KB without the daemon (one-shot osascript's argument limit). Rejected: the OS file dialog (takes the foreground) and a localhost server the page fetches from (local-network prompt).
+- `file_upload` reads the file in Node and ships it base64 in one page call, where a `DataTransfer` sets the input's `files`. It refuses a file over 25MB, or over 700KB without the daemon (one-shot osascript's argument limit). Rejected: a localhost server the page fetches from (local-network prompt).
+- The OS file dialog is opt-in only (`raise:true`, it takes the foreground): for a site with no file input of its own, a raised trusted click on the control opens the native open panel (a sheet, or a window of the Open and Save Panel Service); the runtime's `chooser` types Cmd+Shift+G, sets the Go to field's `AXValue`, Returns and presses `AXDefaultButton`. It refuses a chooser already open (the user's), refuses to type when the browser isn't in front, cancels the chooser on any later failure, and counts only when the page shows a new `blob:`/`data:` preview, a held input or the name. Pinned by `test/upload-chooser.test.mjs`.
 - A target that is not a file input is a drop zone: its own file input comes first; with none, the page dispatches `dragenter`/`dragover`/`drop` with the file. An unwired hidden input (no request, no mutation within 1s) falls back to a drop. A drop is `{dropped:true, el}` and counts only when a file input holds the file or the name appears; otherwise `{ok:false, dropped:true, error}`. Result `shown` says whether the file name showed.
 - Pinned by `test/upload.test.mjs`.
 
