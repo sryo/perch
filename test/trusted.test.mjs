@@ -176,6 +176,46 @@ test("trusted input reaches a background browser without changing app focus or c
   assert.deepEqual(world.state.warps, []);
 });
 
+// A click that makes the page call window.focus(), opens a native popup or a
+// file chooser can bring the browser forward; perch can't undo that without
+// taking focus, so it says so.
+const raiseOnClick = (world) => (e) => {
+  if (e.kind === "mouse" && e.type === 2 && e.pt.x >= 0) {
+    const i = world.cg.findIndex((c) => c.owner === "Google Chrome");
+    world.cg.unshift(world.cg.splice(i, 1)[0]);
+  }
+};
+const behindTerminal = () => install({
+  browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(1) }] }],
+  cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620, ax: PAGE_AX }],
+});
+
+test("a background trusted click that brings the browser to the front says so", async () => {
+  const world = behindTerminal();
+  world.state.onPost = raiseOnClick(world);
+  const r = await handleCall("click", { trusted: true, x: 300, y: 200 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.delivery, "skylight");
+  assert.match(o.warning, /the click brought the browser to the front/);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined, "perch itself activated nothing");
+});
+
+test("a background trusted click that leaves the foreground alone carries no warning", async () => {
+  behindTerminal();
+  const r = await handleCall("click", { trusted: true, x: 300, y: 200 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(JSON.parse(r.content[0].text).warning, undefined);
+});
+
+test("a raised trusted click carries no front warning: raising was asked for", async () => {
+  const world = behindTerminal();
+  world.state.onPost = raiseOnClick(world);
+  const r = await handleCall("click", { trusted: true, raise: true, x: 300, y: 200 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(JSON.parse(r.content[0].text).warning, undefined);
+});
+
 test("background trusted clicks refuse to switch a browser window's active tab", async () => {
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(2) }] }],
@@ -418,6 +458,20 @@ test("trusted click by label posts at the resolved control in a shown background
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
 });
 
+test("a background trusted click by label that brings the browser to the front says so", async () => {
+  const { dom, world } = backgroundTab(LABELLED, 1);
+  const front = raiseOnClick(world);
+  world.state.onPost = (e) => {
+    if (e.type === 1 && e.pt.x >= 0) dom.document.getElementById("b").dispatchEvent(new dom.MouseEvent("mousedown", { bubbles: true }));
+    front(e);
+  };
+  const r = await handleCall("click", { trusted: true, label_pattern: "apply", target: { tabIndex: 1 } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.hit, true);
+  assert.match(o.warning, /the click brought the browser to the front/);
+});
+
 test("trusted click on a disabled button refuses before any mouse event", async () => {
   const { world } = backgroundTab(`<button id=save disabled>Save</button>`, 1);
   const r = await handleCall("click", { trusted: true, selector: "#save", target: { tabIndex: 1 } });
@@ -467,6 +521,18 @@ test("trusted fill types the whole text, emoji included, in surrogate-safe chunk
   // key 0 ("a"), which is what the old 0x14000100 encoding constant produced.
   const keys = world.posted.filter((e) => e.kind === "key");
   assert.ok(keys.length && keys.every((e) => e.via === "tap1" && e.text && e.len === e.text.length));
+});
+
+// A key held on the real keyboard (Command, Option) would otherwise ride on the
+// typed text and turn it into shortcuts.
+test("raised trusted fill types with no modifier flags", async () => {
+  const { dom, world } = domTab(`<input id=i aria-label="Name">`, METRICS);
+  world.state.onPost = (e) => { if (e.kind === "key" && e.down) dom.document.getElementById("i").value += e.text; };
+  const r = await handleCall("fill", { trusted: true, raise: true, selector: "#i", text: "wq", target: { tabIndex: 1 } });
+  assert.equal(JSON.parse(r.content[0].text).ok, true, r.content[0].text);
+  const keys = world.posted.filter((e) => e.kind === "key");
+  assert.ok(keys.length);
+  assert.ok(keys.every((e) => e.flags === 0), JSON.stringify(keys.map((e) => e.flags)));
 });
 
 test("trusted fill edits a background browser without changing AppKit focus", async () => {

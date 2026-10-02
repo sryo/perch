@@ -168,6 +168,20 @@ test("click on a frame ref posts one routed click at the element's Accessibility
   assert.deepEqual(world.state.warps, [], "the cursor never moved");
 });
 
+test("a frame click that brings the browser to the front says so", async () => {
+  const { world } = frameWorld();
+  await snap();
+  world.state.onPost = (e) => {
+    if (e.type === 2 && e.pt.x >= 0) {
+      const i = world.cg.findIndex((c) => c.owner === "Google Chrome");
+      world.cg.unshift(world.cg.splice(i, 1)[0]);
+    }
+  };
+  const { o } = await click({ ref: "f4" });
+  assert.equal(o.ok, true);
+  assert.match(o.warning, /the click brought the browser to the front/);
+});
+
 test("the click reads the element again after posting: a checkbox's state shows in before/after", async () => {
   const { world, pay } = frameWorld();
   await snap();

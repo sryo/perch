@@ -87,6 +87,22 @@ test("trusted: a control that ignores synthetic presses is opened with a backgro
   noFocusTaken(w);
 });
 
+test("trusted: a click that brings the browser to the front still picks, and says so", async () => {
+  const w = world();
+  const post = w.state.onPost;
+  w.state.onPost = (e) => {
+    post(e);
+    if (e.kind === "mouse" && e.type === 2 && e.pt.x >= 0) {
+      const i = w.cg.findIndex((c) => c.owner === "Google Chrome");
+      w.cg.unshift(w.cg.splice(i, 1)[0]);
+    }
+  };
+  const o = await select({ selector: "#fruit", text: "banana", trusted: true });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.match(o.warning, /the click brought the browser to the front/);
+  assert.equal(w.counts["activate(Google Chrome)"], undefined);
+});
+
 test("trusted: options that also ignore synthetic presses get a trusted click of their own", async () => {
   const w = world();
   const o = await select({ label_pattern: "^city$", text: "Quito", trusted: true });

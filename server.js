@@ -1512,6 +1512,16 @@ function jxaRuntime(BROWSERS, HANG) {
     skyMouse(I, pt, 2, 3, 1, group);
   }
 
+  // A background click can still bring the browser forward (the page's
+  // window.focus(), a native popup, a file chooser). Putting it back would take
+  // focus, so the result says so instead, for one procs() read.
+  const FRONTED = "the click brought the browser to the front";
+  function frontWarn(T, out) {
+    if (!T.background || T.t.P.front === T.t.app || procs().front !== T.t.app) return out;
+    out.warning = out.warning ? out.warning + "; " + FRONTED : FRONTED;
+    return out;
+  }
+
   // A key pair addressed to the browser pid only: no window fields, no Command
   // flag. The Unicode string goes on both events, as AppKit's own key events carry it.
   function skyKey(I, vk, uni, flags) {
@@ -1568,6 +1578,9 @@ function jxaRuntime(BROWSERS, HANG) {
       [true, false].forEach(function (down) {
         const e = $.CGEventCreateKeyboardEvent($(), 0, down);
         $.CGEventKeyboardSetUnicodeString(e, chunk.length, data.bytes);
+        // A modifier held on the real keyboard would otherwise ride on the text
+        // and turn it into shortcuts (Command-W, Command-Q).
+        $.CGEventSetFlags(e, 0);
         $.CGEventPost(1, e); // kCGSessionEventTap: foreground target
       });
       delay(0.005);
@@ -1922,7 +1935,7 @@ function jxaRuntime(BROWSERS, HANG) {
       // The click is posted, so a dropped reply says `tool` ran rather than inviting a
       // retry; the check only reads what the recorders saw, so it may be sent twice.
       const check = afterStep(tool, function () { return readExec(T.t, a.check); });
-      const out = { ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" };
+      const out = frontWarn(T, { ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" });
       return { out: threw(check) ? Object.assign(out, { ok: false, error: checkFault(tool, check) }) : Object.assign(out, check) };
     } finally {
       if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
@@ -3075,9 +3088,11 @@ function jxaRuntime(BROWSERS, HANG) {
         // trusted click (the tab its window shows only; never raised). A refused or
         // missed click fails closed.
         const X = a.trusted, used = [];
+        let fronted = null;
         const done = function (o) {
           if (lost) o = a.tool === "fill" ? { ok: false, kind: "typeahead", error: TA_TAKEN } : { ok: false, error: SELECT_TAKEN };
           if (used.length && o) o.trusted = used;
+          if (fronted && o && typeof o === "object") o.warning = o.warning ? o.warning + "; " + fronted : fronted;
           if (o && typeof o === "object") delete o.tok;
           return o;
         };
@@ -3086,6 +3101,7 @@ function jxaRuntime(BROWSERS, HANG) {
           if (!T) T = trustedTarget({ target: a.target }, "select {trusted:true}");
           const c = aimedClick(T, { probe: part, check: X.check, tok: tok }, "select");
           if (c.stop) return c.stop.lost ? (lost = true) : c.stop.gone ? null : c.stop;
+          if (c.out.warning) fronted = c.out.warning;
           if (!c.out.ok) return { ok: false, hit: c.out.hit, el: c.out.el, error: "the trusted click on " + c.out.el + " did not land on it (hit: " + c.out.hit + "); nothing was picked" };
           used.push(part === X.option ? "option" : "control");
           return null;
@@ -3195,7 +3211,7 @@ function jxaRuntime(BROWSERS, HANG) {
           else leftClick(T.I, { x: a.x, y: a.y });
           delay(0.05);
           const check = afterStep("click", function () { return readExec(T.t, a.check); });
-          out = { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" };
+          out = frontWarn(T, { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" });
           if (threw(check)) return Object.assign(out, { ok: false, error: checkFault("click", check) });
           if (check.hit === undefined) out.note = "the page changed after the click (it may have navigated), so whether it landed is unknown";
           else if (check.hit !== true) return Object.assign(out, { ok: false, hit: false, error: "no click reached the page at " + a.x + "," + a.y });
@@ -3273,7 +3289,7 @@ function jxaRuntime(BROWSERS, HANG) {
       const same = function (s) { return JSON.stringify(Object.assign({}, s, { focused: 0 })) === JSON.stringify(Object.assign({}, before, { focused: 0 })); };
       let after, waited = 0;
       do { delay(0.05); waited += 50; after = frameState(row); } while (waited < 500 && same(after));
-      return { ok: true, tabId: tabId, point: pt, aim: "ax", delivery: T.background ? "skylight" : "hid", before: before, after: after, hit: null };
+      return frontWarn(T, { ok: true, tabId: tabId, point: pt, aim: "ax", delivery: T.background ? "skylight" : "hid", before: before, after: after, hit: null });
     },
     trustedFill(a) {
       const T = trustedTarget(a);
