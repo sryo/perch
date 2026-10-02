@@ -176,6 +176,46 @@ test("trusted input reaches a background browser without changing app focus or c
   assert.deepEqual(world.state.warps, []);
 });
 
+// A click that makes the page call window.focus(), opens a native popup or a
+// file chooser can bring the browser forward; perch can't undo that without
+// taking focus, so it says so.
+const raiseOnClick = (world) => (e) => {
+  if (e.kind === "mouse" && e.type === 2 && e.pt.x >= 0) {
+    const i = world.cg.findIndex((c) => c.owner === "Google Chrome");
+    world.cg.unshift(world.cg.splice(i, 1)[0]);
+  }
+};
+const behindTerminal = () => install({
+  browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(1) }] }],
+  cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Google Chrome", pid: 5, wid: 77, x: 10, y: 0, w: 800, h: 620, ax: PAGE_AX }],
+});
+
+test("a background trusted click that brings the browser to the front says so", async () => {
+  const world = behindTerminal();
+  world.state.onPost = raiseOnClick(world);
+  const r = await handleCall("click", { trusted: true, x: 300, y: 200 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.delivery, "skylight");
+  assert.match(o.warning, /the click brought the browser to the front/);
+  assert.equal(world.counts["activate(Google Chrome)"], undefined, "perch itself activated nothing");
+});
+
+test("a background trusted click that leaves the foreground alone carries no warning", async () => {
+  behindTerminal();
+  const r = await handleCall("click", { trusted: true, x: 300, y: 200 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(JSON.parse(r.content[0].text).warning, undefined);
+});
+
+test("a raised trusted click carries no front warning: raising was asked for", async () => {
+  const world = behindTerminal();
+  world.state.onPost = raiseOnClick(world);
+  const r = await handleCall("click", { trusted: true, raise: true, x: 300, y: 200 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(JSON.parse(r.content[0].text).warning, undefined);
+});
+
 test("background trusted clicks refuse to switch a browser window's active tab", async () => {
   const world = install({
     browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: tabs(2) }] }],
@@ -416,6 +456,20 @@ test("trusted click by label posts at the resolved control in a shown background
   assert.equal(o.hit, true);
   assert.deepEqual(world.posted.filter((e) => e.type === 1 && e.pt.x >= 0).map((e) => [e.via, e.pt]), [["skylight", { x: 106, y: 167 }]]);
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
+});
+
+test("a background trusted click by label that brings the browser to the front says so", async () => {
+  const { dom, world } = backgroundTab(LABELLED, 1);
+  const front = raiseOnClick(world);
+  world.state.onPost = (e) => {
+    if (e.type === 1 && e.pt.x >= 0) dom.document.getElementById("b").dispatchEvent(new dom.MouseEvent("mousedown", { bubbles: true }));
+    front(e);
+  };
+  const r = await handleCall("click", { trusted: true, label_pattern: "apply", target: { tabIndex: 1 } });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.hit, true);
+  assert.match(o.warning, /the click brought the browser to the front/);
 });
 
 test("trusted click on a disabled button refuses before any mouse event", async () => {
