@@ -4334,7 +4334,7 @@ function trapLike(el, labelled) {
 function wanted(el) {
   if (!el || (!el.required && attr(el, "aria-required") !== "true")) return false;
   if (untabbable(el) || leaveBlank(el)) return false;
-  return (!!el.labels && Array.prototype.some.call(el.labels, vis))
+  return Array.from(el.labels || []).some(vis)
     || attr(el, "aria-labelledby").split(/\s+/).some(function (id) { const t = id && el.ownerDocument.getElementById(id); return !!t && vis(t) && !!t.textContent.trim(); });
 }
 // vis(), plus a styled control's own input faded (opacity 0) or shrunk to a
@@ -4372,19 +4372,22 @@ function paints(p, el) {
   }
   return false;
 }
+// el.labels, unless the script set LABELS to a cheaper lookup (the snapshot's).
+let LABELS = null;
 // Strong label sources, in accessible-name precedence order.
 function labelText(el) {
   const ids = attr(el, "aria-labelledby");
   if (ids) {
-    const root = el.getRootNode().getElementById ? el.getRootNode() : document;
+    const r = el.getRootNode(), root = r.getElementById ? r : document;
     const t = ids.split(/\s+/).map(function (id) { return textOf(root.getElementById(id)); }).join(" ");
     if (t.trim()) return clip(t, 120);
   }
   const al = attr(el, "aria-label");
   if (al.trim()) return clip(al, 120);
-  if (el.labels && el.labels[0] && labelWords(el.labels[0]).trim()) return clip(labelWords(el.labels[0]), 120);
+  const ls = LABELS ? LABELS(el) : el.labels, own = ls && ls[0] ? labelWords(ls[0]) : "";
+  if (own.trim()) return clip(own, 120);
   // Custom widgets aren't labelable; a wrapping <label> still names them.
-  const wrap = !el.labels && el.closest && el.closest("label");
+  const wrap = !ls && el.closest && el.closest("label");
   return wrap ? clip(labelWords(wrap), 120) : "";
 }
 function hintText(el) { return attr(el, "placeholder") || attr(el, "name") || attr(el, "data-tooltip") || attr(el, "title"); }
@@ -5082,7 +5085,7 @@ function labelSeen(l) {
 function labelShown(el) {
   if (el.tagName !== "INPUT" || !/^(checkbox|radio)$/i.test(el.type || "")) return false;
   if (untabbable(el) || el.closest("[aria-hidden=true]")) return false;
-  return Array.prototype.some.call(el.labels || [], labelSeen);
+  return Array.from(el.labels || []).some(labelSeen);
 }
 // Best-named boxes for a.label_pattern: nameTier over accName, then over the
 // hint one tier group lower; a box wrapping another hit is that same hit.
@@ -5122,10 +5125,10 @@ function checkByLabel(a, only) {
 function radioMates(el) {
   if (el.tagName !== "INPUT") {
     const g = el.closest("[role=radiogroup]");
-    return g ? Array.prototype.slice.call(g.querySelectorAll("[role=radio]")) : [el];
+    return g ? Array.from(g.querySelectorAll("[role=radio]")) : [el];
   }
   if (!el.name) return [el];
-  return Array.prototype.filter.call((el.form || el.ownerDocument).querySelectorAll("input[type=radio]"), function (x) { return x.name === el.name && x.form === el.form; });
+  return Array.from((el.form || el.ownerDocument).querySelectorAll("input[type=radio]")).filter(function (x) { return x.name === el.name && x.form === el.form; });
 }
 // A click as a person's lands: a role=radio or role=checkbox box holding a
 // <label> for its own input gets it on that label, which activates the input
@@ -5200,7 +5203,7 @@ function optName(o) {
   return clip(t || o.value, 120);
 }
 function groupQuestion(box, opts) {
-  const others = function (n) { return Array.prototype.some.call(n.querySelectorAll(RADIO_OPT), function (r) { return opts.indexOf(r) < 0 && !opts.some(function (o) { return o.contains(r); }); }); };
+  const others = function (n) { return Array.from(n.querySelectorAll(RADIO_OPT)).some(function (r) { return opts.indexOf(r) < 0 && !opts.some(function (o) { return o.contains(r); }); }); };
   for (let n = box, up = 0; n && up < 4 && n !== document.body && !others(n); n = n.parentElement, up++) {
     if (attr(n, "aria-labelledby") || attr(n, "aria-label")) { const t = labelText(n); if (t) return t; }
     if (n.tagName === "FIELDSET") {
@@ -5277,7 +5280,7 @@ function ctlParts(el) {
   if (sv) { const one = [textOf(sv)]; one.single = true; return one; }
   let chips = c.querySelectorAll('[class*="multi-value__label"], [class*="multiValue__label"]');
   if (!chips.length) chips = c.querySelectorAll('[class*="multi-value"]:not([class*="__"]), [class*="multiValue"]:not([class*="__"])');
-  return Array.prototype.map.call(chips, textOf);
+  return Array.from(chips).map(textOf);
 }
 function shownValue(el) {
   const p = ctlParts(el);
@@ -5400,7 +5403,8 @@ function wantName(el) {
 function census(f) {
   const fields = Array.from(f.querySelectorAll(FIELDS)).filter(textish);
   let cands = Array.from(f.querySelectorAll(FIELDS + ", " + TICKS + ", " + BOXES));
-  const outside = Array.from(f.elements || []).filter(function (el) { return !f.contains(el) && el.matches(FIELDS); });
+  // Only a form= attribute ties a field outside the form to it.
+  const outside = f.id ? Array.from(f.getRootNode().querySelectorAll("[form]")).filter(function (el) { return el.form === f && !f.contains(el) && el.matches(FIELDS); }) : [];
   if (outside.length) cands = cands.concat(outside).sort(function (a, b) { return a.compareDocumentPosition(b) & 4 ? -1 : 1; });
   const want = [], loose = [], radios = new Map();
   cands.forEach(function (el) {
@@ -5751,7 +5755,7 @@ function revealers(re, nearHit) {
     }
     return wide.get(p);
   };
-  Array.prototype.forEach.call(document.querySelectorAll("button, [role=button], a[href], input[type=button]"), function (el, i) {
+  document.querySelectorAll("button, [role=button], a[href], input[type=button]").forEach(function (el, i) {
     if (!vis(el) || isDisabled(el) || attr(el, "type").toLowerCase() === "submit") return;
     const name = accName(el);
     if (!name || REVEAL_SKIP.test(name)) return;
@@ -5930,7 +5934,7 @@ function fillOne(a, only, onLand) {
   const inFrame = function (d) { try { return !!d && deepAll(EDITABLES, d).some(fillable); } catch (e) { return false; } };
   const crowd = new Map();
   const fieldsIn = function (p) {
-    if (!crowd.has(p)) crowd.set(p, Array.prototype.filter.call(p.querySelectorAll(EDITABLES), fillable).length);
+    if (!crowd.has(p)) crowd.set(p, Array.from(p.querySelectorAll(EDITABLES)).filter(fillable).length);
     return crowd.get(p);
   };
   // A placeholder names another field when it is a short name ("Name",
@@ -6055,7 +6059,7 @@ const invErrish = function (n) { return n.matches("[role=alert], [aria-live]:not
 const invStandin = function (x) { return attr(x, "aria-hidden") === "true" && attr(x, "tabindex") === "-1"; };
 function invNative(el) {
   if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || /^(checkbox|radio|file)$/i.test(el.type || "")) return false;
-  return el.willValidate !== false && !!el.validity && !el.validity.valid && String(el.value || "") !== "";
+  return String(el.value || "") !== "" && el.willValidate !== false && !!el.validity && !el.validity.valid;
 }
 // The element carrying aria-invalid for el (el itself, else the group or
 // combobox around it; up only when asked), or el when it fails natively.
@@ -6100,11 +6104,10 @@ function invalidSet(doc) {
   doc = doc || document;
   const seen = [];
   const add = function (c) { if (c && seen.indexOf(c) < 0) seen.push(c); };
-  doc.querySelectorAll("[aria-invalid=true]").forEach(function (c) {
-    if (invStandin(c) || !(vis(c) || (c.parentElement && vis(c.parentElement) && getComputedStyle(c).display !== "none"))) return;
-    add(c);
+  doc.querySelectorAll("[aria-invalid=true], input, textarea, select").forEach(function (c) {
+    if (attr(c, "aria-invalid") === "true" && !invStandin(c) && (vis(c) || (c.parentElement && vis(c.parentElement) && getComputedStyle(c).display !== "none"))) add(c);
+    else if (invNative(c) && vis(c)) add(c);
   });
-  doc.querySelectorAll("input, textarea, select").forEach(function (el) { if (invNative(el) && vis(el)) add(el); });
   const outer = seen.filter(function (c) { return !seen.some(function (o) { return o !== c && o.contains(c); }); });
   outer.sort(function (a, b) { return a.compareDocumentPosition(b) & 2 ? 1 : -1; });
   return outer.map(function (c) {
@@ -6226,7 +6229,9 @@ function stepRoots(scope) {
 function stepOf(scope) {
   if (!scope || !scope.isConnected) return null;
   const roots = stepRoots(scope);
-  for (const r of roots) {
+  // The outermost root holds every inner one, so a miss there settles them all.
+  const marked = roots[roots.length - 1].querySelector("[aria-current=step], [role=progressbar][aria-valuenow][aria-valuemax]") ? roots : [];
+  for (const r of marked) {
     const cur = r.querySelector("[aria-current=step]");
     if (!cur) continue;
     const li = cur.closest("li, [role=listitem]");
@@ -6237,7 +6242,7 @@ function stepOf(scope) {
     }
     return clip(textOf(cur), 40) || null;
   }
-  for (const r of roots) {
+  for (const r of marked) {
     const bar = r.querySelector("[role=progressbar][aria-valuenow][aria-valuemax]");
     if (bar) return attr(bar, "aria-valuenow") + "/" + attr(bar, "aria-valuemax");
   }
@@ -6620,6 +6625,26 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
   snapshot: INVALID_LIB + STEP_LIB + TA_BOX_LIB + CENSUS_LIB + EMBED_LIB + String.raw`
 const refs = {};
 window.__perch_refs = refs;
+// el.labels searches the whole tree for label[for] on every read. The snapshot
+// changes nothing, so a field with an id takes its labels from one scan per
+// root when that scan settles them: one label for its id, which is its own,
+// and no wrapping label.
+const labelMaps = new Map();
+LABELS = function (el) {
+  if (!el.id || !("labels" in el) || (el.tagName === "INPUT" && /^hidden$/i.test(el.type))) return el.labels;
+  const root = el.getRootNode();
+  if (root.nodeType !== 9 && root.nodeType !== 11) return el.labels;
+  let m = labelMaps.get(root);
+  if (!m) {
+    m = new Map();
+    for (const l of root.querySelectorAll("label[for]")) m.set(l.htmlFor, m.has(l.htmlFor) ? null : l);
+    labelMaps.set(root, m);
+  }
+  if (el.closest("label")) return el.labels;
+  if (!m.has(el.id)) return [];
+  const l = m.get(el.id);
+  return l && root.getElementById(el.id) === el ? [l] : el.labels;
+};
 // Names this map for the server that asked: its ref calls carry it back as
 // A.rid, so a ref meets only the map it came from.
 const rid = window.__perch_refsId = Math.random().toString(36).slice(2, 10) || "0";
@@ -6678,26 +6703,59 @@ const embedded = embeds();
 const frameDocs = new Map();
 embedded.forEach(function (e, i) { if (e.same && e.f.contentDocument) frameDocs.set(e.f.contentDocument, i); });
 function frameTag(el) { return el.ownerDocument === document ? "" : " frame=" + frameDocs.get(el.ownerDocument); }
-let n = n0, matched = 0, truncated = false;
+let act = document.activeElement;
+while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+for (let inner; act && (inner = embedded.some(function (e) { return e.same && e.f === act; }) ? act.contentDocument : null) && inner.activeElement && inner.activeElement !== inner.body;) {
+  act = inner.activeElement;
+  while (act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+}
+const DLG = "[role=dialog], [aria-modal=true], dialog[open]", marks = Array.from(document.querySelectorAll("form, " + DLG));
+const dlgs = marks.filter(function (el) { return el.matches(DLG) && vis(el); });
+// Which rows a capped snapshot keeps first: 0, the focused element and an open
+// dialog's; 1, form fields, and checkboxes, radios and submit buttons of a form.
+function rank(el, r) {
+  if (el === act || dlgs.some(function (d) { return d.contains(el); })) return 0;
+  if (/^(textbox|searchbox|combobox|spinbutton|slider)$/.test(r)) return 1;
+  if (/^(checkbox|radio|switch)$/.test(r)) return (el.form !== undefined ? el.form : el.closest("form")) ? 1 : 2;
+  return r === "button" && el.form && /^(submit|image)$/.test(el.type) ? 1 : 2;
+}
+// Rows are taken by rank, then document order, until max, and print in
+// document order. Without a query, once max rows are taken and one more shows,
+// the rest are counted unchecked, so omitted is at most that many rows.
+let n = n0, matched = 0, truncated = false, omitted = 0;
+const tiers = [[], [], []], kept = [], cut = new Set(), shown = new Set();
+let seq = 0;
 function walk(root) {
   for (const el of deepAll(SEL, root)) {
     const r = role(el);
     if (roles ? roles.indexOf(r) < 0 : INERT.test(r) && !el.matches(OWN)) continue;
-    if (!snapVis(el) || standIn(el)) continue;
-    if (!re && n - n0 >= A.max) { truncated = true; return; }
-    const line = describe(el, r, accName(el)) + frameTag(el);
-    if (re && !re.test(line)) continue;
-    matched++;
-    if (n - n0 >= A.max) { truncated = true; continue; }
-    const ref = String(++n);
-    refs[ref] = el;
-    lines.push(ref + " " + line);
+    tiers[rank(el, r)].push({ el: el, r: r, i: seq++ });
   }
+}
+walk(null);
+frameDocs.forEach(function (i, d) { walk(d); });
+for (const c of tiers[0].concat(tiers[1], tiers[2])) {
+  if (!re && omitted) { omitted++; cut.add(c.el.ownerDocument); continue; }
+  if (!snapVis(c.el) || standIn(c.el)) continue;
+  shown.add(c.el);
+  if (re) {
+    c.line = describe(c.el, c.r, accName(c.el)) + frameTag(c.el);
+    if (!re.test(c.line)) continue;
+    matched++;
+  }
+  if (kept.length < A.max) kept.push(c);
+  else { omitted++; cut.add(c.el.ownerDocument); }
+}
+if (omitted) truncated = true;
+kept.sort(function (a, b) { return a.i - b.i; });
+for (const c of kept) {
+  const ref = String(++n);
+  refs[ref] = c.el;
+  lines.push(ref + " " + (c.line || describe(c.el, c.r, accName(c.el)) + frameTag(c.el)));
 }
 // A frame counts as walked only when the cap left all its rows listed.
 const walkedFrames = new Set();
-walk(null);
-frameDocs.forEach(function (i, d) { if (re || !truncated) walk(d); if (!truncated) walkedFrames.add(i); });
+frameDocs.forEach(function (i, d) { if (!cut.has(d)) walkedFrames.add(i); });
 // The shown boxes around a hidden field, nearest first, up to one holding more
 // than 5 fields: their label text names the field when nothing else does, and
 // they hold the button that reveals it.
@@ -6748,7 +6806,7 @@ function hiddenRows(cands) {
     const line = describe(el, r, name) + (seen ? "" : " hidden") + frameTag(el);
     if (re && !re.test(line)) continue;
     matched++;
-    if (n - n0 >= A.max) { truncated = true; continue; }
+    if (n - n0 >= A.max) { truncated = true; omitted++; continue; }
     shown++;
     const ref = String(++n);
     refs[ref] = el;
@@ -6760,12 +6818,12 @@ function hiddenRows(cands) {
   }
 }
 let form = null;
-let forms = Array.from(document.querySelectorAll("form"));
+let forms = marks.filter(function (el) { return el.tagName === "FORM"; });
 frameDocs.forEach(function (i, d) { forms = forms.concat(Array.from(d.querySelectorAll("form"))); });
 forms = forms.filter(vis);
 if (forms.length) {
-  let big = forms[0];
-  forms.forEach(function (f) { if (f.querySelectorAll(FIELDS).length > big.querySelectorAll(FIELDS).length) big = f; });
+  let big = forms[0], most = -1;
+  forms.forEach(function (f) { const k = f.querySelectorAll(FIELDS).length; if (k > most) { big = f; most = k; } });
   const c = census(big), loose = c.loose, empty = c.empty;
   form = { fields: c.fields.length, requiredEmpty: empty.length };
   if (loose.length) form.unpicked = loose.length;
@@ -6773,7 +6831,7 @@ if (forms.length) {
   if (inv) form.invalid = inv;
   const step = stepOf(big);
   if (step) form.step = step;
-  const unseen = empty.filter(function (el) { return !snapVis(el); });
+  const unseen = empty.filter(function (el) { return !shown.has(el) && !snapVis(el); });
   if (unseen.length) hiddenRows(unseen);
 }
 window.__perch_refN = n;
@@ -6791,19 +6849,13 @@ if (A.frames) {
   if (fr.length) head.fr = fr;
 }
 if (re) head.matched = matched;
-if (truncated) head.truncated = true;
-let act = document.activeElement;
-while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
-for (let inner; act && (inner = embedded.some(function (e) { return e.same && e.f === act; }) ? act.contentDocument : null) && inner.activeElement && inner.activeElement !== inner.body;) {
-  act = inner.activeElement;
-  while (act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
-}
+if (truncated) { head.truncated = true; head.omitted = omitted; }
 if (act && act !== document.body && act !== document.documentElement) {
   let fr = null;
   for (const k in refs) if (refs[k] === act) { fr = k; break; }
   head.focus = fr || ident(act);
 }
-const dialogs = Array.from(document.querySelectorAll("[role=dialog], [aria-modal=true], dialog[open]")).filter(vis).slice(0, 5).map(accName);
+const dialogs = dlgs.slice(0, 5).map(accName);
 if (dialogs.length) head.dialogs = dialogs;
 if (form) head.form = form;
 if (embedded.length) head.iframes = embedded.map(function (e) {
@@ -7069,7 +7121,7 @@ function twin(it) {
   let x = k.id && document.getElementById(k.id);
   if (ok(x)) return { el: x };
   if (k.name && k.form && k.form.isConnected) {
-    x = Array.prototype.find.call(k.form.elements, function (e) { return e.name === k.name && (!("value" in k) || e.value === k.value); });
+    x = Array.from(k.form.elements).find(function (e) { return e.name === k.name && (!("value" in k) || e.value === k.value); });
     if (ok(x)) return { el: x };
   }
   const f = it.f;
@@ -7082,7 +7134,7 @@ function twin(it) {
     return nat ? { el: nat } : null;
   }
   const re = new RegExp(f.label_pattern, "i");
-  const all = Array.prototype.filter.call(document.querySelectorAll("textarea, input, [contenteditable]"), fillable);
+  const all = Array.from(document.querySelectorAll("textarea, input, [contenteditable]")).filter(fillable);
   const hits = all.filter(function (e) { return re.test(labelText(e)); }).concat(all.filter(function (e) { return !re.test(labelText(e)) && re.test(hintText(e)); }));
   x = hits.filter(fieldVis)[0] || hits[0];
   return ok(x) ? { el: x } : null;
@@ -9209,7 +9261,7 @@ const TOOLS = [
     target: TARGET,
   }),
   tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`.", {
-    max: { type: "number", description: "Element cap, default 500; 0 = header only." },
+    max: { type: "number", description: "Row cap, default 500 (dialogs, focus, fields first); 0 = header only." },
     role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles (textbox, button…)." },
     query: { type: "string", description: "Keep lines matching this regex." },
     frames: { type: "boolean", description: "Add iframe controls from Accessibility as `fN` rows (the tab its window shows); fN takes only click {trusted:true}." },
