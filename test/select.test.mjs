@@ -45,6 +45,13 @@ test("native select: a country or state typed in full picks its abbreviation, on
   assert.equal((await select({ label_pattern: "country", text: "United States" })).o.ambiguous, true);
 });
 
+test("native select: a zero-width character in an option's text still matches it exactly", async () => {
+  const zw = String.fromCharCode(0x200b);
+  const { dom } = onPage(`<label>Country <select><option value="">Pick</option><option value=a>Canada${zw}</option><option value=b>Canada (French)</option></select></label>`);
+  assert.equal((await select({ label_pattern: "country", text: "Canada" })).o.ok, true);
+  assert.equal(dom.document.querySelector("select").value, "a");
+});
+
 test("native select: equally good options are a tie, never settled by length or order", async () => {
   const html = `<label>Visa <select><option value="">Pick</option><option value=1>Yes, I need sponsorship</option><option value=2>Yes, I have a visa</option><option value=3>No</option></select></label>`;
   const { dom } = onPage(html);

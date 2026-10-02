@@ -4200,7 +4200,9 @@ async function screenshot(args = {}) {
 export const PAGE_PRELUDE = String.raw`
 const INPUT_SKIP = ["hidden", "checkbox", "radio", "file", "submit", "button", "image", "reset", "range", "color"];
 function attr(el, k) { return (el && el.getAttribute && el.getAttribute(k)) || ""; }
-function clip(s, n) { s = String(s == null ? "" : s).replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; }
+// Format characters (zero-width spaces and joiners, bidi marks, soft hyphens)
+// vanish; private-use icon-font glyphs read as spaces.
+function clip(s, n) { s = String(s == null ? "" : s).replace(/\p{Cf}/gu, "").replace(/[\s\p{Co}]+/gu, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; }
 function textOf(n) { return n ? (n.innerText || n.textContent || "") : ""; }
 // The window an element lives in: a same-origin frame's own, else this one.
 // A frame document that lost its window throws rather than borrow this one.
@@ -4534,7 +4536,7 @@ function tabbables() {
 
 const SELECT_LIB = String.raw`
 // Curly quotes and dashes fold to ASCII, so typed text matches typographic options.
-const norm = function (s) { return String(s || "").replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2010-\u2015]/g, "-").replace(/\s+/g, " ").trim().toLowerCase(); };
+const norm = function (s) { return clip(s, 1e9).replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2010-\u2015]/g, "-").toLowerCase(); };
 // Accents fold away for comparison only, so "Cordoba" matches "Córdoba".
 const fold = function (s) { return String(s || "").normalize("NFD").replace(/\p{M}+/gu, ""); };
 const wordsOf = function (s) { return String(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean); };
@@ -6546,7 +6548,11 @@ const rid = window.__perch_refsId = Math.random().toString(36).slice(2, 10) || "
 // base its load time picks, so a ref from any earlier snapshot names no row here.
 if (!Number.isSafeInteger(window.__perch_refN) || window.__perch_refN < 0 || window.__perch_refN > 1e9) window.__perch_refN = Math.floor((window.__perch_refN === undefined ? ((window.performance || {}).timeOrigin || 0) : Date.now() * 7) % 900);
 const n0 = window.__perch_refN;
-const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
+const OWN = 'a[href], button, input:not([type=hidden]), textarea, select, [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
+const SEL = OWN + ", [role]";
+// Structure and live-region roles name nothing to act on: such an element gets
+// a row only when OWN lists it anyway, or the caller asks for its role.
+const INERT = /^(main|navigation|banner|contentinfo|complementary|region|form|search|article|section|document|feed|list|listitem|directory|presentation|none|generic|group|img|image|figure|separator|status|log|marquee|timer|note|paragraph|blockquote|caption|code|emphasis|strong|term|definition|time|mark|table|rowgroup|cell|tabpanel|toolbar|tooltip)(\s|$)/;
 const roles = A.role == null ? null : [].concat(A.role);
 const q = JSON.stringify;
 const origin = location.origin;
@@ -6597,7 +6603,7 @@ let n = n0, matched = 0, truncated = false;
 function walk(root) {
   for (const el of deepAll(SEL, root)) {
     const r = role(el);
-    if (roles && roles.indexOf(r) < 0) continue;
+    if (roles ? roles.indexOf(r) < 0 : INERT.test(r) && !el.matches(OWN)) continue;
     if (!snapVis(el) || standIn(el)) continue;
     if (!re && n - n0 >= A.max) { truncated = true; return; }
     const line = describe(el, r, accName(el)) + frameTag(el);
