@@ -92,6 +92,13 @@ test("every param, element hint, error code and permission toggle stays document
   assert.match(source, /Accessibility permission required: System Settings > Privacy & Security > Accessibility/);
 });
 
+test("docs say to verify from the call's own result, resend only failed fields, and narrow a cut snapshot", () => {
+  assert.match(INSTRUCTIONS, /own result[^\n]*not a screenshot/);
+  assert.match(INSTRUCTIONS, /resend only[^\n]*ok:false/);
+  const snap = TOOLS.find((t) => t.name === "accessibility_snapshot");
+  assert.match(snap.description, /`truncated`[^.]*`omitted`[^.]*(role|query)[^.]*not missing/);
+});
+
 test("docs say a natively disabled control refuses the click, trusted too, and aria-disabled still clicks", async () => {
   const skill = await read("SKILL.md");
   const agents = await read("AGENTS.md");
