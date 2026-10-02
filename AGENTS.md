@@ -129,14 +129,14 @@ Result shapes callers depend on are pinned by `test/contract.test.mjs` (each tes
 
 ### Snapshot (`accessibility_snapshot`)
 
-- **Format:** a `# {header}` line, then `ref role "name" key=json... flags`. Header keys: `url`, `title`, `ready`, `count`, `focus`, `dialogs`, `matched` (with `query`), `form`, `iframes`. `query` tests each line without its ref; `max` caps rows, not ref values. Refs continue a per-document counter.
+- **Format:** a `# {header}` line, then `ref role "name" key=json... flags`. Header keys: `url`, `title`, `ready`, `count`, `focus`, `dialogs`, `matched` (with `query`), `form`, `iframes`. `query` tests each line without its ref; `max` caps rows, not ref values. Past `max`, focus, open dialogs and form fields are kept first, printed in document order; header `truncated`, `omitted` (at most, without `query`). Refs continue a per-document counter.
 - **Visibility:** `vis()` plus `snapVis` (a styled radio, checkbox or combobox input counts as shown when its label or box is).
 - **Values:** a select's `value` is its chosen option's text; a placeholder choice (`nothingChosen`) has none and counts as required-empty. A combobox's `value` falls back to its box's single value or chips.
 - **`form` header** (the biggest visible form, across walked frames): `fields`, `requiredEmpty`, `invalid?`, `unpicked?`, `step?`. The census (`CENSUS_LIB`'s `census`, shared with `fill {fields}`) counts required-empty text fields, placeholder selects and comboboxes, unticked required checkboxes, unchecked required radio groups and required file inputs, and drops disabled fields.
 - **Flags:** `invalid` plus `error="..."` (from `aria-invalid` or a native constraint failure; an empty required field stays in `requiredEmpty` instead), `unpicked` (a typeahead holding typed text whose pick input is empty), `hidden` (a required-empty field `snapVis` drops gets a row after the ordinary rows; fill it by `ref`), with `reveal=<ref>` naming the button that likely shows it. Bot traps never get rows, nor do stand-ins (`standIn`: a text field aria-hidden and out of the tab order, such as react-select's required input or an address block's autofill catchers), which the census skips too.
 - **Embedded frames:** `iframes: [{src, w, h, same, in?}]` lists visible iframes of at least 200x150 CSS px, largest first, at most 5 (`src` is origin and path only). A listed same-origin frame is walked after the page's rows, each row ending ` frame=<index>`. A cross-origin frame is only named, never read.
 - **`frames:true`** adds cross-origin frame controls from Accessibility as `fN` rows (see Frames). A default snapshot does no Accessibility work.
-- Pinned by `test/snapshot-form.test.mjs`, `test/snapshot-widgets.test.mjs`, `test/snapshot-refs.test.mjs`, `test/snapshot-frames.test.mjs`.
+- Pinned by `test/snapshot-form.test.mjs`, `test/snapshot-widgets.test.mjs`, `test/snapshot-refs.test.mjs`, `test/snapshot-frames.test.mjs`, `test/snapshot-budget.test.mjs`.
 
 ### Click readback (`click {readback}`)
 

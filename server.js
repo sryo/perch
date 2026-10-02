@@ -6678,26 +6678,57 @@ const embedded = embeds();
 const frameDocs = new Map();
 embedded.forEach(function (e, i) { if (e.same && e.f.contentDocument) frameDocs.set(e.f.contentDocument, i); });
 function frameTag(el) { return el.ownerDocument === document ? "" : " frame=" + frameDocs.get(el.ownerDocument); }
-let n = n0, matched = 0, truncated = false;
+let act = document.activeElement;
+while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+for (let inner; act && (inner = embedded.some(function (e) { return e.same && e.f === act; }) ? act.contentDocument : null) && inner.activeElement && inner.activeElement !== inner.body;) {
+  act = inner.activeElement;
+  while (act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+}
+const dlgs = Array.from(document.querySelectorAll("[role=dialog], [aria-modal=true], dialog[open]")).filter(vis);
+// Which rows a capped snapshot keeps first: 0, the focused element and an open
+// dialog's; 1, form fields, and checkboxes, radios and submit buttons of a form.
+function rank(el, r) {
+  if (el === act || dlgs.some(function (d) { return d.contains(el); })) return 0;
+  if (/^(textbox|searchbox|combobox|spinbutton|slider)$/.test(r)) return 1;
+  if (/^(checkbox|radio|switch)$/.test(r)) return el.closest("form") ? 1 : 2;
+  return r === "button" && el.form && /^(submit|image)$/.test(el.type) ? 1 : 2;
+}
+// Rows are taken by rank, then document order, until max, and print in
+// document order. Without a query, once max rows are taken and one more shows,
+// the rest are counted unchecked, so omitted is at most that many rows.
+let n = n0, matched = 0, truncated = false, omitted = 0;
+const cands = [], kept = [], cut = new Set();
 function walk(root) {
   for (const el of deepAll(SEL, root)) {
     const r = role(el);
     if (roles ? roles.indexOf(r) < 0 : INERT.test(r) && !el.matches(OWN)) continue;
-    if (!snapVis(el) || standIn(el)) continue;
-    if (!re && n - n0 >= A.max) { truncated = true; return; }
-    const line = describe(el, r, accName(el)) + frameTag(el);
-    if (re && !re.test(line)) continue;
-    matched++;
-    if (n - n0 >= A.max) { truncated = true; continue; }
-    const ref = String(++n);
-    refs[ref] = el;
-    lines.push(ref + " " + line);
+    cands.push({ el: el, r: r, t: rank(el, r), i: cands.length });
   }
+}
+walk(null);
+frameDocs.forEach(function (i, d) { walk(d); });
+cands.sort(function (a, b) { return a.t - b.t || a.i - b.i; });
+for (const c of cands) {
+  if (!re && omitted) { omitted++; cut.add(c.el.ownerDocument); continue; }
+  if (!snapVis(c.el) || standIn(c.el)) continue;
+  if (re) {
+    c.line = describe(c.el, c.r, accName(c.el)) + frameTag(c.el);
+    if (!re.test(c.line)) continue;
+    matched++;
+  }
+  if (kept.length < A.max) kept.push(c);
+  else { omitted++; cut.add(c.el.ownerDocument); }
+}
+if (omitted) truncated = true;
+kept.sort(function (a, b) { return a.i - b.i; });
+for (const c of kept) {
+  const ref = String(++n);
+  refs[ref] = c.el;
+  lines.push(ref + " " + (c.line || describe(c.el, c.r, accName(c.el)) + frameTag(c.el)));
 }
 // A frame counts as walked only when the cap left all its rows listed.
 const walkedFrames = new Set();
-walk(null);
-frameDocs.forEach(function (i, d) { if (re || !truncated) walk(d); if (!truncated) walkedFrames.add(i); });
+frameDocs.forEach(function (i, d) { if (!cut.has(d)) walkedFrames.add(i); });
 // The shown boxes around a hidden field, nearest first, up to one holding more
 // than 5 fields: their label text names the field when nothing else does, and
 // they hold the button that reveals it.
@@ -6748,7 +6779,7 @@ function hiddenRows(cands) {
     const line = describe(el, r, name) + (seen ? "" : " hidden") + frameTag(el);
     if (re && !re.test(line)) continue;
     matched++;
-    if (n - n0 >= A.max) { truncated = true; continue; }
+    if (n - n0 >= A.max) { truncated = true; omitted++; continue; }
     shown++;
     const ref = String(++n);
     refs[ref] = el;
@@ -6791,19 +6822,13 @@ if (A.frames) {
   if (fr.length) head.fr = fr;
 }
 if (re) head.matched = matched;
-if (truncated) head.truncated = true;
-let act = document.activeElement;
-while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
-for (let inner; act && (inner = embedded.some(function (e) { return e.same && e.f === act; }) ? act.contentDocument : null) && inner.activeElement && inner.activeElement !== inner.body;) {
-  act = inner.activeElement;
-  while (act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
-}
+if (truncated) { head.truncated = true; head.omitted = omitted; }
 if (act && act !== document.body && act !== document.documentElement) {
   let fr = null;
   for (const k in refs) if (refs[k] === act) { fr = k; break; }
   head.focus = fr || ident(act);
 }
-const dialogs = Array.from(document.querySelectorAll("[role=dialog], [aria-modal=true], dialog[open]")).filter(vis).slice(0, 5).map(accName);
+const dialogs = dlgs.slice(0, 5).map(accName);
 if (dialogs.length) head.dialogs = dialogs;
 if (form) head.form = form;
 if (embedded.length) head.iframes = embedded.map(function (e) {
@@ -9209,7 +9234,7 @@ const TOOLS = [
     target: TARGET,
   }),
   tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`.", {
-    max: { type: "number", description: "Element cap, default 500; 0 = header only." },
+    max: { type: "number", description: "Row cap, default 500 (dialogs, focus, fields first); 0 = header only." },
     role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles (textbox, button…)." },
     query: { type: "string", description: "Keep lines matching this regex." },
     frames: { type: "boolean", description: "Add iframe controls from Accessibility as `fN` rows (the tab its window shows); fN takes only click {trusted:true}." },

@@ -336,9 +336,10 @@ for (const [name, err] of [
   });
 }
 
-// Five buttons fill max:5, so the same-origin frame's document is never walked.
+// Five fields fill max:5 ahead of the same-origin frame's, which rank the same
+// but come later, so the frame's rows are cut.
 function truncatedPage() {
-  const w = page(`${[1, 2, 3, 4, 5].map((i) => `<button>B${i}</button>`).join("")}<iframe id=app data-rect="100,100,400,300"></iframe>`);
+  const w = page(`${[1, 2, 3, 4, 5].map((i) => `<input name=b${i}>`).join("")}<iframe id=app data-rect="100,100,400,300"></iframe>`);
   w.document.getElementById("app").contentDocument.body.innerHTML = `<label for=fn>First name</label><input id=fn><label for=ln>Last name</label><input id=ln>`;
   return w;
 }
