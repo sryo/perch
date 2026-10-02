@@ -517,7 +517,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     return v === undefined ? null : v;
   }
 
-  // Native open panel: `state.panel = { pid, kind: "sheet" | "window", parent?, open, enabled? }`.
+  // Native open panel: `state.panel = { pid, kind: "sheet" | "window", parent?, open, enabled?, idsOnly? }`.
   // Open, it is an AXSheet on the CG window `parent` (kind sheet) or a window of
   // `pid` with AXIdentifier open-panel (kind window, the out-of-process panel
   // service's). A posted Cmd+Shift+G opens its Go to sheet, whose PathTextField
@@ -537,12 +537,16 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     }
     if (!el.pn) return undefined;
     const pick = (o) => (o[name] === undefined ? null : o[name]);
-    if (el.btn) return pick({ AXRole: "AXButton", AXTitle: el.btn === "open" ? "Open" : "Cancel", AXEnabled: el.btn === "open" ? p.enabled !== false : true });
+    if (el.btn) return pick({ AXRole: "AXButton", AXTitle: el.btn === "open" ? "Open" : "Cancel", AXIdentifier: el.btn === "open" ? "OKButton" : "CancelButton", AXEnabled: el.btn === "open" ? p.enabled !== false : true });
+    if (el.box) return pick({ AXRole: "AXGroup", AXChildren: axList([{ role: "AXButton", pn: p, btn: "cancel" }, { role: "AXButton", pn: p, btn: "open" }]) });
     if (el.path) return pick({ AXRole: "AXTextField", AXIdentifier: "PathTextField", AXValue: p.field || "" });
     if (el.goto) return pick({ AXRole: "AXSheet", AXChildren: axList([{ role: "AXTextField", pn: p, path: true, goto: true }]) });
+    // `idsOnly`: as Arc's sheet shows it live, no AXDefaultButton/AXCancelButton;
+    // its buttons, a level down, carry the identifiers OKButton and CancelButton.
+    const buttons = p.idsOnly ? [{ role: "AXGroup", pn: p, box: true }] : [{ role: "AXButton", pn: p, btn: "cancel" }, { role: "AXButton", pn: p, btn: "open" }];
     return pick({ AXRole: el.role, AXIdentifier: "open-panel",
-      AXDefaultButton: { role: "AXButton", pn: p, btn: "open" }, AXCancelButton: { role: "AXButton", pn: p, btn: "cancel" },
-      AXChildren: axList((p.goto ? [{ role: "AXSheet", pn: p, goto: true }] : []).concat([{ role: "AXButton", pn: p, btn: "cancel" }, { role: "AXButton", pn: p, btn: "open" }])) });
+      ...(p.idsOnly ? {} : { AXDefaultButton: { role: "AXButton", pn: p, btn: "open" }, AXCancelButton: { role: "AXButton", pn: p, btn: "cancel" } }),
+      AXChildren: axList((p.goto ? [{ role: "AXSheet", pn: p, goto: true }] : []).concat(buttons)) });
   }
 
   // Keyboard focus: `state.focus = { window: {x,y,w,h}, chain: [{role, box?}, ...] }`

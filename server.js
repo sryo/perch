@@ -2323,6 +2323,19 @@ function jxaRuntime(BROWSERS, HANG) {
     })(panel, 0, false);
     return found;
   }
+  // The panel's default or cancel button: its AXDefaultButton/AXCancelButton, else
+  // (Arc's sheet has neither) the button identified OKButton/CancelButton in it.
+  function panelButton(ax, panel, name, id) {
+    const b = ax.attr(panel, name);
+    if (b) return b;
+    let found = null;
+    (function walk(el, depth) {
+      if (found || depth > 6) return;
+      if (ax.str(el, "AXRole") === "AXButton" && ax.str(el, "AXIdentifier") === id) { found = el; return; }
+      ax.list(ax.attr(el, "AXChildren")).forEach(function (k) { walk(k, depth + 1); });
+    })(panel, 0);
+    return found;
+  }
   // A key pair to the foreground app, which the raise made the browser.
   function fgKey(vk, uni, flags) {
     ObjC.bindFunction("CGEventKeyboardSetUnicodeString", ["void", ["void *", "unsigned long", "void *"]]);
@@ -2351,7 +2364,7 @@ function jxaRuntime(BROWSERS, HANG) {
     if (!panel) return { ok: false, error: "no file chooser opened after the click" };
     const gone = function (el) { return function () { return ax.attr(el, "AXRole") == null; }; };
     const cancel = function (why) {
-      const c = ax.attr(panel, "AXCancelButton");
+      const c = panelButton(ax, panel, "AXCancelButton", "CancelButton");
       if (c) $.AXUIElementPerformAction(c, $("AXPress"));
       return { ok: false, chooser: true, error: why + (c ? "; the chooser was cancelled" : "; the chooser is still open, hand it to the user") };
     };
@@ -2363,7 +2376,7 @@ function jxaRuntime(BROWSERS, HANG) {
     if (ax.str(field, "AXValue") !== a.path) return cancel("the path did not land in the Go to folder field");
     fgKey(36, "\r", 0);
     if (!until(2000, gone(field))) return cancel("the Go to folder field did not close");
-    const open = ax.attr(panel, "AXDefaultButton");
+    const open = panelButton(ax, panel, "AXDefaultButton", "OKButton");
     if (!open) return cancel("the chooser has no default button");
     if (/^(false|0)$/.test(ax.str(open, "AXEnabled"))) return cancel("the chooser's default button is disabled (the file may not match what the site accepts)");
     $.AXUIElementPerformAction(open, $("AXPress"));
@@ -8036,18 +8049,22 @@ U.input = null;
 return dropOn(U);
 `,
 
-  // file_upload {raise:true}: what of the file the page shows, counted before the
-  // chooser opens and polled after. media: img/video/source with a blob: or data:
-  // src (a composer's preview); held: file inputs holding the file; names: how
-  // often its name is on the page. upload_census_seen answers once one grew.
+  // file_upload {raise:true}: what of the file the page shows, taken before the
+  // chooser opens and polled after. The sources of the page's img/video/source
+  // elements are kept on window.__perch_census; upload_census_seen answers once
+  // one shows a source not there before (a composer's preview, whatever its URL),
+  // a file input holds the file, or its name is on the page more often.
   upload_census: UPLOAD_LIB + String.raw`
-const media = deepAll("img,video,source").filter(function (el) { return /^(blob|data):/.test(el.currentSrc || el.src || ""); }).length;
-return { media: media, held: deepAll("input[type=file]").filter(has).length, names: nameCount(A.name) };
+const srcs = deepAll("img,video,source").map(function (el) { return el.currentSrc || el.src || ""; }).filter(Boolean);
+window.__perch_census = { srcs: srcs };
+return { media: srcs.length, held: deepAll("input[type=file]").filter(has).length, names: nameCount(A.name) };
 `,
   upload_census_seen: UPLOAD_LIB + String.raw`
-const media = deepAll("img,video,source").filter(function (el) { return /^(blob|data):/.test(el.currentSrc || el.src || ""); }).length;
-const held = deepAll("input[type=file]").filter(has).length, names = nameCount(A.name), b = A.before;
-if (media > b.media || held > b.held || names > b.names) return { media: media > b.media, shown: names > b.names || held > b.held };
+const C = window.__perch_census, b = A.before;
+const old = C ? C.srcs : [];
+const fresh = deepAll("img,video,source").some(function (el) { const s = el.currentSrc || el.src || ""; return !!s && old.indexOf(s) < 0; });
+const held = deepAll("input[type=file]").filter(has).length, names = nameCount(A.name);
+if (fresh || held > b.held || names > b.names) return { media: fresh, shown: names > b.names || held > b.held };
 return null;
 `,
 

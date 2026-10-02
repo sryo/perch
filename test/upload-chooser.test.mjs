@@ -20,7 +20,7 @@ function withWindowMetrics(w, m) {
 // Chrome in front, its page holding the composer's trigger. `panel` is the
 // native panel the trigger's trusted click opens; `service` adds the panel
 // service's CG window (behind the browser) for a panel of kind window.
-async function setup({ panel = {}, opensOnClick = true, preview = true, service = false } = {}) {
+async function setup({ panel = {}, opensOnClick = true, preview = true, service = false, cdn = false } = {}) {
   const dom = page(`<button id=add>Add photo/video</button><div id=media></div>`);
   withWindowMetrics(dom, METRICS);
   const world = makeWorld({
@@ -41,7 +41,7 @@ async function setup({ panel = {}, opensOnClick = true, preview = true, service 
   world.state.onPanelChoose = (path) => {
     if (!preview) return;
     const img = dom.document.createElement("img");
-    img.src = "blob:https://example.test/" + path.split("/").pop();
+    img.src = (cdn ? "https://cdn.example.test/v/" : "blob:https://example.test/") + path.split("/").pop();
     dom.document.getElementById("media").append(img);
   };
   const dir = tempDir("perch-chooser-");
@@ -74,6 +74,28 @@ test("raise:true clicks the trigger, chooses the file in the chooser sheet and s
 
 test("a chooser drawn by the panel service, as its own window, is found and used", async () => {
   const { world, path } = await setup({ panel: { pid: 999, kind: "window" }, service: true });
+  const { o } = await upload({ path });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(world.state.panel.chosen, path);
+});
+
+test("a chooser with no default-button attribute is driven by its OKButton and CancelButton", async () => {
+  const { world, path } = await setup({ panel: { idsOnly: true } });
+  const { o } = await upload({ path });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(world.state.panel.chosen, path);
+  const off = await setup({ panel: { idsOnly: true, enabled: false } });
+  const r = await upload({ path: off.path });
+  assert.equal(r.o.ok, false);
+  assert.match(r.o.error, /disabled/);
+  assert.equal(off.world.state.panel.cancelled, true);
+});
+
+test("a preview the site serves from its own CDN, not a blob:, counts as shown", async () => {
+  const { world, path, dom } = await setup({ cdn: true });
+  const old = dom.document.createElement("img");
+  old.src = "https://cdn.example.test/v/older.jpg";
+  dom.document.getElementById("media").append(old);
   const { o } = await upload({ path });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(world.state.panel.chosen, path);
