@@ -879,6 +879,13 @@ function jxaRuntime(BROWSERS, HANG) {
   const SILENT_MS = 1000;
   const UNANSWERED = HANG.unanswered;
   const ranOut = function (msg) { return new Error(msg + (pollSilent ? UNANSWERED : "")); };
+  // A timed-out wait {expression}'s last answer: what it threw, or a falsy value
+  // other than false (the plain "not yet").
+  function lastSeen(v) {
+    if (!v) return "";
+    if (v.x != null) return "; the expression threw " + v.x;
+    return v.n === false ? "" : "; last value: " + JSON.stringify(v.n);
+  }
 
 
   // Window geometry plus the pid and CGWindowID that screencapture -l and CGEvent
@@ -2787,7 +2794,11 @@ function jxaRuntime(BROWSERS, HANG) {
       if (a.quiet) return waitQuiet(a, start, interval);
       // With a.tok the page answers {tok} while pending: only a seen, lost or
       // foreign-token answer ends the wait.
-      const done = a.tok ? function (v) { return !!v && (!!v.seen || !!v.lost || v.tok !== a.tok); } : null;
+      // With a.expr the page answers {y, v}, {n} or {x} (Node's waitExpr); `last`
+      // keeps the latest answer for the timeout.
+      let last = null;
+      const done = a.tok ? function (v) { return !!v && (!!v.seen || !!v.lost || v.tok !== a.tok); }
+        : a.expr ? function (v) { if (v) last = v; return !!v && !!v.y; } : null;
       let q = null, r = null;
       // A hinted Chromium handle's first poll is quickExec's one event, bounded.
       const w = a.target || {};
@@ -2801,7 +2812,7 @@ function jxaRuntime(BROWSERS, HANG) {
         r = poll(t, a.js, a.timeout, interval, false, done, start);
         if (r) r.waited = Date.now() - start;
       }
-      if (!r) throw ranOut("timeout: wait timed out after " + a.timeout + "ms");
+      if (!r) throw ranOut("timeout: wait timed out after " + a.timeout + "ms" + (a.expr ? lastSeen(last) : ""));
       if (r.value && r.value.bad && a.selector) throw new Error("wait: bad selector: " + a.selector);
       if (r.value && r.value.__perch_error) throw new Error("wait: the page script failed on this page (" + faultName(r.value) + "); nothing verified");
       return r;
@@ -4073,12 +4084,24 @@ async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFA
 
 async function wait(args = {}) {
   const { selector, readyState = "complete", expression, timeout = 10000, target, quiet } = args;
+  // Under 100 is most likely seconds given by mistake. Shorter waits than a
+  // second are real (a brief check), so the floor is lower than eval_js's.
+  if (typeof timeout !== "number" || !(timeout >= WAIT_MIN_MS)) throw new Error(`bad_args: wait timeout is in milliseconds (at least ${WAIT_MIN_MS}); got ${typeof timeout === "number" ? String(timeout) : JSON.stringify(timeout)}`);
   if (quiet != null) return waitQuiet(args, timeout);
-  const js = expression
-    ? `(function(){try{var __r=(${expression});return JSON.stringify(__r===undefined?null:__r)}catch(e){return "null"}})()`
-    : buildEvalWrapper(pageScript("wait_check", { selector, readyState }));
-  const r = await rt("wait", { target, js, timeout, selector: expression ? undefined : selector }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
-  return expression ? { ok: true, waited: r.waited, value: r.value } : { ok: true, waited: r.waited };
+  const js = expression ? waitExpr(expression) : buildEvalWrapper(pageScript("wait_check", { selector, readyState }));
+  const r = await rt("wait", { target, js, timeout, selector: expression ? undefined : selector, expr: !!expression }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+  return expression ? { ok: true, waited: r.waited, value: r.value.v } : { ok: true, waited: r.waited };
+}
+
+// Each poll answers {y, v} once the expression is truthy, {n} with a falsy value,
+// or {x} naming what it threw (serializing included), so the runtime tells "not
+// yet" from "broken" and a timeout can say which. The script is parsed here
+// first, as the page parses it, so a syntax error costs no Apple Event.
+const WAIT_SHOWN = 200, WAIT_MIN_MS = 100;
+function waitExpr(expression) {
+  const js = `(function(){var __r;try{__r=(${expression});return JSON.stringify(__r?{y:1,v:__r}:{n:__r===undefined?null:__r})}catch(e){return JSON.stringify({x:String(e&&e.name?e.name+": "+e.message:e).slice(0,${WAIT_SHOWN})})}})()`;
+  try { new Function(js); } catch (e) { throw new Error(`bad_args: wait \`expression\` does not parse: ${e.name}: ${e.message}`); }
+  return js;
 }
 
 async function waitQuiet({ quiet, selector, expression, target }, timeout) {
@@ -4289,7 +4312,9 @@ async function screenshot(args = {}) {
 export const PAGE_PRELUDE = String.raw`
 const INPUT_SKIP = ["hidden", "checkbox", "radio", "file", "submit", "button", "image", "reset", "range", "color"];
 function attr(el, k) { return (el && el.getAttribute && el.getAttribute(k)) || ""; }
-function clip(s, n) { s = String(s == null ? "" : s).replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; }
+// Format characters (zero-width spaces and joiners, bidi marks, soft hyphens)
+// vanish; private-use icon-font glyphs read as spaces.
+function clip(s, n) { s = String(s == null ? "" : s).replace(/\p{Cf}/gu, "").replace(/[\s\p{Co}]+/gu, " ").trim(); return s.length > n ? s.slice(0, n) + "…" : s; }
 function textOf(n) { return n ? (n.innerText || n.textContent || "") : ""; }
 // The window an element lives in: a same-origin frame's own, else this one.
 // A frame document that lost its window throws rather than borrow this one.
@@ -4398,7 +4423,7 @@ function trapLike(el, labelled) {
 function wanted(el) {
   if (!el || (!el.required && attr(el, "aria-required") !== "true")) return false;
   if (untabbable(el) || leaveBlank(el)) return false;
-  return (!!el.labels && Array.prototype.some.call(el.labels, vis))
+  return Array.from(el.labels || []).some(vis)
     || attr(el, "aria-labelledby").split(/\s+/).some(function (id) { const t = id && el.ownerDocument.getElementById(id); return !!t && vis(t) && !!t.textContent.trim(); });
 }
 // vis(), plus a styled control's own input faded (opacity 0) or shrunk to a
@@ -4436,19 +4461,22 @@ function paints(p, el) {
   }
   return false;
 }
+// el.labels, unless the script set LABELS to a cheaper lookup (the snapshot's).
+let LABELS = null;
 // Strong label sources, in accessible-name precedence order.
 function labelText(el) {
   const ids = attr(el, "aria-labelledby");
   if (ids) {
-    const root = el.getRootNode().getElementById ? el.getRootNode() : document;
+    const r = el.getRootNode(), root = r.getElementById ? r : document;
     const t = ids.split(/\s+/).map(function (id) { return textOf(root.getElementById(id)); }).join(" ");
     if (t.trim()) return clip(t, 120);
   }
   const al = attr(el, "aria-label");
   if (al.trim()) return clip(al, 120);
-  if (el.labels && el.labels[0] && labelWords(el.labels[0]).trim()) return clip(labelWords(el.labels[0]), 120);
+  const ls = LABELS ? LABELS(el) : el.labels, own = ls && ls[0] ? labelWords(ls[0]) : "";
+  if (own.trim()) return clip(own, 120);
   // Custom widgets aren't labelable; a wrapping <label> still names them.
-  const wrap = !el.labels && el.closest && el.closest("label");
+  const wrap = !ls && el.closest && el.closest("label");
   return wrap ? clip(labelWords(wrap), 120) : "";
 }
 function hintText(el) { return attr(el, "placeholder") || attr(el, "name") || attr(el, "data-tooltip") || attr(el, "title"); }
@@ -4623,7 +4651,7 @@ function tabbables() {
 
 const SELECT_LIB = String.raw`
 // Curly quotes and dashes fold to ASCII, so typed text matches typographic options.
-const norm = function (s) { return String(s || "").replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2010-\u2015]/g, "-").replace(/\s+/g, " ").trim().toLowerCase(); };
+const norm = function (s) { return clip(s, 1e9).replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2010-\u2015]/g, "-").toLowerCase(); };
 // Accents fold away for comparison only, so "Cordoba" matches "Córdoba".
 const fold = function (s) { return String(s || "").normalize("NFD").replace(/\p{M}+/gu, ""); };
 const wordsOf = function (s) { return String(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean); };
@@ -5146,7 +5174,7 @@ function labelSeen(l) {
 function labelShown(el) {
   if (el.tagName !== "INPUT" || !/^(checkbox|radio)$/i.test(el.type || "")) return false;
   if (untabbable(el) || el.closest("[aria-hidden=true]")) return false;
-  return Array.prototype.some.call(el.labels || [], labelSeen);
+  return Array.from(el.labels || []).some(labelSeen);
 }
 // Best-named boxes for a.label_pattern: nameTier over accName, then over the
 // hint one tier group lower; a box wrapping another hit is that same hit.
@@ -5186,10 +5214,10 @@ function checkByLabel(a, only) {
 function radioMates(el) {
   if (el.tagName !== "INPUT") {
     const g = el.closest("[role=radiogroup]");
-    return g ? Array.prototype.slice.call(g.querySelectorAll("[role=radio]")) : [el];
+    return g ? Array.from(g.querySelectorAll("[role=radio]")) : [el];
   }
   if (!el.name) return [el];
-  return Array.prototype.filter.call((el.form || el.ownerDocument).querySelectorAll("input[type=radio]"), function (x) { return x.name === el.name && x.form === el.form; });
+  return Array.from((el.form || el.ownerDocument).querySelectorAll("input[type=radio]")).filter(function (x) { return x.name === el.name && x.form === el.form; });
 }
 // A click as a person's lands: a role=radio or role=checkbox box holding a
 // <label> for its own input gets it on that label, which activates the input
@@ -5264,7 +5292,7 @@ function optName(o) {
   return clip(t || o.value, 120);
 }
 function groupQuestion(box, opts) {
-  const others = function (n) { return Array.prototype.some.call(n.querySelectorAll(RADIO_OPT), function (r) { return opts.indexOf(r) < 0 && !opts.some(function (o) { return o.contains(r); }); }); };
+  const others = function (n) { return Array.from(n.querySelectorAll(RADIO_OPT)).some(function (r) { return opts.indexOf(r) < 0 && !opts.some(function (o) { return o.contains(r); }); }); };
   for (let n = box, up = 0; n && up < 4 && n !== document.body && !others(n); n = n.parentElement, up++) {
     if (attr(n, "aria-labelledby") || attr(n, "aria-label")) { const t = labelText(n); if (t) return t; }
     if (n.tagName === "FIELDSET") {
@@ -5341,7 +5369,7 @@ function ctlParts(el) {
   if (sv) { const one = [textOf(sv)]; one.single = true; return one; }
   let chips = c.querySelectorAll('[class*="multi-value__label"], [class*="multiValue__label"]');
   if (!chips.length) chips = c.querySelectorAll('[class*="multi-value"]:not([class*="__"]), [class*="multiValue"]:not([class*="__"])');
-  return Array.prototype.map.call(chips, textOf);
+  return Array.from(chips).map(textOf);
 }
 function shownValue(el) {
   const p = ctlParts(el);
@@ -5464,7 +5492,8 @@ function wantName(el) {
 function census(f) {
   const fields = Array.from(f.querySelectorAll(FIELDS)).filter(textish);
   let cands = Array.from(f.querySelectorAll(FIELDS + ", " + TICKS + ", " + BOXES));
-  const outside = Array.from(f.elements || []).filter(function (el) { return !f.contains(el) && el.matches(FIELDS); });
+  // Only a form= attribute ties a field outside the form to it.
+  const outside = f.id ? Array.from(f.getRootNode().querySelectorAll("[form]")).filter(function (el) { return el.form === f && !f.contains(el) && el.matches(FIELDS); }) : [];
   if (outside.length) cands = cands.concat(outside).sort(function (a, b) { return a.compareDocumentPosition(b) & 4 ? -1 : 1; });
   const want = [], loose = [], radios = new Map();
   cands.forEach(function (el) {
@@ -5815,7 +5844,7 @@ function revealers(re, nearHit) {
     }
     return wide.get(p);
   };
-  Array.prototype.forEach.call(document.querySelectorAll("button, [role=button], a[href], input[type=button]"), function (el, i) {
+  document.querySelectorAll("button, [role=button], a[href], input[type=button]").forEach(function (el, i) {
     if (!vis(el) || isDisabled(el) || attr(el, "type").toLowerCase() === "submit") return;
     const name = accName(el);
     if (!name || REVEAL_SKIP.test(name)) return;
@@ -5994,7 +6023,7 @@ function fillOne(a, only, onLand) {
   const inFrame = function (d) { try { return !!d && deepAll(EDITABLES, d).some(fillable); } catch (e) { return false; } };
   const crowd = new Map();
   const fieldsIn = function (p) {
-    if (!crowd.has(p)) crowd.set(p, Array.prototype.filter.call(p.querySelectorAll(EDITABLES), fillable).length);
+    if (!crowd.has(p)) crowd.set(p, Array.from(p.querySelectorAll(EDITABLES)).filter(fillable).length);
     return crowd.get(p);
   };
   // A placeholder names another field when it is a short name ("Name",
@@ -6040,13 +6069,13 @@ function fillOne(a, only, onLand) {
   });
   scored.sort(function (a, b) { return b.s - a.s; });
   if (only && !scored.length && !passed.length) return { ok: true, skipped: "absent" };
+  let shown = scored.filter(function (c) { return fieldVis(c.el); });
+  // With nothing shown to fill: buttons that may show the field, or the frame it may sit in.
+  const reveal = shown.length ? [] : revealers(re, nearHit), framed = !shown.length && !reveal.length && frameHint(inFrame);
   if (!scored.length) {
-    const none = "no fillable field matched /" + a.label_pattern + "/i", miss = none + "; it may appear ";
-    const reveal = revealers(re, nearHit);
-    const framed = !reveal.length && frameHint(inFrame);
-    const out = framed ? { ok: false, error: none + framed }
-      : !reveal.length ? { ok: false, error: miss + "only after clicking a button" }
-      : { ok: false, error: miss + REVEAL_HOW, reveal: reveal };
+    const none = "no fillable field matched /" + a.label_pattern + "/i";
+    const out = { ok: false, error: framed ? none + framed : none + "; it may appear " + (reveal.length ? REVEAL_HOW : "only after clicking a button") };
+    if (reveal.length) out.reveal = reveal;
     if (passed.length) {
       out.error += "; candidates sit near matching text but carry other labels";
       out.candidates = passed.slice(0, 5).map(function (el) {
@@ -6056,16 +6085,12 @@ function fillOne(a, only, onLand) {
     }
     return out;
   }
-  let shown = scored.filter(function (c) { return fieldVis(c.el); });
   if (!shown.length) {
     const el = ident(scored[0].el), hit = el + " matched /" + a.label_pattern + "/i but ";
     if (scored.every(function (c) { return trapLike(c.el); })) return only ? { ok: true, skipped: "trap", el: el } : { ok: false, el: el, error: hit + "it looks like a bot trap; leave it empty" };
-    const reveal = revealers(re, nearHit);
-    const why = hit + "the field is hidden; ", any = ", or pass its ref or selector to fill it anyway";
-    const framed = !reveal.length && frameHint(inFrame);
-    if (framed) return { ok: false, el: el, error: why + framed.slice(2) + any };
-    return !reveal.length ? { ok: false, el: el, error: why + "it may show only after clicking a button" + any }
-      : { ok: false, el: el, error: why + "it may show " + REVEAL_HOW, reveal: reveal };
+    const out = { ok: false, el: el, error: hit + "the field is hidden; " + (framed ? framed.slice(2) : "it may show " + (reveal.length ? REVEAL_HOW : "only after clicking a button")) + (reveal.length ? "" : ", or pass its ref or selector to fill it anyway") };
+    if (reveal.length) out.reveal = reveal;
+    return out;
   }
   // A shown field that looks like a trap (trapLike: untabbable with autofill
   // off, even when required, or named to be left blank) yields to a normal match scoring
@@ -6090,19 +6115,19 @@ function fillOne(a, only, onLand) {
   // A disabled winner refuses the fill; only an enabled field of equal score stands in.
   const best = shown.find(function (c) { return c.s === shown[0].s && !unsent(c.el); }) || shown[0];
   if (unsent(best.el)) return refuse(best.el);
-  if (only) {
-    // Two fields each named by their own label, neither favoured: guessing would
-    // put the value in the wrong one.
-    const tied = shown.filter(function (c) { return c.s >= 100 && c.s === best.s && (c === best || (!c.el.contains(best.el) && !best.el.contains(c.el))); });
-    if (tied.length > 1) return { ok: true, skipped: "ambiguous", candidates: tied.slice(0, 3).map(function (c) { return ident(c.el); }) };
-    const kept = keep(isField(best.el) ? best.el : best.root, best.el);
-    if (kept) return kept;
-  }
-  const out = tryFill(isField(best.el) ? best.el : best.root, best.el);
+  // Two fields each named by their own label, neither favoured: guessing would
+  // put the value in the wrong one. only_empty skips them; trusted typing posts
+  // real input, so it types nothing.
+  const cid = function (c) { return ident(c.el); };
+  const tied = shown.filter(function (c) { return c.s >= 100 && c.s === best.s && (c === best || (!c.el.contains(best.el) && !best.el.contains(c.el))); }).slice(0, 3).map(cid);
+  if (tied.length > 1 && (only || a.trusted)) return only ? { ok: true, skipped: "ambiguous", candidates: tied } : { ok: false, ambiguous: true, error: "several fields matched /" + a.label_pattern + "/i equally; narrow it, or use a selector or ref", candidates: tied };
+  const host = isField(best.el) ? best.el : best.root, kept = keep(host, best.el);
+  if (kept) return kept;
+  const out = tryFill(host, best.el);
   if (!out) return { ok: false, error: ident(best.el) + " did not accept the text" };
   if (out.ok === false) return out;
   const rivals = shown.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
-  if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(function (c) { return ident(c.el); });
+  if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(cid);
   if (flagged.indexOf(best) >= 0 && trapShaped(best.el)) out.warning = trapWarning(best.el);
   return out;
 }
@@ -6123,7 +6148,7 @@ const invErrish = function (n) { return n.matches("[role=alert], [aria-live]:not
 const invStandin = function (x) { return attr(x, "aria-hidden") === "true" && attr(x, "tabindex") === "-1"; };
 function invNative(el) {
   if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || /^(checkbox|radio|file)$/i.test(el.type || "")) return false;
-  return el.willValidate !== false && !!el.validity && !el.validity.valid && String(el.value || "") !== "";
+  return String(el.value || "") !== "" && el.willValidate !== false && !!el.validity && !el.validity.valid;
 }
 // The element carrying aria-invalid for el (el itself, else the group or
 // combobox around it; up only when asked), or el when it fails natively.
@@ -6168,11 +6193,10 @@ function invalidSet(doc) {
   doc = doc || document;
   const seen = [];
   const add = function (c) { if (c && seen.indexOf(c) < 0) seen.push(c); };
-  doc.querySelectorAll("[aria-invalid=true]").forEach(function (c) {
-    if (invStandin(c) || !(vis(c) || (c.parentElement && vis(c.parentElement) && getComputedStyle(c).display !== "none"))) return;
-    add(c);
+  doc.querySelectorAll("[aria-invalid=true], input, textarea, select").forEach(function (c) {
+    if (attr(c, "aria-invalid") === "true" && !invStandin(c) && (vis(c) || (c.parentElement && vis(c.parentElement) && getComputedStyle(c).display !== "none"))) add(c);
+    else if (invNative(c) && vis(c)) add(c);
   });
-  doc.querySelectorAll("input, textarea, select").forEach(function (el) { if (invNative(el) && vis(el)) add(el); });
   const outer = seen.filter(function (c) { return !seen.some(function (o) { return o !== c && o.contains(c); }); });
   outer.sort(function (a, b) { return a.compareDocumentPosition(b) & 2 ? 1 : -1; });
   return outer.map(function (c) {
@@ -6294,7 +6318,9 @@ function stepRoots(scope) {
 function stepOf(scope) {
   if (!scope || !scope.isConnected) return null;
   const roots = stepRoots(scope);
-  for (const r of roots) {
+  // The outermost root holds every inner one, so a miss there settles them all.
+  const marked = roots[roots.length - 1].querySelector("[aria-current=step], [role=progressbar][aria-valuenow][aria-valuemax]") ? roots : [];
+  for (const r of marked) {
     const cur = r.querySelector("[aria-current=step]");
     if (!cur) continue;
     const li = cur.closest("li, [role=listitem]");
@@ -6305,7 +6331,7 @@ function stepOf(scope) {
     }
     return clip(textOf(cur), 40) || null;
   }
-  for (const r of roots) {
+  for (const r of marked) {
     const bar = r.querySelector("[role=progressbar][aria-valuenow][aria-valuemax]");
     if (bar) return attr(bar, "aria-valuenow") + "/" + attr(bar, "aria-valuemax");
   }
@@ -6549,15 +6575,12 @@ if (A.select) {
   const off = !A.forFill && inertCtl(el);
   if (off) return inertOut(off);
 } else {
-  const re = new RegExp(A.label_pattern, "i");
-  const fields = Array.from(document.querySelectorAll("input, textarea")).filter(function (e) {
-    return !(e.tagName === "INPUT" && INPUT_SKIP.indexOf((e.type || "text").toLowerCase()) >= 0) && !e.disabled && !e.readOnly;
-  });
-  const hit = function (e) { return re.test(labelText(e)) || re.test(hintText(e)); };
-  el = fields.filter(vis).find(hit) || fields.find(hit);
-  if (!el) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
+  // fill by label: the field TRUSTED_LABEL_LIB held.
+  el = taNow && !taLost && taNow.held ? taNow.el : null;
+  if (!el || !el.isConnected) return { ok: false, error: "the page changed before the trusted entry; not filled" };
 }
 if (A.forFill && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, error: "fill {trusted:true} types into plain inputs/textareas only; rich editors work without trusted" };
+if (A.forFill && (el.disabled || el.readOnly)) return { ok: false, error: ident(el) + " is disabled or read-only" };
 const FRAMED = " is or lies under an embedded frame; reach frame controls through accessibility_snapshot {frames:true} and click an fN ref with trusted:true";
 const inFrame = function (e) { return !!(e && e.closest && e.closest("iframe, frame, object, embed")); };
 if (inFrame(el)) return { ok: false, error: ident(el) + FRAMED };
@@ -6613,6 +6636,69 @@ return {
   tok: selTok,
 };`;
 
+// fill's probe also records a typeahead (as TRUSTED_FILL_BG does) before the
+// field is cleared, so the check can hand it to the pick. Its answer's tok is
+// that state's owner token.
+const TRUSTED_FILL_PROBE_TA = String.raw`
+if (A.forFill) {
+  const ta = isTypeahead(el) && taParts(el);
+  if (ta) {
+    selTok = rbTok();
+    window.__perch_ta = { key: taKey, tok: selTok, el: el, comp: ta.comp, pop: ta.pop, prior: el.value, priorComp: ta.comp && ta.comp.value };
+  } else if (taNow && !taLost) window.__perch_ta = null;
+}
+`;
+
+// fill {trusted, label_pattern}: plain fill's ranking (fillOne) picks the field
+// and holds it on __perch_ta, or answers its miss, refusal or tie, before
+// TA_OWN_LIB reads the state. The trusted scripts after it take the held field.
+const TRUSTED_LABEL_LIB = FILL_LIB + String.raw`
+const lpHeld = fillOne(A);
+if (!lpHeld.pending) return lpHeld;
+`;
+
+// Background trusted fill through the editing command (EDIT_LIB).
+// A.held: the field a fill_fields pass resolved for a trusted entry and
+// held on __perch_ta, taken once. A plain one that lands joins that batch's
+// __perch_ff at A.at, so later passes recheck it as they do their own.
+// A held entry's answers carry the held state's owner token, which a
+// typeahead's own state keeps. By label, TRUSTED_LABEL_LIB holds the field
+// first, as a fill_fields pass does.
+const TRUSTED_FILL_BG = String.raw`
+let el;
+const holding = A.held || (!!A.label_pattern && !A.ref && !A.selector);
+const h = holding ? taNow : null;
+if (holding) {
+  if (taLost) return taLost;
+  el = h && h.held && h.el;
+  if (!el || !el.isConnected) return { ok: false, error: "the page changed before the trusted entry; not filled" };
+  h.held = false;
+} else {
+  const r = resolveEl(A);
+  if (r.out) return r.out;
+  el = r.el;
+}
+if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, el: ident(el), error: "fill {trusted:true} supports plain inputs/textareas only" };
+if (el.disabled || el.readOnly) return { ok: false, error: ident(el) + " is disabled or read-only" };
+// A typeahead keeps only a picked suggestion: Node picks after the lookup.
+const ta = isTypeahead(el) && taParts(el);
+const tok = h ? h.tok : ta ? rbTok() : undefined;
+if (ta) window.__perch_ta = { key: taKey, tok: tok, el: el, comp: ta.comp, pop: ta.pop, text: A.text, prior: el.value, priorComp: ta.comp && ta.comp.value };
+const e = editType(el, A.text);
+if (!e.focused) return { ok: false, error: ident(el) + " did not accept focus" };
+if (e.ok && ta) {
+  el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: A.text.slice(-1) }));
+  return { pending: true, trusted: true, tok: tok };
+}
+const ff = A.held && e.ok && window.__perch_ff;
+if (ff) {
+  for (const k in ff.items) if (ff.items[k].el === el) delete ff.items[k];
+  ff.items[A.at] = { el: el, want: el.value, text: A.text, id: ident(el), kind: "plain", f: A.f, key: { id: el.id, name: el.name, form: el.form }, shown: vis(el) };
+  if (!("form" in ff)) ff.form = el.form || el.closest("form");
+}
+return { ok: e.ok, trusted: e.trusted, value: e.value, el: ident(el), ...(h ? { tok: tok } : {}), ...(e.ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
+`;
+
 export const SHOT_BUSY = "screenshot: another perch call on this tab is mid-screenshot; nothing was scrolled or captured, retry";
 
 export const PAGE_SCRIPTS = {
@@ -6628,6 +6714,26 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
   snapshot: INVALID_LIB + STEP_LIB + TA_BOX_LIB + CENSUS_LIB + EMBED_LIB + String.raw`
 const refs = {};
 window.__perch_refs = refs;
+// el.labels searches the whole tree for label[for] on every read. The snapshot
+// changes nothing, so a field with an id takes its labels from one scan per
+// root when that scan settles them: one label for its id, which is its own,
+// and no wrapping label.
+const labelMaps = new Map();
+LABELS = function (el) {
+  if (!el.id || !("labels" in el) || (el.tagName === "INPUT" && /^hidden$/i.test(el.type))) return el.labels;
+  const root = el.getRootNode();
+  if (root.nodeType !== 9 && root.nodeType !== 11) return el.labels;
+  let m = labelMaps.get(root);
+  if (!m) {
+    m = new Map();
+    for (const l of root.querySelectorAll("label[for]")) m.set(l.htmlFor, m.has(l.htmlFor) ? null : l);
+    labelMaps.set(root, m);
+  }
+  if (el.closest("label")) return el.labels;
+  if (!m.has(el.id)) return [];
+  const l = m.get(el.id);
+  return l && root.getElementById(el.id) === el ? [l] : el.labels;
+};
 // Names this map for the server that asked: its ref calls carry it back as
 // A.rid, so a ref meets only the map it came from.
 const rid = window.__perch_refsId = Math.random().toString(36).slice(2, 10) || "0";
@@ -6635,7 +6741,11 @@ const rid = window.__perch_refsId = Math.random().toString(36).slice(2, 10) || "
 // base its load time picks, so a ref from any earlier snapshot names no row here.
 if (!Number.isSafeInteger(window.__perch_refN) || window.__perch_refN < 0 || window.__perch_refN > 1e9) window.__perch_refN = Math.floor((window.__perch_refN === undefined ? ((window.performance || {}).timeOrigin || 0) : Date.now() * 7) % 900);
 const n0 = window.__perch_refN;
-const SEL = 'a[href], button, input:not([type=hidden]), textarea, select, [role], [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
+const OWN = 'a[href], button, input:not([type=hidden]), textarea, select, [tabindex]:not([tabindex="-1"]), h1, h2, h3, h4, h5, h6, [contenteditable]:not([contenteditable=false]), summary';
+const SEL = OWN + ", [role]";
+// Structure and live-region roles name nothing to act on: such an element gets
+// a row only when OWN lists it anyway, or the caller asks for its role.
+const INERT = /^(main|navigation|banner|contentinfo|complementary|region|form|search|article|section|document|feed|list|listitem|directory|presentation|none|generic|group|img|image|figure|separator|status|log|marquee|timer|note|paragraph|blockquote|caption|code|emphasis|strong|term|definition|time|mark|table|rowgroup|cell|tabpanel|toolbar|tooltip)(\s|$)/;
 const roles = A.role == null ? null : [].concat(A.role);
 const q = JSON.stringify;
 const origin = location.origin;
@@ -6682,26 +6792,59 @@ const embedded = embeds();
 const frameDocs = new Map();
 embedded.forEach(function (e, i) { if (e.same && e.f.contentDocument) frameDocs.set(e.f.contentDocument, i); });
 function frameTag(el) { return el.ownerDocument === document ? "" : " frame=" + frameDocs.get(el.ownerDocument); }
-let n = n0, matched = 0, truncated = false;
+let act = document.activeElement;
+while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+for (let inner; act && (inner = embedded.some(function (e) { return e.same && e.f === act; }) ? act.contentDocument : null) && inner.activeElement && inner.activeElement !== inner.body;) {
+  act = inner.activeElement;
+  while (act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+}
+const DLG = "[role=dialog], [aria-modal=true], dialog[open]", marks = Array.from(document.querySelectorAll("form, " + DLG));
+const dlgs = marks.filter(function (el) { return el.matches(DLG) && vis(el); });
+// Which rows a capped snapshot keeps first: 0, the focused element and an open
+// dialog's; 1, form fields, and checkboxes, radios and submit buttons of a form.
+function rank(el, r) {
+  if (el === act || dlgs.some(function (d) { return d.contains(el); })) return 0;
+  if (/^(textbox|searchbox|combobox|spinbutton|slider)$/.test(r)) return 1;
+  if (/^(checkbox|radio|switch)$/.test(r)) return (el.form !== undefined ? el.form : el.closest("form")) ? 1 : 2;
+  return r === "button" && el.form && /^(submit|image)$/.test(el.type) ? 1 : 2;
+}
+// Rows are taken by rank, then document order, until max, and print in
+// document order. Without a query, once max rows are taken and one more shows,
+// the rest are counted unchecked, so omitted is at most that many rows.
+let n = n0, matched = 0, truncated = false, omitted = 0;
+const tiers = [[], [], []], kept = [], cut = new Set(), shown = new Set();
+let seq = 0;
 function walk(root) {
   for (const el of deepAll(SEL, root)) {
     const r = role(el);
-    if (roles && roles.indexOf(r) < 0) continue;
-    if (!snapVis(el) || standIn(el)) continue;
-    if (!re && n - n0 >= A.max) { truncated = true; return; }
-    const line = describe(el, r, accName(el)) + frameTag(el);
-    if (re && !re.test(line)) continue;
-    matched++;
-    if (n - n0 >= A.max) { truncated = true; continue; }
-    const ref = String(++n);
-    refs[ref] = el;
-    lines.push(ref + " " + line);
+    if (roles ? roles.indexOf(r) < 0 : INERT.test(r) && !el.matches(OWN)) continue;
+    tiers[rank(el, r)].push({ el: el, r: r, i: seq++ });
   }
+}
+walk(null);
+frameDocs.forEach(function (i, d) { walk(d); });
+for (const c of tiers[0].concat(tiers[1], tiers[2])) {
+  if (!re && omitted) { omitted++; cut.add(c.el.ownerDocument); continue; }
+  if (!snapVis(c.el) || standIn(c.el)) continue;
+  shown.add(c.el);
+  if (re) {
+    c.line = describe(c.el, c.r, accName(c.el)) + frameTag(c.el);
+    if (!re.test(c.line)) continue;
+    matched++;
+  }
+  if (kept.length < A.max) kept.push(c);
+  else { omitted++; cut.add(c.el.ownerDocument); }
+}
+if (omitted) truncated = true;
+kept.sort(function (a, b) { return a.i - b.i; });
+for (const c of kept) {
+  const ref = String(++n);
+  refs[ref] = c.el;
+  lines.push(ref + " " + (c.line || describe(c.el, c.r, accName(c.el)) + frameTag(c.el)));
 }
 // A frame counts as walked only when the cap left all its rows listed.
 const walkedFrames = new Set();
-walk(null);
-frameDocs.forEach(function (i, d) { if (re || !truncated) walk(d); if (!truncated) walkedFrames.add(i); });
+frameDocs.forEach(function (i, d) { if (!cut.has(d)) walkedFrames.add(i); });
 // The shown boxes around a hidden field, nearest first, up to one holding more
 // than 5 fields: their label text names the field when nothing else does, and
 // they hold the button that reveals it.
@@ -6752,7 +6895,7 @@ function hiddenRows(cands) {
     const line = describe(el, r, name) + (seen ? "" : " hidden") + frameTag(el);
     if (re && !re.test(line)) continue;
     matched++;
-    if (n - n0 >= A.max) { truncated = true; continue; }
+    if (n - n0 >= A.max) { truncated = true; omitted++; continue; }
     shown++;
     const ref = String(++n);
     refs[ref] = el;
@@ -6764,12 +6907,12 @@ function hiddenRows(cands) {
   }
 }
 let form = null;
-let forms = Array.from(document.querySelectorAll("form"));
+let forms = marks.filter(function (el) { return el.tagName === "FORM"; });
 frameDocs.forEach(function (i, d) { forms = forms.concat(Array.from(d.querySelectorAll("form"))); });
 forms = forms.filter(vis);
 if (forms.length) {
-  let big = forms[0];
-  forms.forEach(function (f) { if (f.querySelectorAll(FIELDS).length > big.querySelectorAll(FIELDS).length) big = f; });
+  let big = forms[0], most = -1;
+  forms.forEach(function (f) { const k = f.querySelectorAll(FIELDS).length; if (k > most) { big = f; most = k; } });
   const c = census(big), loose = c.loose, empty = c.empty;
   form = { fields: c.fields.length, requiredEmpty: empty.length };
   if (loose.length) form.unpicked = loose.length;
@@ -6777,7 +6920,7 @@ if (forms.length) {
   if (inv) form.invalid = inv;
   const step = stepOf(big);
   if (step) form.step = step;
-  const unseen = empty.filter(function (el) { return !snapVis(el); });
+  const unseen = empty.filter(function (el) { return !shown.has(el) && !snapVis(el); });
   if (unseen.length) hiddenRows(unseen);
 }
 window.__perch_refN = n;
@@ -6795,19 +6938,13 @@ if (A.frames) {
   if (fr.length) head.fr = fr;
 }
 if (re) head.matched = matched;
-if (truncated) head.truncated = true;
-let act = document.activeElement;
-while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
-for (let inner; act && (inner = embedded.some(function (e) { return e.same && e.f === act; }) ? act.contentDocument : null) && inner.activeElement && inner.activeElement !== inner.body;) {
-  act = inner.activeElement;
-  while (act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
-}
+if (truncated) { head.truncated = true; head.omitted = omitted; }
 if (act && act !== document.body && act !== document.documentElement) {
   let fr = null;
   for (const k in refs) if (refs[k] === act) { fr = k; break; }
   head.focus = fr || ident(act);
 }
-const dialogs = Array.from(document.querySelectorAll("[role=dialog], [aria-modal=true], dialog[open]")).filter(vis).slice(0, 5).map(accName);
+const dialogs = dlgs.slice(0, 5).map(accName);
 if (dialogs.length) head.dialogs = dialogs;
 if (form) head.form = form;
 if (embedded.length) head.iframes = embedded.map(function (e) {
@@ -7073,7 +7210,7 @@ function twin(it) {
   let x = k.id && document.getElementById(k.id);
   if (ok(x)) return { el: x };
   if (k.name && k.form && k.form.isConnected) {
-    x = Array.prototype.find.call(k.form.elements, function (e) { return e.name === k.name && (!("value" in k) || e.value === k.value); });
+    x = Array.from(k.form.elements).find(function (e) { return e.name === k.name && (!("value" in k) || e.value === k.value); });
     if (ok(x)) return { el: x };
   }
   const f = it.f;
@@ -7086,7 +7223,7 @@ function twin(it) {
     return nat ? { el: nat } : null;
   }
   const re = new RegExp(f.label_pattern, "i");
-  const all = Array.prototype.filter.call(document.querySelectorAll("textarea, input, [contenteditable]"), fillable);
+  const all = Array.from(document.querySelectorAll("textarea, input, [contenteditable]")).filter(fillable);
   const hits = all.filter(function (e) { return re.test(labelText(e)); }).concat(all.filter(function (e) { return !re.test(labelText(e)) && re.test(hintText(e)); }));
   x = hits.filter(fieldVis)[0] || hits[0];
   return ok(x) ? { el: x } : null;
@@ -7685,6 +7822,8 @@ if ((!changed || inFlight) && !A.final && !settled) return { pending: true, tok:
 rbStop(s);
 const out = { readback: text, changed: changed, tok: s.tok };
 if (moved) out.url = location.href;
+// The cap's read on a page still active: the outcome may still be coming.
+if (A.final && !settled) out.settled = false;
 if (invNew.length) {
   out.invalid = inv.slice(0, 5).map(function (c) { return clip(c.name + (c.msg ? ": " + c.msg : ""), 140); });
   if (inv.length > 5) out.invalidCount = inv.length;
@@ -8060,18 +8199,9 @@ return out;
 `,
 
   trusted_probe: TRUSTED_PROBE_HEAD + TRUSTED_PROBE_TAIL,
-  // fill's probe also records a typeahead (as trusted_fill_background does)
-  // before the field is cleared, so the check can hand it to the pick.
-  // Its answer's tok is that state's owner token.
-  trusted_fill_probe: TOK_LIB + TYPEAHEAD_LIB + TA_OWN_LIB + TRUSTED_PROBE_HEAD + String.raw`
-if (A.forFill) {
-  const ta = isTypeahead(el) && taParts(el);
-  if (ta) {
-    selTok = rbTok();
-    window.__perch_ta = { key: taKey, tok: selTok, el: el, comp: ta.comp, pop: ta.pop, prior: el.value, priorComp: ta.comp && ta.comp.value };
-  } else if (taNow && !taLost) window.__perch_ta = null;
-}
-` + TRUSTED_PROBE_TAIL,
+  // fill's probe; the _label forms resolve by label through TRUSTED_LABEL_LIB.
+  trusted_fill_probe: TOK_LIB + TYPEAHEAD_LIB + TA_OWN_LIB + TRUSTED_PROBE_HEAD + TRUSTED_FILL_PROBE_TA + TRUSTED_PROBE_TAIL,
+  trusted_fill_probe_label: TRUSTED_LABEL_LIB + TA_OWN_LIB + TRUSTED_PROBE_HEAD + TRUSTED_FILL_PROBE_TA + TRUSTED_PROBE_TAIL,
 
   // A click by point has no element to probe, so it takes the viewport rects of
   // the page's embedded frames, plus the page's own estimate of its screen origin
@@ -8106,53 +8236,8 @@ st.moves = [];
 return A.reset || !moves.length ? null : { moves: moves };
 `,
 
-  // Background trusted fill through the editing command (EDIT_LIB).
-  // A.held: the field a fill_fields pass resolved for a trusted entry and
-  // held on __perch_ta, taken once. A plain one that lands joins that batch's
-  // __perch_ff at A.at, so later passes recheck it as they do their own.
-  // A held entry's answers carry the held state's owner token, which a
-  // typeahead's own state keeps.
-  trusted_fill_background: TOK_LIB + TYPEAHEAD_LIB + EDIT_LIB + TA_OWN_LIB + String.raw`
-let el;
-const h = A.held ? taNow : null;
-if (A.held) {
-  if (taLost) return taLost;
-  el = h && h.held && h.el;
-  if (!el || !el.isConnected) return { ok: false, error: "the page changed before the trusted entry; not filled" };
-  h.held = false;
-} else if (A.ref || A.selector) {
-  const r = resolveEl(A);
-  if (r.out) return r.out;
-  el = r.el;
-} else {
-  const re = new RegExp(A.label_pattern, "i");
-  const fields = Array.from(document.querySelectorAll("input, textarea")).filter(function (e) {
-    return !(e.tagName === "INPUT" && INPUT_SKIP.indexOf((e.type || "text").toLowerCase()) >= 0) && !e.disabled && !e.readOnly;
-  });
-  const hit = function (e) { return re.test(labelText(e)) || re.test(hintText(e)); };
-  el = fields.filter(vis).find(hit) || fields.find(hit);
-  if (!el) return { ok: false, error: "no fillable field matched /" + A.label_pattern + "/i" };
-}
-if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, el: ident(el), error: "fill {trusted:true} supports plain inputs/textareas only" };
-if (el.disabled || el.readOnly) return { ok: false, error: ident(el) + " is disabled or read-only" };
-// A typeahead keeps only a picked suggestion: Node picks after the lookup.
-const ta = isTypeahead(el) && taParts(el);
-const tok = h ? h.tok : ta ? rbTok() : undefined;
-if (ta) window.__perch_ta = { key: taKey, tok: tok, el: el, comp: ta.comp, pop: ta.pop, text: A.text, prior: el.value, priorComp: ta.comp && ta.comp.value };
-const e = editType(el, A.text);
-if (!e.focused) return { ok: false, error: ident(el) + " did not accept focus" };
-if (e.ok && ta) {
-  el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: A.text.slice(-1) }));
-  return { pending: true, trusted: true, tok: tok };
-}
-const ff = A.held && e.ok && window.__perch_ff;
-if (ff) {
-  for (const k in ff.items) if (ff.items[k].el === el) delete ff.items[k];
-  ff.items[A.at] = { el: el, want: el.value, text: A.text, id: ident(el), kind: "plain", f: A.f, key: { id: el.id, name: el.name, form: el.form }, shown: vis(el) };
-  if (!("form" in ff)) ff.form = el.form || el.closest("form");
-}
-return { ok: e.ok, trusted: e.trusted, value: e.value, el: ident(el), ...(h ? { tok: tok } : {}), ...(e.ok ? {} : { error: "background editing did not produce the requested trusted input" }) };
-`,
+  trusted_fill_background: TOK_LIB + TYPEAHEAD_LIB + EDIT_LIB + TA_OWN_LIB + TRUSTED_FILL_BG,
+  trusted_fill_background_label: TRUSTED_LABEL_LIB + EDIT_LIB + TA_OWN_LIB + TRUSTED_FILL_BG,
 
   // hit: the mousedown landed on the element (a click by point: on the page, at
   // `el`); null: no mousedown reached the page; missing: no recorder, a new document.
@@ -8323,9 +8408,15 @@ return { fresh: true, act: n.act, tok: n.tok };
 const order = { loading: 0, interactive: 1, complete: 2 };
 if (A.readyState && order[document.readyState] < order[A.readyState]) return false;
 if (!A.selector) return true;
-let el;
-try { el = document.querySelector(A.selector); } catch (e) { return { bad: true }; }
-return !!el;
+// Found as click and fill resolve a selector: the document, then open shadow
+// roots. Each root is queried whole rather than matching every element, as
+// this runs on every poll.
+function deepOne(root) {
+  if (root.querySelector(A.selector)) return true;
+  for (const h of root.querySelectorAll("*")) if (h.shadowRoot && deepOne(h.shadowRoot)) return true;
+  return false;
+}
+try { return deepOne(document); } catch (e) { return { bad: true }; }
 `,
 };
 
@@ -8692,10 +8783,11 @@ async function trustedClick({ ref, selector, label_pattern, x, y, raise, target,
 // foreground route keeps the hardware-style keystrokes. Both verify the value.
 async function trustedFill({ ref, selector, label_pattern, text, trusted, raise, target }) {
   const key = { ref, selector, label_pattern, text, trusted };
-  if (!raise) return runPage("fill", "trusted_fill_background", key, target);
+  const by = label_pattern && !ref && !selector ? "_label" : "";
+  if (!raise) return runPage("fill", "trusted_fill_background" + by, key, target);
   return rt("trustedFill", {
     target, raise,
-    probe: pageFn("trusted_fill_probe", { ...key, forFill: true, background: !raise }),
+    probe: pageFn("trusted_fill_probe" + by, { ...key, forFill: true, background: !raise }),
     cal: pageFn("trusted_cal", {}),
     calReset: pageFn("trusted_cal", { reset: true }),
     check: pageFn("trusted_check", { ...key, forFill: true }),
@@ -9240,6 +9332,7 @@ export const INSTRUCTIONS = `perch drives the user's own macOS browsers over App
 Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With no target, tools use the active tab of the topmost browser window.
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
+Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
 Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS alert/confirm/prompt is open: press {dialog}), bad_url (only http(s), file or about:blank), bad_args (fix the call). Only activate_tab and raise:true take focus.`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
@@ -9297,8 +9390,8 @@ const TOOLS = [
     offset: { type: "number" },
     target: TARGET,
   }),
-  tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`.", {
-    max: { type: "number", description: "Element cap, default 500; 0 = header only." },
+  tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`. `truncated`/`omitted`: rows cut; narrow by role or query, not missing.", {
+    max: { type: "number", description: "Row cap, default 500 (dialogs, focus, fields first); 0 = header only." },
     role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles (textbox, button…)." },
     query: { type: "string", description: "Keep lines matching this regex." },
     frames: { type: "boolean", description: "Add iframe controls from Accessibility as `fN` rows (the tab its window shows); fN takes only click {trusted:true}." },

@@ -66,9 +66,9 @@ test("trusted_probe with label_pattern aims at the control click would pick", ()
   assert.match(run(w, "trusted_probe", { label_pattern: "app" }).error, /^ambiguous/);
 });
 
-test("trusted_probe for fill skips checkboxes/hidden and refuses rich editors", () => {
-  const w = page(`<label>Email <input type=checkbox></label><label>Email <input id=e></label><div contenteditable aria-label="Email body"></div>`);
-  const o = run(w, "trusted_probe", { label_pattern: "email", forFill: true });
+test("trusted_fill_probe skips checkboxes by label and refuses rich editors", () => {
+  const w = page(`<label>Email <input type=checkbox></label><label>Email <input id=e></label><div contenteditable aria-label="Message body"></div>`);
+  const o = run(w, "trusted_fill_probe_label", { label_pattern: "email", text: "a@b.test", trusted: true, forFill: true });
   assert.equal(o.el, `textbox "Email"`);
   assert.equal(run(w, "trusted_probe", { ref: "1", forFill: true }).__perch_ref_miss, true);
   w.eval(`window.__perch_refsId = 'm'; window.__perch_refs = { '1': document.querySelector('[contenteditable]') }`);

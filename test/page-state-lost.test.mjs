@@ -18,6 +18,8 @@ const STARTS = {
   readback_arm: "records a fresh readback",
   file_upload: "records a fresh upload state",
   trusted_fill_background: "records a fresh typeahead state for the typed field",
+  trusted_fill_background_label: "holds the field fill's ranking picks",
+  trusted_fill_probe_label: "holds the field fill's ranking picks",
 };
 
 // The least each reader needs besides its lost state.

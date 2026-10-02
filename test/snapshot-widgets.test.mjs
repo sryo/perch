@@ -262,3 +262,24 @@ test("snapshot: the pickers fixture's location field reads unpicked until a sugg
   assert.match(lineOf(lines, "Work location"), /value="Rosario, Santa Fe, Argentina" required$/);
   assert.deepEqual(head.form, { fields: 1, requiredEmpty: 0 });
 });
+
+test("snapshot: landmark, list and presentational roles get no rows unless the element is itself actionable", () => {
+  const w = page(`<main role=main><nav role=navigation><ul role=list><li role=listitem><a href=#>Home</a></li><li role=listitem><a href=#>Pricing</a></li></ul></nav><p>Lorem ipsum</p></main>
+    <table role=presentation><tr><td>x</td></tr></table><div role=region></div><div role=img></div><div role=status>Saved</div>
+    <div role=group aria-label=Shipping><a href="/x" role=img aria-label=Logo></a><div role=region tabindex=0>Scroll me</div></div>`);
+  assert.deepEqual(snap(w).lines, [
+    `1 link "Home" href="/p#"`,
+    `2 link "Pricing" href="/p#"`,
+    `3 img "Logo"`,
+    `4 region "Scroll me"`,
+  ]);
+  assert.deepEqual(snap(w, { role: "navigation" }).lines, [`5 navigation "HomePricing"`]);
+});
+
+test("snapshot: zero-width and private-use icon characters drop out of names", () => {
+  const w = page(`<button aria-label="Close\u200b"></button><button>\ue5cd Menu\ufeff</button><label>E\u200bmail <input name=e></label>`);
+  assert.deepEqual(snap(w).lines, [`1 button "Close"`, `2 button "Menu"`, `3 textbox "Email" name="e"`]);
+  assert.deepEqual(run(w, "click", { label_pattern: "^close$" }), { ok: true, el: `button "Close"` });
+  assert.equal(run(w, "fill", { label_pattern: "^email$", text: "a@b.co" }).ok, true);
+  assert.equal(w.document.querySelector("input").value, "a@b.co");
+});
