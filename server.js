@@ -9390,7 +9390,7 @@ const TOOLS = [
     offset: { type: "number" },
     target: TARGET,
   }),
-  tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`. `truncated`/`omitted`: rows cut; narrow by role or query, not missing.", {
+  tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`. `truncated`/`omitted`: cut; narrow by role/query, not missing.", {
     max: { type: "number", description: "Row cap, default 500 (dialogs, focus, fields first); 0 = header only." },
     role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles (textbox, button…)." },
     query: { type: "string", description: "Keep lines matching this regex." },
@@ -9407,7 +9407,7 @@ const TOOLS = [
     subtitle: { type: "string" },
     sound: { type: "string", description: "Default Glass." },
   }, ["message"]),
-  tool("file_upload", "Put a local file on an <input type=file> without the bytes entering context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. `raise:true`: click the control that opens the native chooser, in the foreground, and type the path into it (chooser:true). {ok:false}: hand off, don't retry.", {
+  tool("file_upload", "Put a local file on an <input type=file> without the bytes entering context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. `raise:true`: via the native chooser, foreground (chooser:true). {ok:false}: hand off, don't retry.", {
     path: { type: "string" },
     ref: REF,
     selector: SEL,
