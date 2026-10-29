@@ -74,6 +74,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       href,
       get protocol() { return this.href.slice(0, this.href.indexOf(":") + 1); },
       assign: (u) => go(/^[a-z]+:/i.test(u) ? u : new URL(u, page.url).href, "page"),
+      replace: (u) => go(/^[a-z]+:/i.test(u) ? u : new URL(u, page.url).href, "page"),
     };
     page.ctx.URL = URL;
     // __busy(ms): the script holds the page's thread that long (see tab.execute).
@@ -81,6 +82,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     return page;
   }
 
+  function raiseApp(name) {
+    const i = cgEntries.findIndex((entry) => entry.owner === name);
+    if (i > 0) cgEntries.unshift(cgEntries.splice(i, 1)[0]);
+  }
   function makeTab(spec, b, w) {
     // The page lives on the spec, so one spec listed in several windows is one tab
     // shown in each, as Arc does for windows on the same space.
@@ -124,6 +129,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         bump("tab.url=", b.name);
         if (!present()) throw gone();
         if (tab.slow) { tab.slow.target = u; return; }
+        // b.raiseOnUrl: a url set through AppleScript brings the browser's windows to the front.
+        if (b.raiseOnUrl) raiseApp(b.name);
         go(u, "url");
       },
     });
@@ -248,8 +255,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
           // b.selectOnCreate: the browser shows the tab it just made. b.raiseOnCreate:
           // it also brings its windows to the front.
           if (b.selectOnCreate) w.spec.active = w.tabs.length - 1;
-          const i = b.raiseOnCreate ? cgEntries.findIndex((entry) => entry.owner === b.name) : -1;
-          if (i > 0) cgEntries.unshift(cgEntries.splice(i, 1)[0]);
+          if (b.raiseOnCreate || (b.raiseOnUrl && t.url && t.url !== "about:blank")) raiseApp(b.name);
         };
         if (/^\d+$/.test(String(k))) return w.tabs[Number(k)];
         return undefined;

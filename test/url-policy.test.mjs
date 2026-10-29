@@ -65,7 +65,7 @@ const REFUSED = [
 // Hashes of {text, log, counts, ms} from the same calls before the policy
 // existed: an accepted url behaves exactly as it did.
 const BEFORE = Object.fromEntries(Object.entries({
-  "new_tab chrome": { "https://n.test/": "53fe62243a43", "HTTP://N.TEST/": "171c6afcdcb1", "about:blank": "0bccf24daee8", "ABOUT:BLANK": "4dc47825f0cf", "(none)": "0bccf24daee8" },
+  "new_tab chrome": { "https://n.test/": "63597ee6e461", "HTTP://N.TEST/": "9b105f4f817e", "about:blank": "0bccf24daee8", "ABOUT:BLANK": "4dc47825f0cf", "(none)": "0bccf24daee8" },
   "new_tab arc": { "https://n.test/": "4fd286a4fc95", "HTTP://N.TEST/": "58dc3a653b64", "about:blank": "a2b3fa110815", "ABOUT:BLANK": "1517ebde3e71", "(none)": "a2b3fa110815" },
   "new_tab safari": { "https://n.test/": "c6ea10cfe6e0", "HTTP://N.TEST/": "af75fbddd6dd", "about:blank": "ed52b752901f", "ABOUT:BLANK": "93198762b7ed", "(none)": "ed52b752901f" },
   "navigate chrome front tab": { "https://n.test/": "41c7efeb27fa", "HTTP://N.TEST/": "2471e9b7bf4d", "about:blank": "19c3af526886", "ABOUT:BLANK": "acaebef29b5e" },
@@ -177,7 +177,7 @@ test("new_tab and navigate refuse without reaching the runtime at all", async ()
 // until someone checks it sits behind the bad_url guard.
 test("the runtime's url sinks are the reviewed ones", async () => {
   const lines = (await readFile(new URL("../server.js", import.meta.url), "utf8")).split("\n");
-  const SINK = /Tab\(\{\s*url:|\.url\s*=\s*a\.url|location\.assign\(/g;
+  const SINK = /Tab\(\{\s*url:|\.url\s*=\s*a\.url|location\.(?:assign|replace)\(/g;
   const FN = /^\s{4}(\w+)\([^)]*\)\s*\{|^(?:export\s+)?(?:async\s+)?function\s+(\w+)/;
   const found = {};
   let fn = null;
@@ -186,5 +186,5 @@ test("the runtime's url sinks are the reviewed ones", async () => {
     if (m) fn = m[1] || m[2];
     for (const _ of l.matchAll(SINK)) found[fn] = (found[fn] || 0) + 1;
   }
-  assert.deepEqual(found, { navigate: 3, newTab: 4 });
+  assert.deepEqual(found, { navigate: 3, newTab: 6 });
 });

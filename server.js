@@ -3095,7 +3095,11 @@ function jxaRuntime(BROWSERS, HANG) {
         // Arc's `make new tab` rejects about: and data: URLs but accepts them set
         // afterwards, so such tabs start on its own new-tab page.
         const later = kind === "arc" && /^(about|data):/i.test(a.url);
-        const tab = ap.Tab({ url: later ? "arc://newtab" : a.url });
+        // A url set from outside the page raises a Chromium window; a page-started load
+        // does not. So Chromium's tab starts on about:blank and its page loads an
+        // http(s) url (about:blank can't load a file: one).
+        const viaPage = kind === "chrome" && /^https?:\/\//i.test(a.url);
+        const tab = ap.Tab({ url: later ? "arc://newtab" : viaPage ? "about:blank" : a.url });
         win.tabs.push(tab);
         // Push appends, so the index still names the tab shown before.
         if (kind === "chrome" && prev != null) {
@@ -3123,6 +3127,19 @@ function jxaRuntime(BROWSERS, HANG) {
         }
         if (kind === "arc" && prev != null) {
           try { if (win.activeTab.id() !== prev) win.tabs.byId(prev).select(); } catch (e) {}
+        }
+        if (viaPage) {
+          const nt = win.tabs.byId(newId);
+          const t = { app: name, kind: kind, tabId: newId, win: win, tab: nt };
+          const js = "location.replace(" + JSON.stringify(a.url) + ");'ok'";
+          let started = false;
+          try { started = String(soleInstance(t) ? asExecute(t, js, POLL_EXEC_SECS, "window 1") : nt.execute({ javascript: js })) === "ok"; }
+          catch (e) {
+            // A reply dropped as the new document replaced about:blank: the load started.
+            if (isNoReply(e)) { try { started = String(nt.url()) !== "about:blank"; } catch (x) {} }
+          }
+          // The page couldn't (JS from Apple Events off): set the url, and report a raise.
+          if (!started) { try { nt.url = a.url; } catch (e) {} }
         }
       } else {
         // Safari: documents[0].tabs throws under JXA; windows[0].tabs works.
