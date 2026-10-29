@@ -173,7 +173,7 @@ try {
   await check("new_tab keeps the shown tab; close_tab closes only its tab", async () => {
     if (!withTabCreation) return skip("requires tab creation, which may focus the browser");
     if (!haveBrowser) return skip("no browser running");
-    const token = `about:blank#perch-${Date.now()}`;
+    const token = `https://example.com/?perch-${Date.now()}`;
     const shownIds = async () => (await json("list_tabs", { app, limit: 500 })).tabs.filter((t) => t.active).map((t) => t.tabId).sort().join(",");
     const focus = () => `${frontApp()} / ${keyProcess()}`;
     const shownBefore = await shownIds();
@@ -196,16 +196,18 @@ try {
     if (!haveBrowser) return skip("no browser running");
     // Trusted Types only engages when the page LOADS with the CSP, so set it at tab creation.
     const ttHtml = `<!doctype html><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'"><div contenteditable aria-label="Body"></div>`;
-    const made = await json("new_tab", { app, url: "data:text/html," + encodeURIComponent(ttHtml) });
+    const page = join(tempDir("perch-smoke-"), "tt.html");
+    await writeFile(page, ttHtml);
+    const made = await json("new_tab", { app, url: "file://" + page });
     await call("wait", { readyState: "complete", timeout: 5000, target: { tabId: made.tabId } }).catch(() => {});
     // Some handles follow the URL; re-read it once the page has loaded.
-    const row = (await json("list_tabs", { app, urlContains: "data:text/html" })).tabs.find((t) => sameTab(t.tabId, made.tabId));
+    const row = (await json("list_tabs", { app, urlContains: page })).tabs.find((t) => sameTab(t.tabId, made.tabId));
     const tt = { tabId: (row || made).tabId };
     const reset = () => closeTab(tt);
     const why = await reachable(tt).catch((e) => e.message);
     if (why) { await reset(); return skip(why); }
     const present = text(await call("eval_js", { script: "return !!document.querySelector('[contenteditable]')", target: tt }));
-    if (present !== "true") { await reset(); return skip("browser did not load the data: URL"); }
+    if (present !== "true") { await reset(); return skip("browser did not load the file: URL"); }
     const o = await json("fill", { label_pattern: "body", text: body, target: tt });
     await reset();
     expect(o.ok, `not ok under Trusted Types: ${JSON.stringify(o)}`);
