@@ -503,6 +503,25 @@ test("page scripts define every split-out helper they call", () => {
   }
 });
 
+// Each script ships only the prelude helpers its text names, through others it
+// ships: every prelude name a shipped script mentions is defined in it, and the
+// scripts polled every 50ms carry almost none of the prelude.
+test("page scripts carry the prelude helpers they name and no others; polls stay small", () => {
+  const decls = [...PAGE_PRELUDE.matchAll(/^(?:function|const|let) ([\w$]+)/gm)].map((m) => m[1]);
+  for (const name of Object.keys(PAGE_SCRIPTS)) {
+    const js = pageScript(name, {});
+    for (const h of decls) {
+      if (!new RegExp("(^|[^\\w$])" + h + "(?![\\w$])", "m").test(js)) continue;
+      assert.ok(new RegExp("^(function " + h + "\\(|(const|let) " + h + " = )", "m").test(js), `${name} names ${h} without defining it`);
+    }
+  }
+  assert.ok(!pageScript("wait_check", {}).includes("function vis("), "wait_check carries no prelude helper");
+  for (const [name, cap] of [["wait_check", 1000], ["wait_quiet", 2500], ["wait_quiet_arm", 2500], ["shot_painted", 500], ["console_read", 600]]) {
+    const n = pageScript(name, {}).length;
+    assert.ok(n < cap, `${name} is ${n} bytes`);
+  }
+});
+
 // A plain click is one page call, as eval_js is. A click on a link or submit
 // aimed at a new tab adds every window's tab list in one bulk read before and
 // after the second page call that clicks, plus one read of the shown tab once a

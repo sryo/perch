@@ -8838,6 +8838,24 @@ function lean(s) {
 }
 const LEAN_PRELUDE = lean(PAGE_PRELUDE);
 const LEAN_SCRIPTS = new Map(Object.entries(PAGE_SCRIPTS).map(([k, v]) => [k, lean(v)]));
+// The prelude's top-level declarations (each starts a line at column 0), so a
+// script ships only those its text names, directly or through another shipped
+// one. Matching any word that equals a name over-includes (a string, a property)
+// but never drops a helper the script can reach. Order is kept, and the result
+// is fixed per script, so its source stays byte-identical across calls.
+const PRELUDE_DECLS = PAGE_PRELUDE.split(/\n(?=(?:function|const|let) )/).slice(1).map((src) => {
+  const name = /^(?:function|const|let) ([\w$]+)/.exec(src)[1];
+  return { name, re: new RegExp("(^|[^\\w$])" + name.replace(/\$/g, "\\$") + "(?![\\w$])"), src: lean(src) };
+});
+function preludeFor(script) {
+  const need = new Set(), todo = [script];
+  while (todo.length) {
+    const s = todo.pop();
+    for (const d of PRELUDE_DECLS) if (!need.has(d) && d.re.test(s)) { need.add(d); todo.push(d.src); }
+  }
+  return PRELUDE_DECLS.filter((d) => need.has(d)).map((d) => d.src).join("\n");
+}
+const LEAN_PRELUDES = new Map([...LEAN_SCRIPTS].map(([k, v]) => [k, preludeFor(v)]));
 
 // US states, Canadian provinces and common countries, each group's names equal
 // ("|" between groups, ":" between names), for comparing one comma part.
@@ -8876,7 +8894,7 @@ export function pageScript(name, A) {
   const c = callNotes.getStore();
   if (c) A = withRid(A, c.refs);
   const pl = !name || PLACE_SCRIPTS.has(name) ? placesIn(A) : null;
-  return LEAN_PRELUDE + "\nconst A = " + JSON.stringify(A) + ";\n" + (pl ? "const PLACES = " + JSON.stringify(pl) + ";\n" : "") + (name ? LEAN_SCRIPTS.get(name) : "");
+  return (name ? LEAN_PRELUDES.get(name) : LEAN_PRELUDE) + "\nconst A = " + JSON.stringify(A) + ";\n" + (pl ? "const PLACES = " + JSON.stringify(pl) + ";\n" : "") + (name ? LEAN_SCRIPTS.get(name) : "");
 }
 
 // What this server's last snapshot of a tab listed, keyed by the target as
