@@ -28,7 +28,7 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 ├── bench/           # baseline.json (the number to beat), fixture.html (the benched page), compare/ (fixture + history); runs/ is gitignored
 ├── install.sh       # macOS installer: clone, npm install, register in claude, codex, copilot
 ├── GOALS.md         # goals, principles, admission test, non-goals. Read before adding a tool.
-├── SKILL.md         # usage reference for agents (capped at 6800 bytes)
+├── SKILL.md         # usage reference for agents (capped at 6600 bytes)
 └── AGENTS.md        # this file (CLAUDE.md points here)
 ```
 

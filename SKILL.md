@@ -10,7 +10,7 @@ Targeting, element hints and error codes: the server instructions. `app` matches
 
 ## Tools
 
-Adds to the tool descriptions; none for `new_tab`, `activate_tab`, `close_tab`, `wait`, `console_capture`, `notify`, `get_text`.
+Adds to the tool descriptions; none for `new_tab`, `activate_tab`, `close_tab`, `wait`, `console_capture`, `notify`, `get_text`, `file_upload`.
 
 | Tool | Use |
 |---|---|
@@ -18,11 +18,10 @@ Adds to the tool descriptions; none for `new_tab`, `activate_tab`, `close_tab`, 
 | `navigate` | Returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed; `timeout`: not committed yet, may still load. |
 | `eval_js` | `awaitPromise` only for real async. `ref` binds `el` (a parameter): `return __avis.add(el, 'x')`. |
 | `screenshot` | Not for minimized windows. `ref`: element only; scroll restored; `clipped`: cut. |
-| `accessibility_snapshot` | Rows below; open shadow roots too. `query`: regex per line; `max: 0`: header only. |
+| `accessibility_snapshot` | Rows below; open shadow roots too. `max: 0`: header only. |
 | `click` | `label_pattern`: button/link name; ties: `candidates`. Natively disabled (own or fieldset's): `ok:false`, not clicked, trusted too; `aria-disabled` clicks. `readback` adds `invalid?`, `form?`, `settled:false` (still busy). `form`: {gone, alert, step} after a submit/Next; navigated: `page` {heading?, alert?}; decide success yourself. `hover: true`: JS events, not `:hover`. New tab: `opened.tabId`; `blocked`/`unconfirmed`+`href`. `trusted`: below. |
 | `press` | Background tabs too; Enter submits/clicks, Space clicks. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
 | `fill` | `text_path`: long bodies. One call per form: `fields` (no `raise`); `fields_path`: JSON file. `label_pattern` also matches a whole autocomplete token (`given-name`, `email`, `tel`). |
-| `file_upload` | File onto an `<input type=file>` or drop zone (`dropped`); bytes skip context. |
 
 ## Snapshot format
 
@@ -43,7 +42,7 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value` (a pick's text; none 
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
 - `moved: true` with a new `tabId` (`eval_js`: in a second text item): the tab moved; use it.
 - `eval_js` error: `isError`, `__perch_error`, `__perch_error_name`.
-- Other errors start with a code. Also `window_offscreen`: window minimized or on another Space; `no_browser`: none running, or no window; `window_ambiguous`: move or resize a same-frame window; `timeout`: re-list, retry once; if it may have run, check first.
+- `window_offscreen`: window minimized or on another Space; `no_browser`: none running, or no window; `window_ambiguous`: move or resize a same-frame window; `timeout`: re-list, retry once; if it may have run, check first.
 
 ## Gotchas
 
@@ -57,7 +56,7 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value` (a pick's text; none 
 
 `fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input`, value verified) wherever page JS runs, minimized too, no tab switch, no focus. `click {trusted: true}` reaches an on-screen window's shown tab (else `tab_not_visible`) without activating it or moving the cursor. So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked); other tabs, or a menu the click leaves shut: a filter typed into its own empty box (`"typed"`). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored.
 
-`accessibility_snapshot {frames:true}` adds iframe controls as `fN` rows, never values. `fN` takes only `click {trusted:true}`; read its `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's. `frames_unreadable`: retry.
+`frames` rows carry no values; read a trusted click's `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's. `frames_unreadable`: retry.
 
 ## Permissions
 
