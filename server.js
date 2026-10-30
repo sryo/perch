@@ -1840,6 +1840,7 @@ function jxaRuntime(BROWSERS, HANG) {
     for (let i = 0; el && i < 64; i++, el = ax.attr(el, "AXParent")) {
       const role = ax.str(el, "AXRole");
       if (role === "AXWebArea" && !web) { if (ax.same(el, area.el)) return null; web = true; }
+      if (role === "AXSheet" || role === "AXPopover") return { ok: false, error: "a browser sheet or popover covers the page at that point, so nothing was clicked; answer a leave-page prompt with press {key, dialog:true}, or hand it to the user" };
       if (role !== "AXWindow") continue;
       const id = ax.wid(el), f = ax.frame(el), r = T.I.cgBounds || T.I.geom;
       const mine = id != null ? id === T.I.windowNumber : !!f && Math.abs(f.x - r.x) + Math.abs(f.y - r.y) + Math.abs(f.w - r.w) + Math.abs(f.h - r.h) <= 8;
@@ -2259,7 +2260,7 @@ function jxaRuntime(BROWSERS, HANG) {
     if (!a.target || !a.target.tabId) throw new Error("answerDialog requires `target.tabId`");
     requireAccessibility();
     const found = ownDialogs(a.target, true);
-    if (!found.length) return { ok: false, error: "no open alert/confirm/prompt on the target tab" };
+    if (!found.length) return answerSheet(a);
     if (found.length > 1) return { ok: false, error: "several dialogs open on the target tab" };
     const d = found[0], ax = axInit();
     if (d.kind === "other") return { ok: false, error: "the open dialog is not a page alert/confirm/prompt (sign-in, leave-page or permission prompt); perch does not answer it, hand it to the user" };
@@ -2289,10 +2290,98 @@ function jxaRuntime(BROWSERS, HANG) {
     return r;
   }
 
+  // A leave-page (beforeunload) prompt a Chromium-family browser draws as a sheet
+  // on the browser window itself (Arc), outside the page's JS dialogs. It holds
+  // the tab while open. Read by structure, never by localized title: the one
+  // AXSheet child of the target's AX window (by CGWindowID, else frame), holding
+  // exactly two plain buttons, some static text, and nothing but groups and
+  // images besides. Its leave button is the default one, else the rightmost.
+  // Any other sheet there (open panel, sign-in, permission) is kind "other".
+  // Safari is left out: its own sheets share the shape. The AX scan comes first,
+  // so no Apple Event is spent while no sheet is open; the target must be the
+  // tab its window shows. Null when there is no sheet or it can't be tied.
+  function ownSheet(target) {
+    ObjC.import("ApplicationServices");
+    if (!$.AXIsProcessTrusted()) return null;
+    const h = target && target.tabId != null ? parseHandle(target.tabId) : null, only = h ? h.app : target && target.app;
+    const ax = axInit(), P = procs(), sheets = [];
+    P.z.filter(function (n) { return (!only || n === only) && KIND[n] !== "safari"; }).forEach(function (name) {
+      ax.list(ax.attr($.AXUIElementCreateApplication(P.pid[name]), "AXWindows")).forEach(function (w) {
+        if (ax.str(w, "AXSubrole") !== "AXStandardWindow") return;
+        ax.list(ax.attr(w, "AXChildren")).forEach(function (k) { if (ax.str(k, "AXRole") === "AXSheet") sheets.push({ pid: P.pid[name], w: w, el: k }); });
+      });
+    });
+    if (!sheets.length) return null;
+    let t, I;
+    try {
+      t = resolve(target);
+      if (t.kind === "safari" || !isActive(t)) return null;
+      I = ownWindow(ids(t));
+    } catch (e) { return null; }
+    const r = I.cgBounds || I.geom;
+    const mine = sheets.filter(function (s) {
+      if (s.pid !== I.pid) return false;
+      const id = ax.wid(s.w), f = ax.frame(s.w);
+      return id != null ? id === I.windowNumber : !!f && Math.abs(f.x - r.x) + Math.abs(f.y - r.y) + Math.abs(f.w - r.w) + Math.abs(f.h - r.h) <= 8;
+    });
+    if (mine.length !== 1) return mine.length ? { t: t, kind: "other" } : null;
+    const el = mine[0].el, buttons = [], texts = [], queue = ax.list(ax.attr(el, "AXChildren"));
+    let stray = ax.str(el, "AXIdentifier") === "open-panel", seen = 0;
+    while (queue.length && !stray && seen++ < 100) {
+      const k = queue.shift(), role = ax.str(k, "AXRole");
+      if (role === "AXButton" && !ax.str(k, "AXSubrole")) buttons.push(k);
+      else if (role === "AXStaticText") { const v = ax.str(k, "AXValue").trim(); if (v) texts.push(v); }
+      else if (role === "AXGroup") queue.push.apply(queue, ax.list(ax.attr(k, "AXChildren")));
+      else if (role !== "AXImage") stray = true;
+    }
+    const s = { t: t, kind: "other", el: el };
+    if (stray || queue.length || buttons.length !== 2 || !texts.length) return s;
+    const def = ax.attr(el, "AXDefaultButton");
+    let leave = def ? buttons.filter(function (b) { return ax.same(b, def); })[0] : null;
+    if (!leave) {
+      const fa = ax.frame(buttons[0]), fb = ax.frame(buttons[1]);
+      if (!fa || !fb || fa.x === fb.x) return s;
+      leave = fa.x > fb.x ? buttons[0] : buttons[1];
+    }
+    s.kind = "leave";
+    s.leave = leave;
+    s.stay = buttons[0] === leave ? buttons[1] : buttons[0];
+    s.message = texts.join(" ").slice(0, 200);
+    return s;
+  }
+
+  // The target's leave-page sheet for a dialog_open report: a Chrome page that
+  // still answers is not held by one.
+  function leavePrompt(target) {
+    const s = ownSheet(target);
+    return s && s.kind === "leave" && pagePaused(s.t) !== false ? s : null;
+  }
+
+  // press {dialog} on a leave-page sheet: Enter leaves, Escape stays. The caller
+  // asks for it explicitly, so structure is enough where no page proof exists.
+  function answerSheet(a) {
+    const s = ownSheet(a.target);
+    if (!s) return { ok: false, error: "no open alert/confirm/prompt on the target tab" };
+    const no = "; perch does not answer it, hand it to the user";
+    if (s.kind !== "leave") return { ok: false, error: "the sheet on the tab's window is not a leave-page prompt (sign-in, permission or file chooser?)" + no };
+    if (a.text != null) return { ok: false, error: "the open dialog is a leave-page prompt, not a prompt; answer it without text" };
+    if (pagePaused(s.t) === false) return { ok: false, error: "the sheet on the tab's window does not pause the page, so it is not a leave-page prompt" + no };
+    const ax = axInit();
+    $.AXUIElementPerformAction(a.key === "Enter" ? s.leave : s.stay, $("AXPress"));
+    const start = Date.now();
+    while (ax.attr(s.el, "AXRole") != null) {
+      if (Date.now() - start >= 1000) return { ok: false, error: "the leave-page prompt is still open" };
+      delay(0.05);
+    }
+    return { ok: true, dialog: "leave", message: s.message, answer: a.key === "Enter" ? "accept" : "dismiss" };
+  }
+
   // The native open panel a raised trusted click opened (file_upload {raise:true}).
   // It is a sheet on the browser window, or, for a sandboxed browser, a window of
   // the out-of-process panel service. Found by AXIdentifier open-panel, or as a
-  // sheet with a default button.
+  // sheet with a default button and the panel's sidebar or file browser (an
+  // AXOutline or AXBrowser a few levels down): a leave-page or other alert sheet
+  // has a default button too.
   const PANEL_SERVICE = "Open and Save Panel Service";
   function panelPids(I) {
     const pids = [I.pid];
@@ -2303,7 +2392,21 @@ function jxaRuntime(BROWSERS, HANG) {
   }
   function isOpenPanel(ax, el) {
     if (ax.str(el, "AXIdentifier") === "open-panel") return true;
-    return ax.str(el, "AXRole") === "AXSheet" && ax.attr(el, "AXDefaultButton") != null;
+    if (ax.str(el, "AXRole") !== "AXSheet" || ax.attr(el, "AXDefaultButton") == null) return false;
+    const level = [el];
+    for (let depth = 0, seen = 0; depth < 5 && level.length && seen < 300; depth++) {
+      const next = [];
+      for (let i = 0; i < level.length; i++, seen++) {
+        const kids = ax.list(ax.attr(level[i], "AXChildren"));
+        for (let k = 0; k < kids.length; k++) {
+          if (/^AX(Outline|Browser)$/.test(ax.str(kids[k], "AXRole"))) return true;
+          next.push(kids[k]);
+        }
+      }
+      level.length = 0;
+      level.push.apply(level, next);
+    }
+    return false;
   }
   function findPanel(ax, I) {
     const pids = panelPids(I);
@@ -2687,7 +2790,9 @@ function jxaRuntime(BROWSERS, HANG) {
     takeNote() { const n = note; note = null; return n; },
     lateArm(t) { late = t; lateHeld = null; },
     dialogs(a) {
-      return provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
+      const found = provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
+      const s = found.length ? null : leavePrompt(a.target);
+      return s ? [{ kind: "leave", message: s.message }] : found;
     },
     answerDialog: answerDialog,
     chooser: chooser,
@@ -3956,7 +4061,9 @@ const DIALOG_BLIND = new Set(["listTabs", "newTab", "closeTab", "activate", "sho
 
 const probeDialogs = async (target) => JSON.parse(await jxaOneShot(`JSON.stringify(__perch.dialogs(${JSON.stringify({ target })}))`, { timeout: 5000 }));
 
-const dialogOpen = (d) => new Error(`dialog_open: a ${d.kind} (${JSON.stringify(String(d.message).slice(0, 200))}) is open and pauses the page; answer it with press {key:"Enter"|"Escape", dialog:true, target:{tabId}} (a string answers a prompt). The page JS stopped at the dialog and its result is lost; check the page after answering.`);
+const dialogOpen = (d) => new Error(d.kind === "leave"
+  ? `dialog_open: a leave-page prompt (${JSON.stringify(String(d.message).slice(0, 200))}) is open and holds the tab; press {key:"Enter", dialog:true, target:{tabId}} leaves the page, {key:"Escape"} stays. The call's result is lost; check the page after answering.`
+  : `dialog_open: a ${d.kind} (${JSON.stringify(String(d.message).slice(0, 200))}) is open and pauses the page; answer it with press {key:"Enter"|"Escape", dialog:true, target:{tabId}} (a string answers a prompt). The page JS stopped at the dialog and its result is lost; check the page after answering.`);
 
 async function findDialog(target) {
   try { return (await deps.dialogs(target))[0] || null; } catch { return null; }
@@ -9444,7 +9551,7 @@ Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
 Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
-Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS alert/confirm/prompt is open: press {dialog}), bad_url (only http(s), file or about:blank), bad_args (fix the call). Only activate_tab and raise:true take focus.`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), bad_url (only http(s), file or about:blank), bad_args (fix the call). Only activate_tab and raise:true take focus.`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
 const TARGET = { type: "object", properties: { tabId: { type: "string" }, app: { type: "string" } } };
@@ -9538,7 +9645,7 @@ const TOOLS = [
     hover: { type: "boolean" },
     target: TARGET,
   }),
-  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element; emulates Enter/Space/Tab defaults. `trusted`: real key events in the shown tab; check `hit`. `dialog`, with target.tabId: Enter/Escape answers its alert/confirm/prompt; a string fills it.", {
+  tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element; emulates Enter/Space/Tab defaults. `trusted`: real key events in the shown tab; check `hit`. `dialog`, with target.tabId: Enter/Escape answers its JS or leave-page dialog; a string fills it.", {
     key: { type: "string" },
     ref: REF,
     selector: SEL,

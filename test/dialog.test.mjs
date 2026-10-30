@@ -571,3 +571,117 @@ test("a pick whose click opens alert() reports dialog_open, not a timeout", { ti
   assert.match(t, /^error: dialog_open: a alert \("Saved"\)/);
   assert.ok(w.counts.NSAppleScript > 0, "the pick ran on the bounded path");
 });
+
+// ---- a leave-page prompt drawn as a sheet on the browser window ----
+
+// As Arc draws a beforeunload prompt: an AXSheet on the browser window itself,
+// localized, its default button (leave) rightmost and first in AX order.
+const leaveSheet = (extra = {}) => ({ pid: 40, parent: 400, blocks: 5, texts: ["¿Deseas abandonar el sitio?", "Es posible que no se guarden los cambios."], buttons: ["Abandonar", "Cancelar"], ...extra });
+const LEAVE_MSG = "¿Deseas abandonar el sitio? Es posible que no se guarden los cambios.";
+const withSheets = (sheets, opts) => { const w = install([], opts); w.state.sheets = sheets; return w; };
+
+test("dialogs() reports a leave-page sheet on the target's own window, by structure", () => {
+  withSheets([leaveSheet()]);
+  assert.deepEqual(dialogsOf(A), [{ kind: "leave", message: LEAVE_MSG }]);
+  withSheets([leaveSheet({ texts: ["Leave site?"], buttons: ["Leave", "Cancel"] })]);
+  assert.deepEqual(dialogsOf(A), [{ kind: "leave", message: "Leave site?" }]);
+});
+
+test("a sheet on another window, behind the tab, or of another shape is not reported", () => {
+  withSheets([leaveSheet({ parent: 500, pid: 50 })]);
+  assert.deepEqual(dialogsOf(A), [], "another browser's window");
+  withSheets([leaveSheet({ blocks: 7 })]);
+  assert.deepEqual(dialogsOf({ tabId: "canary:7" }), [], "the window shows another tab");
+  for (const [name, s] of Object.entries({
+    threeButtons: leaveSheet({ buttons: ["A", "B", "C"] }),
+    oneButton: leaveSheet({ buttons: ["OK"] }),
+    noText: leaveSheet({ texts: [] }),
+    field: leaveSheet({ controls: [{ role: "AXSecureTextField" }] }),
+    list: leaveSheet({ controls: [{ role: "AXOutline" }] }),
+    twoSheets: [leaveSheet(), leaveSheet()],
+  })) {
+    withSheets(Array.isArray(s) ? s : [s]);
+    assert.deepEqual(dialogsOf(A), [], name);
+  }
+});
+
+test("a Chrome sheet whose page still answers is not a leave-page prompt", async () => {
+  const w = withSheets([leaveSheet({ blocks: undefined })]);
+  assert.deepEqual(dialogsOf(A), []);
+  const { o } = await call("press", { key: "Enter", dialog: true, target: A });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /does not pause the page, so it is not a leave-page prompt; .*hand it to the user/);
+  assert.deepEqual(w.state.axActions, []);
+});
+
+test("press {dialog} Enter leaves through the sheet's default button, Escape stays", async () => {
+  let w = withSheets([leaveSheet()]);
+  let { o } = await call("press", { key: "Enter", dialog: true, target: A });
+  assert.deepEqual(o, { ok: true, dialog: "leave", message: LEAVE_MSG, answer: "accept" });
+  assert.deepEqual(w.state.axActions, [{ role: "AXButton", title: "Abandonar", action: "AXPress" }]);
+  assert.equal(w.state.sheets.length, 0);
+  w = withSheets([leaveSheet()]);
+  ({ o } = await call("press", { key: "Escape", dialog: true, target: A }));
+  assert.equal(o.answer, "dismiss");
+  assert.deepEqual(w.state.axActions.map((a) => a.title), ["Cancelar"]);
+});
+
+test("without default/cancel attributes the rightmost button leaves", async () => {
+  const w = withSheets([leaveSheet({ noDefault: true })]);
+  const { o } = await call("press", { key: "Enter", dialog: true, target: A });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.deepEqual(w.state.axActions.map((a) => a.title), ["Abandonar"]);
+});
+
+test("press {dialog} on a leave sheet takes no text, never answers other sheets, and says if it stays open", async () => {
+  let w = withSheets([leaveSheet()]);
+  let { o } = await call("press", { key: "Enter", dialog: "x", target: A });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /leave-page prompt, not a prompt/);
+  for (const s of [leaveSheet({ controls: [{ role: "AXSecureTextField" }] }), leaveSheet({ buttons: ["A", "B", "C"] })]) {
+    w = withSheets([s]);
+    ({ o } = await call("press", { key: "Enter", dialog: true, target: A }));
+    assert.equal(o.ok, false);
+    assert.match(o.error, /not a leave-page prompt .*hand it to the user/);
+    assert.deepEqual(w.state.axActions, []);
+  }
+  w = withSheets([leaveSheet({ sticky: true })]);
+  ({ o } = await call("press", { key: "Enter", dialog: true, target: A }));
+  assert.deepEqual(o, { ok: false, error: "the leave-page prompt is still open" });
+});
+
+const soloWorld = (name, kind, pid, wid, url) => {
+  world = makeWorld({
+    browsers: [{ name, kind, windows: [{ id: "W", active: 0, tabs: [{ id: "T1", url }, { id: "T2", url: "https://x.test/" }] }] }],
+    cg: [{ owner: name, pid, wid, x: 0, y: 0, w: 800, h: 700, ax: { web: [{ x: 0, y: 80, w: 800, h: 620 }] } }],
+  });
+  world.run(JXA_PRELUDE);
+  world.state.sheets = [leaveSheet({ pid, parent: wid, blocks: undefined })];
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  return JSON.parse(world.run(`JSON.stringify(__perch.listTabs({}))`)).rows[0].tabId;
+};
+
+test("an Arc leave-page sheet, with no bounded probe, is reported and answered on structure alone", async () => {
+  const tabId = soloWorld("Arc", "arc", 70, 700, "https://business.test/");
+  assert.deepEqual(dialogsOf({ tabId }), [{ kind: "leave", message: LEAVE_MSG }]);
+  const { o } = await call("press", { key: "Escape", dialog: true, target: { tabId } });
+  assert.deepEqual(o, { ok: true, dialog: "leave", message: LEAVE_MSG, answer: "dismiss" });
+  assert.deepEqual(world.state.axActions.map((a) => a.title), ["Cancelar"]);
+});
+
+test("Safari sheets are never taken for a leave-page prompt", async () => {
+  const tabId = soloWorld("Safari", "safari", 60, 600, "https://a.test/");
+  assert.deepEqual(dialogsOf({ tabId }), []);
+  const { o } = await call("press", { key: "Enter", dialog: true, target: { tabId } });
+  assert.equal(o.ok, false);
+  assert.deepEqual(world.state.axActions, []);
+});
+
+test("a call hung behind a leave-page sheet fails with dialog_open naming how to answer it", async () => {
+  DAEMONS.fast = undefined;
+  deps.exec = async () => { throw Object.assign(new Error("killed"), { killed: true }); };
+  deps.dialogs = async () => [{ kind: "leave", message: LEAVE_MSG }];
+  const { t } = await call("eval_js", { script: "return 1", target: A });
+  assert.ok(t.startsWith(`error: dialog_open: a leave-page prompt (${JSON.stringify(LEAVE_MSG)}) is open and holds the tab; press {key:"Enter", dialog:true, target:{tabId}} leaves the page, {key:"Escape"} stays`), t);
+});

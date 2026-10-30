@@ -127,6 +127,17 @@ test("a point under a JS dialog's child window is refused", async () => {
   assert.deepEqual(clicks(w), []);
 });
 
+test("a point under a browser sheet on the page's own window says a sheet covers it, not frames", async () => {
+  const w = world();
+  w.state.sheets = [{ pid: 4242, parent: 50, frame: { x: 56, y: 157, w: 598, h: 200 }, texts: ["Leave site?"], buttons: ["Leave", "Cancel"] }];
+  for (const raise of [false, true]) {
+    const o = await click({ selector: "#b", raise });
+    assert.equal(o.ok, false, JSON.stringify(o));
+    assert.match(o.error, /^a browser sheet or popover covers the page at that point, so nothing was clicked; answer a leave-page prompt with press \{key, dialog:true\}, or hand it to the user$/);
+  }
+  assert.deepEqual(clicks(w), []);
+});
+
 test("a hit test that fails, or can't be bound, refuses: nothing is posted", async () => {
   let w = world();
   w.state.hitFail = true;
