@@ -190,11 +190,11 @@ test("trusted input reaches a background browser without changing app focus or c
   const targetUp = world.posted.find((e) => e.kind === "mouse" && e.type === 2 && e.pt.x >= 0);
   assert.equal(targetDown.flags, 0x100000, "Command flag lets WindowServer route the background press");
   assert.equal(targetUp.flags, undefined, "release without Command so the page receives an ordinary click");
-  // Live on Canary (shown tab, window in front and behind another app) every
-  // gap from 0 to 100ms between the off-screen pair and the press clicked 10/10;
-  // 10ms keeps the press ordered after the pair.
+  // 100ms between the off-screen pair and the press. At 10ms, live on Canary,
+  // 3 of 90 background clicks missed (ok:false, or refused as off the page) where
+  // 100ms landed 90 of 90.
   const sky = world.posted.filter((e) => e.via === "skylight");
-  assert.deepEqual(sky.slice(1).map((e, i) => e.at - sky[i].at), [5, 1, 10, 1], "primer, off-screen pair, press: ms between posts");
+  assert.deepEqual(sky.slice(1).map((e, i) => e.at - sky[i].at), [5, 1, 100, 1], "primer, off-screen pair, press: ms between posts");
   assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 0, "never borrow the user's key focus");
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
   assert.equal(world.counts["win.index="], undefined);

@@ -1797,8 +1797,9 @@ function jxaRuntime(BROWSERS, HANG) {
     skyMouse(I, { x: -1, y: -1 }, 1, 1, 1, group);
     delay(0.001);
     skyMouse(I, { x: -1, y: -1 }, 2, 2, 1, group);
-    // 0 to 100ms all clicked live; 10ms keeps the press ordered after the pair.
-    delay(0.01);
+    // 100ms: at 10ms, 3 of 90 live background clicks on Canary missed or were
+    // refused, where 100ms landed 90 of 90.
+    delay(0.1);
     skyMouse(I, pt, 1, 3, 1, group);
     delay(0.001);
     skyMouse(I, pt, 2, 3, 1, group);
