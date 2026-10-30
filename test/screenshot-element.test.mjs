@@ -189,6 +189,15 @@ test("with a bottom-docked panel the Accessibility page area places the crop", a
   assert.equal(meta.aim, "ax");
 });
 
+test("a crop refused for want of a page area while the screen is locked says so (Accessibility is redacted then)", async () => {
+  const p = scrolled();
+  install(p, { area: { x: 300, y: 130, w: 500, h: 300 } });
+  world.state.locked = true;
+  spawns(2000);
+  const r = await handleCall("screenshot", { target: { tabId: "chrome:c0" }, selector: "#t" });
+  assert.deepEqual(JSON.parse(r.content[0].text), { ok: false, error: "screenshot: Accessibility shows no page area matching this tab's viewport; nothing was captured; screenshot without ref or selector; the screen is locked" });
+});
+
 test("when Accessibility finds no page area the crop is refused, with the scroll restored", async () => {
   const p = scrolled();
   install(p, { area: { x: 300, y: 130, w: 500, h: 300 } });

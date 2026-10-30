@@ -817,6 +817,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       },
       // SkyLight's window capture: a window's pixels even when CG can't draw it (minimized).
       // Recorded in state.shots as {sky: wid, options}; state.skyShotEmpty: no image.
+      // state.displayAsleep: the main display is asleep (a locked, idle Mac).
+      // state.locked: the login session's screen is locked (IOConsoleUsers gains CGSSessionScreenIsLocked).
+      IORegistryGetRootEntry: () => 16395,
+      IORegistryEntryCreateCFProperty: () => { state.screenReads = (state.screenReads || 0) + 1; return [{ kCGSSessionOnConsoleKey: true, ...(state.locked ? { CGSSessionScreenIsLocked: true } : {}) }]; },
+      CGMainDisplayID: () => 1,
+      CGDisplayIsAsleep: () => { state.screenReads = (state.screenReads || 0) + 1; return state.displayAsleep ? 1 : 0; },
       SLSMainConnectionID: () => 99,
       SLSHWCaptureWindowList: (_cid, bytes, count, options) => {
         const wid = Buffer.from(bytes).readUInt32LE(0);

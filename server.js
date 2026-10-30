@@ -1804,6 +1804,23 @@ function jxaRuntime(BROWSERS, HANG) {
     skyMouse(I, pt, 2, 3, 1, group);
   }
 
+  // Whether the login session's screen is locked: IOConsoleUsers in the IO registry
+  // gains CGSSessionScreenIsLocked, which CGSessionCopyCurrentDictionary doesn't
+  // show to an osascript run from an app. Read through IOKit, no process spawned.
+  function sessionLocked() {
+    try {
+      ObjC.bindFunction("IORegistryGetRootEntry", ["unsigned int", ["unsigned int"]]);
+      ObjC.bindFunction("IORegistryEntryCreateCFProperty", ["id", ["unsigned int", "id", "void *", "unsigned int"]]);
+      const users = ObjC.deepUnwrap($.IORegistryEntryCreateCFProperty($.IORegistryGetRootEntry(0), $("IOConsoleUsers"), $(), 0)) || [];
+      return users.some(function (u) { return !!u && u.CGSSessionScreenIsLocked === true; });
+    } catch (e) { return false; }
+  }
+  // Whether the main display is asleep (a locked, idle Mac): no window is
+  // composited then, so no capture or measured click can work.
+  function displayAsleep() {
+    try { ObjC.import("CoreGraphics"); return Number($.CGDisplayIsAsleep($.CGMainDisplayID())) === 1; } catch (e) { return false; }
+  }
+
   // A background click can still bring the browser forward (the page's
   // window.focus(), a native popup, a file chooser). Putting it back would take
   // focus, so the result says so instead, for one procs() read.
@@ -2158,7 +2175,8 @@ function jxaRuntime(BROWSERS, HANG) {
     for (let i = 0; ; i++) {
       probe = readExec(T.t, a.probe);
       if (!probe.retry) break;
-      if (i >= 20) return { out: { ok: false, error: "tab never became visible to measure" } };
+      // A sleeping display shows no page, so waiting a second for one is pointless.
+      if (i >= 20 || (i >= 1 && displayAsleep())) return { out: { ok: false, error: "tab never became visible to measure" } };
       delay(0.05);
     }
     if (!probe.ok) return { out: probe };
@@ -3594,6 +3612,7 @@ function jxaRuntime(BROWSERS, HANG) {
       if (t.tabId != null) delete hints[handle(t.app, t.tabId)];
       return { ok: true, closed: a.target.tabId };
     },
+    screenState() { return { locked: sessionLocked(), asleep: displayAsleep() }; },
     shotGeom(a) { return shotGeom(a); },
     // The geometry plus, when the runtime could capture, `data` (base64) and
     // `image` {w,h}; without them the caller runs screencapture.
@@ -4354,7 +4373,7 @@ const DIALOG_PROBE_MS = 1500, DIALOG_REPROBE_MS = 2000;
 // whose last poll went unanswered says so (HANG.unanswered) and is.
 const HANG_PHRASES = Object.values(HANG);
 const hung = (msg) => msg.startsWith("timeout: ") && HANG_PHRASES.some((p) => msg.includes(p));
-const DIALOG_BLIND = new Set(["listTabs", "newTab", "closeTab", "activate", "shotGeom", "shot", "dialogs", "answerDialog"]);
+const DIALOG_BLIND = new Set(["screenState", "listTabs", "newTab", "closeTab", "activate", "shotGeom", "shot", "dialogs", "answerDialog"]);
 
 const probeDialogs = async (target) => JSON.parse(await jxaOneShot(`JSON.stringify(__perch.dialogs(${JSON.stringify({ target })}))`, { timeout: 5000 }));
 
@@ -10237,7 +10256,33 @@ const tabLockKey = (name, args) =>
     ? tabKey(args.target)
     : null;
 
+// A locked screen and a sleeping display hide every window from the window
+// server, so screenshots and trusted input fail for a reason the caller can't see.
+// The cause is read only after such a failure, by the runtime (IOKit and
+// CoreGraphics, no process spawned).
+const SCREEN_ERR = /window_offscreen|tab_not_visible|never became visible|gave no image|shows no page area/;
+async function screenWhy() {
+  const s = await rt("screenState", {}).catch(() => null);
+  if (!s) return null;
+  return s.locked && s.asleep ? "the screen is locked and the display is asleep" : s.locked ? "the screen is locked" : s.asleep ? "the display is asleep" : null;
+}
+async function withScreenWhy(out) {
+  const first = out && out.content && out.content[0];
+  if (!first || first.type !== "text" || typeof first.text !== "string" || !SCREEN_ERR.test(first.text)) return out;
+  const failed = out.isError === true && first.text.startsWith("error: ");
+  const json = !failed && /^\{"ok":false,"error":"[^"]*"/.test(first.text);
+  if (!failed && !json) return out;
+  const why = await screenWhy();
+  if (!why) return out;
+  first.text = failed ? first.text + "; " + why : first.text.replace(/^(\{"ok":false,"error":"[^"]*)"/, "$1; " + why + '"');
+  return out;
+}
+
 export async function handleCall(name, args = {}) {
+  return withScreenWhy(await handleCallCore(name, args));
+}
+
+async function handleCallCore(name, args = {}) {
   const handler = Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : null;
   let note = null;
   try {
