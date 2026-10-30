@@ -10,7 +10,7 @@ Targeting, element hints and error codes: the server instructions. `app` matches
 
 ## Tools
 
-Adds to the tool descriptions; nothing to add for `new_tab`, `activate_tab`, `close_tab`, `wait`, `console_capture`, `notify`, `get_text`.
+Adds to the tool descriptions; none for `new_tab`, `activate_tab`, `close_tab`, `wait`, `console_capture`, `notify`, `get_text`.
 
 | Tool | Use |
 |---|---|
@@ -41,16 +41,17 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value` (a pick's text; none 
 - `fill {fields}` returns `{ok, results:[{ok, kind, el, error?}]}`, `ok` if all landed. A field a later one cleared (named if known), or the page put back or emptied a moment later (Chrome; else `late`), is `ok:false` (the latter `reverted:true`; a list rebuilt after an earlier field may name it: refill once it settles), as is a select or radio group moved to another option; text reformatted later stays `ok` with a `note`. A pick the control didn't show is `ok:false` (`pressed`, `value`); `unverified`: count of fields a failed final re-read or a page change left unchecked (`warning`); an error after a field landed ends it with `error`, landed kept. `form: {requiredEmpty, unpicked?, left?:[{name, label}]}` (10 at most) is what the filled fields' form still wants, as the snapshot header counts it; absent after a page change. `checked` clicks only on a change; `option` also answers a radio group by question. `only_empty`: skip absent/filled/disabled fields (`skipped`).
 - `select`: a native pick is checked as `fill` is (`late`). A custom pick showing only the typed text is `ok:false`, also when the list stays open: retry `trusted` or check.
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, kind:"plain", note, trusted}`. Require `ok` and `trusted`.
-- `moved: true` with a new `tabId` (`eval_js`: in a second text item): the tab moved; use that `tabId`.
+- `moved: true` with a new `tabId` (`eval_js`: in a second text item): the tab moved; use it.
 - `eval_js` error: `isError`, `__perch_error`, `__perch_error_name`.
 - Other errors start with a code. Also `window_offscreen`: window minimized or on another Space; `no_browser`: none running, or no window; `window_ambiguous`: move or resize a same-frame window; `timeout`: re-list, retry once; if it may have run, check first.
 
 ## Gotchas
 
-- **Page globals may be invisible** (isolated world): read state via the DOM.
+- **Page globals may be invisible** (isolated world): read the DOM.
 - **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait` (`quiet` to let it settle).
 - **Return summaries, not state.**
-- **Dialogs.** `dialog_open` comes in ~3s; answer with `press {dialog}`, then re-read. Only the tab's own JS dialog; other prompts go to the user.
+- **Client timeouts.** Some cut calls at 30-60s: keep `timeout` under that.
+- **Dialogs.** `dialog_open` comes in ~3s; answer with `press {dialog}`, then re-read. Other prompts are the user's.
 
 ## Trusted input
 
@@ -60,4 +61,4 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value` (a pick's text; none 
 
 ## Permissions
 
-On first failure the error names the toggle (Allow JavaScript from Apple Events per profile, Automation, Accessibility); show the user, wait.
+The first failure names the toggle (Allow JavaScript from Apple Events per profile, Automation, Accessibility); show the user, wait.

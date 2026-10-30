@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# perch installer — clones, installs deps, registers as an MCP server in Claude Code.
+# perch installer — clones, installs deps, registers as an MCP server in every
+# client CLI it finds: Claude Code, Codex, GitHub Copilot.
 # Re-runnable: skips clone if already present, idempotent registration.
 #
 # Overrides:
@@ -19,11 +20,12 @@ command -v git >/dev/null || { echo "git not found. Run: xcode-select --install"
 command -v node >/dev/null || { echo "node not found. Install Node 18+ from https://nodejs.org" >&2; exit 1; }
 node_major="$(node -p 'process.versions.node.split(".")[0]')"
 [[ "$node_major" -ge 18 ]] || { echo "node $node_major < 18. Upgrade Node." >&2; exit 1; }
-if command -v claude >/dev/null; then
-  HAS_CLAUDE=1
-else
-  HAS_CLAUDE=0
-  echo "claude CLI not found — skipping Claude Code registration; config snippets will be printed for manual paste."
+HAS_CLAUDE=0; HAS_CODEX=0; HAS_COPILOT=0
+command -v claude >/dev/null && HAS_CLAUDE=1
+command -v codex >/dev/null && HAS_CODEX=1
+command -v copilot >/dev/null && HAS_COPILOT=1
+if [[ "$HAS_CLAUDE$HAS_CODEX$HAS_COPILOT" == "000" ]]; then
+  echo "No claude, codex or copilot CLI found; config snippets will be printed for manual paste."
 fi
 
 if [[ -f "$PERCH_DIR/server.js" ]]; then
@@ -47,6 +49,37 @@ if [[ "$HAS_CLAUDE" == "1" ]]; then
   claude mcp add perch --scope "$PERCH_SCOPE" -- node "$PERCH_DIR/server.js"
 fi
 
+# Codex and Copilot cut tool calls at 60s and 30s by default; eval_js may await
+# up to 300s, so both entries get a longer tool timeout.
+if [[ "$HAS_CODEX" == "1" ]]; then
+  echo "Registering perch in Codex..."
+  codex mcp remove perch >/dev/null 2>&1 || true
+  codex mcp add perch -- node "$PERCH_DIR/server.js"
+  CODEX_CONFIG="${CODEX_HOME:-$HOME/.codex}/config.toml" node -e '
+    const fs = require("fs"), f = process.env.CODEX_CONFIG;
+    const s = fs.readFileSync(f, "utf8"), head = "[mcp_servers.perch]\n";
+    const at = s.indexOf(head);
+    if (at < 0) process.exit(0);
+    const end = s.indexOf("\n[", at + head.length);
+    if (/tool_timeout_sec/.test(s.slice(at, end < 0 ? s.length : end))) process.exit(0);
+    fs.writeFileSync(f, s.slice(0, at + head.length) + "tool_timeout_sec = 330\n" + s.slice(at + head.length));
+  '
+fi
+
+if [[ "$HAS_COPILOT" == "1" ]]; then
+  echo "Registering perch in GitHub Copilot..."
+  COPILOT_CONFIG="${COPILOT_HOME:-$HOME/.copilot}/mcp-config.json" PERCH_DIR="$PERCH_DIR" node -e '
+    const fs = require("fs"), path = require("path"), f = process.env.COPILOT_CONFIG;
+    let cfg = {};
+    try { cfg = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
+    cfg.mcpServers = cfg.mcpServers || {};
+    cfg.mcpServers.perch = { type: "local", command: "node",
+      args: [path.join(process.env.PERCH_DIR, "server.js")], tools: ["*"], timeout: 330000 };
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, JSON.stringify(cfg, null, 2) + "\n");
+  '
+fi
+
 cat <<EOF
 
 perch installed at $PERCH_DIR
@@ -59,14 +92,15 @@ Two one-time permissions before perch can drive your browser:
 
 2. macOS Automation: System Settings > Privacy & Security > Automation
    The first perch call surfaces an OS prompt — tick the target browser under
-   Claude Code / Terminal / iTerm (whichever launched perch).
+   the app that launched perch (Terminal, iTerm, VS Code, Claude, Codex...).
 
 For other MCP-capable clients, register perch by hand:
 
-  Codex CLI — append to ~/.codex/config.toml:
+  Codex — append to ~/.codex/config.toml:
     [mcp_servers.perch]
     command = "node"
     args = ["$PERCH_DIR/server.js"]
+    tool_timeout_sec = 330
 
   Cursor / generic MCP — merge into ~/.cursor/mcp.json (or equivalent):
     {
@@ -78,5 +112,6 @@ For other MCP-capable clients, register perch by hand:
       }
     }
 
-Restart your MCP client. Verify with /mcp (Claude Code) or the client's MCP status — you should see perch connected.
+Restart your MCP client and check its MCP list (/mcp in Claude Code or Copilot,
+codex mcp list): you should see perch connected.
 EOF

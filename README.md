@@ -8,4 +8,4 @@ MCP server for driving the macOS browser the user already has open. Chrome famil
 curl -fsSL https://raw.githubusercontent.com/sryo/perch/main/install.sh | bash
 ```
 
-The installer detects supported client CLIs and registers automatically; otherwise it prints paste-ready MCP config. Restart your client; `perch` should appear in its MCP listing.
+The installer sets perch up in Claude Code, Codex and GitHub Copilot when it finds them; for anything else it prints config to paste. perch needs an agent running on your Mac, so cloud agents can't use it. Restart your client; `perch` should appear in its MCP listing.

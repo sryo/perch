@@ -3480,7 +3480,7 @@ export const ERR = {
   jsOff: "JavaScript-from-AppleEvents is off. Enable it: Chromium-family → View > Developer > Allow JavaScript from Apple Events. " +
     "Safari → Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.",
   automation: "Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, " +
-    "ticking the target browser under the controlling app (Claude Code / Terminal / iTerm).",
+    "ticking the target browser under the app running your agent (Terminal, iTerm, VS Code, Claude, Codex...).",
   timeout: (ms) => `timeout: ${HANG.killed} ${ms}ms: the tab is unreachable (hung page, or a tab its window doesn't show). Re-run list_tabs.`,
 };
 

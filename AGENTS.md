@@ -26,7 +26,7 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 │   ├── temp.mjs     # the only way tests and scripts make temp dirs; removed on test end or process exit
 │   └── skylight-probe.js  # proof that SkyLight event routing binds from pure JXA
 ├── bench/           # baseline.json (the number to beat), fixture.html (the benched page), compare/ (fixture + history); runs/ is gitignored
-├── install.sh       # macOS installer: clone, npm install, `claude mcp add`
+├── install.sh       # macOS installer: clone, npm install, register in claude, codex, copilot
 ├── GOALS.md         # goals, principles, admission test, non-goals. Read before adding a tool.
 ├── SKILL.md         # usage reference for agents (capped at 6800 bytes)
 └── AGENTS.md        # this file (CLAUDE.md points here)
