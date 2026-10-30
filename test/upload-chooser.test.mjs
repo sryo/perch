@@ -111,6 +111,25 @@ test("a chooser already open before the click is the user's: refused, nothing cl
   assert.equal(world.state.panel.open, true, "the user's chooser is left alone");
 });
 
+test("a chooser sheet without the open-panel identifier is still found by its sidebar", async () => {
+  const { world, path } = await setup({ panel: { anon: true } });
+  const { o } = await upload({ path });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(world.state.panel.chosen, path);
+});
+
+test("a leave-page sheet over the page is not a chooser: it is named as covering the page, nothing clicked", async () => {
+  const { world, path } = await setup();
+  world.state.sheets = [{ pid: 4242, parent: 50, frame: { x: 0, y: 57, w: 854, h: 600 }, texts: ["Leave site?", "Changes may not be saved."], buttons: ["Leave", "Cancel"] }];
+  const { o } = await upload({ path });
+  assert.equal(o.ok, false);
+  assert.doesNotMatch(o.error, /already open/);
+  assert.match(o.error, /a browser sheet or popover covers the page at that point/);
+  assert.equal(mice(world).length, 0);
+  assert.equal(keys(world).length, 0);
+  assert.equal(world.state.sheets.length, 1, "the sheet is left alone");
+});
+
 test("no chooser after the click: ok:false and no key is typed", async () => {
   const { world, path } = await setup({ opensOnClick: false });
   const { o } = await upload({ path });

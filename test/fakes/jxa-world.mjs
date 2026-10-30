@@ -11,7 +11,7 @@ import vm from "node:vm";
 
 export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, frameMs = 0 } = {}) {
   const clock = { t: 1_000_000 };
-  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], axActions: [], shots: [], files: {}, imports: [], policies: [] };
+  const state = { loadTicks, linger, ax: true, cursor: { x: 1, y: 2 }, warps: [], dialogs: [], sheets: [], axActions: [], shots: [], files: {}, imports: [], policies: [] };
   const cgEntries = cg.map((entry) => ({ ...entry }));
   const twinOf = (name) => (state.twins || []).find((x) => x.name === name);
   const posted = [];
@@ -197,7 +197,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (state.jsOff) throw new Error("Executing JavaScript through AppleScript is turned off.");
       // A JS dialog pauses its own tab's page: a dialog's `blocks` is that tab's id.
       // Browser prompts that only look like one (permission, FedCM, passkey) omit it.
-      const paused = () => state.dialogs.some((d) => d.blocks != null && String(d.blocks) === String(spec.id));
+      const paused = () => state.dialogs.concat(state.sheets).some((d) => d.blocks != null && String(d.blocks) === String(spec.id));
       if (paused()) throw unanswered();
       // spec.dom: a happy-dom Window standing in for the page.
       const before = tab.pending, ran = tab.page;
@@ -523,7 +523,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     return v === undefined ? null : v;
   }
 
-  // Native open panel: `state.panel = { pid, kind: "sheet" | "window", parent?, open, enabled?, idsOnly? }`.
+  // Native open panel: `state.panel = { pid, kind: "sheet" | "window", parent?, open, enabled?, idsOnly?, anon? }`.
   // Open, it is an AXSheet on the CG window `parent` (kind sheet) or a window of
   // `pid` with AXIdentifier open-panel (kind window, the out-of-process panel
   // service's). A posted Cmd+Shift+G opens its Go to sheet, whose PathTextField
@@ -550,9 +550,39 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     // `idsOnly`: as Arc's sheet shows it live, no AXDefaultButton/AXCancelButton;
     // its buttons, a level down, carry the identifiers OKButton and CancelButton.
     const buttons = p.idsOnly ? [{ role: "AXGroup", pn: p, box: true }] : [{ role: "AXButton", pn: p, btn: "cancel" }, { role: "AXButton", pn: p, btn: "open" }];
-    return pick({ AXRole: el.role, AXIdentifier: "open-panel",
+    // `anon`: no AXIdentifier; its sidebar (an AXOutline, a level down) shows what it is.
+    if (el.side) return pick({ AXRole: el.side, AXChildren: el.side === "AXGroup" ? axList([{ role: "AXOutline", pn: p, side: "AXOutline" }]) : axList([]) });
+    return pick({ AXRole: el.role, AXIdentifier: p.anon ? undefined : "open-panel",
       ...(p.idsOnly ? {} : { AXDefaultButton: { role: "AXButton", pn: p, btn: "open" }, AXCancelButton: { role: "AXButton", pn: p, btn: "cancel" } }),
-      AXChildren: axList((p.goto ? [{ role: "AXSheet", pn: p, goto: true }] : []).concat(buttons)) });
+      AXChildren: axList((p.goto ? [{ role: "AXSheet", pn: p, goto: true }] : []).concat(p.anon ? [{ role: "AXGroup", pn: p, side: "AXGroup" }] : [], buttons)) });
+  }
+
+  // A browser's own sheet on its window, as Arc draws a leave-page prompt:
+  // `state.sheets = [{ pid, parent, texts, buttons, frame?, controls?, noDefault?, blocks?, sticky? }]`
+  // is an AXSheet child of the AX window of CG window `parent`, holding an icon,
+  // the texts as static texts, `controls` and the buttons, in AX order as NSAlert
+  // lays them out: the first is the rightmost and the default (`noDefault` drops
+  // AXDefaultButton/AXCancelButton). An AXPress on a button closes the sheet
+  // (records `answer`) unless `sticky`; closed, its elements stop answering.
+  // `blocks` names the tab whose page it pauses. undefined: not a sheet part.
+  const sheetFrame = (s) => s.frame || { x: 200, y: 60, w: 400, h: 150 };
+  const sheetButton = (s, i) => ({ role: "AXButton", sh: s, bi: i });
+  function sheetAttr(el, name) {
+    if (el.role === "AXWindow" && el.c && name === "AXChildren" && state.sheets.some((s) => s.parent === el.c.wid)) {
+      const base = panelAttr(el, name);
+      return axList(kidsOf(base === undefined ? axAttr(el, name) : base).concat(state.sheets.filter((s) => s.parent === el.c.wid).map((s) => ({ role: "AXSheet", sh: s }))));
+    }
+    if (!el.sh) return undefined;
+    const s = el.sh, f = sheetFrame(s), pick = (o) => (o[name] === undefined ? null : o[name]);
+    if (el.bi != null) {
+      const x = f.x + f.w - 100 * (el.bi + 1);
+      return pick({ AXRole: "AXButton", AXTitle: s.buttons[el.bi], AXPosition: axPoint(x, f.y + f.h - 40), AXSize: axSize(90, 30) });
+    }
+    if (el.role !== "AXSheet") return pick({ AXRole: el.role, AXValue: el.value, AXSubrole: el.subrole, AXTitle: el.title });
+    const kids = [{ role: "AXImage", sh: s }].concat(s.texts.map((value) => ({ role: "AXStaticText", sh: s, value })),
+      (s.controls || []).map((c) => ({ ...c, sh: s })), s.buttons.map((_, i) => sheetButton(s, i)));
+    return pick({ AXRole: "AXSheet", AXPosition: axPoint(f.x, f.y), AXSize: axSize(f.w, f.h), AXChildren: axList(kids),
+      ...(s.noDefault || s.buttons.length < 2 ? {} : { AXDefaultButton: sheetButton(s, 0), AXCancelButton: sheetButton(s, 1) }) });
   }
 
   // Keyboard focus: `state.focus = { window: {x,y,w,h}, chain: [{role, box?}, ...] }`
@@ -586,6 +616,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     const link = (chain) => { chain.forEach((el, i) => { el.parent = chain[i + 1] || null; }); return chain[0]; };
     const d = state.dialogs.find((d) => d.pid === pid && inBox(dialogFrame(d)));
     if (d) return link([{ role: "AXButton", title: d.buttons[0] }, { role: "AXGroup" }, { role: "AXWindow", subrole: "AXUnknown" }]);
+    const sh = state.sheets.find((s) => s.pid === pid && inBox(sheetFrame(s)));
+    const shWin = sh && cgEntries.find((c) => c.wid === sh.parent);
+    if (shWin) return link([sheetButton(sh, 0), { role: "AXSheet", sh }, { role: "AXWindow", subrole: "AXStandardWindow", c: shWin }]);
     for (const c of cgEntries) {
       if (c.pid !== pid || !c.ax || !inBox(c.axFrame || c)) continue;
       const win = { role: "AXWindow", subrole: "AXStandardWindow", c };
@@ -783,6 +816,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         // A kid removed from its frame is gone, like a closed dialog's elements.
         if (el.fk && el.fk.gone) return -25202;
         if (el.pn && (!el.pn.open || (el.goto && !el.pn.goto))) return -25202;
+        if (el.sh && !state.sheets.includes(el.sh)) return -25202;
         // state.axThrow: reading a frame's web area throws it, as a bridge failure would.
         if (el.fr && state.axThrow) throw state.axThrow;
         if (name.js === "AXParent" && el.parent !== undefined) {
@@ -790,7 +824,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
           out[0] = el.parent;
           return 0;
         }
-        let f = panelAttr(el, name.js);
+        let f = sheetAttr(el, name.js);
+        if (f === undefined) f = panelAttr(el, name.js);
         if (f === undefined) f = focusAttr(el, name.js);
         if (f === undefined) f = frameAttr(el, name.js);
         const v = f === undefined ? axAttr(el, name.js) : f === null ? undefined : f;
@@ -807,6 +842,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
           const p = el.pn;
           if (el.btn === "open" && p.enabled !== false) { p.chosen = p.dir; p.open = false; if (state.onPanelChoose) state.onPanelChoose(p.chosen); }
           else if (el.btn === "cancel") { p.open = false; p.cancelled = true; }
+          return 0;
+        }
+        if (el.sh && el.bi != null && action.js === "AXPress") {
+          state.axActions[state.axActions.length - 1].title = el.sh.buttons[el.bi];
+          if (!el.sh.sticky) { el.sh.answer = el.sh.buttons[el.bi]; state.sheets.splice(state.sheets.indexOf(el.sh), 1); }
           return 0;
         }
         if (el.role === "AXButton" && action.js === "AXPress" && el.d && !el.d.sticky) {
@@ -832,7 +872,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         return 0;
       },
       // Two element refs are equal when they name the same window or web area.
-      CFEqual: (a, b) => a === b || (!!a && !!b && a.role === b.role && ((!!a.box && a.box === b.box) || (!!a.c && a.c === b.c))),
+      CFEqual: (a, b) => a === b || (!!a && !!b && a.role === b.role && ((!!a.box && a.box === b.box) || (!!a.c && a.c === b.c) || (!!a.sh && a.sh === b.sh && a.bi === b.bi))),
       AXIsProcessTrustedWithOptions: () => state.ax,
       kCFBooleanFalse: false,
       kAXTrustedCheckOptionPrompt: "prompt",
