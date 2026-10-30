@@ -5079,6 +5079,14 @@ function setNative(nat, opts, opt, pref) {
 }
 `;
 
+// Whether window[slot] is this call's, by the args every phase of a call passes
+// alike: <p>Now is the state, <p>Lost {lost, tok} when it is another call's.
+const ownLib = (p, slot, args) => String.raw`
+const ${p}Key = JSON.stringify([A.ref, A.selector, A.label_pattern, ${args}]);
+const ${p}Now = window.${slot};
+const ${p}Lost = ${p}Now && ${p}Now.key !== ${p}Key ? { lost: true, tok: ${p}Now.tok } : null;
+`;
+
 // select's own phases, not typeahead's: whether window.__perch_select is this
 // call's. Another perch server's select on this tab may have replaced it, and a
 // phase must not press, type or Escape on a state made under other args.
@@ -5104,18 +5112,10 @@ function ctlBox(ctl, input) {
 // slots and shadow roots (flatText).
 const lightText = textOf;
 textOf = function (n) { const t = lightText(n); return t.trim() ? t : flatText(n) || t; };
-const selKey = JSON.stringify([A.ref, A.selector, A.label_pattern, A.text, !!A.trusted]);
-const selNow = window.__perch_select;
-const selLost = selNow && selNow.key !== selKey ? { lost: true, tok: selNow.tok } : null;
-`;
+` + ownLib("sel", "__perch_select", "A.text, !!A.trusted");
 
-// The same for fill's typeahead state, window.__perch_ta. Its key (fillOne's
-// taKey) is the call's own args, which every phase of one call passes alike.
-const TA_OWN_LIB = String.raw`
-const taKey = JSON.stringify([A.ref, A.selector, A.label_pattern, A.text, !!A.trusted]);
-const taNow = window.__perch_ta;
-const taLost = taNow && taNow.key !== taKey ? { lost: true, tok: taNow.tok } : null;
-`;
+// The same for fill's typeahead state, keyed as fillOne's taKey.
+const TA_OWN_LIB = ownLib("ta", "__perch_ta", "A.text, !!A.trusted");
 
 // An owner token: a per-document counter plus a random suffix, made in the page
 // so no per-call value enters script source.
@@ -6835,13 +6835,8 @@ function dropOn(U) {
 }
 `;
 
-// Whether window.__perch_up is this call's: a later phase must not drop, empty
-// or read another call's upload state.
-const UPLOAD_OWN_LIB = String.raw`
-const upKey = JSON.stringify([A.ref, A.selector, A.label_pattern, A.name]);
-const upNow = window.__perch_up;
-const upLost = upNow && upNow.key !== upKey ? { lost: true, tok: upNow.tok } : null;
-`;
+// A later phase must not drop, empty or read another call's upload state.
+const UPLOAD_OWN_LIB = ownLib("up", "__perch_up", "A.name");
 
 // Clicks that open a new tab. blankHref: the absolute http(s) URL a link (not a
 // download) or a form's submit button aimed at _blank opens by default, else
