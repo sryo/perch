@@ -4464,6 +4464,11 @@ export function buildDrop(key) {
   return `(function(){var s=window[${k}];if(s&&typeof s==="object")s.removeAttribute("data-perch-r");delete window[${k}];return "1"})()`;
 }
 
+// The names before 5725447, which older figma-cdp copies detect perch by.
+export const buildMainKick = (js, key, awaitPromise) => buildKick(js, key, { world: "main", awaitPromise });
+export const buildMainRead = (key) => buildRead(key, "main");
+export const buildMainDrop = buildDrop;
+
 // The JSON text eval_js {world:"main"} read off its element, which the page can
 // rewrite (hooking setAttribute or JSON.stringify there): only `{value}` or the
 // two-key error shape is taken, and a value shaped like one of perch's own
