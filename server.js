@@ -204,14 +204,19 @@ function jxaRuntime(BROWSERS, HANG) {
   // Arc windows on one space share the same tabs, and a tab can be active in
   // several windows at once. execute only works through a window where the tab is
   // active (it hangs through any other), so a tabId prefers such a window.
-  function resolveById(want, P) {
+  function resolveById(want, P, shownFirst) {
     const key = String(want.raw);
-    // A hinted Chromium window first: one event instead of a window walk.
+    // A hinted Chromium window first: one event instead of a window walk. A caller
+    // that needs the shown tab reads that first, so the shown tab costs just it.
     const hn = want.windowId == null && hints[want.tabId];
     if (hn && alive(want.app, P)) {
       try {
-        const win = app(want.app).windows[hn.w], i = win.tabs.id().map(String).indexOf(key);
-        if (i >= 0) return { tab: win.tabs.byId(hn.id), idx: i, tabId: hn.id, kind: "chrome", app: want.app, win, w: hn.w, P };
+        const win = app(want.app).windows[hn.w];
+        let shown = null;
+        if (shownFirst) { try { shown = String(win.activeTab.id()); } catch (e) {} }
+        if (shown === key) return { tab: win.tabs.byId(hn.id), idx: null, tabId: hn.id, kind: "chrome", app: want.app, win, w: hn.w, P, shown: true };
+        const i = win.tabs.id().map(String).indexOf(key);
+        if (i >= 0) return { tab: win.tabs.byId(hn.id), idx: i, tabId: hn.id, kind: "chrome", app: want.app, win, w: hn.w, P, hidden: shown != null };
       } catch (e) {}
       delete hints[want.tabId];
     }
@@ -309,14 +314,14 @@ function jxaRuntime(BROWSERS, HANG) {
 
   // Tabs are pinned by id where the browser has one: `tabs[i]` is positional and
   // re-evaluated on every use, so a long poll could drift to another tab.
-  function resolve(want, strict) {
+  function resolve(want, strict, shownFirst) {
     want = want || {};
     const P = procs();
     if (want.tabId != null) {
       const h = parseHandle(want.tabId);
       if (h && KIND[h.app] === "safari") return resolveSafari(want, h.raw, P, strict);
       // A bare id (from before handles) is searched across browsers, narrowed by `app`.
-      return resolveById({ tabId: want.tabId, raw: h ? h.raw : String(want.tabId), app: h ? h.app : want.app, windowId: want.windowId }, P);
+      return resolveById({ tabId: want.tabId, raw: h ? h.raw : String(want.tabId), app: h ? h.app : want.app, windowId: want.windowId }, P, shownFirst);
     }
     const names = candidates(P, want.app);
     // A browser that couldn't be read is why nothing matched, if one was.
@@ -373,9 +378,10 @@ function jxaRuntime(BROWSERS, HANG) {
   }
 
   // Chrome tabs have no `index` property (it throws), so positions come from resolve.
-  // `shown`: resolve just read the tab as its window's shown tab.
+  // `shown`/`hidden`: resolve just read whether the tab is its window's shown tab.
   function isActive(t) {
     if (t.shown) return true;
+    if (t.hidden) return false;
     // A Safari handle with more than one possible tab settles which first, so the
     // tab checked is the one its page JS will run in.
     if (t.pick && !(t.pick.cands.length === 1 && t.pick.cands[0] === t.idx)) execOnce(t, "1");
@@ -950,7 +956,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // Only the active tab of a window is rendered. Never switch tabs implicitly:
   // that can put Chrome's window into focus even without app.activate().
   function shotTarget(a) {
-    const t = resolve(a.target);
+    const t = resolve(a.target, false, !a.raise);
     if (a.raise) { focus(t); delay(0.25); t.P = procs(); }
     else if (a.target && (a.target.tabIndex != null || a.target.tabId != null) && !isActive(t)) {
       throw new Error(notVisible("a background screenshot") + ", or pass raise:true");
@@ -1437,7 +1443,7 @@ function jxaRuntime(BROWSERS, HANG) {
 
   // Resolves the target for trusted input: permission, optional foreground, ids.
   function trustedTarget(a, what, resolved) {
-    const t = resolved || resolve(a.target);
+    const t = resolved || resolve(a.target, false, !a.raise);
     arcPageGuard(t, what || "trusted input");
     requireAccessibility();
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
