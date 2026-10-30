@@ -3179,7 +3179,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Name\\\"\",\"len\":3}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"Name\\\"\",\"len\":3}"
     }
    ],
    "isError": false,
@@ -3210,7 +3210,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Name\\\"\",\"len\":2}]}"
+     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"el\":\"textbox \\\"Name\\\"\",\"len\":2}]}"
     }
    ],
    "isError": false,
@@ -5041,7 +5041,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"First name\\\"\",\"len\":3}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"First name\\\"\",\"len\":3}"
     }
    ],
    "isError": false,
@@ -5065,7 +5065,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Email\\\"\",\"len\":10}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"Email\\\"\",\"len\":10}"
     }
    ],
    "isError": false,
@@ -5112,7 +5112,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Bio\\\"\",\"len\":5}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"Bio\\\"\",\"len\":5}"
     }
    ],
    "isError": false,
@@ -5136,7 +5136,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"First name\\\"\",\"len\":0}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"First name\\\"\",\"len\":0}"
     }
    ],
    "isError": false,
@@ -5184,7 +5184,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Bio\\\"\",\"len\":18}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"Bio\\\"\",\"len\":18}"
     }
    ],
    "isError": false,
@@ -5296,7 +5296,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"hid\\\" hidden\",\"len\":1,\"hidden\":true}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"hid\\\" hidden\",\"len\":1,\"hidden\":true}"
     }
    ],
    "isError": false,
@@ -5380,7 +5380,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Name\\\"\",\"len\":1,\"ambiguous\":[\"textbox \\\"Name\\\"\",\"textbox \\\"Name\\\"\"]}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"Name\\\"\",\"len\":1,\"ambiguous\":[\"textbox \\\"Name\\\"\",\"textbox \\\"Name\\\"\"]}"
     }
    ],
    "isError": false,
@@ -5421,7 +5421,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":false,\"results\":[{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"First\\\"\",\"len\":3},{\"ok\":true,\"selected\":\"Brazil\",\"el\":\"combobox \\\"Country\\\"\",\"pref\":1,\"kind\":\"select\"},{\"ok\":false,\"error\":\"no fillable field matched /nothing/i; it may appear only after clicking a button\",\"kind\":\"text\"}],\"form\":{\"requiredEmpty\":2,\"left\":[{\"name\":\"last\",\"label\":\"Last\"},{\"name\":\"p\",\"label\":\"Phone\"}]}}"
+     "text": "{\"ok\":false,\"results\":[{\"ok\":true,\"el\":\"textbox \\\"First\\\"\",\"len\":3},{\"ok\":true,\"selected\":\"Brazil\",\"el\":\"combobox \\\"Country\\\"\",\"pref\":1,\"kind\":\"select\"},{\"ok\":false,\"error\":\"no fillable field matched /nothing/i; it may appear only after clicking a button\",\"kind\":\"text\"}],\"form\":{\"requiredEmpty\":2,\"left\":[{\"name\":\"last\",\"label\":\"Last\"},{\"name\":\"p\",\"label\":\"Phone\"}]}}"
     }
    ],
    "isError": false,
@@ -5459,7 +5459,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"kind\":\"plain\",\"skipped\":\"has value\",\"el\":\"textbox \\\"First\\\"\",\"value\":\"Ada\"},{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Last\\\"\",\"len\":1},{\"ok\":true,\"skipped\":\"absent\",\"kind\":\"text\"}],\"skipped\":2,\"form\":{\"requiredEmpty\":1,\"left\":[{\"name\":\"p\",\"label\":\"Phone\"}]}}"
+     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"skipped\":\"has value\",\"el\":\"textbox \\\"First\\\"\",\"value\":\"Ada\"},{\"ok\":true,\"el\":\"textbox \\\"Last\\\"\",\"len\":1},{\"ok\":true,\"skipped\":\"absent\",\"kind\":\"text\"}],\"skipped\":2,\"form\":{\"requiredEmpty\":1,\"left\":[{\"name\":\"p\",\"label\":\"Phone\"}]}}"
     }
    ],
    "isError": false,
@@ -5516,7 +5516,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"First\\\"\",\"len\":3}],\"form\":{\"requiredEmpty\":0}}"
+     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"el\":\"textbox \\\"First\\\"\",\"len\":3}],\"form\":{\"requiredEmpty\":0}}"
     }
    ],
    "isError": false,
@@ -5641,7 +5641,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":false,\"results\":[{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"State\\\"\",\"len\":7,\"unverified\":true},{\"kind\":\"select\",\"ok\":true,\"selected\":\"Senior\",\"el\":\"combobox \\\"Level\\\"\"},{\"ok\":false,\"error\":\"the page changed after fields[1]; not filled\"}],\"unverified\":1,\"warning\":\"the page changed after fields[1]; earlier fields may have been cleared, check them\"}"
+     "text": "{\"ok\":false,\"results\":[{\"ok\":true,\"el\":\"textbox \\\"State\\\"\",\"len\":7,\"unverified\":true},{\"kind\":\"select\",\"ok\":true,\"selected\":\"Senior\",\"el\":\"combobox \\\"Level\\\"\"},{\"ok\":false,\"error\":\"the page changed after fields[1]; not filled\"}],\"unverified\":1,\"warning\":\"the page changed after fields[1]; earlier fields may have been cleared, check them\"}"
     }
    ],
    "isError": false,
@@ -5672,7 +5672,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Zip\\\"\",\"len\":4}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"Zip\\\"\",\"len\":4}"
     }
    ],
    "isError": false,
@@ -5807,7 +5807,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"combobox \\\"City\\\"\",\"len\":3,\"note\":\"no suggestion was picked; the typed text stays\"}"
+     "text": "{\"ok\":true,\"el\":\"combobox \\\"City\\\"\",\"len\":3,\"note\":\"no suggestion was picked; the typed text stays\"}"
     }
    ],
    "isError": false,
@@ -5975,7 +5975,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"results\":[{\"kind\":\"plain\",\"ok\":true,\"trusted\":true,\"value\":\"e@f.test\",\"el\":\"textbox \\\"Email\\\"\"}]}"
+     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"trusted\":true,\"value\":\"e@f.test\",\"el\":\"textbox \\\"Email\\\"\"}]}"
     }
    ],
    "isError": false,
@@ -6002,7 +6002,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Name\\\"\",\"len\":3}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"Name\\\"\",\"len\":3}"
     }
    ],
    "isError": false,
@@ -6030,7 +6030,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Name\\\"\",\"len\":3}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"Name\\\"\",\"len\":3}"
     }
    ],
    "isError": false,

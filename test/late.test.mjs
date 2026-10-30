@@ -56,7 +56,7 @@ for (const browser of ["chrome", "arc", "safari"]) {
   test(`${browser}: a fill the page undoes a task later answers ok, and the next page call reports it once as late`, async () => {
     const { dom } = onPage(ZIP, ZIP_CLEARS, browser);
     const f = await call("fill", { label_pattern: "zip", text: "2000" });
-    assert.deepEqual(f.o, { ok: true, kind: "plain", el: `textbox "Zip"`, len: 4 });
+    assert.deepEqual(f.o, { ok: true, el: `textbox "Zip"`, len: 4 });
     const next = await call("get_text", { selector: "form" });
     assert.deepEqual(lateOf(next), [ZIP_LATE], JSON.stringify(next.o));
     assert.equal(dom.document.getElementById("zip").value, "");
@@ -78,8 +78,8 @@ for (const browser of ["chrome", "arc", "safari"]) {
 test("a write that holds, and a value the page reformats, are never reported", async () => {
   const { dom } = onPage(`<label>Postcode <input id=pc></label><label>City <input id=city></label>`,
     `const pc = document.getElementById('pc'); pc.addEventListener('input', () => { later(() => { pc.value = pc.value.toUpperCase(); }, 1); });`);
-  assert.deepEqual((await call("fill", { label_pattern: "postcode", text: "sw1a 1aa" })).o, { ok: true, kind: "plain", el: `textbox "Postcode"`, len: 8 });
-  assert.deepEqual((await call("fill", { label_pattern: "city", text: "Leeds" })).o, { ok: true, kind: "plain", el: `textbox "City"`, len: 5 });
+  assert.deepEqual((await call("fill", { label_pattern: "postcode", text: "sw1a 1aa" })).o, { ok: true, el: `textbox "Postcode"`, len: 8 });
+  assert.deepEqual((await call("fill", { label_pattern: "city", text: "Leeds" })).o, { ok: true, el: `textbox "City"`, len: 5 });
   const next = await call("get_text", {});
   assert.equal(lateOf(next), undefined, JSON.stringify(next.o));
   assert.equal(dom.document.getElementById("pc").value, "SW1A 1AA");
@@ -279,7 +279,7 @@ for (const browser of ["arc", "safari"]) {
   test(`${browser}: a fill {fields} field the page undoes later is late on the next call, with no note on the batch`, async () => {
     onPage(ZIP, ZIP_CLEARS, browser);
     const f = await call("fill", { fields: [{ label_pattern: "zip", text: "2000" }, { label_pattern: "city", text: "Rosario" }] });
-    assert.deepEqual(f.o.results, [{ ok: true, kind: "plain", el: `textbox "Zip"`, len: 4 }, { ok: true, kind: "plain", el: `textbox "City"`, len: 7 }]);
+    assert.deepEqual(f.o.results, [{ ok: true, el: `textbox "Zip"`, len: 4 }, { ok: true, el: `textbox "City"`, len: 7 }]);
     assert.equal(f.o.ok, true);
     assert.deepEqual(lateOf(await call("get_text", {})), [ZIP_LATE]);
   });
@@ -415,13 +415,13 @@ const AC_FIELDS = [
   { selector: "#postcode", text: "35401" },
   { selector: "#country", text: "United States" },
 ];
-const cleared = (id) => ({ ok: false, kind: "plain", el: `textbox "${id}" hidden`, reverted: true, kept: "", hidden: true, error: `textbox "${id}" hidden was cleared after it was filled; the page reverted the write` });
+const cleared = (id) => ({ ok: false, el: `textbox "${id}" hidden`, reverted: true, kept: "", hidden: true, error: `textbox "${id}" hidden was cleared after it was filled; the page reverted the write` });
 
 test("fill {fields}: autofill catchers the page empties on a debounce are ok:false in the batch's answer", async () => {
   const { dom, world } = onPage(AC_BODY, AC_JS);
   const f = await call("fill", { fields: AC_FIELDS });
   assert.equal(f.o.ok, false, JSON.stringify(f.o));
-  assert.deepEqual(f.o.results[0], { ok: true, kind: "plain", el: `textbox "First name"`, len: 4 });
+  assert.deepEqual(f.o.results[0], { ok: true, el: `textbox "First name"`, len: 4 });
   assert.deepEqual(f.o.results.slice(1), ["city", "postcode", "country"].map(cleared));
   assert.equal(dom.document.getElementById("address").value, "Córdoba, Argentina, Tuscaloosa, 35401, United States");
   // The batch, its re-read, and the one read after the watch.

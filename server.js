@@ -9605,6 +9605,14 @@ async function readFieldsFile(p) {
   return fields;
 }
 
+// "plain" is a fill result's default kind, so it is left out of what the caller
+// sees; rich and typeahead keep theirs.
+function unplain(r) {
+  const drop = (x) => { if (x && x.kind === "plain") delete x.kind; return x; };
+  if (r && Array.isArray(r.results)) r.results.forEach(drop);
+  return drop(r);
+}
+
 async function fill(args = {}) {
   const { selector, label_pattern, ref, text, text_path, target, trusted = false, raise = false, fields_path, only_empty } = args;
   let { fields } = args;
@@ -9956,7 +9964,7 @@ export const HANDLERS = {
   file_upload:   (a) => fileUpload(a),
   click:         (a) => click(a),
   press:         (a) => press(a),
-  fill:          (a) => fill(a),
+  fill:          (a) => fill(a).then(unplain),
   select:        (a) => select(a),
 };
 

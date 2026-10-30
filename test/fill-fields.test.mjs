@@ -156,6 +156,15 @@ const fill = async (args) => {
   return { r, o: r.isError ? r.content[0].text : JSON.parse(r.content[0].text) };
 };
 
+test("fill results leave out kind:\"plain\"; rich and typeahead keep their kind", async () => {
+  onPage(`<input id=a aria-label="Name"><div id=r contenteditable aria-label="Bio"></div>`);
+  const one = (await fill({ selector: "#a", text: "Ada" })).o;
+  assert.equal(one.ok, true, JSON.stringify(one));
+  assert.equal("kind" in one, false, JSON.stringify(one));
+  const many = (await fill({ fields: [{ selector: "#a", text: "Ada" }, { selector: "#r", text: "hi" }] })).o;
+  assert.deepEqual(many.results.map((x) => x.kind), [undefined, "rich"], JSON.stringify(many));
+});
+
 test("fill {fields}: the 5-field form is one tool call", async () => {
   const { dom } = onPage(FORM);
   const { r, o } = await fill({ fields: FIVE });
@@ -205,7 +214,7 @@ test("fill {fields}: a custom combobox goes through select, in order", async () 
     { label_pattern: "last", text: "B" },
   ] });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.deepEqual(o.results.map((x) => x.kind), ["plain", "select", "plain"]);
+  assert.deepEqual(o.results.map((x) => x.kind), [undefined, "select", undefined]);
   assert.equal(o.results[1].selected, "Senior");
   assert.equal(o.results[1].selected, "Senior");
   assert.equal(o.results[1].value, undefined, "the pick it shows is not repeated");
@@ -229,7 +238,7 @@ test("fill {fields}: arguments are validated before touching the page", async ()
 test("fill without fields keeps its single-field shape", async () => {
   onPage(FORM);
   const { o } = await fill({ label_pattern: "email", text: "a@b.test" });
-  assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "Email"`, len: 8 });
+  assert.deepEqual(o, { ok: true, el: `textbox "Email"`, len: 8 });
 });
 
 test("fill schema advertises fields", () => {
@@ -784,7 +793,7 @@ test("fill {fields, only_empty}: fields the form lacks are skipped as absent, th
   assert.equal(r.isError, undefined, JSON.stringify(o));
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.skipped, 7);
-  assert.deepEqual(o.results.map((x) => x.skipped || x.kind), ["plain", "plain", "plain", "plain", "plain", "absent", "absent", "absent", "absent", "absent", "absent", "absent"]);
+  assert.deepEqual(o.results.map((x) => x.skipped || x.kind), [undefined, undefined, undefined, undefined, undefined, "absent", "absent", "absent", "absent", "absent", "absent", "absent"]);
   assert.ok(o.results.slice(5).every((x) => x.ok === true && x.kind));
   assert.deepEqual(["fn", "ln", "em", "ph", "li"].map((n) => dom.document.querySelector(`[name=${n}]`).value),
     ["Ada", "Lovelace", "ada@example.test", "+1 555 010 0199", "https://linkedin.example/ada"]);
@@ -795,7 +804,7 @@ test("fill {fields, only_empty}: a prefilled field keeps its value", async () =>
   const { o } = await fill({ fields: [{ label_pattern: "email", text: "other@example.test" }, { label_pattern: "phone", text: "5550100" }], only_empty: true });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.skipped, 1);
-  assert.deepEqual(o.results[0], { ok: true, kind: "plain", skipped: "has value", el: `textbox "Email"`, value: "ada@parsed.test" });
+  assert.deepEqual(o.results[0], { ok: true, skipped: "has value", el: `textbox "Email"`, value: "ada@parsed.test" });
   assert.equal(o.results[1].skipped, undefined);
   assert.equal(dom.document.querySelector("[name=em]").value, "ada@parsed.test");
   assert.equal(dom.document.querySelector("[name=ph]").value, "5550100");
@@ -1179,8 +1188,8 @@ test("fill {fields}: order-independent fields stay ok and nothing extra leaks in
   onPage(FORM);
   const { o } = await fill({ fields: [FIVE[0], FIVE[1], FIVE[4]] });
   assert.deepEqual(o, { ok: true, results: [
-    { ok: true, kind: "plain", el: `textbox "Name"`, len: 12 },
-    { ok: true, kind: "plain", el: `textbox "Email"`, len: 16 },
+    { ok: true, el: `textbox "Name"`, len: 12 },
+    { ok: true, el: `textbox "Email"`, len: 16 },
     { ok: true, kind: "check", el: `checkbox "I agree"`, checked: true },
   ], form: { requiredEmpty: 0 } });
 });
@@ -1332,7 +1341,7 @@ test("fill {fields}: a combobox pick that clears an earlier field is caught by t
   const { o } = await fill({ fields: [{ label_pattern: "state", text: "Cordoba" }, { label_pattern: "level", option: "senior" }, { label_pattern: "city", text: "Rio" }] });
   assert.equal(sent.length, 2);
   assert.equal(o.ok, false, JSON.stringify(o));
-  assert.deepEqual(o.results.map((x) => [x.kind, x.ok]), [["plain", false], ["select", true], ["plain", true]]);
+  assert.deepEqual(o.results.map((x) => [x.kind, x.ok]), [[undefined, false], ["select", true], [undefined, true]]);
   assert.match(o.results[0].error, /cleared after a later field changed/);
 });
 
@@ -2128,7 +2137,7 @@ test("fill {fields, only_empty}: token patterns fill a form labelled in another 
   const { dom } = onPage(ES_FORM);
   const { o } = await fill({ fields: TOKEN_PROFILE, only_empty: true });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.deepEqual(o.results.map((x) => [x.ok, x.kind, x.skipped, x.unverified]), TOKEN_PROFILE.map(() => [true, "plain", undefined, undefined]));
+  assert.deepEqual(o.results.map((x) => [x.ok, x.kind, x.skipped, x.unverified]), TOKEN_PROFILE.map(() => [true, undefined, undefined, undefined]));
   assert.deepEqual(["n1", "n2", "n3", "n4"].map((n) => val(dom, `[name=${n}]`).value), ["Ada", "Lovelace", "ada@example.test", "+1 555 010 0199"]);
   assert.deepEqual(o.form, { requiredEmpty: 0 });
 });

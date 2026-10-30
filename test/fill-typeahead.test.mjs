@@ -207,7 +207,7 @@ test("typeahead: a free-text combobox with no suggestions keeps the text, withou
   const t0 = world.clock.t;
   const o = await fill({ label_pattern: "job title", text: "Staff Engineer" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.kind, "plain");
+  assert.equal(o.kind, undefined);
   assert.match(o.note, /no suggestion/);
   assert.equal($(dom, "#t").value, "Staff Engineer");
   assert.ok(world.clock.t - t0 < 2000, "waited " + (world.clock.t - t0) + "ms");
@@ -370,7 +370,7 @@ test("fill {fields}: a typeahead in the middle is resolved in order", async () =
   const { dom } = onPage(LOCATION, LOCATION_JS());
   const o = await fill({ fields: [{ selector: "#loc", text: "Rosario del" }, { label_pattern: "name", text: "Ada" }] });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.deepEqual(o.results.map((r) => r.kind), ["typeahead", "plain"]);
+  assert.deepEqual(o.results.map((r) => r.kind), ["typeahead", undefined]);
   assert.equal($(dom, "#selected-location").value, "loc-1");
   assert.equal($(dom, "[name=name]").value, "Ada");
 });
@@ -902,7 +902,7 @@ for (const [name, browser] of [
 ]) {
   test(`${name}: fill and select answer from the write alone, with no note`, async () => {
     for (const [tool, html, args, want] of [
-      ["fill", `<label>Search <input id=q></label>`, { label_pattern: "search", text: "shoes" }, { ok: true, kind: "plain", el: `textbox "Search"`, len: 5 }],
+      ["fill", `<label>Search <input id=q></label>`, { label_pattern: "search", text: "shoes" }, { ok: true, el: `textbox "Search"`, len: 5 }],
       ["select", `<label>Sort <select><option>Name</option><option>Price</option></select></label>`, { label_pattern: "sort", text: "Price" }, { ok: true, selected: "Price", el: `combobox "Sort"` }],
     ]) {
       const dom = page(html);
@@ -980,7 +980,7 @@ test("fill {fields}: a trusted entry types through the editing command and picks
   const { dom, world } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
   const o = await fill({ fields: TRUSTED_ENTRIES });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.deepEqual(o.results.map((r) => r.kind), ["plain", "typeahead", "plain"]);
+  assert.deepEqual(o.results.map((r) => r.kind), [undefined, "typeahead", undefined]);
   assert.equal(o.results[1].trusted, true);
   assert.equal(o.results[0].trusted, undefined);
   assert.equal(o.results[1].selected, "Rosario, Santa Fe, Argentina");
@@ -1075,7 +1075,7 @@ test("fill {fields}: a plain trusted entry lands through the editing command", a
   const { dom, world } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
   const o = await fill({ fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }, { label_pattern: "name", text: "Ada" }] });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.deepEqual([o.results[0].kind, o.results[0].trusted, o.results[0].el], ["plain", true, 'textbox "Email"']);
+  assert.deepEqual([o.results[0].kind, o.results[0].trusted, o.results[0].el], [undefined, true, 'textbox "Email"']);
   assert.equal($(dom, "[name=email]").value, "a@b.test");
   assert.equal($(dom, "[name=name]").value, "Ada");
   assert.equal(world.counts["win.activeTabIndex="], undefined);
@@ -1108,12 +1108,12 @@ test("trusted_fill_background {held}: the field fill_fields held is used once; a
   $(dom, "[name=name]").remove();
   assert.deepEqual(run(dom, "trusted_fill_background", { held: true, label_pattern: "name", text: "Ada", trusted: true }), gone);
 });
-test("fill {fields}: a trusted entry whose page script throws stays kind plain, in neutral words", async () => {
+test("fill {fields}: a trusted entry whose page script throws stays plain, in neutral words", async () => {
   const { dom } = onPage(LOC_FORM, TRUSTED_ONLY_JS());
   const threw = throwAt(dom, "if (holding) {");
   const o = await fill({ fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }, { label_pattern: "name", text: "Ada" }] });
   assert.equal(threw(), 1);
-  assert.deepEqual(o.results[0], { ok: false, kind: "plain", error: "fill: the page script failed on this page (TypeError); nothing verified" });
+  assert.deepEqual(o.results[0], { ok: false, error: "fill: the page script failed on this page (TypeError); nothing verified" });
   assert.equal(o.results[1].ok, true);
   noRaw(o);
 });
@@ -1124,7 +1124,7 @@ test("fill {fields}: a trusted entry a later field clears is rechecked like any 
   const o = await fill({ fields: [{ label_pattern: "email", text: "a@b.test", trusted: true }, { label_pattern: "name", text: "Ada" }] });
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.results[0].ok, false);
-  assert.equal(o.results[0].kind, "plain");
+  assert.equal(o.results[0].kind, undefined);
   assert.match(o.results[0].error, /was cleared after a later field changed, and fields\[1\] \(textbox "Name"\) may have changed it; fill it again$/);
   assert.equal(o.results[1].ok, true);
 });
@@ -1624,7 +1624,7 @@ test("typeahead: a declared list that never appears keeps the text after a short
   const t0 = world.clock.t;
   const o = await fill({ label_pattern: "job title", text: "Staff Engineer" });
   assert.equal(o.ok, true, JSON.stringify(o));
-  assert.equal(o.kind, "plain");
+  assert.equal(o.kind, undefined);
   assert.equal($(dom, "#t").value, "Staff Engineer");
   assert.ok(world.clock.t - t0 < 2200, "waited " + (world.clock.t - t0) + "ms");
 });

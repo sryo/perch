@@ -631,7 +631,7 @@ test("fill on a plain field costs one Apple Event, and the next call's check cos
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
   const seen = evalsOf(dom);
   const { o } = await call("fill", { label_pattern: "city", text: "Rosario" });
-  assert.deepEqual(o, { ok: true, kind: "plain", el: `textbox "City"`, len: 7 });
+  assert.deepEqual(o, { ok: true, el: `textbox "City"`, len: 7 });
   assert.equal(appleEvents(), 1, breakdown());
   world.reset();
   assert.equal((await call("eval_js", { script: "return 1" })).o, 1);
