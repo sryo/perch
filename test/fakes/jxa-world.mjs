@@ -6,7 +6,8 @@
 // aeBy(app) its keys for one browser. With frameMs, an Apple Event to a browser
 // returns at that browser's next frame boundary; each browser has its own phase,
 // so events to different browsers overlap, as they do live. frameMs 0 (the
-// default) leaves the clock alone.
+// default) leaves the clock alone. world.sent lists the UTF-8 byte size of
+// every page script handed to a tab (execute, doJavaScript, bounded execute).
 import vm from "node:vm";
 
 export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, frameMs = 0 } = {}) {
@@ -17,6 +18,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   const posted = [];
   const counts = {}, geom = {};
   const aeLog = [];
+  const sent = [];
   // Building a specifier is lazy in JXA, and running() asks LaunchServices: no Apple Event.
   const notAe = /^(win\.tabs|tabs\.byId|win\.activeTab|windows\[\d+\]\(.*\)|running\(.*\))$/;
   const phase = (app) => (browsers.findIndex((b) => b.name === app) * frameMs) / browsers.length;
@@ -156,6 +158,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     tab.execute = ({ javascript }, ae = {}) => {
       bump("tab.execute", b.name);
       if (!present()) throw gone();
+      sent.push(Buffer.byteLength(javascript));
       // state.onExecute(tabSpec) runs as each page script is sent: a world change
       // (another window raised) that lands while page JS goes unanswered.
       if (state.onExecute) state.onExecute(spec, javascript);
@@ -163,9 +166,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (b.kind === "arc" && /^arc:/.test(tab.page.url)) throw new Error("HANG: Arc internal page execute");
       // Chromium runs no page JS on its own pages (chrome://newtab, settings).
       if (b.kind === "chrome" && /^(chrome|edge|brave):/.test(tab.page.url)) { state.internalExecs = (state.internalExecs || 0) + 1; throw new Error("Chromium internal page execute"); }
-      const limit = ae.timeoutMs ?? 120000, sent = clock.t;
+      const limit = ae.timeoutMs ?? 120000, sentAt = clock.t;
       const unanswered = () => {
-        clock.t = sent + limit;
+        clock.t = sentAt + limit;
         return Object.assign(new Error("AppleEvent timed out."), { errorNumber: -1712 });
       };
       // An execute sent while an earlier script still holds the page's thread waits for it.
@@ -208,7 +211,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // A script busy past the caller's timeout ran, but its reply never arrives.
       if (ran.busy) {
         tab.busyUntil = clock.t + ran.busy;
-        if (tab.busyUntil - sent >= limit) throw unanswered();
+        if (tab.busyUntil - sentAt >= limit) throw unanswered();
         clock.t = tab.busyUntil;
       }
       // state.dropAfterAssign: the reply to the execute that started a navigation is lost.
@@ -337,6 +340,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         bump("doJavaScript", b.name);
         if (tab && tab.__specifier) tab = tab();
         if (!tab || !winsByApp[b.name].some((x) => x.tabs.includes(tab))) throw gone();
+        sent.push(Buffer.byteLength(js));
         // Live on macOS 27.2 Safari runs JS in any tab; state.safariCurrentOnly
         // models versions that only run it in the window's current tab.
         if (state.safariCurrentOnly && !tab._active) throw new Error("Safari: tab is not current");
@@ -949,7 +953,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   };
   const ctx = vm.createContext(sandbox);
   return {
-    ctx, counts, geom, log, clock, apps, posted, cg: cgEntries, aeLog,
+    ctx, counts, geom, log, clock, apps, posted, cg: cgEntries, aeLog, sent,
     aeBy: (app) => aeLog.filter(([a]) => a === app).map(([, k]) => k),
     // Reorder a window's tabs in place: tabs[w] is the live list the runtime reads.
     tabsOf: (name, w) => winsByApp[name][w].tabs,
@@ -968,7 +972,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     closeWindow: (name, w) => { winsByApp[name].splice(w, 1); },
     // The user opens a window in front of the others.
     openWindow: (name, spec) => { winsByApp[name].unshift(makeWindow(spec, browsers.find((b) => b.name === name))); },
-    reset() { for (const o of [counts, geom]) for (const k of Object.keys(o)) delete o[k]; log.length = 0; aeLog.length = 0; },
+    reset() { for (const o of [counts, geom]) for (const k of Object.keys(o)) delete o[k]; log.length = 0; aeLog.length = 0; sent.length = 0; },
     state,
     page: (name, w, t) => winsByApp[name][w].tabs[t].page.ctx,
     run: (src) => vm.runInContext(src, ctx),
