@@ -4,7 +4,7 @@
 // checkout is never touched.
 //   node scripts/versions.mjs [--refs c4010f4,6b0d9cf,main] [--reps 10] [--out bench/runs/versions.json]
 //                             [--baseline bench/versions-baseline.json [--against <ref>]]
-//                             [--app canary|safari] [--only "<call regex>"] [--offline]
+//                             [--app canary|safari] [--only "<call regex>"] [--focus] [--offline]
 // It opens one scratch Chrome Canary window of its own (Canary may come to the
 // front while it opens), with bench/versions-fixture.html served on 127.0.0.1
 // in a shown tab and a background tab, runs every version there, minimizes
@@ -34,6 +34,10 @@ const OUT = arg("--out", "bench/runs/versions.json"), BASELINE = arg("--baseline
 const OFFLINE = process.argv.includes("--offline");
 // --only "<regex>": run just the calls whose names match (a retake of a flagged call).
 const ONLY = arg("--only") ? new RegExp(arg("--only")) : null, keep = (name) => !ONLY || ONLY.test(name);
+// --focus: trusted click, press and fill with the scratch window in front, the
+// calls that need the keyboard or an uncovered point. It takes focus for a few
+// seconds per version, gives it back to the app that had it, and records how long.
+const FOCUS = process.argv.includes("--focus"), FOCUS_LOG = [];
 const BROWSER = {
   canary: { app: "Google Chrome Canary", key: "canary", minimized: "minimized" },
   safari: { app: "Safari", key: "safari", minimized: "miniaturized" },
@@ -123,6 +127,14 @@ function workload(W, upload) {
   );
   return calls;
 }
+const focused = (W) => [
+  ["focus click trusted", "click", { selector: "#b", trusted: true, target: { tabId: W.shown } }],
+  ["focus click trusted raise", "click", { selector: "#t", trusted: true, raise: true, target: { tabId: W.shown } }],
+  ["focus press trusted", "press", { key: "Tab", trusted: true, target: { tabId: W.shown } }],
+  ["focus fill trusted", "fill", { selector: "#t", text: "focused", trusted: true, target: { tabId: W.shown } }],
+];
+const frontPid = () => Number(jxa(`ObjC.import("AppKit"); $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier`));
+const giveBack = (pid) => jxa(`ObjC.import("AppKit"); $.NSRunningApplication.runningApplicationWithProcessIdentifier(${pid}).activateWithOptions(0); "ok"`);
 const minimized = (W) => [
   ["minimized eval_js", "eval_js", { script: "return document.title", target: { tabId: W.shown } }],
   ["minimized screenshot", "screenshot", { format: "jpeg", target: { tabId: W.shown } }],
@@ -154,6 +166,8 @@ async function runVersion(T, base, upload) {
     // its log): a new query string reloads it, a fragment alone would not. navigate
     // answers the tab's current handle, which a Safari handle needs after a load.
     const W = { ...base, url: `${base.url}?v=${T.sha}` };
+    // The same window size for every version: restoring a minimized window can resize it.
+    try { jxa(`const w = ${winOf(base)}; if (w) w.bounds = { x: 40, y: 60, width: 900, height: 760 }; "ok"`); } catch {}
     for (const [k, row] of [["shown", shownRow], ["bg", bgRow]]) {
       const r = await client.rpc("tools/call", { name: "navigate", arguments: { url: W.url + (k === "bg" ? "#bg" : ""), target: { tabId: row.tabId } } });
       let o = {}; try { o = JSON.parse(r.result.content[0].text); } catch {}
@@ -169,6 +183,20 @@ async function runVersion(T, base, upload) {
       if (shot) results[name].image = shot.image;
     }
     if (keep("parallel 4x500ms await")) results["parallel 4x500ms await"] = stats(await parallel(client, W, Math.min(REPS, 5)));
+    if (FOCUS && focused(W).some(([name]) => keep(name))) {
+      const pid = frontPid(), t0 = Date.now();
+      try {
+        await rep(client, "activate_tab", { target: { tabId: W.shown } });
+        for (const [name, tool, args] of focused(W).filter(([name]) => keep(name))) {
+          const reps = [];
+          for (let i = 0; i < Math.min(REPS, 5); i++) reps.push(await rep(client, tool, args));
+          results[name] = stats(reps);
+        }
+      } finally {
+        try { giveBack(pid); } catch {}
+        FOCUS_LOG.push({ sha: T.sha, ms: Date.now() - t0 });
+      }
+    }
     if (!minimized(W).some(([name]) => keep(name))) return results;
     let down = null;
     try { minimize(W, true); } catch (e) { down = String(e.message).split("\n")[0]; }
@@ -238,7 +266,7 @@ async function main() {
   openWindow(server.url);
   const W = { url: server.url };
   const save = (versions) => {
-    const report = { date: new Date().toISOString(), macos: execFileSync("sw_vers", ["-productVersion"], { encoding: "utf8" }).trim(), browser: APP, fixture, reps: REPS, versions };
+    const report = { date: new Date().toISOString(), focus: FOCUS_LOG, macos: execFileSync("sw_vers", ["-productVersion"], { encoding: "utf8" }).trim(), browser: APP, fixture, reps: REPS, versions };
     mkdirSync(dirname(resolve(ROOT, OUT)), { recursive: true });
     writeFileSync(resolve(ROOT, OUT), JSON.stringify(report, null, 2) + "\n");
     return report;

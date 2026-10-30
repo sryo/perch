@@ -1443,8 +1443,26 @@
   ],
   "condition": "screen locked for every version (scratch window shown, behind the lock); reps 10",
   "unlocked": {
-    "date": "2026-10-30T19:07:41.154Z",
-    "condition": "screen unlocked; get_text bg bytes there grew with the page log (fixed in the harness since)",
+    "date": "2026-10-30T21:15:19.814Z",
+    "condition": "screen unlocked, stackd windowscape paused, display awake; reps 10; --focus took focus per version for the ms in `focus`",
+    "focus": [
+      {
+        "sha": "c4010f4",
+        "ms": 6225
+      },
+      {
+        "sha": "6b0d9cf",
+        "ms": 5765
+      },
+      {
+        "sha": "1eccf8e",
+        "ms": 5554
+      },
+      {
+        "sha": "a2b6a30",
+        "ms": 6285
+      }
+    ],
     "versions": [
       {
         "ref": "c4010f4",
@@ -1456,9 +1474,9 @@
         "results": {
           "list_tabs": {
             "n": 10,
-            "p50": 66,
+            "p50": 67,
             "p90": 68,
-            "bytes": 309,
+            "bytes": 479,
             "ok": 10,
             "err": 0,
             "error": null
@@ -1475,7 +1493,7 @@
           "eval_js shown": {
             "n": 10,
             "p50": 16,
-            "p90": 21,
+            "p90": 17,
             "bytes": 22,
             "ok": 10,
             "err": 0,
@@ -1483,8 +1501,8 @@
           },
           "eval_js await shown": {
             "n": 10,
-            "p50": 33,
-            "p90": 40,
+            "p50": 34,
+            "p90": 37,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1492,8 +1510,8 @@
           },
           "eval_js main shown": {
             "n": 10,
-            "p50": 17,
-            "p90": 21,
+            "p50": 16,
+            "p90": 18,
             "bytes": 13,
             "ok": 10,
             "err": 0,
@@ -1502,7 +1520,7 @@
           "eval_js main await shown": {
             "n": 10,
             "p50": 33,
-            "p90": 50,
+            "p90": 40,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1510,8 +1528,8 @@
           },
           "eval_js main await long shown": {
             "n": 10,
-            "p50": 34,
-            "p90": 45,
+            "p50": 33,
+            "p90": 41,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1519,17 +1537,17 @@
           },
           "accessibility_snapshot shown": {
             "n": 10,
-            "p50": 17,
-            "p90": 17,
-            "bytes": 536,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 576,
             "ok": 10,
             "err": 0,
             "error": null
           },
           "get_text shown": {
             "n": 10,
-            "p50": 17,
-            "p90": 17,
+            "p50": 16,
+            "p90": 18,
             "bytes": 696,
             "ok": 10,
             "err": 0,
@@ -1537,8 +1555,8 @@
           },
           "click shown": {
             "n": 10,
-            "p50": 17,
-            "p90": 19,
+            "p50": 16,
+            "p90": 17,
             "bytes": 32,
             "ok": 10,
             "err": 0,
@@ -1547,7 +1565,7 @@
           "fill shown": {
             "n": 10,
             "p50": 17,
-            "p90": 17,
+            "p90": 18,
             "bytes": 58,
             "ok": 10,
             "err": 0,
@@ -1556,7 +1574,7 @@
           "press shown": {
             "n": 10,
             "p50": 17,
-            "p90": 18,
+            "p90": 17,
             "bytes": 81,
             "ok": 10,
             "err": 0,
@@ -1564,7 +1582,7 @@
           },
           "select shown": {
             "n": 10,
-            "p50": 17,
+            "p50": 31,
             "p90": 35,
             "bytes": 53,
             "ok": 10,
@@ -1574,7 +1592,7 @@
           "wait shown": {
             "n": 10,
             "p50": 17,
-            "p90": 17,
+            "p90": 19,
             "bytes": 23,
             "ok": 10,
             "err": 0,
@@ -1582,8 +1600,8 @@
           },
           "file_upload shown": {
             "n": 10,
-            "p50": 16,
-            "p90": 17,
+            "p50": 17,
+            "p90": 18,
             "bytes": 76,
             "ok": 10,
             "err": 0,
@@ -1591,12 +1609,16 @@
           },
           "screenshot shown": {
             "n": 10,
-            "p50": 88,
-            "p90": 96,
-            "bytes": 148512,
+            "p50": 83,
+            "p90": 86,
+            "bytes": 136228,
             "ok": 10,
             "err": 0,
-            "error": null
+            "error": null,
+            "image": {
+              "w": 900,
+              "h": 760
+            }
           },
           "eval_js bg": {
             "n": 10,
@@ -1610,7 +1632,7 @@
           "eval_js await bg": {
             "n": 10,
             "p50": 33,
-            "p90": 43,
+            "p90": 44,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1619,7 +1641,7 @@
           "eval_js main bg": {
             "n": 10,
             "p50": 17,
-            "p90": 19,
+            "p90": 18,
             "bytes": 13,
             "ok": 10,
             "err": 0,
@@ -1627,8 +1649,8 @@
           },
           "eval_js main await bg": {
             "n": 10,
-            "p50": 33,
-            "p90": 41,
+            "p50": 34,
+            "p90": 50,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1637,7 +1659,7 @@
           "eval_js main await long bg": {
             "n": 10,
             "p50": 34,
-            "p90": 45,
+            "p90": 44,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1645,17 +1667,17 @@
           },
           "accessibility_snapshot bg": {
             "n": 10,
-            "p50": 17,
-            "p90": 17,
-            "bytes": 615,
+            "p50": 15,
+            "p90": 24,
+            "bytes": 644,
             "ok": 10,
             "err": 0,
             "error": null
           },
           "get_text bg": {
             "n": 10,
-            "p50": 17,
-            "p90": 17,
+            "p50": 16,
+            "p90": 24,
             "bytes": 703,
             "ok": 10,
             "err": 0,
@@ -1663,8 +1685,8 @@
           },
           "click bg": {
             "n": 10,
-            "p50": 17,
-            "p90": 18,
+            "p50": 16,
+            "p90": 17,
             "bytes": 32,
             "ok": 10,
             "err": 0,
@@ -1672,8 +1694,8 @@
           },
           "fill bg": {
             "n": 10,
-            "p50": 16,
-            "p90": 17,
+            "p50": 17,
+            "p90": 19,
             "bytes": 58,
             "ok": 10,
             "err": 0,
@@ -1681,7 +1703,7 @@
           },
           "press bg": {
             "n": 10,
-            "p50": 16,
+            "p50": 17,
             "p90": 17,
             "bytes": 81,
             "ok": 10,
@@ -1690,8 +1712,8 @@
           },
           "select bg": {
             "n": 10,
-            "p50": 20,
-            "p90": 34,
+            "p50": 17,
+            "p90": 36,
             "bytes": 53,
             "ok": 10,
             "err": 0,
@@ -1699,7 +1721,7 @@
           },
           "wait bg": {
             "n": 10,
-            "p50": 17,
+            "p50": 16,
             "p90": 17,
             "bytes": 23,
             "ok": 10,
@@ -1717,8 +1739,8 @@
           },
           "screenshot bg": {
             "n": 10,
-            "p50": 33,
-            "p90": 34,
+            "p50": 34,
+            "p90": 35,
             "bytes": 141,
             "ok": 0,
             "err": 10,
@@ -1726,17 +1748,17 @@
           },
           "click trusted shown": {
             "n": 10,
-            "p50": 83,
-            "p90": 87,
-            "bytes": 161,
-            "ok": 0,
-            "err": 10,
-            "error": "the point is not on the page itself (embedded frame or browser UI); frame controls need accessibility_snapshot {frames:true} and an fN ref"
+            "p50": 330,
+            "p90": 339,
+            "bytes": 150,
+            "ok": 10,
+            "err": 0,
+            "error": null
           },
           "fill trusted shown": {
             "n": 10,
-            "p50": 17,
-            "p90": 20,
+            "p50": 16,
+            "p90": 17,
             "bytes": 68,
             "ok": 10,
             "err": 0,
@@ -1744,17 +1766,17 @@
           },
           "navigate shown": {
             "n": 3,
-            "p50": 130,
-            "p90": 140,
-            "bytes": 97,
+            "p50": 131,
+            "p90": 132,
+            "bytes": 107,
             "ok": 3,
             "err": 0,
             "error": null
           },
           "notify": {
             "n": 1,
-            "p50": 7,
-            "p90": 7,
+            "p50": 17,
+            "p90": 17,
             "bytes": 11,
             "ok": 1,
             "err": 0,
@@ -1762,9 +1784,45 @@
           },
           "parallel 4x500ms await": {
             "n": 5,
-            "p50": 2210,
-            "p90": 2304,
+            "p50": 2235,
+            "p90": 2288,
             "bytes": 4,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus click trusted": {
+            "n": 5,
+            "p50": 322,
+            "p90": 350,
+            "bytes": 150,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus click trusted raise": {
+            "n": 5,
+            "p50": 633,
+            "p90": 906,
+            "bytes": 156,
+            "ok": 4,
+            "err": 1,
+            "error": "ok:false"
+          },
+          "focus press trusted": {
+            "n": 5,
+            "p50": 198,
+            "p90": 205,
+            "bytes": 108,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus fill trusted": {
+            "n": 5,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 68,
             "ok": 5,
             "err": 0,
             "error": null
@@ -1772,7 +1830,7 @@
           "minimized eval_js": {
             "n": 5,
             "p50": 17,
-            "p90": 97,
+            "p90": 111,
             "bytes": 22,
             "ok": 5,
             "err": 0,
@@ -1781,7 +1839,7 @@
           "minimized screenshot": {
             "n": 5,
             "p50": 50,
-            "p90": 51,
+            "p90": 53,
             "bytes": 91,
             "ok": 0,
             "err": 5,
@@ -1789,7 +1847,7 @@
           },
           "minimized click trusted": {
             "n": 5,
-            "p50": 50,
+            "p50": 49,
             "p90": 51,
             "bytes": 91,
             "ok": 0,
@@ -1808,17 +1866,17 @@
         "results": {
           "list_tabs": {
             "n": 10,
-            "p50": 67,
-            "p90": 68,
-            "bytes": 309,
+            "p50": 66,
+            "p90": 70,
+            "bytes": 479,
             "ok": 10,
             "err": 0,
             "error": null
           },
           "list_tabs arc": {
             "n": 10,
-            "p50": 101,
-            "p90": 104,
+            "p50": 100,
+            "p90": 106,
             "bytes": 520,
             "ok": 10,
             "err": 0,
@@ -1827,7 +1885,7 @@
           "eval_js shown": {
             "n": 10,
             "p50": 16,
-            "p90": 18,
+            "p90": 17,
             "bytes": 22,
             "ok": 10,
             "err": 0,
@@ -1836,7 +1894,7 @@
           "eval_js await shown": {
             "n": 10,
             "p50": 33,
-            "p90": 41,
+            "p90": 43,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1845,7 +1903,7 @@
           "eval_js main shown": {
             "n": 10,
             "p50": 17,
-            "p90": 19,
+            "p90": 17,
             "bytes": 13,
             "ok": 10,
             "err": 0,
@@ -1853,8 +1911,8 @@
           },
           "eval_js main await shown": {
             "n": 10,
-            "p50": 34,
-            "p90": 42,
+            "p50": 33,
+            "p90": 53,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1863,7 +1921,7 @@
           "eval_js main await long shown": {
             "n": 10,
             "p50": 33,
-            "p90": 45,
+            "p90": 42,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1871,9 +1929,9 @@
           },
           "accessibility_snapshot shown": {
             "n": 10,
-            "p50": 17,
-            "p90": 17,
-            "bytes": 517,
+            "p50": 16,
+            "p90": 19,
+            "bytes": 557,
             "ok": 10,
             "err": 0,
             "error": null
@@ -1881,7 +1939,7 @@
           "get_text shown": {
             "n": 10,
             "p50": 17,
-            "p90": 18,
+            "p90": 17,
             "bytes": 696,
             "ok": 10,
             "err": 0,
@@ -1890,7 +1948,7 @@
           "click shown": {
             "n": 10,
             "p50": 16,
-            "p90": 18,
+            "p90": 19,
             "bytes": 32,
             "ok": 10,
             "err": 0,
@@ -1908,7 +1966,7 @@
           "press shown": {
             "n": 10,
             "p50": 17,
-            "p90": 17,
+            "p90": 19,
             "bytes": 63,
             "ok": 10,
             "err": 0,
@@ -1916,8 +1974,8 @@
           },
           "select shown": {
             "n": 10,
-            "p50": 17,
-            "p90": 37,
+            "p50": 18,
+            "p90": 36,
             "bytes": 53,
             "ok": 10,
             "err": 0,
@@ -1925,7 +1983,7 @@
           },
           "wait shown": {
             "n": 10,
-            "p50": 17,
+            "p50": 16,
             "p90": 18,
             "bytes": 23,
             "ok": 10,
@@ -1934,8 +1992,8 @@
           },
           "file_upload shown": {
             "n": 10,
-            "p50": 16,
-            "p90": 17,
+            "p50": 17,
+            "p90": 18,
             "bytes": 76,
             "ok": 10,
             "err": 0,
@@ -1943,12 +2001,16 @@
           },
           "screenshot shown": {
             "n": 10,
-            "p50": 70,
-            "p90": 81,
-            "bytes": 148508,
+            "p50": 63,
+            "p90": 71,
+            "bytes": 135984,
             "ok": 10,
             "err": 0,
-            "error": null
+            "error": null,
+            "image": {
+              "w": 900,
+              "h": 760
+            }
           },
           "eval_js bg": {
             "n": 10,
@@ -1962,7 +2024,7 @@
           "eval_js await bg": {
             "n": 10,
             "p50": 33,
-            "p90": 44,
+            "p90": 42,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1970,8 +2032,8 @@
           },
           "eval_js main bg": {
             "n": 10,
-            "p50": 16,
-            "p90": 21,
+            "p50": 17,
+            "p90": 18,
             "bytes": 13,
             "ok": 10,
             "err": 0,
@@ -1980,7 +2042,7 @@
           "eval_js main await bg": {
             "n": 10,
             "p50": 34,
-            "p90": 47,
+            "p90": 53,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1988,8 +2050,8 @@
           },
           "eval_js main await long bg": {
             "n": 10,
-            "p50": 38,
-            "p90": 52,
+            "p50": 33,
+            "p90": 38,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -1997,26 +2059,26 @@
           },
           "accessibility_snapshot bg": {
             "n": 10,
-            "p50": 16,
-            "p90": 19,
-            "bytes": 596,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 636,
             "ok": 10,
             "err": 0,
             "error": null
           },
           "get_text bg": {
             "n": 10,
-            "p50": 17,
-            "p90": 17,
-            "bytes": 768,
+            "p50": 16,
+            "p90": 22,
+            "bytes": 703,
             "ok": 10,
             "err": 0,
             "error": null
           },
           "click bg": {
             "n": 10,
-            "p50": 16,
-            "p90": 18,
+            "p50": 17,
+            "p90": 17,
             "bytes": 32,
             "ok": 10,
             "err": 0,
@@ -2024,8 +2086,8 @@
           },
           "fill bg": {
             "n": 10,
-            "p50": 18,
-            "p90": 27,
+            "p50": 16,
+            "p90": 18,
             "bytes": 43,
             "ok": 10,
             "err": 0,
@@ -2042,8 +2104,8 @@
           },
           "select bg": {
             "n": 10,
-            "p50": 33,
-            "p90": 53,
+            "p50": 16,
+            "p90": 17,
             "bytes": 53,
             "ok": 10,
             "err": 0,
@@ -2052,7 +2114,7 @@
           "wait bg": {
             "n": 10,
             "p50": 17,
-            "p90": 26,
+            "p90": 20,
             "bytes": 23,
             "ok": 10,
             "err": 0,
@@ -2060,8 +2122,8 @@
           },
           "file_upload bg": {
             "n": 10,
-            "p50": 17,
-            "p90": 19,
+            "p50": 16,
+            "p90": 18,
             "bytes": 76,
             "ok": 10,
             "err": 0,
@@ -2069,8 +2131,8 @@
           },
           "screenshot bg": {
             "n": 10,
-            "p50": 36,
-            "p90": 64,
+            "p50": 33,
+            "p90": 34,
             "bytes": 141,
             "ok": 0,
             "err": 10,
@@ -2078,16 +2140,16 @@
           },
           "click trusted shown": {
             "n": 10,
-            "p50": 50,
-            "p90": 71,
-            "bytes": 161,
-            "ok": 0,
-            "err": 10,
-            "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+            "p50": 192,
+            "p90": 202,
+            "bytes": 132,
+            "ok": 9,
+            "err": 1,
+            "error": "the point is not on the page itself (embedded frame or browser UI); frame controls need accessibility_snapshot {frames:true} and an fN ref"
           },
           "fill trusted shown": {
             "n": 10,
-            "p50": 17,
+            "p50": 16,
             "p90": 17,
             "bytes": 68,
             "ok": 10,
@@ -2096,17 +2158,17 @@
           },
           "navigate shown": {
             "n": 3,
-            "p50": 117,
-            "p90": 117,
-            "bytes": 97,
+            "p50": 115,
+            "p90": 116,
+            "bytes": 107,
             "ok": 3,
             "err": 0,
             "error": null
           },
           "notify": {
             "n": 1,
-            "p50": 8,
-            "p90": 8,
+            "p50": 15,
+            "p90": 15,
             "bytes": 11,
             "ok": 1,
             "err": 0,
@@ -2114,17 +2176,53 @@
           },
           "parallel 4x500ms await": {
             "n": 5,
-            "p50": 2223,
-            "p90": 2284,
+            "p50": 2200,
+            "p90": 2319,
             "bytes": 4,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus click trusted": {
+            "n": 5,
+            "p50": 212,
+            "p90": 217,
+            "bytes": 132,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus click trusted raise": {
+            "n": 5,
+            "p50": 652,
+            "p90": 994,
+            "bytes": 138,
+            "ok": 4,
+            "err": 1,
+            "error": "ok:false"
+          },
+          "focus press trusted": {
+            "n": 5,
+            "p50": 184,
+            "p90": 200,
+            "bytes": 108,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus fill trusted": {
+            "n": 5,
+            "p50": 16,
+            "p90": 22,
+            "bytes": 68,
             "ok": 5,
             "err": 0,
             "error": null
           },
           "minimized eval_js": {
             "n": 5,
-            "p50": 16,
-            "p90": 91,
+            "p50": 17,
+            "p90": 113,
             "bytes": 22,
             "ok": 5,
             "err": 0,
@@ -2132,7 +2230,7 @@
           },
           "minimized screenshot": {
             "n": 5,
-            "p50": 35,
+            "p50": 33,
             "p90": 36,
             "bytes": 91,
             "ok": 0,
@@ -2142,7 +2240,7 @@
           "minimized click trusted": {
             "n": 5,
             "p50": 34,
-            "p90": 34,
+            "p90": 37,
             "bytes": 91,
             "ok": 0,
             "err": 5,
@@ -2160,16 +2258,16 @@
         "results": {
           "list_tabs": {
             "n": 10,
-            "p50": 66,
+            "p50": 67,
             "p90": 68,
-            "bytes": 309,
+            "bytes": 479,
             "ok": 10,
             "err": 0,
             "error": null
           },
           "list_tabs arc": {
             "n": 10,
-            "p50": 100,
+            "p50": 101,
             "p90": 101,
             "bytes": 520,
             "ok": 10,
@@ -2197,7 +2295,7 @@
           "eval_js main shown": {
             "n": 10,
             "p50": 17,
-            "p90": 17,
+            "p90": 18,
             "bytes": 13,
             "ok": 10,
             "err": 0,
@@ -2205,8 +2303,8 @@
           },
           "eval_js main await shown": {
             "n": 10,
-            "p50": 33,
-            "p90": 54,
+            "p50": 34,
+            "p90": 50,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2215,7 +2313,7 @@
           "eval_js main await long shown": {
             "n": 10,
             "p50": 34,
-            "p90": 43,
+            "p90": 42,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2225,7 +2323,7 @@
             "n": 10,
             "p50": 17,
             "p90": 17,
-            "bytes": 517,
+            "bytes": 557,
             "ok": 10,
             "err": 0,
             "error": null
@@ -2233,7 +2331,7 @@
           "get_text shown": {
             "n": 10,
             "p50": 17,
-            "p90": 18,
+            "p90": 17,
             "bytes": 696,
             "ok": 10,
             "err": 0,
@@ -2251,7 +2349,7 @@
           "fill shown": {
             "n": 10,
             "p50": 17,
-            "p90": 18,
+            "p90": 17,
             "bytes": 43,
             "ok": 10,
             "err": 0,
@@ -2268,7 +2366,7 @@
           },
           "select shown": {
             "n": 10,
-            "p50": 18,
+            "p50": 17,
             "p90": 37,
             "bytes": 53,
             "ok": 10,
@@ -2277,7 +2375,7 @@
           },
           "wait shown": {
             "n": 10,
-            "p50": 17,
+            "p50": 16,
             "p90": 18,
             "bytes": 23,
             "ok": 10,
@@ -2286,8 +2384,8 @@
           },
           "file_upload shown": {
             "n": 10,
-            "p50": 16,
-            "p90": 18,
+            "p50": 17,
+            "p90": 17,
             "bytes": 76,
             "ok": 10,
             "err": 0,
@@ -2295,16 +2393,20 @@
           },
           "screenshot shown": {
             "n": 10,
-            "p50": 67,
-            "p90": 82,
-            "bytes": 157596,
+            "p50": 66,
+            "p90": 72,
+            "bytes": 136036,
             "ok": 10,
             "err": 0,
-            "error": null
+            "error": null,
+            "image": {
+              "w": 900,
+              "h": 760
+            }
           },
           "eval_js bg": {
             "n": 10,
-            "p50": 16,
+            "p50": 17,
             "p90": 17,
             "bytes": 22,
             "ok": 10,
@@ -2314,7 +2416,7 @@
           "eval_js await bg": {
             "n": 10,
             "p50": 33,
-            "p90": 45,
+            "p90": 42,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2323,7 +2425,7 @@
           "eval_js main bg": {
             "n": 10,
             "p50": 17,
-            "p90": 17,
+            "p90": 18,
             "bytes": 13,
             "ok": 10,
             "err": 0,
@@ -2332,7 +2434,7 @@
           "eval_js main await bg": {
             "n": 10,
             "p50": 33,
-            "p90": 54,
+            "p90": 43,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2341,7 +2443,7 @@
           "eval_js main await long bg": {
             "n": 10,
             "p50": 33,
-            "p90": 44,
+            "p90": 46,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2349,26 +2451,26 @@
           },
           "accessibility_snapshot bg": {
             "n": 10,
-            "p50": 16,
-            "p90": 18,
-            "bytes": 607,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 636,
             "ok": 10,
             "err": 0,
             "error": null
           },
           "get_text bg": {
             "n": 10,
-            "p50": 16,
+            "p50": 17,
             "p90": 18,
-            "bytes": 834,
+            "bytes": 703,
             "ok": 10,
             "err": 0,
             "error": null
           },
           "click bg": {
             "n": 10,
-            "p50": 17,
-            "p90": 18,
+            "p50": 16,
+            "p90": 17,
             "bytes": 32,
             "ok": 10,
             "err": 0,
@@ -2376,7 +2478,7 @@
           },
           "fill bg": {
             "n": 10,
-            "p50": 16,
+            "p50": 17,
             "p90": 17,
             "bytes": 43,
             "ok": 10,
@@ -2404,7 +2506,7 @@
           "wait bg": {
             "n": 10,
             "p50": 16,
-            "p90": 18,
+            "p90": 17,
             "bytes": 23,
             "ok": 10,
             "err": 0,
@@ -2422,7 +2524,7 @@
           "screenshot bg": {
             "n": 10,
             "p50": 33,
-            "p90": 36,
+            "p90": 34,
             "bytes": 141,
             "ok": 0,
             "err": 10,
@@ -2430,17 +2532,17 @@
           },
           "click trusted shown": {
             "n": 10,
-            "p50": 52,
-            "p90": 68,
-            "bytes": 161,
-            "ok": 0,
-            "err": 10,
+            "p50": 200,
+            "p90": 216,
+            "bytes": 132,
+            "ok": 9,
+            "err": 1,
             "error": "the point is not on the page itself (embedded frame or browser UI); frame controls need accessibility_snapshot {frames:true} and an fN ref"
           },
           "fill trusted shown": {
             "n": 10,
             "p50": 16,
-            "p90": 18,
+            "p90": 17,
             "bytes": 68,
             "ok": 10,
             "err": 0,
@@ -2448,17 +2550,17 @@
           },
           "navigate shown": {
             "n": 3,
-            "p50": 115,
-            "p90": 117,
-            "bytes": 97,
+            "p50": 113,
+            "p90": 116,
+            "bytes": 107,
             "ok": 3,
             "err": 0,
             "error": null
           },
           "notify": {
             "n": 1,
-            "p50": 9,
-            "p90": 9,
+            "p50": 16,
+            "p90": 16,
             "bytes": 11,
             "ok": 1,
             "err": 0,
@@ -2466,9 +2568,45 @@
           },
           "parallel 4x500ms await": {
             "n": 5,
-            "p50": 2219,
-            "p90": 2330,
+            "p50": 2235,
+            "p90": 2324,
             "bytes": 4,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus click trusted": {
+            "n": 5,
+            "p50": 208,
+            "p90": 210,
+            "bytes": 132,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus click trusted raise": {
+            "n": 5,
+            "p50": 648,
+            "p90": 992,
+            "bytes": 138,
+            "ok": 4,
+            "err": 1,
+            "error": "ok:false"
+          },
+          "focus press trusted": {
+            "n": 5,
+            "p50": 152,
+            "p90": 181,
+            "bytes": 108,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus fill trusted": {
+            "n": 5,
+            "p50": 17,
+            "p90": 21,
+            "bytes": 68,
             "ok": 5,
             "err": 0,
             "error": null
@@ -2476,7 +2614,7 @@
           "minimized eval_js": {
             "n": 5,
             "p50": 17,
-            "p90": 88,
+            "p90": 111,
             "bytes": 22,
             "ok": 5,
             "err": 0,
@@ -2484,17 +2622,21 @@
           },
           "minimized screenshot": {
             "n": 5,
-            "p50": 91,
-            "p90": 112,
-            "bytes": 149116,
+            "p50": 79,
+            "p90": 108,
+            "bytes": 138687,
             "ok": 5,
             "err": 0,
-            "error": null
+            "error": null,
+            "image": {
+              "w": 940,
+              "h": 763
+            }
           },
           "minimized click trusted": {
             "n": 5,
             "p50": 33,
-            "p90": 33,
+            "p90": 34,
             "bytes": 91,
             "ok": 0,
             "err": 5,
@@ -2504,7 +2646,7 @@
       },
       {
         "ref": "main",
-        "sha": "c5e8fda",
+        "sha": "a2b6a30",
         "locked": [
           false,
           false
@@ -2512,9 +2654,9 @@
         "results": {
           "list_tabs": {
             "n": 10,
-            "p50": 66,
+            "p50": 67,
             "p90": 68,
-            "bytes": 309,
+            "bytes": 479,
             "ok": 10,
             "err": 0,
             "error": null
@@ -2531,7 +2673,7 @@
           "eval_js shown": {
             "n": 10,
             "p50": 16,
-            "p90": 20,
+            "p90": 17,
             "bytes": 22,
             "ok": 10,
             "err": 0,
@@ -2539,8 +2681,8 @@
           },
           "eval_js await shown": {
             "n": 10,
-            "p50": 33,
-            "p90": 43,
+            "p50": 34,
+            "p90": 45,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2549,7 +2691,7 @@
           "eval_js main shown": {
             "n": 10,
             "p50": 16,
-            "p90": 17,
+            "p90": 18,
             "bytes": 13,
             "ok": 10,
             "err": 0,
@@ -2557,8 +2699,8 @@
           },
           "eval_js main await shown": {
             "n": 10,
-            "p50": 35,
-            "p90": 41,
+            "p50": 33,
+            "p90": 45,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2566,8 +2708,8 @@
           },
           "eval_js main await long shown": {
             "n": 10,
-            "p50": 34,
-            "p90": 40,
+            "p50": 33,
+            "p90": 43,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2575,9 +2717,9 @@
           },
           "accessibility_snapshot shown": {
             "n": 10,
-            "p50": 17,
-            "p90": 17,
-            "bytes": 517,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 547,
             "ok": 10,
             "err": 0,
             "error": null
@@ -2593,8 +2735,8 @@
           },
           "click shown": {
             "n": 10,
-            "p50": 16,
-            "p90": 17,
+            "p50": 17,
+            "p90": 18,
             "bytes": 32,
             "ok": 10,
             "err": 0,
@@ -2603,7 +2745,7 @@
           "fill shown": {
             "n": 10,
             "p50": 17,
-            "p90": 17,
+            "p90": 18,
             "bytes": 43,
             "ok": 10,
             "err": 0,
@@ -2611,7 +2753,7 @@
           },
           "press shown": {
             "n": 10,
-            "p50": 16,
+            "p50": 17,
             "p90": 17,
             "bytes": 63,
             "ok": 10,
@@ -2620,8 +2762,8 @@
           },
           "select shown": {
             "n": 10,
-            "p50": 17,
-            "p90": 36,
+            "p50": 18,
+            "p90": 38,
             "bytes": 53,
             "ok": 10,
             "err": 0,
@@ -2629,8 +2771,8 @@
           },
           "wait shown": {
             "n": 10,
-            "p50": 17,
-            "p90": 17,
+            "p50": 16,
+            "p90": 18,
             "bytes": 23,
             "ok": 10,
             "err": 0,
@@ -2639,7 +2781,7 @@
           "file_upload shown": {
             "n": 10,
             "p50": 17,
-            "p90": 20,
+            "p90": 18,
             "bytes": 76,
             "ok": 10,
             "err": 0,
@@ -2647,17 +2789,21 @@
           },
           "screenshot shown": {
             "n": 10,
-            "p50": 67,
-            "p90": 83,
-            "bytes": 157596,
+            "p50": 68,
+            "p90": 72,
+            "bytes": 135928,
             "ok": 10,
             "err": 0,
-            "error": null
+            "error": null,
+            "image": {
+              "w": 900,
+              "h": 760
+            }
           },
           "eval_js bg": {
             "n": 10,
-            "p50": 15,
-            "p90": 19,
+            "p50": 16,
+            "p90": 18,
             "bytes": 22,
             "ok": 10,
             "err": 0,
@@ -2665,8 +2811,8 @@
           },
           "eval_js await bg": {
             "n": 10,
-            "p50": 34,
-            "p90": 44,
+            "p50": 33,
+            "p90": 43,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2674,8 +2820,8 @@
           },
           "eval_js main bg": {
             "n": 10,
-            "p50": 17,
-            "p90": 18,
+            "p50": 16,
+            "p90": 17,
             "bytes": 13,
             "ok": 10,
             "err": 0,
@@ -2684,7 +2830,7 @@
           "eval_js main await bg": {
             "n": 10,
             "p50": 33,
-            "p90": 53,
+            "p90": 52,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2693,7 +2839,7 @@
           "eval_js main await long bg": {
             "n": 10,
             "p50": 33,
-            "p90": 46,
+            "p90": 40,
             "bytes": 1,
             "ok": 10,
             "err": 0,
@@ -2701,18 +2847,18 @@
           },
           "accessibility_snapshot bg": {
             "n": 10,
-            "p50": 16,
-            "p90": 21,
-            "bytes": 607,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 636,
             "ok": 10,
             "err": 0,
             "error": null
           },
           "get_text bg": {
             "n": 10,
-            "p50": 16,
-            "p90": 17,
-            "bytes": 900,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 703,
             "ok": 10,
             "err": 0,
             "error": null
@@ -2728,7 +2874,7 @@
           },
           "fill bg": {
             "n": 10,
-            "p50": 16,
+            "p50": 17,
             "p90": 18,
             "bytes": 43,
             "ok": 10,
@@ -2746,8 +2892,8 @@
           },
           "select bg": {
             "n": 10,
-            "p50": 19,
-            "p90": 37,
+            "p50": 18,
+            "p90": 39,
             "bytes": 53,
             "ok": 10,
             "err": 0,
@@ -2755,8 +2901,8 @@
           },
           "wait bg": {
             "n": 10,
-            "p50": 17,
-            "p90": 24,
+            "p50": 16,
+            "p90": 17,
             "bytes": 23,
             "ok": 10,
             "err": 0,
@@ -2764,8 +2910,8 @@
           },
           "file_upload bg": {
             "n": 10,
-            "p50": 16,
-            "p90": 18,
+            "p50": 17,
+            "p90": 23,
             "bytes": 76,
             "ok": 10,
             "err": 0,
@@ -2774,7 +2920,7 @@
           "screenshot bg": {
             "n": 10,
             "p50": 33,
-            "p90": 34,
+            "p90": 39,
             "bytes": 141,
             "ok": 0,
             "err": 10,
@@ -2782,17 +2928,17 @@
           },
           "click trusted shown": {
             "n": 10,
-            "p50": 57,
-            "p90": 73,
-            "bytes": 161,
-            "ok": 0,
-            "err": 10,
-            "error": "the point is not on the page itself (embedded frame or browser UI); frame controls need accessibility_snapshot {frames:true} and an fN ref"
+            "p50": 296,
+            "p90": 306,
+            "bytes": 132,
+            "ok": 10,
+            "err": 0,
+            "error": null
           },
           "fill trusted shown": {
             "n": 10,
             "p50": 16,
-            "p90": 23,
+            "p90": 19,
             "bytes": 68,
             "ok": 10,
             "err": 0,
@@ -2800,17 +2946,17 @@
           },
           "navigate shown": {
             "n": 3,
-            "p50": 115,
-            "p90": 123,
-            "bytes": 97,
+            "p50": 118,
+            "p90": 127,
+            "bytes": 107,
             "ok": 3,
             "err": 0,
             "error": null
           },
           "notify": {
             "n": 1,
-            "p50": 9,
-            "p90": 9,
+            "p50": 18,
+            "p90": 18,
             "bytes": 11,
             "ok": 1,
             "err": 0,
@@ -2818,9 +2964,45 @@
           },
           "parallel 4x500ms await": {
             "n": 5,
-            "p50": 587,
-            "p90": 951,
+            "p50": 583,
+            "p90": 867,
             "bytes": 4,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus click trusted": {
+            "n": 5,
+            "p50": 300,
+            "p90": 300,
+            "bytes": 132,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus click trusted raise": {
+            "n": 5,
+            "p50": 665,
+            "p90": 1016,
+            "bytes": 138,
+            "ok": 4,
+            "err": 1,
+            "error": "ok:false"
+          },
+          "focus press trusted": {
+            "n": 5,
+            "p50": 177,
+            "p90": 199,
+            "bytes": 108,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "focus fill trusted": {
+            "n": 5,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 68,
             "ok": 5,
             "err": 0,
             "error": null
@@ -2828,7 +3010,7 @@
           "minimized eval_js": {
             "n": 5,
             "p50": 17,
-            "p90": 76,
+            "p90": 113,
             "bytes": 22,
             "ok": 5,
             "err": 0,
@@ -2836,17 +3018,21 @@
           },
           "minimized screenshot": {
             "n": 5,
-            "p50": 75,
-            "p90": 114,
-            "bytes": 149175,
+            "p50": 66,
+            "p90": 136,
+            "bytes": 138814,
             "ok": 5,
             "err": 0,
-            "error": null
+            "error": null,
+            "image": {
+              "w": 940,
+              "h": 763
+            }
           },
           "minimized click trusted": {
             "n": 5,
-            "p50": 32,
-            "p90": 34,
+            "p50": 33,
+            "p90": 40,
             "bytes": 91,
             "ok": 0,
             "err": 5,

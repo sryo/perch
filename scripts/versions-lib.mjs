@@ -35,7 +35,7 @@ export function compareRuns(base, run) {
     if (b.err === 0 && r.err > 0) flags.push({ call, kind: "fails", detail: `${r.err}/${r.n ?? r.ok + r.err} reps failed: ${r.error ?? ""}`.trim() });
     if (b.err > 0) continue;
     if (r.p50 > b.p50 * SLOWER_RATIO && r.p50 - b.p50 >= SLOWER_MS) flags.push({ call, kind: "slower", detail: `p50 ${b.p50} -> ${r.p50}ms` });
-    if (r.bytes > b.bytes) flags.push({ call, kind: "bigger", detail: `${b.bytes} -> ${r.bytes} B` });
+    if (r.bytes > b.bytes && !r.image) flags.push({ call, kind: "bigger", detail: `${b.bytes} -> ${r.bytes} B` });
     const area = (i) => (i ? i.w * i.h : 0);
     if (area(r.image) > area(b.image) && b.image) flags.push({ call, kind: "bigger image", detail: `${b.image.w}x${b.image.h} -> ${r.image.w}x${r.image.h}` });
   }

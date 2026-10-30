@@ -51,3 +51,8 @@ test("compareRuns flags a screenshot whose pixel area grew, which is what an ima
   assert.deepEqual(compareRuns(base, { shot: { p50: 80, p90: 90, bytes: 900, ok: 5, err: 0, image: { w: 1568, h: 1568 } } }).map((f) => f.kind), ["bigger image"]);
   assert.deepEqual(compareRuns(base, { shot: { p50: 80, p90: 90, bytes: 1000, ok: 5, err: 0, image: { w: 784, h: 1568 } } }), []);
 });
+
+test("compareRuns judges a screenshot by pixel area, not by its encoded bytes, which move with the page", () => {
+  const base = { shot: { p50: 80, p90: 90, bytes: 135500, ok: 5, err: 0, image: { w: 900, h: 760 } } };
+  assert.deepEqual(compareRuns(base, { shot: { p50: 80, p90: 90, bytes: 135628, ok: 5, err: 0, image: { w: 900, h: 760 } } }), []);
+});
