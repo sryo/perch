@@ -2203,7 +2203,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 910
+   "pageBytes": 863
   },
   {
    "call": [
@@ -2230,7 +2230,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 914
+   "pageBytes": 867
   }
  ],
  "eval_js: timeout argument checks": [

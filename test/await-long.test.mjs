@@ -67,7 +67,7 @@ for (const [at, timeout] of [[45000, 60000], [200000, AWAIT_MAX_MS]]) {
     assert.equal(t, String(at));
     // Seen at most 5% late, plus one poll.
     assert.ok(took >= at && took <= at * 1.05 + 100, `took ${took}ms`);
-    const run = lanes.find(([, fn]) => fn === "evalAsync");
+    const run = lanes.find(([, fn]) => fn === "evalKicked");
     assert.equal(run[0], "long");
     assert.ok(run[2] >= timeout + 5000, `the Node-side kill waits ${run[2]}ms`);
   });
@@ -82,7 +82,7 @@ test("the default timeout still ends at 30s, on the slow lane", async () => {
   assert.match(t, /^error: timeout: eval_js \(awaitPromise\) timed out after 30000ms; the code ran/);
   const took = world.clock.t - t0;
   assert.ok(took >= 30000 && took <= 30000 + 100, `took ${took}ms`);
-  assert.equal(lanes.find(([, fn]) => fn === "evalAsync")[0], "slow");
+  assert.equal(lanes.find(([, fn]) => fn === "evalKicked")[0], "slow");
 });
 
 test("a timeout up to 30s stays on the slow lane and is honoured", async () => {
@@ -92,7 +92,7 @@ test("a timeout up to 30s stays on the slow lane and is honoured", async () => {
   const { t } = await call("eval_js", { script: "await new Promise(() => {})", awaitPromise: true, timeout: 2000, target: { tabId: H } });
   assert.match(t, /^error: timeout: eval_js \(awaitPromise\) timed out after 2000ms/);
   assert.ok(world.clock.t - t0 <= 2100, `took ${world.clock.t - t0}ms`);
-  assert.equal(lanes.find(([, fn]) => fn === "evalAsync")[0], "slow");
+  assert.equal(lanes.find(([, fn]) => fn === "evalKicked")[0], "slow");
 });
 
 test("a timeout over 300s, under 1s, or not a number, is bad_args before any Apple Event", async () => {
@@ -154,7 +154,7 @@ test("quick calls (fast) and polling tools (slow) keep running while a long awai
   let long = null;
   const pending = call("eval_js", { script: SETTLE, awaitPromise: true, timeout: 180000, target: { tabId: H } }).then((x) => { long = x; });
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(lanes.at(-1), ["long", "evalAsync"], "the await went to the long lane");
+  assert.deepEqual(lanes.at(-1), ["long", "evalKicked"], "the await went to the long lane");
   const quick = await call("eval_js", { script: "return 1 + 1", target: { tabId: H } });
   assert.equal(quick.t, "2");
   assert.equal((await call("get_text", { target: { tabId: H } })).r.isError, undefined);
@@ -163,7 +163,7 @@ test("quick calls (fast) and polling tools (slow) keep running while a long awai
   const short = await call("eval_js", { script: "return 4", awaitPromise: true, target: { tabId: H } });
   assert.equal(short.t, "4");
   assert.equal(long, null, "the long await is still waiting");
-  assert.deepEqual(lanes.filter(([l]) => l === "long").map(([, fn]) => fn), ["evalAsync"], "nothing else queued on the long lane");
+  assert.deepEqual(lanes.filter(([l]) => l === "long").map(([, fn]) => fn), ["evalKicked"], "nothing else queued on the long lane");
   release();
   await pending;
   assert.equal(long.t, "done");

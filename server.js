@@ -2975,29 +2975,18 @@ function jxaRuntime(BROWSERS, HANG) {
       try { return pollExec(t, a.js, POLL_EXEC_SECS); }
       catch (e) { if (isNoReply(e)) return JSON.stringify({ dropped: true }); throw e; }
     },
-    evalAsync(a) {
-      const t = pageTarget(a.target, "eval_js"), start = Date.now();
-      // The kick is never sent twice. It sets its result slot before the user's
-      // code runs, so after a dropped reply the polls tell a kick still running
-      // (slot set) from one whose document is gone (slot missing).
-      let ran = true;
-      try { pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000))); }
-      catch (e) { if (!isNoReply(e)) throw e; ran = false; }
-      const r = poll(t, a.poll, a.timeout, awaitEvery, false, null, start);
-      if (!r) throw ranOut("timeout: eval_js (awaitPromise) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again; background tabs throttle timers, so avoid page sleeps or activate the tab");
-      if (r.value.__perch_gone) throw new Error("timeout: eval_js (awaitPromise) lost its result before the promise settled" + MAY_HAVE_RUN);
-      return r.value;
-    },
-    // eval_js {world:"main"}: the kick injects the code as a <script> and answers
-    // the result's first part when it settled at once; otherwise reads poll. A
-    // result longer than a part is read on from each part's end, so no reply
-    // carries more than one part. Returns "m" and the JSON text the page's world
-    // wrote, or "i" and perch's own error from the isolated world. A call that
-    // ends before reading its result in full drops its own slot (a.drop), which
-    // otherwise keeps the element and its result alive until the page unloads;
-    // not when the page stopped answering, where the drop could hang too.
-    evalMain(a) {
-      const t = pageTarget(a.target, "eval_js", true), start = Date.now();
+    // eval_js {awaitPromise} and {world:"main"}: the kick (never sent twice) runs
+    // the code and answers like a read; reads poll until the outcome is there.
+    // Returns "i" and the isolated world's outcome (awaitPromise's, or perch's
+    // own error from the main-world kick), or "m" and the JSON text the page's
+    // world wrote, read on from each part's end so no reply carries more than
+    // one part. A main-world call that ends before reading its result in full
+    // drops its slot (a.drop), which otherwise keeps the element and its result
+    // alive until the page unloads; not when the page stopped answering, where
+    // the drop could hang too.
+    evalKicked(a) {
+      const main = a.world === "main", what = main ? "world main" : "awaitPromise";
+      const t = pageTarget(a.target, "eval_js", main), start = Date.now();
       const read = function (off) { return a.read.split(MW_OFF).join(String(off)); };
       const dropped = function (err) { try { pollExec(t, a.drop, POLL_EXEC_SECS); } catch (e) {} return err; };
       let ran = true, v = null;
@@ -3008,14 +2997,14 @@ function jxaRuntime(BROWSERS, HANG) {
         pinFront(t);
         const r = poll(t, read(0), a.timeout, awaitEvery, false, null, start);
         if (!r) {
-          const err = ranOut("timeout: eval_js (world main) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again");
-          throw pollSilent ? err : dropped(err);
+          const err = ranOut("timeout: eval_js (" + what + ") timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again" + (main ? "" : "; background tabs throttle timers, so avoid page sleeps or activate the tab"));
+          throw pollSilent || !main ? err : dropped(err);
         }
         v = r.value;
       }
-      if (v.__perch_gone) throw new Error("timeout: eval_js (world main) lost its result before it settled" + MAY_HAVE_RUN);
+      if (v.__perch_gone) throw new Error("timeout: eval_js (" + what + ") lost its result before " + (main ? "it" : "the promise") + " settled" + MAY_HAVE_RUN);
       if (v.__perch_blocked) throw new Error("tab_not_scriptable: eval_js world:\"main\" can't run on this page: " + (MW_BLOCKED[v.__perch_blocked] || MW_BLOCKED.csp) + "; nothing ran");
-      if (v.p == null) return "i" + JSON.stringify(v);
+      if (!main || v.p == null) return "i" + JSON.stringify(v);
       const parts = [v.p];
       for (let end = v.end; end < v.len;) {
         pinFront(t);
@@ -4238,38 +4227,36 @@ export function buildEvalWrapper(js) {
   return `(function(){var __E=${ERROR_SHAPE};try{var __r=(function(){${js}\n})();return JSON.stringify(__r===undefined?null:__r)}catch(e){return JSON.stringify(__E(e))}})()`;
 }
 
-// AppleScript can't await, so async code stashes its outcome on window[key] and JXA polls it.
-// A poll never deletes the slot: one that gave up waiting can still run later, and
-// deleting there would read as a lost result. It lists the slot as read instead,
-// and the next kick sweeps read slots, so the normal path adds no Apple Event.
+// AppleScript can't await, so eval_js {awaitPromise} and {world:"main"} kick the
+// code once and read its outcome off window[key]. The kick sets the slot before
+// the code runs, so a read finding none (__perch_gone) means the document went.
+// A read never deletes the slot: one that gave up waiting can still run later,
+// and deleting there would read as a lost result. It lists the slot as read
+// instead, and the next kick sweeps read slots, so this adds no Apple Event.
 const ASYNC_DONE = "window.__perch_async_done";
-function buildAsyncKickoff(js, key) {
-  const k = JSON.stringify(key);
-  return `(function(){var __E=${ERROR_SHAPE};(${ASYNC_DONE}||[]).forEach(function(d){delete window[d]});${ASYNC_DONE}=[];window[${k}]=0;(async function(){try{var __r=await (async function(){${js}\n})();window[${k}]={value:__r===undefined?null:__r}}catch(e){window[${k}]=__E(e)}})();return "1"})()`;
-}
+const SLOT_HEAD = `var s=window[K];if(s===undefined)return '{"__perch_gone":1}';var d=${ASYNC_DONE}=${ASYNC_DONE}||[];`;
 
-function buildAsyncPoll(key) {
-  const k = JSON.stringify(key);
-  return `(function(){var v=window[${k}];if(v===undefined)return '{"__perch_gone":1}';if(v===0)return "null";var d=${ASYNC_DONE}=${ASYNC_DONE}||[];if(d.indexOf(${k})<0)d.push(${k});return JSON.stringify(v)})()`;
-}
+// The isolated world (awaitPromise): the slot holds 0 until the code settles,
+// then its outcome, which a read answers whole.
+const ISO_READ = `function(K){${SLOT_HEAD}if(s===0)return "null";if(d.indexOf(K)<0)d.push(K);return JSON.stringify(s)}`;
 
-// eval_js {world:"main"}: Chrome runs Apple Events JS in an isolated world, so
-// the kick injects the code as a <script>, which runs in the page's own world,
-// and the result comes back as an attribute on that (removed) element, found
-// through window[key] in the isolated world. A constant probe script runs first:
-// when it doesn't, the page's CSP blocks inline scripts, which the isolated world
-// records as a string in window[key] in place of the element (the page can write
-// the element's attributes, never perch's globals), as it does a non-HTML
+// The main world: Chrome runs Apple Events JS in an isolated world, so the kick
+// injects the code as a <script>, which runs in the page's own world, and the
+// result comes back as an attribute on that (removed) element, found through
+// window[key] in the isolated world. A constant probe script runs first: when
+// it doesn't, the page's CSP blocks inline scripts, which the isolated world
+// records as a string in window[key] in place of the element (the page can
+// write the element's attributes, never perch's globals), as it does a non-HTML
 // document (its createElement("script") makes a script that never runs) and
-// Trusted Types refusing the script's text; when it does and the
-// code's script doesn't, the code failed to parse, and compiling it here (only
-// then) names the SyntaxError, since the page's error event never reaches us. Slots join the awaitPromise
-// sweep list once fully read. A read answers at most MW_PART chars from an
-// offset (never splitting a surrogate pair), so a long result (a PNG as base64)
-// takes several bounded replies. Everything on the element is the page's to
-// write, so Node takes from it only `{value}` or the two-key error shape.
+// Trusted Types refusing the script's text; when it does and the code's script
+// doesn't, the code failed to parse, and compiling it here (only then) names
+// the SyntaxError, since the page's error event never reaches us. A read
+// answers at most MW_PART chars from an offset (never splitting a surrogate
+// pair), so a long result (a PNG as base64) takes several bounded replies.
+// Everything on the element is the page's to write, so Node takes from it only
+// `{value}` or the two-key error shape.
 export const MW_PART = 2000000;
-const MW_READ = `function(K,o){var s=window[K];if(s===undefined)return '{"__perch_gone":1}';var d=${ASYNC_DONE}=${ASYNC_DONE}||[];` +
+const MW_READ = `function(K,o){${SLOT_HEAD}` +
   `if(typeof s==="string"){if(d.indexOf(K)<0)d.push(K);return JSON.stringify({__perch_blocked:s})}` +
   `var j=s.getAttribute("data-perch-r");if(j==null)return "null";` +
   `var e=Math.min(j.length,o+${MW_PART});if(e<j.length){var c=j.charCodeAt(e-1);if(c>=55296&&c<56320)e--}` +
@@ -4278,14 +4265,19 @@ const MW_PROBE = `document.currentScript.setAttribute("data-perch-ran","")`;
 
 const MW_ERROR_SHAPE = `function(e){return {__perch_error:(e&&e.message)?String(e.message):String(e),__perch_error_name:(e&&e.name)?String(e.name):'Error'}}`;
 
-export function buildMainKick(js, key, awaitPromise) {
+// The kick answers as a read does: "null", or the main world's first part when
+// the code settled at once. The isolated kick is awaitPromise's; its error's
+// __perch_error_stack_head names the column the code starts at, so the text
+// before ${js} is part of the result.
+export function buildKick(js, key, { world, awaitPromise = false } = {}) {
+  const k = JSON.stringify(key), sweep = `(${ASYNC_DONE}||[]).forEach(function(d){delete window[d]});${ASYNC_DONE}=[];`;
+  if (world !== "main") return `(function(){var __E=${ERROR_SHAPE};${sweep}window[${k}]=0;(async function(){try{var __r=await (async function(){${js}\n})();window[${k}]={value:__r===undefined?null:__r}}catch(e){window[${k}]=__E(e)}})();return "null"})()`;
   const run = awaitPromise
     ? `(async function(){${js}\n})().then(function(r){p({value:r===undefined?null:r})},function(e){p(E(e))})`
     : `try{var r=(function(){${js}\n})();p({value:r===undefined?null:r})}catch(e){p(E(e))}`;
   const main = `(function(){var s=document.currentScript;if(!s)return;s.setAttribute("data-perch-ran","");var E=${MW_ERROR_SHAPE};` +
     `var p=function(o){var j;try{j=JSON.stringify(o)}catch(e){j=JSON.stringify(E(e))}s.setAttribute("data-perch-r",j)};${run}})()`;
-  const k = JSON.stringify(key);
-  return `(function(){var __E=${ERROR_SHAPE},__M=${MW_ERROR_SHAPE};(${ASYNC_DONE}||[]).forEach(function(d){delete window[d]});${ASYNC_DONE}=[];` +
+  return `(function(){var __E=${ERROR_SHAPE},__M=${MW_ERROR_SHAPE};${sweep}` +
     `try{var root=document.head||document.documentElement,q=document.createElement("script"),s=document.createElement("script"),m;` +
     `if(q.namespaceURI!=="http://www.w3.org/1999/xhtml")window[${k}]="xml";` +
     `else try{q.textContent=${JSON.stringify(MW_PROBE)};s.textContent=${JSON.stringify(main)}}catch(e){if(!/trusted/i.test(String(e&&e.message)))throw e;window[${k}]="tt"}` +
@@ -4296,13 +4288,15 @@ export function buildMainKick(js, key, awaitPromise) {
     `}catch(e){return JSON.stringify(__E(e))}return (${MW_READ})(${k},0)})()`;
 }
 
-export function buildMainDrop(key) {
-  const k = JSON.stringify(key);
-  return `(function(){var s=window[${k}];if(s&&typeof s==="object")s.removeAttribute("data-perch-r");delete window[${k}];return "1"})()`;
+// The read leaves the offset to read from for the runtime to fill in.
+export function buildRead(key, world) {
+  return `(${world === "main" ? MW_READ : ISO_READ})(${JSON.stringify(key)},"@perch_off@")`;
 }
 
-export function buildMainRead(key) {
-  return `(function(){return (${MW_READ})(${JSON.stringify(key)},"@perch_off@")})()`;
+// Main world only: drops the slot and its element's result.
+export function buildDrop(key) {
+  const k = JSON.stringify(key);
+  return `(function(){var s=window[${k}];if(s&&typeof s==="object")s.removeAttribute("data-perch-r");delete window[${k}];return "1"})()`;
 }
 
 // The JSON text eval_js {world:"main"} read off its element, which the page can
@@ -4360,18 +4354,14 @@ async function listTabs(args = {}) {
 
 async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFAULT_TIMEOUT, tool = "eval_js", reread, world } = {}) {
   if (world != null && world !== "main") throw new Error(`eval_js: unknown world '${world}' (expected main)`);
-  const lane = timeout > JXA_DEFAULT_TIMEOUT ? "long" : "slow";
-  if (world === "main") {
-    const key = `__perch_mw_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    const raw = await rt("evalMain", { target, kick: buildMainKick(script, key, awaitPromise), read: buildMainRead(key), drop: buildMainDrop(key), timeout },
-      { raw: true, lane, timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + MW_READ_MS + JXA_OVERHEAD });
-    return raw[0] === "m" ? mainResult(raw.slice(1)) : parsePage(raw.slice(1));
-  }
-  if (!awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
-  const key = `__perch_async_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  const r = await rt("evalAsync", { target, kick: buildAsyncKickoff(script, key), poll: buildAsyncPoll(key), timeout },
-    { lane, timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
-  return r && Object.hasOwn(r, "value") ? r.value : r;
+  const main = world === "main";
+  if (!main && !awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
+  const key = `__perch_${main ? "mw" : "async"}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const raw = await rt("evalKicked", { target, world, kick: buildKick(script, key, { world, awaitPromise }), read: buildRead(key, world), drop: main ? buildDrop(key) : undefined, timeout },
+    { raw: true, lane: timeout > JXA_DEFAULT_TIMEOUT ? "long" : "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + (main ? MW_READ_MS : 0) + JXA_OVERHEAD });
+  if (raw[0] === "m") return mainResult(raw.slice(1));
+  const r = parsePage(raw.slice(1));
+  return !main && r && Object.hasOwn(r, "value") ? r.value : r;
 }
 
 async function wait(args = {}) {

@@ -147,9 +147,9 @@ test("awaitPromise: once the deadline passed after a negative poll, it ends with
   const at = execStarts(world);
   const t0 = world.clock.t;
   // The kick holds the page 250ms of the 300: one poll fits, then the deadline.
-  const kick = `(function(){window.__k=0;__busy(250);return "1"})()`;
+  const kick = `(function(){window.__k=0;__busy(250);return "null"})()`;
   const poll = `(function(){var v=window.__k;if(v===undefined)return '{"__perch_gone":1}';return v===0?"null":JSON.stringify(v)})()`;
-  assert.throws(() => world.run(`__perch.evalAsync(${JSON.stringify({ target: { tabId: "chrome:x" }, kick, poll, timeout: 300 })})`),
+  assert.throws(() => world.run(`__perch.evalKicked(${JSON.stringify({ target: { tabId: "chrome:x" }, kick, read: poll, timeout: 300 })})`),
     /^Error: timeout: eval_js \(awaitPromise\) timed out after 300ms; the code ran/);
   assert.deepEqual(at.map((x) => x - t0), [0, 250], "the kick, then one poll");
   assert.equal(world.clock.t - t0, 300);

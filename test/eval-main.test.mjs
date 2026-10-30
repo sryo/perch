@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
-import { JXA_PRELUDE, DAEMONS, handleCall, buildMainKick, buildMainRead, MW_PART } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, buildKick, buildRead, MW_PART } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 
 function twoWorlds() {
@@ -241,7 +241,7 @@ test("two servers' calls on one tab never read each other's results, and a sweep
   // Server B's whole call (its kick sweeps read slots) lands while server A is
   // still polling, and again between A's parts.
   const b = (v) => {
-    const kick = buildMainKick(`return ${JSON.stringify(v)}`, "__perch_mw_b" + v, false);
+    const kick = buildKick(`return ${JSON.stringify(v)}`, "__perch_mw_b" + v, { world: "main" });
     const first = JSON.parse(dom.eval(kick));
     return first.p;
   };
@@ -259,7 +259,7 @@ test("two servers' calls on one tab never read each other's results, and a sweep
   assert.equal(t, "A" + "b".repeat(MW_PART + 5));
   assert.deepEqual(got, ['{"value":"x"}', '{"value":"y"}', '{"value":"z"}', '{"value":"w"}'], "B's last kick landed between A's parts");
   // B's last slot, read in full by B, waits for the next kick's sweep.
-  const read = JSON.parse(dom.eval(buildMainRead("__perch_mw_bw").split('"@perch_off@"').join("0")));
+  const read = JSON.parse(dom.eval(buildRead("__perch_mw_bw", "main").split('"@perch_off@"').join("0")));
   assert.equal(read.p, '{"value":"w"}');
 });
 
@@ -276,7 +276,7 @@ test("world main {awaitPromise}: a kick whose reply is dropped still answers, ha
 test("world main: a part read whose reply is dropped is read again", async () => {
   const { world } = install();
   let n = 0;
-  world.state.hangIf = (js) => (/,\d+\)\}\)\(\)$/.test(js) && !/,0\)\}\)\(\)$/.test(js) && n++ === 0 ? "ran" : false);
+  world.state.hangIf = (js) => (/",[1-9]\d*\)$/.test(js) && n++ === 0 ? "ran" : false);
   const { r, t } = await call({ script: `return 'c'.repeat(${MW_PART + 9})`, world: "main" });
   assert.equal(r.isError, undefined, t.slice(0, 200));
   assert.equal(t.length, MW_PART + 9);
@@ -382,7 +382,7 @@ test("world main: the page marking the element as CSP-blocked is not believed", 
 const heldResults = (dom) => [...new Set(slots(dom).map((k) => dom.iso[k]))].filter((s) => s && typeof s === "object" && s.getAttribute("data-perch-r") != null);
 const otherServerPending = (dom) => {
   vm.runInContext("window.__other = new Promise(() => {})", dom.main);
-  dom.eval(buildMainKick("await __other; return 1", "__perch_mw_other", true));
+  dom.eval(buildKick("await __other; return 1", "__perch_mw_other", { world: "main", awaitPromise: true }));
 };
 
 test("world main: a promise that never settles drops its slot when the call times out", async () => {
