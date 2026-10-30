@@ -464,7 +464,7 @@ test("calibration: a mouse move reveals the real offset and the click lands on t
   };
   const r = await handleCall("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } });
   const o = JSON.parse(r.content[0].text);
-  assert.equal(o.calibrated, true);
+  assert.equal("calibrated" in o, false, "calibration and aim say how the point was found");
   // Element center (50,10) in client px maps to screen (0 + 50, 57 + 100 + 10).
   assert.deepEqual(downs(world), [{ x: 50, y: 167 }]);
   assert.deepEqual(o.calibration, [[-56, 0], [0, 0]]);
@@ -660,7 +660,7 @@ test("background aim reads the page area from Accessibility, past a right-side p
   const r = await handleCall("click", { trusted: true, selector: "#b" });
   const o = JSON.parse(r.content[0].text);
   assert.equal(o.aim, "ax");
-  assert.equal(o.calibrated, true);
+  assert.equal("calibrated" in o, false, "calibration and aim say how the point was found");
   assert.equal(o.warning, undefined);
   // Estimate 0 + 256 + 50 = 306; the page really starts at 56, so the press is at 106.
   assert.deepEqual(o.calibration, [[-200, 0]]);

@@ -4471,7 +4471,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"el\":\"button \\\"Buy\\\"\",\"point\":{\"x\":106,\"y\":167},\"calibrated\":true,\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"skylight\",\"hit\":true}"
+     "text": "{\"ok\":true,\"el\":\"button \\\"Buy\\\"\",\"point\":{\"x\":106,\"y\":167},\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"skylight\",\"hit\":true}"
     }
    ],
    "isError": false,
@@ -4498,7 +4498,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"el\":\"button \\\"Buy\\\"\",\"point\":{\"x\":106,\"y\":167},\"calibrated\":true,\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"skylight\",\"hit\":true}"
+     "text": "{\"ok\":true,\"el\":\"button \\\"Buy\\\"\",\"point\":{\"x\":106,\"y\":167},\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"skylight\",\"hit\":true}"
     }
    ],
    "isError": false,
@@ -4528,7 +4528,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"el\":\"button \\\"Buy\\\"\",\"point\":{\"x\":106,\"y\":167},\"calibrated\":true,\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"hid\",\"hit\":true}"
+     "text": "{\"ok\":true,\"el\":\"button \\\"Buy\\\"\",\"point\":{\"x\":106,\"y\":167},\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"hid\",\"hit\":true}"
     }
    ],
    "isError": false,
@@ -5811,7 +5811,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"el\":\"textbox \\\"Email\\\"\",\"calibrated\":true,\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"hid\",\"hit\":true,\"len\":0,\"ok\":false,\"error\":\"trusted typing left a different value (0 chars: \\\"\\\")\"}"
+     "text": "{\"el\":\"textbox \\\"Email\\\"\",\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"hid\",\"hit\":true,\"len\":0,\"ok\":false,\"error\":\"trusted typing left a different value (0 chars: \\\"\\\")\"}"
     }
    ],
    "isError": false,
@@ -6261,7 +6261,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38017
+   "pageBytes": 38015
   }
  ],
  "select: arc": [

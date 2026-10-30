@@ -2042,7 +2042,7 @@ function jxaRuntime(BROWSERS, HANG) {
 
     function aimed() {
       const off = offPage(T, probe, pt, area);
-      return off ? { out: off } : { pt: pt, el: probe.el, blank: probe.blank, tok: probe.tok, calibrated: true, calibration: trace, aim: via };
+      return off ? { out: off } : { pt: pt, el: probe.el, blank: probe.blank, tok: probe.tok, calibration: trace, aim: via };
     }
   }
 
@@ -2063,7 +2063,7 @@ function jxaRuntime(BROWSERS, HANG) {
       // The click is posted, so a dropped reply says `tool` ran rather than inviting a
       // retry; the check only reads what the recorders saw, so it may be sent twice.
       const check = afterStep(tool, function () { return readExec(T.t, a.check); });
-      const out = frontWarn(T, { ok: check.hit === true, el: A.el, point: A.pt, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" });
+      const out = frontWarn(T, { ok: check.hit === true, el: A.el, point: A.pt, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" });
       return { out: threw(check) ? Object.assign(out, { ok: false, error: checkFault(tool, check) }) : Object.assign(out, check) };
     } finally {
       if (home) $.CGWarpMouseCursorPosition($.CGPointMake(home.x, home.y));
@@ -3689,7 +3689,7 @@ function jxaRuntime(BROWSERS, HANG) {
         delay(0.05); // let focus settle before typing
         typeChunks(a.chunks);
         delay(0.05);
-        const out = Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: "hid" }, afterStep("fill", function () { return readExec(T.t, a.check); }));
+        const out = Object.assign({ el: A.el, calibration: A.calibration, aim: A.aim, delivery: "hid" }, afterStep("fill", function () { return readExec(T.t, a.check); }));
         // The probe's typeahead state (A.tok) must be the one the check hands on.
         if (!threw(out) && out.ok !== false && (A.tok != null || out.pending) && !(out.pending && out.tok === A.tok)) {
           return { ok: false, kind: "typeahead", el: A.el, hit: out.hit, delivery: "hid", error: TA_TAKEN };

@@ -86,7 +86,7 @@ test("click {trusted, raise}: a check that throws after the press keeps the poin
   assert.equal(o.delivery, "hid");
   assert.equal(o.el, `button "Go"`);
   assert.equal(typeof o.point.x, "number");
-  assert.deepEqual(Object.keys(o).sort(), ["aim", "calibrated", "calibration", "delivery", "el", "error", "ok", "point"]);
+  assert.deepEqual(Object.keys(o).sort(), ["aim", "calibration", "delivery", "el", "error", "ok", "point"]);
 });
 
 test("click plain and click {hover}: a page script that throws is the neutral fault", async () => {
