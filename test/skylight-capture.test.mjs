@@ -55,7 +55,7 @@ test("a minimized window is captured by SkyLight under the CGWindowID Accessibil
   assert.equal(skyShots()[0].sky, 88);
   assert.equal(skyShots()[0].options, (1 << 11) | (1 << 8), "no global clip shape, best resolution (yabai, AltTab)");
   assert.deepEqual(cgShots().map((s) => s.cg), [88], "CoreGraphics is asked first and draws nothing");
-  assert.match(meta.warning, /minimized/);
+  assert.match(meta.warning, /minimized, hidden or locked/);
   assert.deepEqual(meta.image, { w: 1568, h: 1215 });
   assert.deepEqual(world.state.files, {});
 });
@@ -175,4 +175,13 @@ test("Accessibility titles end in the app name (\"Docs: Google Chrome Canary\");
   const r = await handleCall("screenshot", {});
   assert.equal(r.isError, undefined, r.content[0].text);
   assert.equal(skyShots()[0].sky, 88);
+});
+
+test("a hidden browser's window is captured the same way, and the warning doesn't call it minimized only", async () => {
+  install({ state: { hidden: [4242] } });
+  spawns();
+  const r = await handleCall("screenshot", {});
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(skyShots()[0].sky, 88);
+  assert.match(JSON.parse(r.content[1].text).warning, /not on screen \(minimized, hidden or locked\)/);
 });

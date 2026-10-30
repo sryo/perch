@@ -1006,7 +1006,7 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     const I = ids(t);
     if (I.windowNumber == null && !a.clip && !a.noSky && minimizedWindow(t, I)) {
-      I.warning = "minimized window: the image is the last frame the window server holds for it, not a live render";
+      I.warning = "the window is not on screen (minimized, hidden or locked): the image is the last frame the window server holds for it, not a live render";
     }
     if (I.windowNumber == null) throw new Error(offscreenMsg(t, I));
     if (I.ambiguous) axNamed(t, I);
