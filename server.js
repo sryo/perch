@@ -4563,13 +4563,19 @@ function takeLongLane() {
 
 async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFAULT_TIMEOUT, tool = "eval_js", reread, world } = {}) {
   if (world != null && world !== "main") throw new Error(`eval_js: unknown world '${world}' (expected main)`);
-  const main = world === "main";
+  // Safari runs Apple Events JS in the page's own world already, so world:"main"
+  // on a Safari tab is a plain eval: one execute, and no injected <script> for a
+  // Content-Security-Policy to block. An untargeted call can't tell its browser
+  // here and keeps the main-world protocol.
+  const pageWorld = typeof target?.tabId === "string" ? target.tabId.startsWith("safari:") : /^safari$/i.test(target?.app || "");
+  const main = world === "main" && !pageWorld;
   if (!main && !awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
   const key = `__perch_${main ? "mw" : "async"}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const lane = timeout > JXA_DEFAULT_TIMEOUT ? takeLongLane() : "slow";
   let raw;
   try {
-    raw = await rt("evalKicked", { target, world, kick: buildKick(script, key, { world, awaitPromise }), read: buildRead(key, world), drop: main ? buildDrop(key) : undefined, timeout },
+    const w = main ? "main" : undefined;
+    raw = await rt("evalKicked", { target, world: w, kick: buildKick(script, key, { world: w, awaitPromise }), read: buildRead(key, w), drop: main ? buildDrop(key) : undefined, timeout },
       { raw: true, lane, timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + (main ? MW_READ_MS : 0) + JXA_OVERHEAD });
   } finally { longBusy.delete(lane); }
   if (raw[0] === "m") return mainResult(raw.slice(1));
