@@ -131,7 +131,7 @@ test("trusted fill by label refuses a rich editor its ranking picks", async () =
   background(`<div contenteditable aria-label="Email body"></div>`);
   const o = await call({ trusted: true, label_pattern: "email", text: "Hi" });
   assert.equal(o.ok, false);
-  assert.match(o.error, /plain inputs\/textareas only$/);
+  assert.match(o.error, /trusted fill takes inputs\/textareas only; use plain fill$/);
 });
 
 test("raised trusted fill by label never clears a read-only field its ranking picks", async () => {
