@@ -14,6 +14,7 @@ import { makeWorld } from "./fakes/jxa-world.mjs";
 const saved = { ...DAEMONS, dialogs: deps.dialogs };
 afterEach(() => {
   for (const lane of ["fast", "slow", "long"]) DAEMONS[lane] = saved[lane];
+  for (const lane of ["long2", "long3", "long4"]) delete DAEMONS[lane];
   deps.dialogs = saved.dialogs;
 });
 
@@ -219,4 +220,25 @@ test("a long await still ends at once on a navigation, a closed tab, or at its d
   out = await call("eval_js", { script: "await new Promise(() => {})", awaitPromise: true, timeout: 200000, target: { tabId: H } });
   assert.match(out.t, /^error: timeout: eval_js \(awaitPromise\) timed out after 200000ms; .*the page stopped answering/);
   assert.ok(world.clock.t - t0 <= 200000 + 200, `hung: took ${world.clock.t - t0}ms`);
+});
+
+// figma-cdp's parallel workers each await seconds-long scripts with a 120s
+// timeout on one tab. An await holds its lane until the promise settles, so on
+// one long lane the third of three 3s awaits answered at 11.5s (live, Canary).
+test("concurrent long awaits each get a long lane of their own: none waits behind another", async () => {
+  const lanes = install();
+  for (const lane of ["long2", "long3"]) DAEMONS[lane] = { run: (script, timeout) => { lanes.push([lane, entry(script), timeout]); return world.daemon.run(script); } };
+  await call("list_tabs", {});
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  DAEMONS.long = { run: async (script) => { lanes.push(["long", entry(script)]); await gate; return world.daemon.run(script); } };
+  const first = call("eval_js", { script: "return 1", awaitPromise: true, timeout: 60000, target: { tabId: H } });
+  await new Promise((r) => setImmediate(r));
+  const second = await call("eval_js", { script: "return 2", awaitPromise: true, timeout: 60000, target: { tabId: H } });
+  assert.equal(second.t, "2", "answered while the first still holds the long lane");
+  const third = await call("eval_js", { script: "return 3", awaitPromise: true, timeout: 60000, target: { tabId: H } });
+  assert.equal(third.t, "3");
+  assert.deepEqual(lanes.filter(([, e]) => e === "evalKicked").map(([l]) => l), ["long", "long2", "long2"], "a lane is free again once its await answered");
+  release();
+  assert.equal((await first).t, "1");
 });

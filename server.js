@@ -4542,13 +4542,36 @@ async function listTabs(args = {}) {
   return out;
 }
 
+// An await past the default timeout holds its lane until the promise settles, so
+// concurrent ones (figma-cdp's parallel workers on one tab) each take a long lane
+// of their own: "long", then "long2".. up to LONG_LANES, each spawned on first use.
+// With all of them busy an await queues on "long".
+const LONG_LANES = 4, longBusy = new Set();
+function takeLongLane() {
+  for (let i = 1; i <= LONG_LANES; i++) {
+    const lane = i === 1 ? "long" : "long" + i;
+    if (longBusy.has(lane)) continue;
+    if (!DAEMONS[lane]) {
+      if (!(DAEMONS.long instanceof OsaDaemon)) continue;
+      DAEMONS[lane] = new OsaDaemon({ prelude: DAEMON_PRELUDE });
+    }
+    longBusy.add(lane);
+    return lane;
+  }
+  return "long";
+}
+
 async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFAULT_TIMEOUT, tool = "eval_js", reread, world } = {}) {
   if (world != null && world !== "main") throw new Error(`eval_js: unknown world '${world}' (expected main)`);
   const main = world === "main";
   if (!main && !awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
   const key = `__perch_${main ? "mw" : "async"}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  const raw = await rt("evalKicked", { target, world, kick: buildKick(script, key, { world, awaitPromise }), read: buildRead(key, world), drop: main ? buildDrop(key) : undefined, timeout },
-    { raw: true, lane: timeout > JXA_DEFAULT_TIMEOUT ? "long" : "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + (main ? MW_READ_MS : 0) + JXA_OVERHEAD });
+  const lane = timeout > JXA_DEFAULT_TIMEOUT ? takeLongLane() : "slow";
+  let raw;
+  try {
+    raw = await rt("evalKicked", { target, world, kick: buildKick(script, key, { world, awaitPromise }), read: buildRead(key, world), drop: main ? buildDrop(key) : undefined, timeout },
+      { raw: true, lane, timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + (main ? MW_READ_MS : 0) + JXA_OVERHEAD });
+  } finally { longBusy.delete(lane); }
   if (raw[0] === "m") return mainResult(raw.slice(1));
   const r = parsePage(raw.slice(1));
   return !main && r && Object.hasOwn(r, "value") ? r.value : r;
