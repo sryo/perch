@@ -195,7 +195,7 @@ for (const [label, mark] of [["unstamped", () => {}], ["stamped by another handl
     const m = meta(e.r);
     assert.equal(m.moved, true);
     assert.equal(m.tabId, h.replace("safari:3.1.", "safari:3.0."));
-    assert.match(m.warning, /tab moved; tabId refreshed/);
+    assert.equal(m.warning, undefined, "moved:true says it");
   });
 }
 
@@ -303,7 +303,7 @@ test("a single unstamped same-URL tab off the recorded index runs, and returns i
   assert.notEqual(f.r.isError, true, f.t);
   assert.equal(f.o.ok, true, f.t);
   assert.equal(f.o.moved, true, f.t);
-  assert.match(f.o.warning, /tab moved; tabId refreshed/);
+  assert.equal(f.o.warning, undefined, "moved:true says it");
   const fresh = h.replace("safari:3.1.", "safari:3.0.");
   assert.equal(f.o.tabId, fresh);
   world.reset();

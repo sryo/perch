@@ -843,7 +843,7 @@
     },
     {
      "type": "text",
-     "text": "{\"tabId\":\"safari:3.0.1puzom\",\"moved\":true,\"warning\":\"tab moved; tabId refreshed\"}"
+     "text": "{\"tabId\":\"safari:3.0.1puzom\",\"moved\":true}"
     }
    ],
    "isError": false,
@@ -874,7 +874,7 @@
     },
     {
      "type": "text",
-     "text": "{\"tabId\":\"safari:3.0.1puzom\",\"moved\":true,\"warning\":\"tab moved; tabId refreshed\"}"
+     "text": "{\"tabId\":\"safari:3.0.1puzom\",\"moved\":true}"
     }
    ],
    "isError": false,

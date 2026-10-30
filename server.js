@@ -10025,15 +10025,15 @@ function issuedHandles(name, result) {
 // A Safari tab found off its handle's index answers under its new handle, so the
 // next call is a one-event hit again. eval_js's value is the page's own, so the
 // note goes beside it.
-const MOVED = "tab moved; tabId refreshed";
+// `moved: true` beside the refreshed tabId says it all; no warning repeats it.
 function withMoved(name, result, tabId) {
   const plain = result && typeof result === "object" && !Array.isArray(result) && !result.__image && !result.__perch_ref_miss && result.__perch_error === undefined;
   if (plain && name !== "eval_js") {
     // A result's own tabId (navigate's, after the URL changed) is already the current one.
-    return formatResult({ ...result, tabId: result.tabId ?? tabId, moved: true, warning: result.warning ? `${result.warning}; ${MOVED}` : MOVED });
+    return formatResult({ ...result, tabId: result.tabId ?? tabId, moved: true });
   }
   const out = formatResult(result);
-  out.content.push({ type: "text", text: JSON.stringify({ tabId, moved: true, warning: MOVED }) });
+  out.content.push({ type: "text", text: JSON.stringify({ tabId, moved: true }) });
   return out;
 }
 
