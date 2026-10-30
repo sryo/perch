@@ -1671,8 +1671,6 @@ function jxaRuntime(BROWSERS, HANG) {
     });
   }
 
-  const parseExec = function (t, js) { return JSON.parse(String(exec(t, js))); };
-
   // After a click armed with readback: the first changed text/url within a.settle ms,
   // else what the element shows now. Polled here because page timers are throttled.
   // `tok` is the owner token the arm returned: a read that answers from a record
@@ -1947,7 +1945,7 @@ function jxaRuntime(BROWSERS, HANG) {
     visibleGuard(T.t, tool);
     let probe;
     for (let i = 0; ; i++) {
-      probe = parseExec(T.t, a.probe);
+      probe = readExec(T.t, a.probe);
       if (!probe.retry) break;
       if (i >= 20) return { out: { ok: false, error: "tab never became visible to measure" } };
       delay(0.05);
@@ -1975,7 +1973,7 @@ function jxaRuntime(BROWSERS, HANG) {
     const ours = function (at) {
       for (let tries = 0; tries < 10; tries++) {
         let got = null;
-        try { got = parseExec(T.t, a.cal); } catch (e) {}
+        try { got = readExec(T.t, a.cal); } catch (e) { if (isNoReply(e) || held(e)) throw e; }
         const m = got && got.moves.filter(function (v) { return Math.abs(v[2] - at.x) < 2 && Math.abs(v[3] - at.y) < 2; }).pop();
         if (m) return m;
         delay(0.025);
@@ -1983,7 +1981,7 @@ function jxaRuntime(BROWSERS, HANG) {
       return null;
     };
     for (let i = 0; i < 3; i++) {
-      exec(T.t, a.calReset);
+      readExec(T.t, a.calReset);
       mouse(T.I, pt, 5, 0, 0.0); // kCGEventMouseMoved
       const m = ours(pt);
       if (!m) break;
@@ -3407,7 +3405,7 @@ function jxaRuntime(BROWSERS, HANG) {
       let W = null, before = null, href = null, tok = null;
       const arm = function (A) {
         if (A && A.blank) { W = winOf(T.t); before = tabSet(W); href = A.blank.href; }
-        const r = a.arm ? parseExec(T.t, a.arm) : null;
+        const r = a.arm ? stepRead(T.t, a.arm) : null;
         if (r && r.tok) tok = r.tok;
         return r;
       };
@@ -3415,7 +3413,7 @@ function jxaRuntime(BROWSERS, HANG) {
       if (a.x != null) {
         const home = T.background ? null : cursorAt();
         try {
-          const f = parseExec(T.t, a.frames);
+          const f = readExec(T.t, a.frames);
           const framed = pointOnFrame(T, a, f) || offPage(T, f, { x: a.x, y: a.y });
           if (framed) return framed;
           const bad = arm();
@@ -3481,7 +3479,7 @@ function jxaRuntime(BROWSERS, HANG) {
       if (w.handoff) return refuse;
       const T = trustedTarget(a, undefined, t);
       visibleGuard(T.t, "click");
-      const vp = parseExec(T.t, a.probe);
+      const vp = readExec(T.t, a.probe);
       if (!vp || String(vp.url).split("#")[0] !== String(want.url).split("#")[0]) return miss;
       const row = frameWalk(T.I, vp).rows.filter(function (r) { return r.url === w.url && r.up.join("\n") === (w.up || []).join("\n") && r.role === w.role && r.name === w.name && r.ord === w.ord; })[0];
       if (!row) return miss;
@@ -3515,7 +3513,7 @@ function jxaRuntime(BROWSERS, HANG) {
         delay(0.05); // let focus settle before typing
         typeChunks(a.chunks);
         delay(0.05);
-        const out = Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: "hid" }, parseExec(T.t, a.check));
+        const out = Object.assign({ el: A.el, calibrated: A.calibrated, calibration: A.calibration, aim: A.aim, delivery: "hid" }, afterStep("fill", function () { return readExec(T.t, a.check); }));
         // The probe's typeahead state (A.tok) must be the one the check hands on.
         if (!threw(out) && out.ok !== false && (A.tok != null || out.pending) && !(out.pending && out.tok === A.tok)) {
           return { ok: false, kind: "typeahead", el: A.el, hit: out.hit, delivery: "hid", error: TA_TAKEN };
@@ -3529,14 +3527,16 @@ function jxaRuntime(BROWSERS, HANG) {
     // a trusted keydown with that key arrived (polled: page timers are throttled).
     trustedPress(a) {
       const T = trustedTarget(a, "a background trusted press");
-      const miss = keyFocusMiss(T.I, T.t.P, parseExec(T.t, a.probe));
+      const miss = keyFocusMiss(T.I, T.t.P, readExec(T.t, a.probe));
       if (miss) throw new Error("tab_not_visible: a background trusted press needs the keyboard in the target's page: " + miss);
-      const arm = parseExec(T.t, a.arm);
+      const arm = stepRead(T.t, a.arm);
       if (threw(arm)) return armFault("press", arm);
       if (!arm || arm.ok === false || arm.__perch_ref_miss) return arm;
       skyKey(T.I, a.vk, a.uni, a.flags);
-      const r = poll(T.t, a.check, 1000, 25);
-      const check = r ? r.value : parseExec(T.t, a.final);
+      const check = afterStep("press", function () {
+        const r = poll(T.t, a.check, 1000, 25);
+        return r ? r.value : readExec(T.t, a.final);
+      });
       if (threw(check)) return { ok: false, el: arm.el, key: a.key, delivery: "skylight", error: checkFault("press", check) };
       const out = Object.assign({ ok: check.hit === true, el: arm.el, key: a.key }, check, { delivery: "skylight" });
       if (check.hit === null) out.error = "no key reached the page; the browser's focus may be in its toolbar (a trusted click on the page brings it back)";
