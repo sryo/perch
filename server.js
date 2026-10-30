@@ -7183,7 +7183,7 @@ function rank(el, r) {
 // Rows are taken by rank, then document order, until max, and print in
 // document order. Without a query, once max rows are taken and one more shows,
 // the rest are counted unchecked, so omitted is at most that many rows.
-let n = n0, matched = 0, truncated = false, omitted = 0;
+let n = n0, matched = 0, omitted = 0;
 const tiers = [[], [], []], kept = [], cut = new Set(), shown = new Set();
 let seq = 0;
 function walk(root) {
@@ -7207,7 +7207,6 @@ for (const c of tiers[0].concat(tiers[1], tiers[2])) {
   if (kept.length < A.max) kept.push(c);
   else { omitted++; cut.add(c.el.ownerDocument); }
 }
-if (omitted) truncated = true;
 kept.sort(function (a, b) { return a.i - b.i; });
 for (const c of kept) {
   const ref = String(++n);
@@ -7267,7 +7266,7 @@ function hiddenRows(cands) {
     const line = describe(el, r, name) + (seen ? "" : " hidden") + frameTag(el);
     if (re && !re.test(line)) continue;
     matched++;
-    if (n - n0 >= A.max) { truncated = true; omitted++; continue; }
+    if (n - n0 >= A.max) { omitted++; continue; }
     shown++;
     const ref = String(++n);
     refs[ref] = el;
@@ -7296,7 +7295,11 @@ if (forms.length) {
   if (unseen.length) hiddenRows(unseen);
 }
 window.__perch_refN = n;
-const head = { rid: rid, url: location.href, title: document.title, ready: document.readyState, count: n - n0 };
+// An empty title and a complete readyState are the defaults the header leaves out.
+const head = { rid: rid, url: location.href };
+if (document.title) head.title = document.title;
+if (document.readyState !== "complete") head.ready = document.readyState;
+head.count = n - n0;
 // For the frame walk's page-area match; Node drops them from the header.
 if (A.frames) {
   head.iw = innerWidth; head.ih = innerHeight;
@@ -7310,7 +7313,7 @@ if (A.frames) {
   if (fr.length) head.fr = fr;
 }
 if (re) head.matched = matched;
-if (truncated) { head.truncated = true; head.omitted = omitted; }
+if (omitted) head.omitted = omitted;
 if (act && act !== document.body && act !== document.documentElement) {
   let fr = null;
   for (const k in refs) if (refs[k] === act) { fr = k; break; }
@@ -9853,7 +9856,7 @@ const TOOLS = [
     offset: { type: "number" },
     target: TARGET,
   }),
-  tool("accessibility_snapshot", "Page outline: a `# {url,title,ready,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`. `truncated`/`omitted`: cut; narrow by role/query, not missing.", {
+  tool("accessibility_snapshot", "Page outline: a `# {url,title?,ready?,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`. `omitted`: rows cut; narrow by role/query, not missing.", {
     max: { type: "number", description: "Row cap, default 500 (dialogs, focus, fields first); 0 = header only." },
     role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles (textbox, button…)." },
     query: { type: "string", description: "Keep lines matching this regex." },

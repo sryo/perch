@@ -142,7 +142,7 @@ test("snapshot: role filter, max cap, header-only, focus", () => {
   const tb = run(w, "snapshot", { max: 500, role: ["textbox"] }).split("\n").slice(1);
   assert.equal(tb.length, 2);
   const capped = run(w, "snapshot", { max: 2 });
-  assert.equal(JSON.parse(capped.split("\n")[0].slice(2)).truncated, true);
+  assert.ok(JSON.parse(capped.split("\n")[0].slice(2)).omitted > 0);
   assert.equal(capped.split("\n").length, 3);
   assert.equal(run(w, "snapshot", { max: 0 }).split("\n").length, 1);
   w.document.querySelector("[name=email]").focus();

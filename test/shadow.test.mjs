@@ -79,7 +79,7 @@ test("query matches keys but not the ref, and max caps the emitted lines", () =>
   const capped = run(w, "snapshot", { max: 1, query: "button" });
   // Refs continue from the first snapshot's one row.
   assert.deepEqual(lines(capped), [`2 button "Light"`]);
-  assert.deepEqual([head(capped).count, head(capped).matched, head(capped).truncated], [1, 3, true]);
+  assert.deepEqual([head(capped).count, head(capped).matched, head(capped).omitted > 0], [1, 3, true]);
 });
 
 test("a bad query regex errors in Node before reaching the page", async () => {

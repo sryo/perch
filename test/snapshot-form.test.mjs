@@ -172,7 +172,7 @@ test("snapshot: hidden rows stop at 10 and respect max", () => {
   assert.equal(head.form.requiredEmpty, 15);
   ({ head, lines } = snap(w, { max: 3 }));
   assert.equal(lines.length, 3);
-  assert.equal(head.truncated, true);
+  assert.ok(head.omitted > 0);
 });
 
 test("snapshot: the form header carries the wizard's step, and only when one shows", () => {

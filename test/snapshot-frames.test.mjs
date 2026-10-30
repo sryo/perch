@@ -164,7 +164,7 @@ test("(b) a same-origin frame's rows count toward max and query like any other",
   assert.deepEqual(snap(w, { query: "frame=0" }).lines, [`1 textbox "First name" name="first" required frame=0`, `2 combobox "Work authorization" name="auth" options=["Select...","Yes","No"] required frame=0`]);
   const capped = snap(w, { max: 2 });
   assert.equal(capped.lines.length, 2);
-  assert.equal(capped.head.truncated, true);
+  assert.ok(capped.head.omitted > 0);
 });
 
 test("(b) the header's form is the biggest one across the page and its same-origin frames", () => {
@@ -351,7 +351,7 @@ const MINE = { url: "https://a.test/app", box: MINE_BOX, kids: [
 test("a page cut at max before a same-origin frame leaves the frame out of the walked boxes, so its controls come back as frame rows", async () => {
   const w = truncatedPage();
   const { head, lines } = snap(w, { max: 5, frames: true });
-  assert.equal(head.truncated, true);
+  assert.ok(head.omitted > 0);
   assert.deepEqual(head.iframes.map((f) => f.same), [true]);
   assert.equal(head.fr, undefined);
   assert.ok(!lines.some((l) => / frame=0$/.test(l)), lines.join("\n"));
@@ -359,7 +359,7 @@ test("a page cut at max before a same-origin frame leaves the frame out of the w
 
   framesWorld(w, [MINE]);
   const r = await frameSnap({ max: 5 });
-  assert.equal(r.head.truncated, true);
+  assert.ok(r.head.omitted > 0);
   assert.deepEqual(r.f, [`f1 textbox "First name" frame="a.test"`, `f2 textbox "Last name" frame="a.test"`], r.s);
 });
 

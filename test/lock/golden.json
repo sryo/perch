@@ -2419,7 +2419,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":1}\n1 button \"Go\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":1}\n1 button \"Go\""
     }
    ],
    "isError": false,
@@ -2430,7 +2430,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35162
+   "pageBytes": 35143
   },
   {
    "call": [
@@ -3029,7 +3029,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":1}\n1 button \"Go now\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":1}\n1 button \"Go now\""
     }
    ],
    "isError": false,
@@ -3040,7 +3040,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35162
+   "pageBytes": 35143
   },
   {
    "call": [
@@ -3123,7 +3123,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":8,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 heading \"Apply\" level=1\n2 textbox \"Email\" name=\"email\" type=\"email\" required\n3 combobox \"Country\" name=\"c\" options=[\"Choose\",\"Argentina\",\"Brazil\"] required\n4 checkbox \"Terms\" name=\"t\" required\n5 button \"Send\"\n6 dialog \"Cookies\"\n7 button \"Accept\"\n8 link \"Help\" href=\"/help\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":8,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 heading \"Apply\" level=1\n2 textbox \"Email\" name=\"email\" type=\"email\" required\n3 combobox \"Country\" name=\"c\" options=[\"Choose\",\"Argentina\",\"Brazil\"] required\n4 checkbox \"Terms\" name=\"t\" required\n5 button \"Send\"\n6 dialog \"Cookies\"\n7 button \"Accept\"\n8 link \"Help\" href=\"/help\""
     }
    ],
    "isError": false,
@@ -3134,7 +3134,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35162
+   "pageBytes": 35143
   }
  ],
  "targeted calls on a page tool by tool": [
@@ -3150,7 +3150,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":4}\n1 textbox \"Name\"\n2 combobox \"Size\" options=[\"S\",\"M\"] value=\"S\"\n3 textbox \"CV\" type=\"file\"\n4 button \"Go\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":4}\n1 textbox \"Name\"\n2 combobox \"Size\" options=[\"S\",\"M\"] value=\"S\"\n3 textbox \"CV\" type=\"file\"\n4 button \"Go\""
     }
    ],
    "isError": false,
@@ -3163,7 +3163,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35162
+   "pageBytes": 35143
   },
   {
    "call": [
@@ -3403,6 +3403,52 @@
    "pageBytes": 0
   }
  ],
+ "accessibility_snapshot: a page still loading shows ready and title": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "Object.defineProperty(document, 'readyState', { value: 'interactive', configurable: true }); return document.title"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "Loading shop"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 473
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"Loading shop\",\"ready\":\"interactive\",\"count\":1}\n1 button \"Go\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35143
+  }
+ ],
  "accessibility_snapshot: max, role, query": [
   {
    "call": [
@@ -3414,7 +3460,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":0,\"truncated\":true,\"omitted\":8,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}"
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":0,\"omitted\":8,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}"
     }
    ],
    "isError": false,
@@ -3425,7 +3471,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35160
+   "pageBytes": 35141
   },
   {
    "call": [
@@ -3437,7 +3483,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":2,\"truncated\":true,\"omitted\":6,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 dialog \"Cookies\"\n2 button \"Accept\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":2,\"omitted\":6,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 dialog \"Cookies\"\n2 button \"Accept\""
     }
    ],
    "isError": false,
@@ -3448,7 +3494,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35160
+   "pageBytes": 35141
   },
   {
    "call": [
@@ -3460,7 +3506,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":2,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n3 button \"Send\"\n4 button \"Accept\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":2,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n3 button \"Send\"\n4 button \"Accept\""
     }
    ],
    "isError": false,
@@ -3471,7 +3517,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35166
+   "pageBytes": 35147
   },
   {
    "call": [
@@ -3486,7 +3532,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":2,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n5 textbox \"Email\" name=\"email\" type=\"email\" required\n6 combobox \"Country\" name=\"c\" options=[\"Choose\",\"Argentina\",\"Brazil\"] required"
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":2,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n5 textbox \"Email\" name=\"email\" type=\"email\" required\n6 combobox \"Country\" name=\"c\" options=[\"Choose\",\"Argentina\",\"Brazil\"] required"
     }
    ],
    "isError": false,
@@ -3497,7 +3543,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35180
+   "pageBytes": 35161
   },
   {
    "call": [
@@ -3509,7 +3555,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":2,\"matched\":2,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n7 checkbox \"Terms\" name=\"t\" required\n8 link \"Help\" href=\"/help\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":2,\"matched\":2,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n7 checkbox \"Terms\" name=\"t\" required\n8 link \"Help\" href=\"/help\""
     }
    ],
    "isError": false,
@@ -3520,7 +3566,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35170
+   "pageBytes": 35151
   },
   {
    "call": [
@@ -3553,7 +3599,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":3,\"truncated\":true,\"omitted\":5,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 textbox \"Email\" name=\"email\" type=\"email\" required\n2 dialog \"Cookies\"\n3 button \"Accept\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":3,\"omitted\":5,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 textbox \"Email\" name=\"email\" type=\"email\" required\n2 dialog \"Cookies\"\n3 button \"Accept\""
     }
    ],
    "isError": false,
@@ -3566,7 +3612,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35160
+   "pageBytes": 35141
   }
  ],
  "accessibility_snapshot: safari": [
@@ -3580,7 +3626,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":3,\"truncated\":true,\"omitted\":5,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 textbox \"Email\" name=\"email\" type=\"email\" required\n2 dialog \"Cookies\"\n3 button \"Accept\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":3,\"omitted\":5,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 textbox \"Email\" name=\"email\" type=\"email\" required\n2 dialog \"Cookies\"\n3 button \"Accept\""
     }
    ],
    "isError": false,
@@ -3591,7 +3637,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35160
+   "pageBytes": 35141
   }
  ],
  "accessibility_snapshot: same-origin and cross-origin iframes": [
@@ -3603,7 +3649,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":1,\"iframes\":[{\"src\":\"https://jobs.example/acme/apply\",\"w\":600,\"h\":800,\"same\":false}]}\n1 heading \"Careers\" level=1"
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":1,\"iframes\":[{\"src\":\"https://jobs.example/acme/apply\",\"w\":600,\"h\":800,\"same\":false}]}\n1 heading \"Careers\" level=1"
     }
    ],
    "isError": false,
@@ -3614,7 +3660,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35162
+   "pageBytes": 35143
   }
  ],
  "accessibility_snapshot: frames from Accessibility": [
@@ -3628,7 +3674,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://form.test/\",\"title\":\"\",\"ready\":\"complete\",\"count\":1,\"iframes\":[{\"src\":\"https://js.pay.example/v3/card\",\"w\":400,\"h\":150,\"same\":false}],\"frames\":{\"count\":3}}\n1 heading \"Shop\" level=1\nf1 textbox \"Card number\" frame=\"js.pay.example\" secure\nf2 button \"Pay\" frame=\"js.pay.example\"\nf3 checkbox \"Verify\" frame=\"challenges.cloudflare.com\" handoff"
+     "text": "# {\"url\":\"https://form.test/\",\"count\":1,\"iframes\":[{\"src\":\"https://js.pay.example/v3/card\",\"w\":400,\"h\":150,\"same\":false}],\"frames\":{\"count\":3}}\n1 heading \"Shop\" level=1\nf1 textbox \"Card number\" frame=\"js.pay.example\" secure\nf2 button \"Pay\" frame=\"js.pay.example\"\nf3 checkbox \"Verify\" frame=\"challenges.cloudflare.com\" handoff"
     }
    ],
    "isError": false,
@@ -3641,7 +3687,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35176
+   "pageBytes": 35157
   },
   {
    "call": [
@@ -3771,7 +3817,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://form.test/\",\"title\":\"\",\"ready\":\"complete\",\"count\":1,\"frames\":{\"error\":\"frames_unreadable: Accessibility could not read the page's frames; the page rows are unaffected, retry for frame rows\"}}\n1 heading \"Shop\" level=1"
+     "text": "# {\"url\":\"https://form.test/\",\"count\":1,\"frames\":{\"error\":\"frames_unreadable: Accessibility could not read the page's frames; the page rows are unaffected, retry for frame rows\"}}\n1 heading \"Shop\" level=1"
     }
    ],
    "isError": false,
@@ -3784,7 +3830,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35176
+   "pageBytes": 35157
   }
  ],
  "accessibility_snapshot: hidden with reveal, unpicked, pressed, expanded": [
@@ -3796,7 +3842,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":7,\"form\":{\"fields\":2,\"requiredEmpty\":2,\"unpicked\":1}}\n1 button \"Attach\"\n2 button \"Enter manually\"\n3 textbox \"Location\" value=\"Buenos\" required unpicked\n4 button \"Bold\" pressed\n5 button \"Menu\" expanded\n6 button \"Submit application\"\n7 textbox \"Cover Letter\" name=\"cover_letter\" type=\"textarea\" required hidden reveal=\"2\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":7,\"form\":{\"fields\":2,\"requiredEmpty\":2,\"unpicked\":1}}\n1 button \"Attach\"\n2 button \"Enter manually\"\n3 textbox \"Location\" value=\"Buenos\" required unpicked\n4 button \"Bold\" pressed\n5 button \"Menu\" expanded\n6 button \"Submit application\"\n7 textbox \"Cover Letter\" name=\"cover_letter\" type=\"textarea\" required hidden reveal=\"2\""
     }
    ],
    "isError": false,
@@ -3807,7 +3853,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35162
+   "pageBytes": 35143
   }
  ],
  "accessibility_snapshot: frames unreadable without Accessibility": [
@@ -3821,7 +3867,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://form.test/\",\"title\":\"\",\"ready\":\"complete\",\"count\":1,\"frames\":{\"error\":\"Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch (Codex / ChatGPT / Terminal / iTerm), then retry.\"}}\n1 heading \"Shop\" level=1"
+     "text": "# {\"url\":\"https://form.test/\",\"count\":1,\"frames\":{\"error\":\"Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch (Codex / ChatGPT / Terminal / iTerm), then retry.\"}}\n1 heading \"Shop\" level=1"
     }
    ],
    "isError": false,
@@ -3833,7 +3879,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35176
+   "pageBytes": 35157
   }
  ],
  "click: selector, label, ref, hover, coordinates": [
@@ -3958,7 +4004,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":1}\n1 link \"Docs\" href=\"/p#x\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":1}\n1 link \"Docs\" href=\"/p#x\""
     }
    ],
    "isError": false,
@@ -3969,7 +4015,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35164
+   "pageBytes": 35145
   },
   {
    "call": [
@@ -5006,7 +5052,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29876
+   "pageBytes": 29871
   },
   {
    "call": [
@@ -5030,7 +5076,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 44588
+   "pageBytes": 44477
   },
   {
    "call": [
@@ -5042,7 +5088,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":1,\"matched\":1,\"form\":{\"fields\":4,\"requiredEmpty\":0}}\n1 textbox \"Bio\" type=\"textarea\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":1,\"matched\":1,\"form\":{\"fields\":4,\"requiredEmpty\":0}}\n1 textbox \"Bio\" type=\"textarea\""
     }
    ],
    "isError": false,
@@ -5053,7 +5099,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 49866
+   "pageBytes": 49741
   },
   {
    "call": [
@@ -5077,7 +5123,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29881
+   "pageBytes": 29876
   },
   {
    "call": [
@@ -5101,7 +5147,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 44576
+   "pageBytes": 44465
   },
   {
    "call": [
@@ -5125,7 +5171,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 44583
+   "pageBytes": 44472
   },
   {
    "call": [
@@ -5149,7 +5195,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29895
+   "pageBytes": 29890
   },
   {
    "call": [
@@ -5173,7 +5219,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 44579
+   "pageBytes": 44468
   },
   {
    "call": [
@@ -5237,7 +5283,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29883
+   "pageBytes": 29878
   },
   {
    "call": [
@@ -5261,7 +5307,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 44569
+   "pageBytes": 44458
   }
  ],
  "fill: checkbox, radio, ambiguous": [
@@ -5288,7 +5334,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73884
+   "pageBytes": 73785
   },
   {
    "call": [
@@ -5321,7 +5367,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73926
+   "pageBytes": 73827
   },
   {
    "call": [
@@ -5345,7 +5391,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29873
+   "pageBytes": 29868
   }
  ],
  "fill: fields with form census, only_empty, preference list": [
@@ -5387,7 +5433,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73977
+   "pageBytes": 73878
   },
   {
    "call": [
@@ -5425,7 +5471,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73969
+   "pageBytes": 73870
   },
   {
    "call": [
@@ -5456,7 +5502,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 59798
+   "pageBytes": 59563
   }
  ],
  "fill: fields_path and bad fields": [
@@ -5482,7 +5528,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73882
+   "pageBytes": 73783
   },
   {
    "call": [
@@ -5611,7 +5657,7 @@
     ]
    },
    "pageScripts": 5,
-   "pageBytes": 231697
+   "pageBytes": 231225
   }
  ],
  "fill: late revert reported by the next call and held click": [
@@ -5637,7 +5683,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29875
+   "pageBytes": 29870
   },
   {
    "call": [
@@ -5660,7 +5706,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 30461
+   "pageBytes": 30355
   },
   {
    "call": [
@@ -5713,7 +5759,7 @@
     ]
    },
    "pageScripts": 4,
-   "pageBytes": 146866
+   "pageBytes": 146861
   },
   {
    "call": [
@@ -5748,7 +5794,7 @@
     ]
    },
    "pageScripts": 11,
-   "pageBytes": 424398
+   "pageBytes": 424393
   },
   {
    "call": [
@@ -5841,7 +5887,7 @@
     ]
    },
    "pageScripts": 69,
-   "pageBytes": 2712428
+   "pageBytes": 2712423
   }
  ],
  "fill: trusted background and raised": [
@@ -5969,7 +6015,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29875
+   "pageBytes": 29870
   }
  ],
  "fill: safari": [
@@ -5995,7 +6041,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29875
+   "pageBytes": 29870
   }
  ],
  "select: native exact, word, ambiguous, miss, disabled": [
@@ -6022,7 +6068,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38012
+   "pageBytes": 38010
   },
   {
    "call": [
@@ -6047,7 +6093,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 52752
+   "pageBytes": 52644
   },
   {
    "call": [
@@ -6072,7 +6118,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 52710
+   "pageBytes": 52602
   },
   {
    "call": [
@@ -6097,7 +6143,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 52707
+   "pageBytes": 52599
   },
   {
    "call": [
@@ -6122,7 +6168,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38006
+   "pageBytes": 38004
   },
   {
    "call": [
@@ -6147,7 +6193,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38005
+   "pageBytes": 38003
   },
   {
    "call": [
@@ -6172,7 +6218,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38001
+   "pageBytes": 37999
   },
   {
    "call": [
@@ -6197,7 +6243,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38002
+   "pageBytes": 38000
   },
   {
    "call": [
@@ -6222,7 +6268,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38005
+   "pageBytes": 38003
   },
   {
    "call": [
@@ -6270,7 +6316,7 @@
     ]
    },
    "pageScripts": 3,
-   "pageBytes": 111950
+   "pageBytes": 111948
   },
   {
    "call": [
@@ -6305,7 +6351,7 @@
     ]
    },
    "pageScripts": 11,
-   "pageBytes": 391866
+   "pageBytes": 391864
   }
  ],
  "select: trusted": [
@@ -6361,7 +6407,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38002
+   "pageBytes": 38000
   }
  ],
  "select: safari": [
@@ -6390,7 +6436,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38002
+   "pageBytes": 38000
   }
  ],
  "file_upload: input, label, drop zone, misses": [
@@ -6980,7 +7026,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://form.test/\",\"title\":\"\",\"ready\":\"complete\",\"count\":1}\n1 button \"Buy\""
+     "text": "# {\"url\":\"https://form.test/\",\"count\":1}\n1 button \"Buy\""
     }
    ],
    "isError": false,
@@ -6991,7 +7037,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35162
+   "pageBytes": 35143
   },
   {
    "call": [
@@ -7770,7 +7816,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 30269
+   "pageBytes": 30264
   }
  ],
  "errors: window_ambiguous with a second instance": [

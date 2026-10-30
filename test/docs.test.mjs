@@ -96,7 +96,7 @@ test("docs say to verify from the call's own result, resend only failed fields, 
   assert.match(INSTRUCTIONS, /own result[^\n]*not a screenshot/);
   assert.match(INSTRUCTIONS, /resend only[^\n]*ok:false/);
   const snap = TOOLS.find((t) => t.name === "accessibility_snapshot");
-  assert.match(snap.description, /`truncated`[^.]*`omitted`[^.]*(role|query)[^.]*not missing/);
+  assert.match(snap.description, /`omitted`[^.]*(role|query)[^.]*not missing/);
 });
 
 test("docs say a natively disabled control refuses the click, trusted too, and aria-disabled still clicks", async () => {

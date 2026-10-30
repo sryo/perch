@@ -129,7 +129,7 @@ Result shapes callers depend on are pinned by `test/contract.test.mjs` (each tes
 
 ### Snapshot (`accessibility_snapshot`)
 
-- **Format:** a `# {header}` line, then `ref role "name" key=json... flags`. Header keys: `url`, `title`, `ready`, `count`, `focus`, `dialogs`, `matched` (with `query`), `form`, `iframes`. `query` tests each line without its ref; `max` caps rows, not ref values. Past `max`, focus, dialogs and fields come first, in document order (`truncated`, `omitted`). Refs continue a per-document counter.
+- **Format:** a `# {header}` line, then `ref role "name" key=json... flags`. Header keys: `url`, `title`, `ready`, `count`, `focus`, `dialogs`, `matched` (with `query`), `form`, `iframes`. `query` tests each line without its ref; `max` caps rows, not ref values. Past `max`, focus, dialogs and fields come first, in document order (`omitted`). Refs continue a per-document counter.
 - **Visibility:** `vis()` plus `snapVis` (a styled radio, checkbox or combobox input counts as shown when its label or box is).
 - **Values:** a select's `value` is its chosen option's text; a placeholder choice (`nothingChosen`) has none and counts as required-empty. A combobox's `value` falls back to its box's single value or chips.
 - **`form` header** (the biggest visible form, across walked frames): `fields`, `requiredEmpty`, `invalid?`, `unpicked?`, `step?`. The census (`CENSUS_LIB`'s `census`, shared with `fill {fields}`) counts required-empty text fields, placeholder selects and comboboxes, unticked required checkboxes, unchecked required radio groups and required file inputs, and drops disabled fields.

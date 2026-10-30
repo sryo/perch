@@ -22,7 +22,7 @@ test("large page: a capped snapshot keeps the big form's fields, which sit past 
   build(w.document);
   const { head, lines } = snap(w);
   assert.equal(lines.length, 500);
-  assert.equal(head.truncated, true);
+  assert.ok(head.omitted > 0 && !("truncated" in head), "omitted alone says the rows were cut");
   const boxes = lines.filter((l) => / textbox /.test(l)).map((l) => l.split(" ")[0]);
   const inForm = runBody(w, `return ${JSON.stringify(boxes)}.filter(function (r) { return !!window.__perch_refs[r].closest("#big"); }).length`);
   assert.ok(inForm >= 60, `${inForm} of ${boxes.length} textbox rows in the form`);
@@ -37,7 +37,7 @@ test("an open modal dialog's controls get rows ahead of the background, printed 
   assert.deepEqual(lines.map(unref), [`link "Link 0" href="/l0"`, `link "Link 1" href="/l1"`, `dialog "Verify it's you"`, `textbox "Code"`, `button "Verify"`]);
   assert.ok(ascending(refs(lines)));
   assert.equal(head.count, 5);
-  assert.equal(head.truncated, true);
+  assert.ok(head.omitted > 0 && !("truncated" in head), "omitted alone says the rows were cut");
   assert.equal(head.omitted, 98);
   assert.deepEqual(head.dialogs, ["Verify it's you"]);
 });
@@ -86,8 +86,21 @@ test("max 0 is still the header alone, with the rows it left out", () => {
   const w = page(`${links(3)}<form><input name=q></form>`);
   const { head, lines } = snap(w, { max: 0 });
   assert.deepEqual(lines, []);
-  assert.equal(head.truncated, true);
+  assert.ok(head.omitted > 0 && !("truncated" in head), "omitted alone says the rows were cut");
   assert.equal(head.omitted, 4);
+});
+
+test("the header leaves out an empty title and a complete readyState", () => {
+  const w = page(`<button>Go</button>`);
+  Object.defineProperty(w.document, "readyState", { value: "complete", configurable: true });
+  const h = snap(w, { max: 10 }).head;
+  assert.equal("title" in h, false);
+  assert.equal("ready" in h, false, "complete is the default");
+  w.document.title = "Shop";
+  Object.defineProperty(w.document, "readyState", { value: "interactive", configurable: true });
+  const h2 = snap(w, { max: 10 }).head;
+  assert.deepEqual([h2.title, h2.ready], ["Shop", "interactive"]);
+  assert.deepEqual(Object.keys(h2).slice(0, 4), ["url", "title", "ready", "count"]);
 });
 
 test("a page under the cap prints as before: document order, no truncated or omitted, dialog or not", () => {

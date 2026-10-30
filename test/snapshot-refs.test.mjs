@@ -93,7 +93,7 @@ test("snapshots give disjoint short refs, and max caps the row count of every sn
     const s = run(dom, "snapshot", { max: 3 });
     const head = JSON.parse(s.split("\n")[0].slice(2));
     assert.equal(head.count, 3, s);
-    assert.equal(head.truncated, true, s);
+    assert.ok(head.omitted > 0, s);
     assert.equal(rows(s).length, 3, s);
     all.push(...rows(s).map(([r]) => r));
   }
@@ -261,7 +261,9 @@ test("a ref keeps to the tab its snapshot named, and a renumbered row still reso
 test("the snapshot's map id stays out of the reply, and two clicks on one ref send the same source", async () => {
   const w = install(page(HTML));
   const s = text(await handleCall("accessibility_snapshot", {}));
-  assert.deepEqual(Object.keys(JSON.parse(s.split("\n")[0].slice(2))), ["url", "title", "ready", "count"]);
+  const keys = Object.keys(JSON.parse(s.split("\n")[0].slice(2)));
+  assert.equal(keys.includes("rid"), false, keys.join());
+  assert.deepEqual(keys.filter((k) => k !== "title" && k !== "ready"), ["url", "count"]);
   const sent = [];
   w.state.onExecute = (spec, js) => sent.push(js);
   const ref = refOf(s, "Alpha");

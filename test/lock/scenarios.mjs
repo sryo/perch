@@ -267,6 +267,11 @@ add("targeted calls on a page tool by tool", async (h) => {
   await h.call("click", { ref: ref('"Go"'), target });
   await h.call("fill", { ref: ref('"Name"'), text: "x" });
 });
+add("accessibility_snapshot: a page still loading shows ready and title", async (h) => {
+  onPage(h, `<title>Loading shop</title><button>Go</button>`);
+  await h.call("eval_js", { script: "Object.defineProperty(document, 'readyState', { value: 'interactive', configurable: true }); return document.title" });
+  await h.call("accessibility_snapshot", {});
+});
 add("accessibility_snapshot: max, role, query", async (h) => {
   onPage(h, FORM);
   await h.call("accessibility_snapshot", { max: 0 });
