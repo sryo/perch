@@ -401,7 +401,7 @@ test("new_tab without app opens in the browser the user is looking at", async ()
     cg: [{ owner: "Terminal" }, { owner: "Arc" }, { owner: "Google Chrome" }],
   });
   const { o } = await call("new_tab", { url: "about:blank" });
-  assert.deepEqual(o, { app: "Arc", tabId: "arc:new1" });
+  assert.deepEqual({ ...o, note: undefined }, { app: "Arc", tabId: "arc:new1", shown: false, note: undefined });
 });
 
 test("tool descriptions and instructions never name a browser", async () => {

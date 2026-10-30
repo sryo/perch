@@ -1,6 +1,6 @@
 ---
 name: perch
-description: Drive the user's own macOS browsers (Chrome family, Arc, Safari) via the perch MCP server. Use whenever a skill needs to list tabs, read or change a live page, fill forms, navigate, or screenshot.
+description: Drive the user's own macOS browsers (Chrome family, Arc, Safari) via the perch MCP server. Use to list tabs, read or change a live page, fill forms, navigate, or screenshot.
 allowed-tools: mcp__perch__*
 ---
 
@@ -10,14 +10,15 @@ Targeting, element hints and error codes: the server instructions. `app` matches
 
 ## Tools
 
-Adds to the tool descriptions; none for `new_tab`, `activate_tab`, `close_tab`, `wait`, `console_capture`, `notify`, `get_text`.
+Adds to the tool descriptions; none for `activate_tab`, `close_tab`, `wait`, `console_capture`, `notify`, `get_text`.
 
 | Tool | Use |
 |---|---|
 | `list_tabs` | Filter: `app`, `urlContains`, `titleContains`. |
+| `new_tab` | `shown:false`: page tools get `tab_not_visible` until shown; see `note`. |
 | `navigate` | Returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed; `timeout`: not committed yet, may still load. |
-| `eval_js` | `awaitPromise` only for real async. `ref` binds `el` (a parameter): `return __avis.add(el, 'x')`. |
-| `screenshot` | Not for minimized windows. `ref`: element only; scroll restored; `clipped`: cut. |
+| `eval_js` | Return summaries; `awaitPromise`: real async only. `ref` binds `el` (a parameter): `return __avis.add(el, 'x')`. |
+| `screenshot` | Not minimized windows. `ref`: element only; scroll restored; `clipped`: cut. |
 | `accessibility_snapshot` | Rows below; open shadow roots too. `query`: regex per line; `max: 0`: header only. |
 | `click` | `label_pattern`: button/link name; ties: `candidates`. Natively disabled (own or fieldset's): `ok:false`, not clicked, trusted too; `aria-disabled` clicks. `readback` adds `invalid?`, `form?`, `settled:false` (still busy). `form`: {gone, alert, step} after a submit/Next; navigated: `page` {heading?, alert?}; decide success yourself. `hover: true`: JS events, not `:hover`. New tab: `opened.tabId`; `blocked`/`unconfirmed`+`href`. `trusted`: below. |
 | `press` | Background tabs too; Enter submits/clicks, Space clicks. `{ok, el, prevented, focus}`. `trusted: true`: real keys to the shown tab (named keys, shift) if the page has the keyboard (else `tab_not_visible`: trusted click it first); check `hit`. |
@@ -48,9 +49,8 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value` (a pick's text; none 
 ## Gotchas
 
 - **Page globals may be invisible** (isolated world): read the DOM.
-- **Don't sleep in page code.** Background tabs throttle timers to ~1/s. Use `wait` (`quiet` to let it settle).
-- **Return summaries, not state.**
-- **Client timeouts.** Some cut calls at 30-60s: keep `timeout` under that.
+- **Don't sleep in page code.** Background timers run ~1/s. Use `wait` (`quiet` to settle).
+- **Client timeouts.** Some cut calls at 30-60s; keep `timeout` under.
 - **Dialogs.** `dialog_open` comes in ~3s; answer with `press {dialog}`, then re-read. Other prompts are the user's.
 
 ## Trusted input
@@ -61,4 +61,4 @@ Values are JSON. Keys: `name` (HTML name), `type`, `value` (a pick's text; none 
 
 ## Permissions
 
-The first failure names the toggle (Allow JavaScript from Apple Events per profile, Automation, Accessibility); show the user, wait.
+The first failure names the toggle (JavaScript from Apple Events per profile, Automation, Accessibility); show the user, wait.

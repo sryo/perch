@@ -66,7 +66,7 @@ const REFUSED = [
 // existed: an accepted url behaves exactly as it did.
 const BEFORE = Object.fromEntries(Object.entries({
   "new_tab chrome": { "https://n.test/": "63597ee6e461", "HTTP://N.TEST/": "9b105f4f817e", "about:blank": "0bccf24daee8", "ABOUT:BLANK": "4dc47825f0cf", "(none)": "0bccf24daee8" },
-  "new_tab arc": { "https://n.test/": "4fd286a4fc95", "HTTP://N.TEST/": "58dc3a653b64", "about:blank": "a2b3fa110815", "ABOUT:BLANK": "1517ebde3e71", "(none)": "a2b3fa110815" },
+  "new_tab arc": { "https://n.test/": "7da30df7737e", "HTTP://N.TEST/": "068cd15a7bd9", "about:blank": "13f99b9a9212", "ABOUT:BLANK": "3e62a627f151", "(none)": "13f99b9a9212" },
   "new_tab safari": { "https://n.test/": "c6ea10cfe6e0", "HTTP://N.TEST/": "af75fbddd6dd", "about:blank": "ed52b752901f", "ABOUT:BLANK": "93198762b7ed", "(none)": "ed52b752901f" },
   "navigate chrome front tab": { "https://n.test/": "41c7efeb27fa", "HTTP://N.TEST/": "2471e9b7bf4d", "about:blank": "19c3af526886", "ABOUT:BLANK": "acaebef29b5e" },
   "navigate chrome background tab": { "https://n.test/": "0e5f82c4a2ad", "HTTP://N.TEST/": "b7bbf7bc3aa6", "about:blank": "0b2b02db69d1", "ABOUT:BLANK": "a9a286798003" },
@@ -78,7 +78,7 @@ const BEFORE = Object.fromEntries(Object.entries({
 // window behind another app still needs raise:true.
 const FILE_BEFORE = {
   "new_tab chrome": ["d7f298402483", "91a414df1711"],
-  "new_tab arc": ["e98ca1f37729", "79a4ab6ecfba"],
+  "new_tab arc": ["4ab4eb84cd79", "b2bb1561bdc7"],
   "new_tab safari": ["3e8b546c42dd", "588b3fef6d00"],
   "navigate chrome front tab": ["61b903d42db8", "af17a158e1e6"],
   "navigate chrome background tab": ["4b7a84b076b7", "5b1cc67ec094"],

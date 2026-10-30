@@ -44,6 +44,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // Errors start with a stable, browser-neutral code that clients branch on.
   const notVisible = (what) => "tab_not_visible: " + what + " needs the tab its window shows; activate_tab (takes focus) or retry later";
   const OFFSCREEN = "window_offscreen: the browser window isn't on screen (minimized or on another Space)";
+  const NEW_TAB_UNSHOWN = "its window still shows its previous tab, so page tools on this one get tab_not_visible until it is shown: activate_tab (takes focus) when the user is away, or navigate a tab its window shows instead";
   const AMBIGUOUS = "window_ambiguous: another window of this browser has the same frame, so perch can't tell which is the target's; move or resize one";
   const TWINS = "window_ambiguous: two instances of this browser have windows on screen, so perch can't tell which is the target's; quit the other one";
 
@@ -696,6 +697,7 @@ function jxaRuntime(BROWSERS, HANG) {
   };
   // How long navigate holds page JS while the tab reports loading.
   const NAV_GATE_MS = 2000;
+  const ERR_SETTLE_MS = 500;
   // Provisional: how long a background Arc tab may read not loading after its url
   // is set before a load that never started counts as failed. Not yet measured live.
   const ARC_START_GRACE = 1500;
@@ -928,7 +930,26 @@ function jxaRuntime(BROWSERS, HANG) {
   function ownWindow(I) {
     if (I.windowNumber == null) throw new Error(OFFSCREEN);
     if (I.ambiguous) throw new Error(AMBIGUOUS);
+    const r = I.cgBounds || I.geom;
+    if (!onAnyScreen(r)) throw new Error("window_offscreen: the browser window is outside every screen (at " + Math.round(r.x) + "," + Math.round(r.y) + "); move it onto a screen");
     return I;
+  }
+  // A window dragged off every display keeps its CG entry, but nothing there can
+  // be hit or focused. Any overlap counts: a window partly above the screen still
+  // takes input on its visible part. NSScreen frames are bottom-left based, from
+  // the main (first) screen; CG's are top-left. An unreadable frame never refuses.
+  function onAnyScreen(r) {
+    try {
+      appKit();
+      const s = $.NSScreen.screens, n = Number(s.count);
+      if (!n) return true;
+      const mainH = s.objectAtIndex(0).frame.size.height;
+      for (let i = 0; i < n; i++) {
+        const f = s.objectAtIndex(i).frame, x = f.origin.x, y = mainH - f.origin.y - f.size.height;
+        if (r.x < x + f.size.width && r.x + r.w > x && r.y < y + f.size.height && r.y + r.h > y) return true;
+      }
+      return false;
+    } catch (e) { return true; }
   }
 
   // Arc has no geometry verbs, so its window is matched to a CG entry by title.
@@ -1443,7 +1464,7 @@ function jxaRuntime(BROWSERS, HANG) {
     if (a.raise) { focus(t); delay(0.2); t.P = procs(); }
     else if (!isActive(t)) throw new Error(what ? notVisible(what) : notVisible("a background trusted click") + ", or pass raise:true");
     const I = ownWindow(ids(t));
-    if (a.raise && t.P.front !== t.app) throw new Error("target did not become frontmost after raise");
+    if (a.raise && t.P.front !== t.app) throw new Error("tab_not_visible: raise:true did not bring the browser to the front (another app kept focus); nothing was sent; retry later");
     return { t: t, I: I, background: !a.raise };
   }
 
@@ -3056,11 +3077,23 @@ function jxaRuntime(BROWSERS, HANG) {
         return result(!!(c && c.done), c ? String(c.href) : u);
       };
       const settled = idler(start);
+      // An error page can be a step on the way (a redirect hop that failed and was
+      // retried, an interstitial): it counts once it has stood ERR_SETTLE_MS with
+      // the tab not loading. `errAt`: when the current one was first seen.
+      let errAt = null;
       while (Date.now() < deadline) {
         let c = null;
         try { c = JSON.parse(String(run(check))); } catch (e) { if (isStale(e)) throw e; }
         if (c) lastC = c;
-        if (c && c.done) return c.err ? failed() : result(true, String(c.href));
+        if (c && c.done && !c.err) return result(true, String(c.href));
+        if (c && c.done) {
+          if (t.kind !== "safari" && read(function () { return t.tab.loading(); })) errAt = null;
+          else if (errAt == null) errAt = Date.now();
+          else if (Date.now() - errAt >= ERR_SETTLE_MS) return failed();
+          delay(0.05);
+          continue;
+        }
+        errAt = null;
         // A download or 204 never replaces the document; Chrome's `loading` settles.
         // So does a load the page dropped, so it counts only if the tab's URL moved.
         if (t.kind !== "safari" && Date.now() - start > 300 && settled(read(function () { return t.tab.loading(); }))) {
@@ -3068,6 +3101,7 @@ function jxaRuntime(BROWSERS, HANG) {
         }
         delay(0.05);
       }
+      if (errAt != null) return failed();
       // At the deadline, only when the last check that answered still found the
       // stamped document: a url and a loading read, made only here.
       if (lastC && lastC.old) {
@@ -3085,7 +3119,7 @@ function jxaRuntime(BROWSERS, HANG) {
       const ap = app(name);
       if (!ap.running()) throw new Error("no_browser: " + name + " must already be running (new_tab never launches it)");
       if (!ap.windows.length) throw new Error("no_browser: " + name + " needs an existing window (new_tab never makes one)");
-      let win, newId = null;
+      let win, newId = null, shown = null;
       if (kind === "chrome" || kind === "arc") {
         win = ap.windows[0];
         let prev = null;
@@ -3125,8 +3159,12 @@ function jxaRuntime(BROWSERS, HANG) {
             delay(0.05);
           }
         }
-        if (kind === "arc" && prev != null) {
-          try { if (win.activeTab.id() !== prev) win.tabs.byId(prev).select(); } catch (e) {}
+        if (kind === "arc") {
+          try {
+            const cur = win.activeTab.id();
+            if (prev != null && cur !== prev) win.tabs.byId(prev).select();
+            shown = prev != null ? prev === newId : cur === newId;
+          } catch (e) {}
         }
         if (viaPage) {
           const nt = win.tabs.byId(newId);
@@ -3167,6 +3205,8 @@ function jxaRuntime(BROWSERS, HANG) {
         }
       } catch (e) {}
       const out = { app: name, tabId };
+      // Page tools here run only in the tab a window shows (see visibleGuard).
+      if (shown === false) { out.shown = false; out.note = NEW_TAB_UNSHOWN; }
       if (P.front !== name && procs().front === name) out.warning = "creating the tab brought the browser to the front";
       return out;
     },
@@ -4179,7 +4219,7 @@ async function navigate(url, target, raise) {
   const r = await rt("navigate", { target, url, raise: !!raise, timeout: NAV_TIMEOUT }, { lane: "slow", timeout: NAV_TIMEOUT + JXA_OVERHEAD });
   const same = (x, y) => { try { return new URL(x).href === new URL(y).href; } catch { return x === y; } };
   const tab = r && r.tabId ? { tabId: r.tabId } : {};
-  if (r && r.loadFailed) return { ok: false, error: `load_failed: ${url} did not load; the browser showed its error page`, ...tab };
+  if (r && r.loadFailed) return { ok: false, error: `load_failed: ${url} did not load; the browser showed its error page; it may retry on its own, so check the tab's url before navigating again`, ...tab };
   // A reload that settles on the url it started from is not a failure.
   if (r && r.stayed != null && !same(r.stayed, url)) {
     const blocked = /^file:/i.test(url) && /^file:/i.test(r.stayed) ? "; if the browser keeps pages from loading file: URLs, raise:true loads it from outside the page" : "";
