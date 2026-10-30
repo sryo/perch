@@ -221,7 +221,7 @@ A popup blocker drops a synthetic click's new tab silently, so `click` reports b
 
 - `file_upload` reads the file in Node and ships it base64 in one page call, where a `DataTransfer` sets the input's `files`. It refuses a file over 25MB, or over 700KB without the daemon (one-shot osascript's argument limit). Rejected: a localhost server the page fetches from (local-network prompt).
 - The OS file dialog is opt-in (`raise:true`, foreground): a raised trusted click opens it and its Go to sheet takes the path; it fails closed (a chooser already open, the browser not in front) and counts only what the page shows. Pinned by `test/upload-chooser.test.mjs`.
-- A target that is not a file input is a drop zone: its own file input comes first; with none, the page dispatches `dragenter`/`dragover`/`drop` with the file. An unwired hidden input (no request, no mutation within 1s) falls back to a drop. A drop is `{dropped:true, el}` and counts only when a file input holds the file or the name appears; otherwise `{ok:false, dropped:true, error}`. Result `shown` says whether the file name showed.
+- A target that is not a file input is a drop zone: its own file input comes first; with none, the page dispatches `dragenter`/`dragover`/`drop` with the file. An unwired hidden input (no request, no mutation within 1s) falls back to a drop. A drop (`dropped:true, el`) counts when an input holds the file or its name shows (`shown`), else by `took` (`preview`, `request`); otherwise `ok:false`.
 - Pinned by `test/upload.test.mjs`.
 
 ### Console and network (`console_capture`)

@@ -6499,9 +6499,48 @@ function uploadSeen(name, U) {
   if (U.obs && U.obs.takeRecords().some(function (r) { return r.target !== U.input; })) U.moved = true;
   return U.moved || (U.net != null && upNet() > U.net) || deepAll("input[type=file]").some(function (el) { return el !== U.input && has(el); }) || nameCount(name) > U.names;
 }
+`;
+
+// The drop itself, sent only by the phases that drop or verify a drop. A drop's
+// own evidence, for composers that show only a preview: after the drop, a new
+// img/video/canvas in the zone's dialog or 5 ancestors, a blob: (or image-sized
+// data:) source anywhere, or a finished fetch/XHR to an upload-like URL. A
+// drag-over class, other requests or a tiny placeholder don't count.
+const UPLOAD_DROP_LIB = String.raw`
+function upReqs() {
+  try { return performance.getEntriesByType("resource").filter(function (e) { return e.initiatorType === "fetch" || e.initiatorType === "xmlhttprequest"; }); }
+  catch (e) { return []; }
+}
+const upShown = function (name, U) { return deepAll("input[type=file]").some(function (el) { return el !== U.input && has(el); }) || nameCount(name) > U.names; };
+const UP_URL = /upload|attach|\/media\b|\bfiles?\b|amazonaws|googleapis/i;
+const blobby = function (s) { return /^blob:/i.test(s) || (/^data:/i.test(s) && s.length > 2048); };
+function upArm(U) {
+  let s = U.zone.closest("dialog, [role=dialog]");
+  if (!s) { s = U.zone; for (let k = 0; k < 5 && s.parentElement && s.parentElement !== document.body; k++) s = s.parentElement; }
+  U.scope = s;
+  U.net = upReqs().length;
+  if (typeof MutationObserver !== "function") return;
+  const o = U.obs = new MutationObserver(function () {});
+  o.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["src"] });
+  setTimeout(function () { o.disconnect(); }, 10000);
+}
+function upTook(U) {
+  if (U.obs) U.obs.takeRecords().forEach(function (r) {
+    if (r.type === "attributes") { if (blobby(attr(r.target, "src"))) U.prev = true; return; }
+    Array.prototype.forEach.call(r.addedNodes, function (n) {
+      if (n.nodeType !== 1) return;
+      const m = Array.prototype.slice.call(n.querySelectorAll("img,video,canvas,source"));
+      if (n.matches("img,video,canvas,source")) m.push(n);
+      if (m.some(function (e) { return blobby(attr(e, "src")) || (e.tagName !== "SOURCE" && U.scope.contains(e)); })) U.prev = true;
+    });
+  });
+  if (U.prev) return "preview";
+  return upReqs().slice(U.net).some(function (e) { return UP_URL.test(e.name || ""); }) ? "request" : null;
+}
 // Not every engine takes dataTransfer in a DragEvent init, so it is pinned on
 // the event when it didn't stick.
 function dropOn(U) {
+  upArm(U);
   const b = U.zone.getBoundingClientRect();
   const init = { bubbles: true, cancelable: true, composed: true, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2 };
   ["dragenter", "dragover", "drop"].forEach(function (t) {
@@ -6510,9 +6549,10 @@ function dropOn(U) {
     if (ev.dataTransfer !== U.dt) Object.defineProperty(ev, "dataTransfer", { value: U.dt });
     U.zone.dispatchEvent(ev);
   });
-  const seen = uploadSeen(A.name, U);
-  const r = { ok: seen, dropped: true, el: ident(U.zone), shown: seen, tok: U.tok };
-  if (!seen) r.error = "nothing took the file dropped on " + r.el + ": no file name shown and no file input holds it";
+  const shown = upShown(A.name, U), took = !shown && (U.took = upTook(U));
+  const r = { ok: shown || !!took, dropped: true, el: ident(U.zone), shown: shown, tok: U.tok };
+  if (took) r.took = took;
+  if (!r.ok) r.error = "nothing took the file dropped on " + r.el + ": no file name, preview or upload request showed and no file input holds it";
   return r;
 }
 `;
@@ -7957,6 +7997,7 @@ function inputFor(z) {
   }
   return {};
 }
+if (upNow && upNow.obs) upNow.obs.disconnect();
 window.__perch_up = null;
 let input = null, zone = null, many = false;
 if (A.ref) {
@@ -7994,7 +8035,8 @@ const dt = new DataTransfer();
 dt.items.add(file);
 const out = { ok: true, name: file.name, size: file.size, type: file.type };
 const U = { dt: dt, zone: zone, input: null, obs: null, moved: false, names: 0, key: upKey, tok: rbTok(), at: Date.now() };
-if (!input) { U.names = nameCount(A.name); U.done = true; window.__perch_up = U; return Object.assign(out, dropOn(U)); }
+// No input: Node sends the drop (file_upload_drop), which arms its own evidence first.
+if (!input) { U.names = nameCount(A.name); U.pending = true; window.__perch_up = U; return Object.assign(out, { drop: true, tok: U.tok }); }
 const who = ident(input) + (input.id ? " #" + input.id : "");
 // A hidden input that no form submits may have no handler reading it; a change
 // handler we can see, or any page change or completed fetch/XHR after change,
@@ -8061,11 +8103,24 @@ if (A.up) {
 return deepAll("input[type=file]").some(has) || textOf(document.body).indexOf(A.name) >= 0 || null;
 `,
 
-  // The fallback for a hidden input nothing reacted to: empty it, drop on its zone.
-  // The drop leaves its state in place, marked done, since the verifying poll
+  // file_upload_shown for a drop: answers {seen, shown, took} once the name, a
+  // file input or the drop's own evidence shows, else {tok}.
+  file_upload_drop_shown: UPLOAD_LIB + UPLOAD_DROP_LIB + UPLOAD_OWN_LIB + String.raw`
+if (upLost) return upLost;
+const U = upNow;
+if (!U) return window.__perch_tok_n ? { lost: true } : null;
+const shown = upShown(A.name, U);
+U.took = U.took || (!shown && U.scope ? upTook(U) : null);
+if (!shown && !U.took) return { tok: U.tok };
+if (U.obs) { U.obs.disconnect(); U.obs = null; }
+return { seen: true, tok: U.tok, shown: shown, took: U.took || undefined };
+`,
+
+  // The drop, for a zone with no input or a hidden input nothing reacted to
+  // (emptied first). The drop leaves its state in place, marked done, since the verifying poll
   // still reads it; a second drop on a done state can only be another call's
   // with the same key.
-  file_upload_drop: UPLOAD_LIB + UPLOAD_OWN_LIB + String.raw`
+  file_upload_drop: UPLOAD_LIB + UPLOAD_DROP_LIB + UPLOAD_OWN_LIB + String.raw`
 if (upLost) return upLost;
 const U = upNow;
 if (!U) return window.__perch_tok_n ? { lost: true } : { ok: false, error: "the drop zone left the page" };
@@ -8862,11 +8917,14 @@ function uploadCap(abs, size) {
 }
 export const UPLOAD_TAKEN = "file_upload: another perch call on this tab replaced this upload's state";
 // key: the args both page phases compare with the state's. With up, the answer
-// counts only when it is the state this call's tok names.
+// counts only when it is the state this call's tok names; up "drop" also reads
+// the drop's own evidence.
 async function uploadShown(target, key, up, tok) {
   try {
-    const r = await rt("wait", { target, js: pageFn("file_upload_shown", { ...key, up }), timeout: UPLOAD_SHOWN_WAIT, interval: 50, tok: up ? tok : undefined }, { lane: "slow" });
-    return up ? { own: !!r.value.seen && r.value.tok === tok, lost: !r.value.seen || r.value.tok !== tok } : { own: true };
+    const js = up === "drop" ? pageFn("file_upload_drop_shown", key) : pageFn("file_upload_shown", { ...key, up });
+    const r = await rt("wait", { target, js, timeout: UPLOAD_SHOWN_WAIT, interval: 50, tok: up ? tok : undefined }, { lane: "slow" });
+    const v = r.value;
+    return up ? { own: !!v.seen && v.tok === tok, lost: !v.seen || v.tok !== tok, shown: v.shown, took: v.took } : { own: true };
   } catch { return { own: false }; }
 }
 async function fileUpload(args = {}) {
@@ -8885,15 +8943,19 @@ async function fileUpload(args = {}) {
   let r = await runPage("file_upload", "file_upload", { selector, ref, label_pattern, b64: data.toString("base64"), name, mime }, target);
   const tok = r && r.tok;
   if (r) delete r.tok;
-  // A hidden input nothing reacted to within the wait gets a drop on its zone instead.
+  // A zone with no input gets a drop; so does a hidden input nothing reacted to
+  // within the wait, on its zone.
+  const who = r && r.who;
+  const taken = (tail) => ({ ...r, ok: false, error: `${UPLOAD_TAKEN}; ${who ? `the file was set on ${who} but ` : ""}${tail}; not verified` });
   if (r && r.unwired) {
-    const who = r.who;
     delete r.unwired;
     delete r.who;
     const seen = await uploadShown(target, key, true, tok);
     if (seen.own) return r;
-    const taken = (tail) => ({ ...r, ok: false, error: `${UPLOAD_TAKEN}; the file was set on ${who} but ${tail}; not verified` });
     if (seen.lost) return taken("no drop was made");
+  }
+  if (r && (r.drop || who)) {
+    delete r.drop;
     const drop = await runPage("file_upload", "file_upload_drop", key, target);
     if (drop && drop.__perch_error != null) return drop;
     if (drop && drop.lost) return taken("no drop was made");
@@ -8901,12 +8963,13 @@ async function fileUpload(args = {}) {
     if (drop) delete drop.tok;
     r = { ...r, ...drop };
   }
-  if (!r || r.shown !== false || !(r.ok === true || r.dropped)) return r;
+  if (!r || r.shown !== false || r.took || !(r.ok === true || r.dropped)) return r;
   // Best effort: an input already holds the file, so a failed poll leaves shown:false.
-  // A drop nothing showed stays {ok:false}.
-  if ((await uploadShown(target, key, !!r.dropped, tok)).own) {
-    r.shown = true;
-    if (r.dropped) { r.ok = true; delete r.error; }
+  // A drop nothing took stays {ok:false}; one only a preview or request confirmed says so in took.
+  const seen = await uploadShown(target, key, r.dropped ? "drop" : false, tok);
+  if (seen.own) {
+    r.shown = seen.shown !== false;
+    if (r.dropped) { r.ok = true; delete r.error; if (!r.shown && seen.took) r.took = seen.took; }
   }
   return r;
 }

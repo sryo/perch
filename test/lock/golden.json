@@ -3295,7 +3295,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 18221
+   "pageBytes": 17550
   },
   {
    "call": [
@@ -6336,7 +6336,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 18210
+   "pageBytes": 17539
   },
   {
    "call": [
@@ -6360,7 +6360,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 18219
+   "pageBytes": 17548
   },
   {
    "call": [
@@ -6383,7 +6383,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 18194
+   "pageBytes": 17523
   },
   {
    "call": [
@@ -6400,14 +6400,15 @@
     }
    ],
    "isError": false,
-   "events": 1,
+   "events": 2,
    "ae": {
     "Google Chrome": [
+     "tab.execute",
      "tab.execute"
     ]
    },
-   "pageScripts": 1,
-   "pageBytes": 18210
+   "pageScripts": 2,
+   "pageBytes": 32094
   },
   {
    "call": [
@@ -6470,7 +6471,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 18213
+   "pageBytes": 17542
   },
   {
    "call": [
@@ -6514,7 +6515,7 @@
     ]
    },
    "pageScripts": 13,
-   "pageBytes": 148407
+   "pageBytes": 147668
   }
  ],
  "console_capture: start, read, stop, network": [

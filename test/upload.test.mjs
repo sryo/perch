@@ -51,7 +51,9 @@ test("file_upload: failures always carry an error string", () => {
   const o = run(w, "file_upload", { ...PDF, selector: "#f" });
   assert.equal(o.ok, false);
   assert.match(o.error, /file/);
-  const d = run(w, "file_upload", { ...PDF, selector: "#d" });
+  // A zone with no input: the upload phase only arms; the drop is its own phase.
+  assert.equal(run(w, "file_upload", { ...PDF, selector: "#d" }).drop, true);
+  const d = run(w, "file_upload_drop", { name: PDF.name, selector: "#d" });
   assert.equal(d.ok, false);
   assert.equal(d.dropped, true);
   assert.match(d.error, /nothing took the file dropped on/);
@@ -396,4 +398,68 @@ test("file_upload: a zone with an unwired hidden input that ignores drops fails 
   assert.equal(o.ok, false);
   assert.match(o.error, /nothing took the file dropped/);
   assert.equal(dom.eval("document.getElementById('f').files.length"), 0);
+});
+
+// A story composer: the drop handler reads the file and, on a later render, shows
+// only a preview, never the file name; no file input exists.
+const COMPOSER = `<section><div><button id=add><span>Add photo/video</span></button></div><div id=prev></div></section><p id=far></p>`;
+const COMPOSER_JS = (render) => `(() => {
+  const z = document.getElementById('add');
+  z.addEventListener('dragover', (e) => { e.preventDefault(); z.className = 'over'; });
+  z.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files[0];
+    if (f) setTimeout(() => { ${render} }, 80);
+  });
+})();`;
+
+test("file_upload: a drop the composer shows only as a preview is ok, took:preview", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(COMPOSER, COMPOSER_JS(`document.getElementById('prev').innerHTML = '<div><img alt="" src="blob:https://a.test/4f1c"></div>';`));
+  const o = await upload({ path, label_pattern: "^Add photo/video$" });
+  assert.equal(o.ok, true, o.error);
+  assert.equal(o.dropped, true);
+  assert.equal(o.shown, false);
+  assert.equal(o.took, "preview");
+  assert.equal(o.error, undefined);
+  assert.equal(dom.eval("document.querySelectorAll('#prev img').length"), 1);
+});
+
+test("file_upload: a preview drawn on a new canvas near the zone counts as taken", async (t) => {
+  const path = await cvFile(t);
+  onPage(COMPOSER, COMPOSER_JS(`document.getElementById('prev').append(document.createElement('canvas'));`));
+  const o = await upload({ path, selector: "#add" });
+  assert.equal(o.ok, true, o.error);
+  assert.equal(o.took, "preview");
+});
+
+test("file_upload: a drop that only starts an upload request is ok, took:request", async (t) => {
+  const path = await cvFile(t);
+  const { dom } = onPage(COMPOSER, COMPOSER_JS(`window.startUpload();`));
+  const entries = fetchEntries(dom);
+  entries.push({ initiatorType: "fetch", name: "https://a.test/api/graphql" });
+  dom.startUpload = () => dom.setTimeout(() => entries.push({ initiatorType: "xmlhttprequest", name: "https://rupload.a.test/media/upload/123" }), 200);
+  const o = await upload({ path, selector: "#add" });
+  assert.equal(o.ok, true, o.error);
+  assert.equal(o.took, "request");
+  assert.equal(o.shown, false);
+});
+
+test("file_upload: a drop nothing took fails closed despite page noise", async (t) => {
+  // The page keeps working: a drag-over class, an upload request finished before
+  // the drop, then a background request and a tiny placeholder image far from the zone.
+  const path = await cvFile(t);
+  const { dom } = onPage(COMPOSER, `document.getElementById('add').addEventListener('dragover', (e) => { e.currentTarget.className = 'over'; });`);
+  const entries = fetchEntries(dom);
+  entries.push({ initiatorType: "xmlhttprequest", name: "https://a.test/upload/old" });
+  dom.setTimeout(() => {
+    entries.push({ initiatorType: "fetch", name: "https://a.test/api/graphql" });
+    dom.document.getElementById("far").innerHTML = '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">';
+  }, 200);
+  const o = await upload({ path, label_pattern: "^Add photo/video$" });
+  assert.equal(o.ok, false);
+  assert.equal(o.dropped, true);
+  assert.equal(o.took, undefined);
+  assert.match(o.error, /nothing took the file dropped on/);
+  assert.equal(dom.document.getElementById("add").className, "over");
 });
