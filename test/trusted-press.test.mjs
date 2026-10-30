@@ -91,10 +91,10 @@ const WIN = { x: 10, y: 0, w: 800, h: 620 };
 const AREA = { x: 10, y: 20, w: 800, h: 600 };
 const inPage = { window: WIN, chain: [{ role: "AXTextField", box: { x: 20, y: 40, w: 100, h: 20 } }, { role: "AXGroup" }, { role: "AXWebArea", box: AREA }, { role: "AXGroup" }, { role: "AXWindow", box: WIN }] };
 
-function background({ active = 1, cg, extra = [], focus = inPage } = {}) {
+function background({ active = 1, cg, extra = [], focus = inPage, at = { x: 10, y: 20 } } = {}) {
   const dom = page(`<input id=i aria-label="City"><button id=b>Go</button>`);
   const world = makeWorld({
-    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active, x: 10, y: 20, w: 800, h: 600, tabs: [{ url: "about:blank", id: "front" }, { url: "about:blank", id: "scratch", dom }] }] }],
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active, ...at, w: 800, h: 600, tabs: [{ url: "about:blank", id: "front" }, { url: "about:blank", id: "scratch", dom }] }] }],
     cg: cg || [{ owner: "Terminal", pid: 1, wid: 10 }, ...extra, { owner: "Google Chrome", pid: 5, wid: 77, ...WIN, ax: { web: [AREA] } }],
   });
   world.run(JXA_PRELUDE);
@@ -171,6 +171,15 @@ test("trusted press needs the tab its window shows, on screen", async () => {
   const o = await handleCall("press", { key: "Enter", trusted: true, target });
   assert.match(o.content[0].text, /window_offscreen/);
   assert.equal(off.world.posted.length, 0);
+});
+
+test("trusted press to a window outside every screen is window_offscreen, not a focus miss", async () => {
+  const far = { x: 77, y: -2530, w: 800, h: 620 }, area = { x: 77, y: -2510, w: 800, h: 600 };
+  const { world } = background({ cg: [{ owner: "Google Chrome", pid: 5, wid: 77, ...far, ax: { web: [area] } }], focus: { ...inPage, window: far }, at: { x: 77, y: -2510 } });
+  world.state.screens = [{ x: 0, y: 0, w: 1920, h: 1080 }];
+  const r = await handleCall("press", { key: "Enter", trusted: true, target });
+  assert.match(r.content[0].text, /^error: window_offscreen: .*move it onto a screen/);
+  assert.equal(world.posted.length, 0);
 });
 
 test("trusted press reports hit:null when no keydown reaches the page, and ok:false", async () => {

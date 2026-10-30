@@ -69,6 +69,20 @@ test("new_tab adds no warning when the browser was already in front", async () =
   assert.deepEqual(o, { app: "Google Chrome", tabId: "chrome:new2" });
 });
 
+test("new_tab says when the new tab is left unshown where page tools need it shown, and only there", async () => {
+  install({ browsers: [arc([{ id: "A", active: 0, tabs: tabs(2, "a") }], { selectOnCreate: true })], cg: [{ owner: "Terminal" }, { owner: "Arc" }] });
+  const { o } = await call("new_tab", { app: "Arc", url: "https://n.test/" });
+  assert.equal(o.shown, false);
+  assert.match(o.note, /tab_not_visible.*activate_tab.*user is away.*navigate a tab its window shows/);
+  assert.equal(shown("Arc"), "a0");
+  const snap = await call("get_text", { target: { tabId: o.tabId } });
+  assert.match(snap.t, /^error: tab_not_visible: /, "the note describes what the next page call gets");
+
+  install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(2) }])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  const c = await call("new_tab", { app: "Google Chrome", url: "https://n.test/" });
+  assert.deepEqual(Object.keys(c.o).sort(), ["app", "tabId"], "a tab page JS reaches in the background needs no note");
+});
+
 test("new_tab in an Arc window that shows no tab creates the tab and selects nothing", async () => {
   install({ browsers: [arc([{ id: "A", active: null, tabs: tabs(1, "a") }])], cg: [{ owner: "Terminal" }, { owner: "Arc" }] });
   const { r, o } = await call("new_tab", { app: "Arc", url: "https://n.test/" });

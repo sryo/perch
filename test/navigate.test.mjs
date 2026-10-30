@@ -495,6 +495,34 @@ test("navigate tool: the browser's network error page is load_failed naming the 
   assert.equal(o.url, undefined);
 });
 
+test("navigate tool: an error page the browser moves on from at once (a redirect, a retry) is not load_failed", async () => {
+  install(fixture());
+  world.state.commitMs = 60;
+  world.state.errorPage = /^https:\/\/mail\.test\/u\/1\/$/;
+  let moved = false;
+  world.state.onExecute = () => {
+    const loc = world.page("Google Chrome", 0, 0).location;
+    if (moved || !/^chrome-error:/.test(loc.href)) return;
+    moved = true;
+    loc.assign("https://mail.test/u/1/#inbox");
+  };
+  world.state.redirects = { "https://mail.test/u/1/#inbox": "https://mail.test/mail/u/1/" };
+  const { o } = await navTool({ url: "https://mail.test/u/1/" });
+  assert.ok(moved, "the error page was seen");
+  assert.equal(o.ok, true, o.error);
+  assert.equal(o.url, "https://mail.test/mail/u/1/");
+});
+
+test("navigate tool: an error page that stays is load_failed within a second of showing", async () => {
+  install(fixture());
+  world.state.commitMs = 60;
+  world.state.errorPage = /^http:\/\/127\.0\.0\.1:9\//;
+  const t0 = world.clock.t;
+  const { o } = await navTool({ url: "http://127.0.0.1:9/" });
+  assert.match(o.error, /^load_failed: http:\/\/127\.0\.0\.1:9\/ did not load; the browser showed its error page.*check the tab's url/);
+  assert.ok(world.clock.t - t0 < 1500, `took ${world.clock.t - t0}ms`);
+});
+
 test("navigate tool: a load that never leaves the old page is load_failed, loaded once", async () => {
   install(fixture());
   world.page("Google Chrome", 0, 0).location.assign = (u) => { world.log.push(["assign", "Google Chrome", u]); };

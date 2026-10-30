@@ -338,7 +338,7 @@ test("raise that doesn't bring the browser to the front refuses before posting",
   world.state.activateFails = true;
   const r = await handleCall("click", { trusted: true, raise: true, x: 300, y: 200 });
   assert.equal(r.isError, true);
-  assert.match(r.content[0].text, /^error: target did not become frontmost after raise/);
+  assert.match(r.content[0].text, /^error: tab_not_visible: raise:true did not bring the browser to the front/);
   assert.equal(world.posted.length, 0);
 });
 
@@ -353,6 +353,44 @@ test("trusted input to a window with no on-screen CG entry is window_offscreen a
     assert.match(r.content[0].text, /^error: window_offscreen: /, `raise:${raise}`);
   }
   assert.equal(world.posted.length, 0);
+});
+
+test("trusted input to a window outside every screen is window_offscreen and posts nothing", async () => {
+  // A window dragged far above the screens still has its CG entry.
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 77, y: -2510, w: 800, h: 600, tabs: tabs(2) }] }],
+    cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 77, y: -2530, w: 800, h: 620, ax: { web: [{ x: 77, y: -2510, w: 800, h: 600 }] } }],
+  });
+  world.state.screens = [{ x: 0, y: 0, w: 1920, h: 1080 }, { x: 1920, y: 200, w: 1280, h: 800 }];
+  for (const raise of [true, false]) {
+    const r = await handleCall("click", { trusted: true, raise, x: 300, y: -2300 });
+    assert.equal(r.isError, true, `raise:${raise}`);
+    assert.match(r.content[0].text, /^error: window_offscreen: .*outside every screen.*move it onto a screen/, `raise:${raise}`);
+  }
+  assert.equal(world.posted.length, 0);
+});
+
+test("a window partly above the screen still takes trusted input on its visible part", async () => {
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: -280, w: 800, h: 600, tabs: tabs(2) }] }],
+    cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 10, y: -300, w: 800, h: 620, ax: { web: [{ x: 10, y: -280, w: 800, h: 600 }] } }],
+  });
+  world.state.screens = [{ x: 0, y: 0, w: 1920, h: 1080 }];
+  const r = await handleCall("click", { trusted: true, raise: true, x: 300, y: 200 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(world.posted.length, 2);
+});
+
+test("a window on a second screen above the main one takes trusted input", async () => {
+  // AppKit's y grows upward: a screen at y 1080 sits above the main one, at CG y -1080.
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: -1000, w: 800, h: 600, tabs: tabs(2) }] }],
+    cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 10, y: -1020, w: 800, h: 620, ax: { web: [{ x: 10, y: -1000, w: 800, h: 600 }] } }],
+  });
+  world.state.screens = [{ x: 0, y: 0, w: 1920, h: 1080 }, { x: 0, y: 1080, w: 1920, h: 1080 }];
+  const r = await handleCall("click", { trusted: true, raise: true, x: 300, y: -800 });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(world.posted.length, 2);
 });
 
 test("a tab that never becomes visible is reported, not clicked", async () => {

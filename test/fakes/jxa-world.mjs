@@ -661,7 +661,13 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       },
     },
     // state.screenScale: every screen's backing scale (default state.shotScale, or 2).
-    NSScreen: { get screens() { const k = state.screenScale ?? state.shotScale ?? 2; return { count: 1, objectAtIndex: () => ({ backingScaleFactor: k }) }; } },
+    // state.screens: [{x, y, w, h}] in AppKit's coordinates (origin at the main,
+    // first, screen's bottom left); without it a screen has no frame to read.
+    NSScreen: { get screens() {
+      const k = state.screenScale ?? state.shotScale ?? 2, list = state.screens || [null];
+      const frame = (f) => (f ? { origin: { x: f.x, y: f.y }, size: { width: f.w, height: f.h } } : undefined);
+      return { count: list.length, objectAtIndex: (i) => ({ backingScaleFactor: k, frame: frame(list[i]) }) };
+    } },
     NSApplication: { get sharedApplication() { state.sharedApp = (state.sharedApp || 0) + 1; return { setActivationPolicy: (p) => { state.policies.push(p); return true; } }; } },
   };
   // The capture helper, an osascript NSTask running the runtime's shotHelper.
