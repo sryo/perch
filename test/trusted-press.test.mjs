@@ -150,12 +150,23 @@ test("trusted press never posts a Tab that would move focus out of the page", as
 
 test("trusted press refuses chords and characters before touching the browser", async () => {
   const { world } = background();
-  for (const key of ["cmd+k", "ctrl+Enter", "alt+ArrowDown", "a", "shift+a"]) {
+  for (const key of ["cmd+k", "ctrl+Enter", "alt+ArrowDown", "cmd+a", "ctrl+0", "alt+e", "shift+1", "-", "/"]) {
     const r = await handleCall("press", { key, trusted: true, target });
     assert.equal(r.isError, true, key);
-    assert.match(r.content[0].text, /press: trusted takes a named key \(Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12\), optionally with shift/, key);
+    assert.match(r.content[0].text, /press: trusted takes a named key \(Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12\), a letter or a digit, optionally with shift \(letters only\)/, key);
   }
   assert.equal(world.posted.length, 0);
+});
+
+test("trusted press posts letters and digits by their ANSI keycodes", async () => {
+  const { world, dom } = background();
+  world.state.onPost = (e) => { if (e.kind === "key") trustedKey(dom, e.down ? "keydown" : "keyup", e.text); };
+  for (const [key, vk, text, flags] of [["0", 29, "0", 0], ["7", 26, "7", 0], ["a", 0, "a", 0], ["shift+a", 0, "A", 0x20000], ["M", 46, "M", 0], ["q", 12, "q", 0]]) {
+    world.posted.length = 0;
+    const r = await handleCall("press", { key, selector: "#i", trusted: true, target });
+    assert.equal(JSON.parse(r.content[0].text).hit, true, key + ": " + r.content[0].text);
+    assert.deepEqual(keys(world).map((k) => [k.vk, k.text, k.flags]), [[vk, text, flags], [vk, text, flags]], key);
+  }
 });
 
 test("trusted press needs the tab its window shows, on screen", async () => {

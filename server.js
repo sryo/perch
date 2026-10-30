@@ -1618,6 +1618,8 @@ function jxaRuntime(BROWSERS, HANG) {
     return v;
   }
   const SELECT_TAKEN = "another perch call on this tab took over this select; not verified";
+  // How much longer a select or typeahead waits on a list still loading at its bound.
+  const BUSY_MS = 2000;
   const TA_TAKEN = "another perch call on this tab took over this fill's suggestions; not verified";
   const RB_REPLACED = "timeout: click sent, but another perch call on this tab took over its readback state; the outcome is not verified";
 
@@ -3209,9 +3211,11 @@ function jxaRuntime(BROWSERS, HANG) {
       // server's select or fill on this tab) ends the call, with nothing more
       // pressed or posted.
       const tok = r.tok != null ? r.tok : a.tok;
-      let lost = false;
+      let lost = false, last = null;
       const own = function (v) { if (tok != null && v && typeof v === "object" && (v.lost || (v.tok != null && v.tok !== tok))) lost = true; return !lost; };
-      const until = function (js, ms, step) { return poll(t, js, ms, 50, step, function (v) { return !own(v) || (v != null && v !== false && !v.pending); }); };
+      const until = function (js, ms, step) {
+        return poll(t, js, ms, 50, step, function (v) { if (!own(v)) return true; if (v && v.pending) last = v; return v != null && v !== false && !v.pending; });
+      };
       const once = function (v) { own(v); return v; };
       return afterStep(a.tool || "select", function () {
         // a.trusted: a control whose synthetic open shows no list of its own gets a
@@ -3270,6 +3274,8 @@ function jxaRuntime(BROWSERS, HANG) {
           }
           if (!picked && !lost && p === true) picked = until(a.pick, a.wait - spent, true);
         }
+        // A list still loading at the bound (a slow lookup's loading row) gets BUSY_MS more, once.
+        if (!picked && !lost && last && last.busy) picked = until(a.pick, BUSY_MS, true);
         if (lost) return done(null);
         if (picked && picked.value.settled) picked = null;
         if (!picked && !a.missFinal) return done(once(readExec(t, a.miss)));
@@ -4734,7 +4740,8 @@ function findCtl(a, groups, only) {
   }
   const re = new RegExp(a.label_pattern, "i");
   const cands = Array.from(document.querySelectorAll("select, [role=combobox], [aria-haspopup=listbox], [aria-haspopup=dialog], [role=listbox]"));
-  const hit = function (el) { return re.test(labelText(el)) || re.test(hintText(el)); };
+  // ctlNamed ships only with select's own scripts (SELECT_PICK_LIB).
+  const hit = typeof ctlNamed == "function" ? function (el) { return ctlNamed(re, el); } : function (el) { return re.test(labelText(el)) || re.test(hintText(el)); };
   const el = cands.filter(vis).find(hit) || cands.find(hit);
   const gs = groups ? groups().filter(function (g) { return re.test(g.q); }) : [];
   const shownGs = gs.filter(function (g) { return g.shown; });
@@ -4997,6 +5004,25 @@ function loadingIn(roots) {
   };
   return roots.some(function (r) {
     return !!r && r.isConnected && ((r.matches && r.matches(SIGNS) && busy(r)) || Array.prototype.some.call(r.querySelectorAll(SIGNS), busy) || said(r));
+  });
+}
+// Whether re names a select's control: its label or hint, each aria-labelledby
+// part alone (MUI names its select "<label> <value>"), or, unlabeled, the text
+// laid out before it (a <label> not linked by for).
+function ctlNamed(re, el) {
+  const own = labelText(el), parts = attr(el, "aria-labelledby").split(/\s+/).map(function (id) {
+    const r = el.getRootNode(), t = id && (r.getElementById ? r : document).getElementById(id);
+    return t && !el.contains(t) ? textOf(t) : "";
+  });
+  return [own, hintText(el), own ? "" : nearText(el)].concat(parts).some(function (s) { return !!s && re.test(s); });
+}
+// A loading row in a popup anywhere on the page, for a control that declares a
+// list: one portaled to the body shows it before the listbox it names exists.
+function popLoading(el) {
+  if (!el || !(attr(el, "aria-controls") || attr(el, "aria-owns") || attr(el, "aria-haspopup") || attr(el, "aria-autocomplete") || attr(el, "aria-expanded"))) return false;
+  const host = "[role=presentation], [role=listbox], [role=dialog], [role=tooltip], [class*=popper], [class*=popover], [class*=dropdown], [class*=menu], [class*=autocomplete], [class*=suggest]";
+  return Array.prototype.some.call(document.querySelectorAll("[aria-busy=true], [role=progressbar], [class*=loading], [class*=Loading], [class*=spinner]"), function (e) {
+    return !e.closest("[role=option]") && !!e.closest(host) && vis(e);
   });
 }
 // Still open: the control says so, or its own list still shows options.
@@ -5677,6 +5703,12 @@ function taMatch(opts, text) {
     if (hits.length > 1 && lead[i]) {
       const first = hits.filter(function (o) { return lead[i](keys[opts.indexOf(o)]); });
       if (first.length) hits = first;
+    }
+    // The one hit continuing the typed text past a separator (" - UNC", ", TX",
+    // " (Main)") is the thing itself among longer names that merely start alike.
+    if (hits.length > 1 && i) {
+      const sep = hits.filter(function (o) { const k = keys[opts.indexOf(o)]; return k.indexOf(w) === 0 && /^(\s*[,(]|\s+[-\u2013\u2014]\s)/.test(k.slice(w.length)); });
+      if (sep.length === 1) hits = sep;
     }
     if (i === 2 && hits.length > 1) { tie = hits; continue; }
     if (hits.length) return { hits: hits, exact: i === 0 };
@@ -7035,13 +7067,13 @@ if (!s) return { ok: false, kind: "typeahead", error: "fill state lost (did the 
 if (taLost) return taLost;
 if (A.probe) {
   const sc = taScopes(s);
-  if (s.comp || attr(s.el, "aria-expanded") === "true" || taBusy(sc)) return true;
+  if (s.comp || attr(s.el, "aria-expanded") === "true" || taBusy(sc) || popLoading(s.el)) return true;
   if (sc.some(function (r) { return vis(r) && taNorm(r.textContent); })) return !noneIn(sc);
   return attr(s.el, "aria-haspopup") === "listbox" || attr(s.el, "aria-controls") || attr(s.el, "aria-owns") ? "declared" : false;
 }
 // A list showing a loading row may still hold the last lookup's results, which
 // some widgets ignore a press on: nothing is matched until the row goes.
-if (taBusy(taScopes(s))) return { pending: true, tok: s.tok };
+if (taBusy(taScopes(s))) return { pending: true, busy: true, tok: s.tok };
 const opts = taOptions(s);
 const m = taMatch(opts, s.text);
 // Several equal hits short of exact are a tie, never settled by list order.
@@ -7057,7 +7089,7 @@ if (!opt) {
   if (sig !== s.sig0) s.answered = true;
   s.same = sig && sig === s.sig ? s.same + 1 : 0;
   s.sig = sig;
-  return sig && s.same >= 8 && (s.tied || s.answered) ? { settled: true, tok: s.tok } : { pending: true, tok: s.tok };
+  return sig && s.same >= 8 && (s.tied || s.answered) ? { settled: true, tok: s.tok } : { pending: true, busy: !sig && popLoading(s.el), tok: s.tok };
 }
 const optT = textOf(opt).trim() ? textOf(opt) : tcOf(opt);
 s.picked = clip(optT, 80);
@@ -7570,7 +7602,8 @@ if (!s.typed && wantN && box && s.polls >= 4) {
   s.compTyped = s.comp ? s.comp.value : null;
   s.typedSig = sig;
 }
-return wait;
+// The runtime gives a list still loading at the bound a little longer.
+return !all.length && (loadingIn(roots) || popLoading(s.input || s.ctl)) ? { pending: true, busy: true, tok: tok } : wait;
 `,
 
   // Candidates come from the control's own list, unfiltered when it was seen; the
@@ -8590,6 +8623,28 @@ function withRid(v, st, nested = false) {
   return { ...o, ...pageRef(v.ref, st) };
 }
 
+// Matching is always case-insensitive, so a leading (?i), which JS regexes
+// refuse as an invalid group, is dropped instead of failing the call. A
+// label_pattern's end anchor also lets a required mark or colon through
+// ("^Degree$" names "Degree *"); a rewrite that would not compile is skipped.
+const INLINE_I = /^\(\?i\)/;
+const END_ANCHOR = /(\\*)\$(?=$|[|)])/g;
+function normPattern(p, label) {
+  p = p.replace(INLINE_I, "");
+  if (!label || /\[[^\]]*\$/.test(p)) return p;
+  const wide = p.replace(END_ANCHOR, (m, esc) => (esc.length % 2 ? m : esc + "[\\s*:]*$"));
+  try { new RegExp(wide, "i"); return wide; } catch { return p; }
+}
+const normKey = (o, k) => {
+  if (!o || typeof o[k] !== "string") return o;
+  const p = normPattern(o[k], k === "label_pattern");
+  return p === o[k] ? o : { ...o, [k]: p };
+};
+export function normPatterns(args) {
+  const out = normKey(normKey(args, "label_pattern"), "query");
+  return Array.isArray(out.fields) ? { ...out, fields: out.fields.map((f) => normKey(f, "label_pattern")) } : out;
+}
+
 export function validateLabelPattern(tool, p, param = "label_pattern") {
   try { new RegExp(p, "i"); } catch (e) { throw new Error(`${tool}: invalid ${param}: ${e.message}`); }
 }
@@ -8974,12 +9029,22 @@ export function parseKey(chord) {
   return { key, code: "", keyCode: 0, ...out };
 }
 
+// ANSI virtual keycodes by key position: a character's index is its keycode.
+// "\0" marks positions that hold no letter or digit.
+const ANSI_KEYS = "asdfhgzxcv\0bqweryt123465\0" + "97\0" + "80\0ou\0ip\0lj\0k\0\0\0\0nm";
+// A shifted digit's character depends on the layout, so only letters take shift.
+function ansiKey(k) {
+  if (!/^(Key[A-Z]|Digit[0-9])$/.test(k.code) || (k.shiftKey && k.code.startsWith("Digit"))) return null;
+  const ch = k.code.slice(-1).toLowerCase();
+  return [ANSI_KEYS.indexOf(ch), k.key];
+}
+
 // Command/Control/Option chords are refused: posted for real they can fire
 // browser menu shortcuts. Untrusted press covers chords at the page level.
 async function trustedPress({ key, ref, selector, target }) {
   const k = parseKey(key);
-  const v = VKEYS[k.code];
-  if (!v || k.metaKey || k.ctrlKey || k.altKey) throw new Error("press: trusted takes a named key (Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12), optionally with shift");
+  const v = VKEYS[k.code] || ansiKey(k);
+  if (!v || k.metaKey || k.ctrlKey || k.altKey) throw new Error("press: trusted takes a named key (Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12), a letter or a digit, optionally with shift (letters only)");
   return rt("trustedPress", {
     target, key, vk: v[0], uni: v[1], flags: k.shiftKey ? 0x20000 : 0,
     probe: pageFn("viewport", {}),
@@ -9197,7 +9262,7 @@ async function fill(args = {}) {
   if (fields != null || fields_path != null) {
     if (text != null || text_path != null || ref || selector || label_pattern) throw new Error("fill: pass `fields` OR a single field, not both");
     if (trusted || raise) throw new Error("fill: `fields` takes trusted per entry, and no raise");
-    if (fields_path != null) fields = await readFieldsFile(fields_path);
+    if (fields_path != null) fields = normPatterns({ fields: await readFieldsFile(fields_path) }).fields;
     const r = await fillFields(fields, target, !!only_empty);
     if (r && Array.isArray(r.results)) r.results = r.results.map((x, i) => fields[i] && fields[i].text != null && !fields[i].trusted ? hintTrusted(x) : x);
     return r;
@@ -9616,6 +9681,7 @@ export async function handleCall(name, args = {}) {
   try {
     if (!handler) throw new Error(`unknown tool: ${name}`);
     guardFrameRefs(name, args);
+    args = normPatterns(args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
     note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name) };

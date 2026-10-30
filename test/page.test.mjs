@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PAGE_PRELUDE, PAGE_SCRIPTS, pageScript, buildEvalWrapper, validateLabelPattern } from "../server.js";
+import { PAGE_PRELUDE, PAGE_SCRIPTS, pageScript, buildEvalWrapper, validateLabelPattern, normPatterns } from "../server.js";
 import { readFileSync } from "node:fs";
 import { page, run, runBody } from "./helpers/page.mjs";
 
@@ -66,6 +66,26 @@ test("resolveEl: ref hit, stale ref, detached ref, missing and bad selectors", (
 test("validateLabelPattern rejects bad regexes before they reach the page", () => {
   assert.throws(() => validateLabelPattern("fill", "("), /fill: invalid label_pattern/);
   assert.doesNotThrow(() => validateLabelPattern("fill", "e-?mail"));
+});
+
+test("a leading (?i) is dropped from label_pattern, query and fields, since matching is case-insensitive", () => {
+  assert.deepEqual(normPatterns({ query: "(?i)link|button" }), { query: "link|button" });
+  assert.deepEqual(normPatterns({ label_pattern: "(?i)degree", text: "x" }), { label_pattern: "degree", text: "x" });
+  assert.deepEqual(normPatterns({ fields: [{ label_pattern: "(?i)email", text: "a" }, { ref: "3" }] }).fields, [{ label_pattern: "email", text: "a" }, { ref: "3" }]);
+  assert.deepEqual(normPatterns({ label_pattern: "a(?i)b" }), { label_pattern: "a(?i)b" }, "only a leading flag");
+  const same = { label_pattern: "name", query: "^button$" };
+  assert.equal(normPatterns(same), same, "a query's anchor stays as written");
+});
+
+test("a label_pattern's end anchor lets a trailing required mark or colon through", () => {
+  const wide = (p) => normPatterns({ label_pattern: p }).label_pattern;
+  assert.equal(wide("(?i)^Degree$"), String.raw`^Degree[\s*:]*$`);
+  const re = new RegExp(wide("^Degree$"), "i");
+  for (const s of ["Degree", "Degree *", "Degree*", "Degree:"]) assert.ok(re.test(s), s);
+  assert.ok(!re.test("Degree level"));
+  assert.equal(wide("^a$|(^b$)"), String.raw`^a[\s*:]*$|(^b[\s*:]*$)`);
+  for (const p of [String.raw`cost\$`, "[$]", "[^$|]", "price"]) assert.equal(wide(p), p, p);
+  assert.ok(new RegExp(wide(String.raw`^x\\$`)).test(String.raw`x\ *`), "an escaped backslash before the anchor");
 });
 
 // ---- get_text ----
