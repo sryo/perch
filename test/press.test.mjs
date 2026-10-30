@@ -45,7 +45,7 @@ test("Enter in a form field submits the form", () => {
   let submits = 0;
   w.document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); submits++; });
   const o = press(w, "Enter", { selector: "#q" });
-  assert.deepEqual(o, { ok: true, el: `textbox "q"`, prevented: false, focus: `textbox "q"` });
+  assert.deepEqual(o, { ok: true, el: `textbox "q"` }, "focus stayed and nothing prevented: neither key");
   assert.equal(submits, 1);
 });
 
@@ -56,6 +56,18 @@ test("Enter in a form with a submit button clicks it, as implicit submission doe
   w.document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); seen.push("submit"); });
   press(w, "Enter", { selector: "#q" });
   assert.deepEqual(seen, ["click", "submit"]);
+});
+
+test("a press with nothing focused names the body, not its text", () => {
+  const w = page(`<main><h1>Big heading</h1><p>${"long text ".repeat(30)}</p></main>`);
+  assert.deepEqual(press(w, "Escape"), { ok: true, el: "body" });
+});
+
+test("focus is reported only when the press moved it; leaving to nothing is \"body\"", () => {
+  const w = page(`<input id=a><button id=b>B</button>`);
+  w.document.getElementById("a").addEventListener("keydown", (e) => { if (e.key === "Escape") e.target.blur(); });
+  assert.deepEqual(press(w, "Tab", { selector: "#a" }), { ok: true, el: `textbox ""`, focus: `button "B"` });
+  assert.deepEqual(press(w, "Escape", { selector: "#a" }), { ok: true, el: `textbox ""`, focus: "body" });
 });
 
 test("a prevented keydown skips the default action", () => {
@@ -165,7 +177,7 @@ test("press tool: parses the chord in Node and runs in the page", async () => {
   dom.document.addEventListener("keydown", (e) => { got = [e.key, e.metaKey]; });
   const r = await call("press", { key: "cmd+k", selector: "#q" });
   assert.equal(r.err, undefined, r.text);
-  assert.deepEqual(JSON.parse(r.text), { ok: true, el: `textbox ""`, prevented: false, focus: `textbox ""` });
+  assert.deepEqual(JSON.parse(r.text), { ok: true, el: `textbox ""` });
   assert.deepEqual(got, ["k", true]);
 });
 

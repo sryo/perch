@@ -8249,7 +8249,13 @@ if (!prevented && !A.ctrlKey && !A.metaKey && !A.altKey) {
 }
 const f = document.activeElement;
 send("keyup", f || el);
-return { ok: true, el: ident(el), prevented: prevented, focus: f && f !== document.body ? ident(f) : null };
+// The body's ident is its whole text, so it is named "body". prevented and focus
+// only when they say something: a prevented default, focus the press moved.
+const name = function (n) { return !n || n === document.body ? "body" : ident(n); };
+const out = { ok: true, el: name(el) };
+if (prevented) out.prevented = true;
+if ((f || document.body) !== el) out.focus = name(f);
+return out;
 `,
 
   // JS-driven hover menus listen for these; CSS :hover needs a real pointer.

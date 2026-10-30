@@ -3190,7 +3190,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29879
+   "pageBytes": 29874
   },
   {
    "call": [
@@ -3222,7 +3222,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 88587
+   "pageBytes": 88382
   },
   {
    "call": [
@@ -3249,7 +3249,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38018
+   "pageBytes": 38016
   },
   {
    "call": [
@@ -3265,7 +3265,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\",\"prevented\":false,\"focus\":\"button \\\"Go\\\"\"}"
+     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\"}"
     }
    ],
    "isError": false,
@@ -3276,7 +3276,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 27194
+   "pageBytes": 27207
   },
   {
    "call": [
@@ -4627,7 +4627,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\",\"prevented\":false,\"focus\":\"textbox \\\"City\\\"\"}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\"}"
     }
    ],
    "isError": false,
@@ -4638,7 +4638,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12463
+   "pageBytes": 12582
   },
   {
    "call": [
@@ -4651,7 +4651,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\",\"prevented\":false,\"focus\":\"button \\\"Go\\\"\"}"
+     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\"}"
     }
    ],
    "isError": false,
@@ -4662,7 +4662,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12459
+   "pageBytes": 12578
   },
   {
    "call": [
@@ -4674,7 +4674,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\",\"prevented\":false,\"focus\":\"textbox \\\"City\\\"\"}"
+     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\",\"focus\":\"textbox \\\"City\\\"\"}"
     }
    ],
    "isError": false,
@@ -4685,7 +4685,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12458
+   "pageBytes": 12577
   },
   {
    "call": [
@@ -4697,7 +4697,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\",\"prevented\":false,\"focus\":\"textbox \\\"City\\\"\"}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\"}"
     }
    ],
    "isError": false,
@@ -4708,7 +4708,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12457
+   "pageBytes": 12576
   },
   {
    "call": [
@@ -4732,7 +4732,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12468
+   "pageBytes": 12587
   },
   {
    "call": [
@@ -4775,6 +4775,78 @@
    },
    "pageScripts": 1,
    "pageBytes": 389
+  }
+ ],
+ "press: a prevented key, and the body": [
+  {
+   "call": [
+    "press",
+    {
+     "key": "Enter",
+     "selector": "#i"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"Search\\\"\",\"prevented\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 12582
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "document.activeElement.blur(); return 1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "1"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 398
+  },
+  {
+   "call": [
+    "press",
+    {
+     "key": "Escape"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"body\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 12584
   }
  ],
  "press: trusted": [
@@ -4869,7 +4941,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\",\"prevented\":false,\"focus\":\"textbox \\\"City\\\"\"}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\"}"
     }
    ],
    "isError": false,
@@ -4882,7 +4954,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12471
+   "pageBytes": 12590
   }
  ],
  "press: safari": [
@@ -4897,7 +4969,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\",\"prevented\":false,\"focus\":\"textbox \\\"City\\\"\"}"
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\"}"
     }
    ],
    "isError": false,
@@ -4908,7 +4980,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12471
+   "pageBytes": 12590
   }
  ],
  "fill: plain by label, selector, ref; clear; text_path": [

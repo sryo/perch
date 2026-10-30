@@ -453,6 +453,12 @@ add("press: keys, chords, selector, focus", async (h) => {
   await h.call("press", { key: "NotAKey" });
   await h.call("eval_js", { script: "return [window.sent, window.b]" });
 });
+add("press: a prevented key, and the body", async (h) => {
+  onPage(h, `<p>${"page text ".repeat(20)}</p><input id=i aria-label="Search" onkeydown="if (event.key === 'Enter') event.preventDefault()">`);
+  await h.call("press", { key: "Enter", selector: "#i" });
+  await h.call("eval_js", { script: "document.activeElement.blur(); return 1" });
+  await h.call("press", { key: "Escape" });
+});
 add("press: trusted", async (h) => {
   desk(h, `<input id=i aria-label="City"><button id=b>Go</button>`);
   await h.call("press", { key: "Enter", selector: "#i", trusted: true });
