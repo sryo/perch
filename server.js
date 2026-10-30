@@ -2861,8 +2861,13 @@ function jxaRuntime(BROWSERS, HANG) {
       // javascript: or browser URLs that way, and a file: URL only from a file: page.
       let r = null, wasLoading = false, preUrl = null;
       if (canEval && t.kind !== "safari") {
-        wasLoading = !!read(function () { return t.tab.loading(); });
-        preUrl = read(function () { return String(t.tab.url()); });
+        // Chrome answers both in one properties() event.
+        const p = t.kind === "chrome" ? read(function () { return t.tab.properties(); }) : null;
+        if (p && p.url != null) { wasLoading = !!p.loading; preUrl = String(p.url); }
+        else {
+          wasLoading = !!read(function () { return t.tab.loading(); });
+          preUrl = read(function () { return String(t.tab.url()); });
+        }
       }
       const fromPage = /^(https?:\/\/|about:blank$)/i.test(a.url) || (/^file:/i.test(a.url) && preUrl != null && /^file:/i.test(preUrl));
       // Arc's execute hangs on its own arc: pages, so no page JS runs on one: none
@@ -3077,6 +3082,8 @@ function jxaRuntime(BROWSERS, HANG) {
       // At the deadline, only when the last check that answered still found the
       // stamped document: a url and a loading read, made only here.
       if (lastC && lastC.old) {
+        const p = t.kind === "chrome" ? read(function () { return t.tab.properties(); }) : null;
+        if (p && p.url != null) return decide(String(p.url), !!p.loading);
         return decide(read(function () { return String(t.tab.url()); }), t.kind === "safari" ? null : read(function () { return t.tab.loading(); }));
       }
       return result(false);

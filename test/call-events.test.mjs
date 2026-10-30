@@ -194,9 +194,10 @@ test("navigate's load check polls every 50ms", () => {
   assert.ok(world.clock.t - t0 <= 4 * 50, `took ${world.clock.t - t0}ms`);
 });
 
-test("navigate that loads is 7 events on Chrome and Safari, 6 on Arc's shown tab", async () => {
+// Chrome reads the tab's loading and url before the stamp in one properties() event.
+test("navigate that loads is 6 events on Chrome and Arc's shown tab, 7 on Safari", async () => {
   for (const [spec, app, n] of [
-    [chrome([{ id: 1, active: 0, tabs: tabs(1) }]), "Google Chrome", 7],
+    [chrome([{ id: 1, active: 0, tabs: tabs(1) }]), "Google Chrome", 6],
     [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }]), "Arc", 6],
     [safari([{ id: 3, active: 0, tabs: tabs(1, "s") }]), "Safari", 7],
   ]) {

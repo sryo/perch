@@ -112,6 +112,12 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (tab.pending && tab.pending.at != null && clock.t >= tab.pending.at) { tab.page = mk(tab.pending.url); tab.pending = null; }
     };
     fn("loading", () => { settle(); return !!tab.pending || tab.page.ticks > 0; });
+    // Chrome's tab properties() answers url, title, loading and id in one event (live).
+    fn("properties", () => {
+      if (b.kind !== "chrome") throw new Error("Can't get object.");
+      settle();
+      return { url: tab.shownUrl(), title: spec.title || "", loading: !!tab.pending || tab.page.ticks > 0, id: spec.id };
+    });
     // A pending load shows its url while the old document still answers, as live
     // Canary does for a page-started one. Safari reports a blank tab's URL as null.
     tab.shownUrl = () => { const u = tab.pending ? tab.pending.url : tab.page.url; return b.kind === "safari" && u === "about:blank" ? null : u; };

@@ -338,8 +338,9 @@ test("navigate on Chrome: a url set from outside the page, refused because its w
     cg: [{ owner: "Google Chrome" }],
   });
   const tab = world.tabsOf("Google Chrome", 0)[0];
-  const loading = Object.getOwnPropertyDescriptor(tab, "loading");
-  Object.defineProperty(tab, "loading", { configurable: true, get() { world.apps["Google Chrome"].windows[1].index = 1; return loading.get.call(tab); } });
+  // The first read of the tab (its properties) is when the other window comes forward.
+  const props = Object.getOwnPropertyDescriptor(tab, "properties");
+  Object.defineProperty(tab, "properties", { configurable: true, get() { world.apps["Google Chrome"].windows[1].index = 1; return props.get.call(tab); } });
   assert.throws(() => navWith({ url: "https://next.test/", target: { tabId: "chrome:5" } }),
     (e) => /^tab_not_visible: .*no longer in front/.test(e.message) && !/refused or cancelled/.test(e.message) && OPT_IN.test(e.message));
   assert.equal(world.counts["tab.url="], undefined);
