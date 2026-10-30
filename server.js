@@ -436,8 +436,11 @@ function jxaRuntime(BROWSERS, HANG) {
 
   // For tools that only run page JS: a hinted Chromium handle costs no Apple
   // Event here, and an execute that finds no tab in that window re-resolves it
-  // (onTab). Anything else resolves and is guarded as usual.
-  function pageTarget(want, tool) {
+  // (onTab). `once`: the call's first page JS may run before its tab is read, as
+  // quickExec's does, and pinFront reads the tab before any more: untargeted, with
+  // a Chromium browser on top, it goes to the front window's shown tab (`front`).
+  // Anything else resolves and is guarded as usual.
+  function pageTarget(want, tool, once) {
     const hn = want && want.windowId == null && want.tabId != null && hints[want.tabId];
     if (hn) {
       const name = parseHandle(want.tabId).app, P = procs();
@@ -446,9 +449,26 @@ function jxaRuntime(BROWSERS, HANG) {
         return { tab: win.tabs.byId(hn.id), idx: null, tabId: hn.id, kind: "chrome", app: name, win, w: hn.w, P, lazy: want };
       }
     }
+    want = want || {};
+    if (once && want.tabId == null && want.windowId == null && want.tabIndex == null && want.app == null) {
+      const P = procs(), top = P.z[0];
+      if (KIND[top] === "chrome") {
+        const win = app(top).windows[0];
+        return { tab: win.activeTab, idx: null, tabId: null, kind: "chrome", app: top, win, w: 0, P, shown: true, front: want };
+      }
+    }
     const t = resolve(want);
     visibleGuard(t, tool);
     return t;
+  }
+  // Pins a front target to the tab its window shows now, by id. One closed or
+  // left since the first page JS is another tab by then, where the call's own
+  // page state is missing, so the call fails closed.
+  function pinFront(t) {
+    if (!t.front) return;
+    let id;
+    try { id = t.win.activeTab.id(); } catch (e) { if (noSuchObject(e)) throw staleError(null); throw e; }
+    Object.assign(t, { tab: t.win.tabs.byId(id), tabId: id, front: null });
   }
 
   const isStale = (e) => !!e && /^stale_tab:/.test(e.message);
@@ -460,17 +480,18 @@ function jxaRuntime(BROWSERS, HANG) {
   // (errAENoSuchObject: the tab closed, or its window moved in the app's
   // positional window list) is re-resolved by the tab's id once and `f` runs
   // again; a tab found nowhere, or missing again, is stale_tab. Safari tabs have
-  // no id to re-find them by, so theirs is stale_tab at once.
+  // no id to re-find them by, so theirs is stale_tab at once. A front target
+  // with no window to run in resolves the default target afresh.
   function onTab(t, f) {
     try { return f(); } catch (e) {
       if (!noSuchObject(e)) throw e;
     }
     const h = t.lazy ? t.lazy.tabId : t.tabId != null ? handle(t.app, t.tabId) : null;
     if (t.lazy) delete hints[h];
-    if (h == null || t.kind === "safari") throw staleError(h);
-    const r = resolve({ tabId: h });
+    if (t.kind === "safari" || (h == null && !t.front)) throw staleError(h);
+    const r = resolve(h != null ? { tabId: h } : t.front);
     visibleGuard(r, "page JS");
-    t.lazy = t.winId = t.shown = null;
+    t.lazy = t.winId = t.shown = t.front = null;
     t.pageOk = false;
     Object.assign(t, r);
     try { return f(); } catch (e) {
@@ -788,7 +809,8 @@ function jxaRuntime(BROWSERS, HANG) {
   // windows[N-1], the window the plain path's specifier names). A fast failure (a
   // raised window moved the tab's window, JS from Apple Events off) takes the
   // plain path, which re-finds a moved tab and reports the real error.
-  const pinned = function (t) { return t.kind === "chrome" && t.tabId != null && (t.winId != null || t.w != null) && soleInstance(t); };
+  // A front target names the window's active tab, as the plain path's specifier does.
+  const pinned = function (t) { return t.kind === "chrome" && (t.tabId != null || !!t.front) && (t.winId != null || t.w != null) && soleInstance(t); };
   const namedWindow = function (t) { return t.winId != null ? "window id " + asQuote(t.winId) : "window " + (t.w + 1); };
   function pollExec(t, js, secs) {
     if (!pinned(t)) return exec(t, js);
@@ -2847,13 +2869,15 @@ function jxaRuntime(BROWSERS, HANG) {
     // otherwise keeps the element and its result alive until the page unloads;
     // not when the page stopped answering, where the drop could hang too.
     evalMain(a) {
-      const t = pageTarget(a.target, "eval_js"), start = Date.now();
+      const t = pageTarget(a.target, "eval_js", true), start = Date.now();
       const read = function (off) { return a.read.split(MW_OFF).join(String(off)); };
       const dropped = function (err) { try { pollExec(t, a.drop, POLL_EXEC_SECS); } catch (e) {} return err; };
       let ran = true, v = null;
       try { v = pollValue(pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000)))); }
       catch (e) { if (!isNoReply(e)) throw e; ran = false; }
+      // A result the kick answered in full needs no more page JS, and no tab read.
       if (v == null) {
+        pinFront(t);
         const r = poll(t, read(0), a.timeout, awaitEvery, false, null, start);
         if (!r) {
           const err = ranOut("timeout: eval_js (world main) timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again");
@@ -2866,6 +2890,7 @@ function jxaRuntime(BROWSERS, HANG) {
       if (v.p == null) return "i" + JSON.stringify(v);
       const parts = [v.p];
       for (let end = v.end; end < v.len;) {
+        pinFront(t);
         if (Date.now() - start > a.timeout + MW_READ_MS) throw dropped(new Error("timeout: eval_js (world main) could not read its " + v.len + "-char result in time; the code ran"));
         let x;
         try { x = readExec(t, read(end)); }

@@ -182,6 +182,19 @@ test("select and click readback on a listed Chrome handle read nothing but the p
   }
 });
 
+// eval_js {world:"main"} runs its kick on Chrome's default tab unread (as eval_js
+// does; see test/eval-main.test.mjs); Arc and Safari still resolve and guard first.
+test("untargeted world main on Arc and Safari still resolves the tab first", async () => {
+  for (const [spec, owner, first, x] of [
+    [arc([{ id: "W1", active: 1, tabs: tabs(3, "a") }]), "Arc", ["tab.id", "tab.url"], "tab.execute"],
+    [safari([{ id: 3, active: 1, tabs: tabs(3, "s") }]), "Safari", ["windows.length(Safari)", "tabs.length", "win.currentTab.index()"], "doJavaScript"],
+  ]) {
+    install({ browsers: [spec], cg: [{ owner }] });
+    await call("eval_js", { script: "return 1", world: "main" });
+    assert.deepEqual(world.aeBy(owner), [...first, x], owner);
+  }
+});
+
 // ---- navigate ----
 
 test("navigate's load check polls every 50ms", () => {
