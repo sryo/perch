@@ -4,6 +4,7 @@
 // checkout is never touched.
 //   node scripts/versions.mjs [--refs c4010f4,6b0d9cf,main] [--reps 10] [--out bench/runs/versions.json]
 //                             [--baseline bench/versions-baseline.json [--against <ref>]]
+//                             [--app canary|safari] [--only "<call regex>"] [--offline]
 // It opens one scratch Chrome Canary window of its own (Canary may come to the
 // front while it opens), with bench/versions-fixture.html served on 127.0.0.1
 // in a shown tab and a background tab, runs every version there, minimizes
@@ -26,11 +27,19 @@ import { serveFixture } from "./bench.mjs";
 import { stats, compareRuns, lockSteps, lockTotals, lockDiff } from "./versions-lib.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const APP = "Google Chrome Canary", KEY = "canary";
+
 const arg = (k, d) => { const i = process.argv.lastIndexOf(k); return i >= 0 ? process.argv[i + 1] : d; };
 const REFS = arg("--refs", "c4010f4,main").split(","), REPS = Number(arg("--reps", 10));
 const OUT = arg("--out", "bench/runs/versions.json"), BASELINE = arg("--baseline"), AGAINST = arg("--against");
 const OFFLINE = process.argv.includes("--offline");
+// --only "<regex>": run just the calls whose names match (a retake of a flagged call).
+const ONLY = arg("--only") ? new RegExp(arg("--only")) : null, keep = (name) => !ONLY || ONLY.test(name);
+const BROWSER = {
+  canary: { app: "Google Chrome Canary", key: "canary", minimized: "minimized" },
+  safari: { app: "Safari", key: "safari", minimized: "miniaturized" },
+}[arg("--app", "canary")];
+if (!BROWSER) throw new Error("--app takes canary or safari");
+const APP = BROWSER.app, KEY = BROWSER.key;
 
 const git = (...a) => execFileSync("git", ["-C", ROOT, ...a], { encoding: "utf8" }).trim();
 const jxa = (src) => execFileSync("osascript", ["-l", "JavaScript", "-e", src], { encoding: "utf8" }).trim();
@@ -45,21 +54,21 @@ function tree(ref) {
   return { ref, sha, dir };
 }
 
-// One scratch window: tab 1 shown, tab 2 behind it, both on the fixture.
+// One scratch window: tab 1 shown, tab 2 behind it, both on the fixture. Each
+// version finds the tabs itself (list_tabs), since a Safari handle names a url.
 function openWindow(url) {
-  const r = JSON.parse(jxa(`const a = Application(${JSON.stringify(APP)});
-    const w = a.Window().make(); w.bounds = { x: 40, y: 60, width: 900, height: 760 };
-    w.activeTab.url = ${JSON.stringify(url)};
-    const t2 = a.Tab({ url: ${JSON.stringify(url + "#bg")} }); w.tabs.push(t2);
-    w.activeTabIndex = 1; delay(1.5);
-    JSON.stringify({ win: w.id(), shown: w.tabs[0].id(), bg: w.tabs[1].id() });`));
-  return { win: r.win, shown: `${KEY}:${r.shown}`, bg: `${KEY}:${r.bg}` };
+  const make = KEY === "safari"
+    ? `const d = a.Document().make(); delay(0.5); const w = a.windows[0]; d.url = ${JSON.stringify(url)};
+       w.tabs.push(a.Tab({ url: ${JSON.stringify(url + "#bg")} })); w.currentTab = w.tabs[0];`
+    : `const w = a.Window().make(); w.activeTab.url = ${JSON.stringify(url)};
+       w.tabs.push(a.Tab({ url: ${JSON.stringify(url + "#bg")} })); w.activeTabIndex = 1;`;
+  jxa(`const a = Application(${JSON.stringify(APP)}); ${make} w.bounds = { x: 40, y: 60, width: 900, height: 760 }; delay(1.5); "ok"`);
 }
-// The scratch window, found by its shown tab: a window's id can change under it.
-const winOf = (tabId) => `Application(${JSON.stringify(APP)}).windows().find((w) => w.tabs.id().map(String).includes(${JSON.stringify(String(tabId).split(":")[1])}))`;
-const minimize = (W, on) => jxa(`const w = ${winOf(W.shown)}; if (!w) throw new Error("scratch window gone"); w.minimized = ${on}; delay(${on ? 1 : 1.5}); "ok"`);
+// The scratch window: the one whose every tab is on this run's fixture.
+const winOf = (W) => `Application(${JSON.stringify(APP)}).windows().find((w) => { const u = w.tabs.url(); return u.length && u.every((x) => String(x).startsWith(${JSON.stringify(W.url)})); })`;
+const minimize = (W, on) => jxa(`const w = ${winOf(W)}; if (!w) throw new Error("scratch window gone"); w.${BROWSER.minimized} = ${on}; delay(${on ? 1 : 1.5}); "ok"`);
 const screenLocked = () => { try { return JSON.parse(jxa(`ObjC.import("CoreGraphics"); JSON.stringify(!!ObjC.deepUnwrap(ObjC.castRefToObject($.CGSessionCopyCurrentDictionary())).CGSSessionScreenIsLocked)`)); } catch { return null; } };
-const closeWindow = (W) => { try { jxa(`const w = ${winOf(W.shown)}; if (w) w.close(); "ok"`); } catch {} };
+const closeWindow = (W) => { try { jxa(`const w = ${winOf(W)}; if (w) w.close(); "ok"`); } catch {} };
 
 // A result's size as the caller gets it: text characters plus image base64.
 const size = (r) => (r.content || []).reduce((n, c) => n + (c.type === "image" ? c.data.length : c.text.length), 0);
@@ -133,28 +142,39 @@ async function parallel(client, W, reps) {
   return out;
 }
 
-async function runVersion(T, W, upload) {
+async function runVersion(T, base, upload) {
   const { connect } = await import(join(T.dir, "scripts", "mcp-client.mjs"));
   const client = await connect({ timeoutMs: 120000 });
   const results = {};
   try {
-    // Each version starts on a fresh copy of the page: clicks and presses append to its log.
-    // A new query string reloads it; a changed fragment alone would not.
-    for (const tabId of [W.shown, W.bg]) await rep(client, "navigate", { url: `${W.url}?v=${T.sha}${tabId === W.bg ? "#bg" : ""}`, target: { tabId } });
-    for (const [name, tool, args] of workload(W, upload)) await rep(client, tool, args); // warm each path once
-    for (const [name, tool, args, n = REPS] of workload(W, upload)) {
+    const rows = JSON.parse((await client.rpc("tools/call", { name: "list_tabs", arguments: { app: KEY, urlContains: base.url } })).result.content[0].text).tabs;
+    const bgRow = rows.find((r) => r.url.includes("#bg")), shownRow = rows.find((r) => r !== bgRow);
+    if (!bgRow || !shownRow) throw new Error(`scratch tabs not found in ${APP}: ${JSON.stringify(rows)}`);
+    // Each version starts on a fresh copy of the page (clicks and presses append to
+    // its log): a new query string reloads it, a fragment alone would not. navigate
+    // answers the tab's current handle, which a Safari handle needs after a load.
+    const W = { ...base, url: `${base.url}?v=${T.sha}` };
+    for (const [k, row] of [["shown", shownRow], ["bg", bgRow]]) {
+      const r = await client.rpc("tools/call", { name: "navigate", arguments: { url: W.url + (k === "bg" ? "#bg" : ""), target: { tabId: row.tabId } } });
+      let o = {}; try { o = JSON.parse(r.result.content[0].text); } catch {}
+      W[k] = o.tabId || row.tabId;
+    }
+    const calls = workload(W, upload).filter(([name]) => keep(name));
+    for (const [name, tool, args] of calls) await rep(client, tool, args); // warm each path once
+    for (const [name, tool, args, n = REPS] of calls) {
       const reps = [];
       for (let i = 0; i < n; i++) reps.push(await rep(client, tool, args));
       results[name] = stats(reps);
       const shot = reps.find((x) => x.image);
       if (shot) results[name].image = shot.image;
     }
-    results["parallel 4x500ms await"] = stats(await parallel(client, W, Math.min(REPS, 5)));
+    if (keep("parallel 4x500ms await")) results["parallel 4x500ms await"] = stats(await parallel(client, W, Math.min(REPS, 5)));
+    if (!minimized(W).some(([name]) => keep(name))) return results;
     let down = null;
     try { minimize(W, true); } catch (e) { down = String(e.message).split("\n")[0]; }
     if (down) for (const [name] of minimized(W)) results[name] = { n: 0, p50: 0, p90: 0, bytes: 0, ok: 0, err: 1, error: `harness: could not minimize: ${down}` };
     else try {
-      for (const [name, tool, args] of minimized(W)) {
+      for (const [name, tool, args] of minimized(W).filter(([name]) => keep(name))) {
         const reps = [];
         for (let i = 0; i < Math.min(REPS, 5); i++) reps.push(await rep(client, tool, args));
         results[name] = stats(reps);
@@ -215,7 +235,8 @@ async function main() {
   const server = await serveFixture(html);
   const upload = join(tmpdir(), "perch-versions-upload.txt");
   writeFileSync(upload, "perch versions upload\n");
-  const W = { ...openWindow(server.url), url: server.url };
+  openWindow(server.url);
+  const W = { url: server.url };
   const save = (versions) => {
     const report = { date: new Date().toISOString(), macos: execFileSync("sw_vers", ["-productVersion"], { encoding: "utf8" }).trim(), browser: APP, fixture, reps: REPS, versions };
     mkdirSync(dirname(resolve(ROOT, OUT)), { recursive: true });
