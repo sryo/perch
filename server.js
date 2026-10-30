@@ -1213,25 +1213,39 @@ function jxaRuntime(BROWSERS, HANG) {
   // another osascript that has captured is alive, every other osascript's
   // capture waits 30s and gets no image, and the one served stalls as well
   // while another asks. It can't be bounded in the process that makes it (a
-  // native call holds the JS lock), so the helper, never the daemon, makes it,
-  // and the daemon waits HELPER_WAIT_MS for the reply, then kills the helper,
-  // leaves it off for HELPER_STALL_MS and takes screencapture inside the same
-  // SHOT_CAPTURE_SECS. Only one perch helper runs per user: it holds an flock on
-  // $TMPDIR/perch-capture.lock for its life, and a runtime that finds the lock
-  // held (another perch server's helper) uses screencapture and checks again
-  // after HELPER_LOCKED_MS. The helper exits HELPER_IDLE_MS after its last
-  // shot, or once this daemon is gone, so it holds replayd only while shots
-  // come. Requests and replies are files: `<prefix>.req` holds the request as
-  // JSON, and the reply is written to `<out>.w` and renamed to `out`, so a file
-  // at `out` is always whole. Every one is removed on every path.
-  const HELPER_WAIT_MS = 1000, HELPER_STALL_MS = 60000, HELPER_LOCKED_MS = 10000, HELPER_GONE_MS = 5000, HELPER_IDLE_MS = 30000;
+  // native call holds the JS lock), so the helper, never the daemon, makes it.
+  // Only one perch helper runs per user: it holds an flock on
+  // $TMPDIR/perch-capture.lock for its life and registers itself in
+  // $TMPDIR/perch-capture.helper as {prefix, pid}. A runtime that finds the
+  // lock held sends its shots to the registered helper (another perch
+  // server's), whose pid it checks with kill(pid, 0); with none registered
+  // alive it uses screencapture and checks again after HELPER_LOCKED_MS. The
+  // daemon waits HELPER_WAIT_MS for the reply, then takes screencapture inside
+  // the same SHOT_CAPTURE_SECS and leaves the helper off for HELPER_STALL_MS;
+  // only the helper's own runtime kills it, never another server's. The helper
+  // exits HELPER_IDLE_MS after its last shot, or once its daemon is gone, so
+  // it holds replayd only while shots come.
+  // Requests and replies are files. `<prefix>.req` is a one-request slot: a
+  // client writes its request to its own `.w` file and moves it there, which
+  // fails while another client's request waits, so none is ever replaced, and
+  // retries until its wait runs out. A request's `until` falls HELPER_GRACE_MS
+  // before its client stops waiting: the helper skips a request taken past it
+  // and drops a reply finished past it, so a client that gave up finds no
+  // reply left behind. The reply is written to `<out>.w` and renamed to `out`,
+  // so a file at `out` is always whole. Every file is removed on every path; a
+  // request left in a stalled helper's slot is skipped by the helper or
+  // removed by its owner.
+  const HELPER_WAIT_MS = 1000, HELPER_STALL_MS = 60000, HELPER_LOCKED_MS = 10000, HELPER_GONE_MS = 5000, HELPER_IDLE_MS = 30000, HELPER_GRACE_MS = 20;
   // The helper's poll for a request and for its parent: 10ms costs it about 2.5%
   // of a core while idle, 2ms cost 9%, and a shot waits 5ms more on average.
   const HELPER_POLL_SECS = 0.01;
-  // helperOffCall: this call's noHelper (PERCH_CAPTURE_HELPER=0 in Node).
-  let helper = null, helperOff = 0, helperGen = 0, helperSeq = 0, helperOffCall = false;
+  // helper: where shots go, this runtime's own ({task, prefix}) or another
+  // server's ({pid, prefix}). helperOffCall: this call's noHelper
+  // (PERCH_CAPTURE_HELPER=0 in Node).
+  let helper = null, helperOff = 0, helperGen = 0, helperSeq = 0, helperOffCall = false, killBound = false;
+  const tmpPath = (name) => $.NSTemporaryDirectory().js + name;
   function shotLock() {
-    const fm = $.NSFileManager.defaultManager, path = $.NSTemporaryDirectory().js + "perch-capture.lock";
+    const fm = $.NSFileManager.defaultManager, path = tmpPath("perch-capture.lock");
     if (!fm.fileExistsAtPath(path)) fm.createFileAtPathContentsAttributes(path, $(), $());
     const h = $.NSFileHandle.fileHandleForUpdatingAtPath(path);
     if (!h || h.isNil()) return null;
@@ -1240,17 +1254,38 @@ function jxaRuntime(BROWSERS, HANG) {
     if (Number($.flock(h.fileDescriptor, 6)) !== 0) { h.closeFile; return null; }
     return h;
   }
-  // Whether the helper can take a shot now, launching it if needed.
+  function pidAlive(pid) {
+    if (!killBound) { ObjC.bindFunction("kill", ["int", ["int", "int"]]); killBound = true; }
+    return Number($.kill(pid, 0)) === 0;
+  }
+  const helperAlive = (h) => (h.task ? !!h.task.isRunning : pidAlive(h.pid));
+  // The helper another perch server registered, while its pid is alive.
+  function hostedHelper() {
+    try {
+      const text = $.NSString.stringWithContentsOfFileEncodingError(tmpPath("perch-capture.helper"), 4, $());
+      if (!text || text.isNil()) return null;
+      const r = JSON.parse(text.js);
+      if (!r || typeof r.prefix !== "string" || r.prefix.indexOf(tmpPath("perch-")) !== 0 || !(r.pid > 0) || Math.floor(r.pid) !== r.pid) return null;
+      return pidAlive(r.pid) ? { pid: r.pid, prefix: r.prefix, answered: false } : null;
+    } catch (e) { return null; }
+  }
+  // Whether a helper can take a shot now: this runtime's, launched if needed
+  // while the lock is free, else another server's.
   function helperUp() {
     if (helperOffCall || Date.now() < helperOff) return false;
-    if (helper && helper.task.isRunning) return true;
+    if (helper && helperAlive(helper)) return true;
     if (helper) { dropHelper(); }
     const lock = shotLock();
-    if (!lock) { helperOff = Date.now() + HELPER_LOCKED_MS; return false; }
+    if (!lock) {
+      helper = hostedHelper();
+      if (helper) return true;
+      helperOff = Date.now() + HELPER_LOCKED_MS;
+      return false;
+    }
     // LOCK_UN: the helper takes it for itself.
     $.flock(lock.fileDescriptor, 8);
     lock.closeFile;
-    const prefix = $.NSTemporaryDirectory().js + "perch-" + $.NSProcessInfo.processInfo.processIdentifier + "-h" + (++helperGen);
+    const prefix = tmpPath("perch-" + $.NSProcessInfo.processInfo.processIdentifier + "-h" + (++helperGen));
     // A request left under this prefix by an earlier daemon with the same pid.
     dropFile(prefix + ".req");
     const task = $.NSTask.alloc.init;
@@ -1265,32 +1300,44 @@ function jxaRuntime(BROWSERS, HANG) {
     helper = { task: task, prefix: prefix, answered: false };
     return true;
   }
+  // Forgets the helper; this runtime's own is stopped and its slot cleared.
   function dropHelper() {
-    if (helper.task.isRunning) stopTask(helper.task);
-    dropFile(helper.prefix + ".req");
+    if (helper.task) {
+      if (helper.task.isRunning) stopTask(helper.task);
+      dropFile(helper.prefix + ".req");
+    }
     helper = null;
   }
   // The helper's shot of q ({wid, format, maxWidth, map}), or null when it
   // can't take one or gave no image; screencapture then takes it.
   function helperShot(q, until) {
-    let out = null;
+    let out = null, w = null;
     try {
       if (!helperUp()) return null;
-      const h = helper, fm = $.NSFileManager.defaultManager;
-      out = h.prefix + "-" + (++helperSeq) + ".json";
-      q.out = out;
-      if (!$(JSON.stringify(q)).writeToFileAtomicallyEncodingError(h.prefix + ".req", true, 4, $())) return null;
+      const h = helper, fm = $.NSFileManager.defaultManager, slot = h.prefix + ".req";
+      const me = $.NSProcessInfo.processInfo.processIdentifier + "-" + (++helperSeq);
       const stop = Math.min(until, Date.now() + HELPER_WAIT_MS);
-      while (!fm.fileExistsAtPath(out)) {
-        if (!h.task.isRunning) {
+      out = h.prefix + "." + me + ".json";
+      w = slot + "." + me + ".w";
+      q.out = out;
+      q.until = stop - HELPER_GRACE_MS;
+      if (!$(JSON.stringify(q)).writeToFileAtomicallyEncodingError(w, false, 4, $())) return null;
+      let placed = false;
+      for (;;) {
+        // The move fails while another client's request holds the slot.
+        if (!placed) placed = !!fm.moveItemAtPathToPathError(w, slot, $());
+        if (placed && fm.fileExistsAtPath(out)) break;
+        if (!helperAlive(h)) {
           // Gone without an answer: the idle exit at the same moment, or a
           // helper that lost the lock or never ran, which is left off a while.
           if (!h.answered) helperOff = Date.now() + HELPER_GONE_MS;
+          if (placed && !h.task) takeBack(slot, out);
           dropHelper();
           return null;
         }
         if (Date.now() >= stop) {
-          dropHelper();
+          // A request still in the slot has expired, so the helper skips it.
+          if (h.task) dropHelper(); else helper = null;
           helperOff = Date.now() + HELPER_STALL_MS;
           return null;
         }
@@ -1303,18 +1350,36 @@ function jxaRuntime(BROWSERS, HANG) {
     } catch (e) {
       return null;
     } finally {
-      if (out) { dropFile(out); dropFile(out + ".w"); }
+      // `<out>.w` first: a reply the helper renames after this finds no file.
+      if (w) dropFile(w);
+      if (out) { dropFile(out + ".w"); dropFile(out); }
     }
+  }
+  // This client's request, out of the slot of a helper that is gone. Nothing
+  // else empties that slot, so it can't have become another client's.
+  function takeBack(slot, out) {
+    try {
+      const text = $.NSString.stringWithContentsOfFileEncodingError(slot, 4, $());
+      if (text && !text.isNil() && JSON.parse(text.js).out === out) dropFile(slot);
+    } catch (e) {}
+  }
+  // One request, served by the helper: skipped once past q.until, and its
+  // reply dropped rather than renamed into place when finished past it.
+  function helperServe(q) {
+    if (!(Date.now() < q.until)) return;
+    let r = NO_IMAGE;
+    try {
+      // kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming (no shadow, as screencapture -o).
+      r = encodeShot($.CGWindowListCreateImage($.CGRectNull, 8, q.wid, 1), q.format, q.maxWidth, q.map);
+    } catch (e) {}
+    const w = q.out + ".w";
+    if ($(JSON.stringify(r)).writeToFileAtomicallyEncodingError(w, false, 4, $()) && Date.now() < q.until) $.NSFileManager.defaultManager.moveItemAtPathToPathError(w, q.out, $());
+    dropFile(w);
   }
   // The helper's own loop (run by the osascript helperUp launches): serves
   // `<prefix>.req` until HELPER_IDLE_MS pass without one or `parent` (the
-  // daemon) is gone. It captures only while it holds the lock.
-  function helperServe(q) {
-    try {
-      // kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming (no shadow, as screencapture -o).
-      return encodeShot($.CGWindowListCreateImage($.CGRectNull, 8, q.wid, 1), q.format, q.maxWidth, q.map);
-    } catch (e) { return NO_IMAGE; }
-  }
+  // daemon) is gone. It captures, and stays registered, only while it holds
+  // the lock.
   function shotHelper(prefix, parent) {
     const lock = shotLock();
     if (!lock) return;
@@ -1323,7 +1388,9 @@ function jxaRuntime(BROWSERS, HANG) {
     ObjC.bindFunction("getppid", ["int", []]);
     // access(2) costs about half of fileExistsAtPath's bridge per idle poll.
     ObjC.bindFunction("access", ["int", ["char *", "int"]]);
-    const fm = $.NSFileManager.defaultManager, req = prefix + ".req";
+    const req = prefix + ".req", reg = tmpPath("perch-capture.helper");
+    const entry = JSON.stringify({ prefix: prefix, pid: $.NSProcessInfo.processInfo.processIdentifier });
+    $(entry).writeToFileAtomicallyEncodingError(reg, true, 4, $());
     let last = Date.now();
     try {
       // The parent is read every poll: a helper left behind by a daemon that
@@ -1334,13 +1401,16 @@ function jxaRuntime(BROWSERS, HANG) {
         let q = null;
         try { q = JSON.parse($.NSString.stringWithContentsOfFileEncodingError(req, 4, $()).js); } catch (e) {}
         dropFile(req);
-        if (q && typeof q.out === "string") {
-          $(JSON.stringify(helperServe(q))).writeToFileAtomicallyEncodingError(q.out + ".w", false, 4, $());
-          fm.moveItemAtPathToPathError(q.out + ".w", q.out, $());
-        }
+        if (q && typeof q.out === "string") helperServe(q);
         last = Date.now();
       }
-    } finally { dropFile(req); }
+    } finally {
+      dropFile(req);
+      try {
+        const text = $.NSString.stringWithContentsOfFileEncodingError(reg, 4, $());
+        if (text && !text.isNil() && text.js === entry) dropFile(reg);
+      } catch (e) {}
+    }
   }
   function shotGranted() {
     ObjC.import("CoreGraphics");

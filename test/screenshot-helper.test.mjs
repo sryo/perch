@@ -128,7 +128,7 @@ test("a stalled helper and a hung screencapture still end at 3s: the helper's wa
   onlyLock();
 });
 
-test("with the capture lock held by another perch server no helper is launched, screencapture takes it, and the lock is checked again only after 10s", async () => {
+test("with the capture lock held by another perch server that registered no helper, none is launched, screencapture takes it, and the lock is checked again only after 10s", async () => {
   install(null);
   spawns();
   await shoot({});
@@ -140,6 +140,130 @@ test("with the capture lock held by another perch server no helper is launched, 
   await shoot({});
   assert.deepEqual(world.state.flocks, [6, 6]);
   onlyLock();
+});
+
+// ---- another perch server's helper ----
+
+const REG = "/tmp/fake/perch-capture.helper";
+const filesLeft = () => Object.keys(world.state.files).sort();
+
+test("with the lock held by another server's registered helper, the shot goes through that helper: no launch, no screencapture, one lock probe", async () => {
+  install(null);
+  const f = world.hostHelper();
+  const calls = spawns();
+  const { meta } = await shoot({});
+  const j = await shoot({ format: "jpeg" });
+  assert.deepEqual(calls, []);
+  assert.equal(scShots().length, 0, "no screencapture run");
+  assert.equal(world.state.helpers, undefined, "no helper launched");
+  assert.equal(f.served, 2);
+  assert.equal(cgShots().length, 2);
+  assert.deepEqual(meta.image, { w: 1568, h: 1215 });
+  assert.equal(j.r.content[0].mimeType, "image/jpeg");
+  assert.deepEqual(world.state.flocks, [6], "the lock is probed once, then the helper's pid");
+  assert.equal(world.state.sigkills, undefined);
+  assert.deepEqual(filesLeft(), [REG], "only the other server's registry is left");
+});
+
+test("a slot holding another client's request is never overwritten: the shot waits for the helper to take it, then lands", async () => {
+  install(null);
+  const f = world.hostHelper({ ms: 20 });
+  const other = { wid: 77, format: "png", maxWidth: 0, map: null, out: "/tmp/fake/perch-900-h1.42-1.json", until: world.clock.t + 5000 };
+  world.state.files[f.prefix + ".req"] = { text: JSON.stringify(other) };
+  spawns();
+  const t0 = world.clock.t;
+  await shoot({});
+  const took = world.clock.t - t0;
+  assert.ok(took >= 40 && took < 100, `took ${took}ms`);
+  assert.equal(f.served, 2, "the other request first, then this one");
+  assert.equal(scShots().length, 0);
+  assert.ok(world.state.files[other.out], "the other client's reply is left for it");
+  delete world.state.files[other.out];
+  assert.deepEqual(filesLeft(), [REG]);
+});
+
+test("the owner's own shot waits for a request another server put in its helper's slot, and never replaces it", async () => {
+  install({ ms: 20 });
+  spawns();
+  await shoot({});
+  const other = { wid: 77, format: "png", maxWidth: 0, map: null, out: "/tmp/fake/perch-555-h1.42-1.json", until: world.clock.t + 5000 };
+  world.state.files["/tmp/fake/perch-555-h1.req"] = { text: JSON.stringify(other) };
+  const t0 = world.clock.t;
+  await shoot({});
+  assert.ok(world.clock.t - t0 >= 40, `took ${world.clock.t - t0}ms`);
+  assert.equal(cgShots().length, 3);
+  assert.ok(world.state.files[other.out]);
+  delete world.state.files[other.out];
+  onlyLock();
+});
+
+test("another server's helper that stalls is never killed: screencapture takes the shot in the same call, that helper is left off for 60s, and the expired request it skips leaves no file", async () => {
+  install(null);
+  const f = world.hostHelper({ stall: true });
+  const calls = spawns();
+  const t0 = world.clock.t;
+  const { meta } = await shoot({});
+  const took = world.clock.t - t0;
+  assert.ok(took >= 1000 && took < 1500, `took ${took}ms`);
+  assert.deepEqual([f.alive, f.killed, world.state.sigkills], [true, false, undefined], "never signalled");
+  assert.equal(scShots().length, 1);
+  assert.deepEqual(calls, []);
+  assert.deepEqual(meta.image, { w: 1568, h: 1215 });
+  const left = JSON.parse(world.state.files[f.prefix + ".req"].text);
+  assert.ok(left.until < world.clock.t, "the request left in the slot has expired");
+  assert.deepEqual(filesLeft(), [f.prefix + ".req", REG]);
+  // Within 60s: straight to screencapture, no wait.
+  const t1 = world.clock.t;
+  await shoot({});
+  assert.ok(world.clock.t - t1 < 100);
+  assert.equal(scShots().length, 2);
+  // It recovers; after 60s it skips the expired request uncaptured and serves the new one.
+  f.cfg().stall = false;
+  world.clock.t += 60000;
+  await shoot({});
+  assert.equal(f.served, 2);
+  assert.equal(cgShots().length, 1, "only the live request was captured");
+  assert.equal(scShots().length, 2);
+  assert.deepEqual(filesLeft(), [REG]);
+});
+
+test("another server's stalled helper and a hung screencapture still end at 3s", async () => {
+  install(null, { state: { captureMs: Infinity } });
+  const f = world.hostHelper({ stall: true });
+  spawns();
+  const t0 = world.clock.t;
+  const r = await handleCall("screenshot", {});
+  assert.equal(r.content[0].text, "error: " + SHOT_NO_IMAGE);
+  const took = world.clock.t - t0;
+  assert.ok(took >= 3000 && took <= 3500, `took ${took}ms`);
+  assert.equal(f.killed, false);
+});
+
+test("a registry naming a pid that is gone falls back as before: screencapture, no launch, no request left, the lock checked again after 10s", async () => {
+  install(null);
+  world.hostHelper({ dead: true });
+  spawns();
+  await shoot({});
+  await shoot({});
+  assert.equal(world.state.helpers, undefined);
+  assert.equal(scShots().length, 2);
+  assert.deepEqual(world.state.flocks, [6]);
+  assert.deepEqual(filesLeft(), [REG]);
+  world.clock.t += 10000;
+  await shoot({});
+  assert.deepEqual(world.state.flocks, [6, 6]);
+});
+
+test("another server's helper that exits mid-wait hands the shot to screencapture at once and the request is taken back from its slot", async () => {
+  install(null);
+  const f = world.hostHelper({ stall: true, goneAt: world.clock.t + 50 });
+  spawns();
+  const t0 = world.clock.t;
+  await shoot({});
+  assert.ok(world.clock.t - t0 < 150, `took ${world.clock.t - t0}ms`);
+  assert.equal(scShots().length, 1);
+  assert.equal(f.killed, false);
+  assert.deepEqual(filesLeft(), [REG]);
 });
 
 test("a free lock is only probed by the daemon (LOCK_EX|LOCK_NB, then LOCK_UN); the helper takes it", async () => {
@@ -190,7 +314,7 @@ const REQ = "/tmp/fake/perch-555-h1.req";
 test("shotHelper serves a request: captures the window, encodes it, writes the reply whole (.w then renamed), and exits 30s after its last shot", () => {
   install();
   world.state.lockFile = "/tmp/fake/perch-capture.lock";
-  world.state.files[REQ] = { text: JSON.stringify({ wid: 77, format: "jpeg", maxWidth: 400, map: null, out: "/tmp/fake/r1.json" }) };
+  world.state.files[REQ] = { text: JSON.stringify({ wid: 77, format: "jpeg", maxWidth: 400, map: null, out: "/tmp/fake/r1.json", until: world.clock.t + 1000 }) };
   const t0 = world.clock.t;
   world.run(`__perch.shotHelper(${JSON.stringify(REQ.slice(0, -4))}, 555)`);
   const r = JSON.parse(world.state.files["/tmp/fake/r1.json"].text);
@@ -211,10 +335,44 @@ test("shotHelper exits at once when its daemon is gone, and serves nothing witho
   assert.equal(world.clock.t, t0);
   world.state.ppid = 555;
   world.state.helper = undefined;
-  world.state.files[REQ] = { text: JSON.stringify({ wid: 77, format: "png", maxWidth: 0, map: null, out: "/tmp/fake/r1.json" }) };
+  world.state.files[REQ] = { text: JSON.stringify({ wid: 77, format: "png", maxWidth: 0, map: null, out: "/tmp/fake/r1.json", until: world.clock.t + 1000 }) };
   world.run(`__perch.shotHelper("/tmp/fake/perch-555-h1", 555)`);
   assert.equal(world.state.files["/tmp/fake/r1.json"], undefined);
   assert.equal(world.clock.t, t0);
+});
+
+test("shotHelper registers {prefix, pid} in perch-capture.helper while it holds the lock, and removes the entry on exit only while it still names it", () => {
+  install();
+  world.state.lockFile = "/tmp/fake/perch-capture.lock";
+  let seen = null;
+  world.state.onDelay = () => { if (seen == null) seen = world.state.files[REG]; };
+  world.run(`__perch.shotHelper("/tmp/fake/perch-555-h1", 555)`);
+  assert.deepEqual(JSON.parse(seen.text), { prefix: "/tmp/fake/perch-555-h1", pid: 555 });
+  assert.deepEqual(filesLeft(), []);
+  const theirs = JSON.stringify({ prefix: "/tmp/fake/perch-900-h1", pid: 7001 });
+  world.state.onDelay = () => { world.state.files[REG] = { text: theirs }; };
+  world.run(`__perch.shotHelper("/tmp/fake/perch-555-h1", 555)`);
+  assert.equal(world.state.files[REG].text, theirs);
+});
+
+test("shotHelper skips a request already past its until: nothing captured, no reply, the slot cleared", () => {
+  install();
+  world.state.lockFile = "/tmp/fake/perch-capture.lock";
+  world.state.files[REQ] = { text: JSON.stringify({ wid: 77, format: "png", maxWidth: 0, map: null, out: "/tmp/fake/r1.json", until: world.clock.t - 1 }) };
+  world.run(`__perch.shotHelper(${JSON.stringify(REQ.slice(0, -4))}, 555)`);
+  assert.equal(cgShots().length, 0);
+  assert.deepEqual(filesLeft(), []);
+});
+
+test("a reply finished after its request's until is dropped, never left for a client that gave up", () => {
+  install();
+  world.state.onDelay = null;
+  const until = world.clock.t + 10;
+  // The capture itself takes 15ms on the clock.
+  world.run(`(function () { const f = $.CGWindowListCreateImage; $.CGWindowListCreateImage = function () { delay(0.015); return f.apply(null, arguments); }; })()`);
+  world.run(`__perch.helperServe(${JSON.stringify({ wid: 77, format: "png", maxWidth: 0, map: null, out: "/tmp/fake/r1.json", until })})`);
+  assert.equal(cgShots().length, 1);
+  assert.deepEqual(filesLeft(), []);
 });
 
 // ---- element crops ----
@@ -271,7 +429,7 @@ test("an element crop whose helper stalls is cropped from screencapture after th
 test("shotHelper idles at 10ms polls throughout, never the 2ms poll", () => {
   install();
   world.state.lockFile = "/tmp/fake/perch-capture.lock";
-  world.state.files[REQ] = { text: JSON.stringify({ wid: 77, format: "png", maxWidth: 0, map: null, out: "/tmp/fake/r1.json" }) };
+  world.state.files[REQ] = { text: JSON.stringify({ wid: 77, format: "png", maxWidth: 0, map: null, out: "/tmp/fake/r1.json", until: world.clock.t + 1000 }) };
   world.state.delays = [];
   world.run(`__perch.shotHelper(${JSON.stringify(REQ.slice(0, -4))}, 555)`);
   assert.deepEqual([...new Set(world.state.delays)], [0.01], "never the 2ms poll");

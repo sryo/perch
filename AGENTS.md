@@ -23,7 +23,7 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 │   ├── bench.mjs    # live latency/payload bench, compared against bench/baseline.json
 │   ├── compare.mjs  # perch side of the perch vs Claude in Chrome suite
 │   ├── mcp-client.mjs  # tiny MCP stdio client shared by the live scripts
-│   ├── temp.mjs     # the only way tests and scripts make temp dirs; removed on test end or process exit
+│   ├── temp.mjs     # the only way tests and scripts make temp dirs; removed at test end or exit (tmp-cleanup.test.mjs)
 │   └── skylight-probe.js  # proof that SkyLight event routing binds from pure JXA
 ├── bench/           # baseline.json (the number to beat), fixture.html (the benched page), compare/ (fixture + history); runs/ is gitignored
 ├── install.sh       # macOS installer: clone, npm install, register in claude, codex, copilot
@@ -212,8 +212,8 @@ A popup blocker drops a synthetic click's new tab silently, so `click` reports b
 
 ### Screenshots
 
-- **Capture:** the runtime reads a window's own pixels regardless of z-order. Without the Screen Recording grant (`CGPreflightScreenCaptureAccess`, which never prompts) every screenshot is refused before anything is spawned. With it, the **capture helper** (a second `osascript` capturing in process with `CGWindowListCreateImage`) takes the shot, else `/usr/sbin/screencapture`, else a Node-spawned `screencapture` fallback. Every capture is bounded at 3s and every temp file is removed; no execFile or fs message or temp path reaches the caller.
-- **Why a helper:** `CGWindowListCreateImage` is proxied through `replayd`, which serves one live process per executable, so a daemon that captured in process would stall other tools' captures and be stalled by them. The helper holds an `flock` on `$TMPDIR/perch-capture.lock`, exits when idle or when its daemon is gone, and a stalled helper is killed and left off for a while. `PERCH_CAPTURE_HELPER=0` turns it off. Pinned by `test/screenshot-helper.test.mjs`.
+- **Capture:** the runtime reads a window's own pixels regardless of z-order. Without the Screen Recording grant (`CGPreflightScreenCaptureAccess`, which never prompts) every screenshot is refused before anything is spawned. With it, the **capture helper** (a second `osascript` capturing in process) takes the shot, else `/usr/sbin/screencapture`, else a Node-spawned `screencapture` fallback. Every capture is bounded at 3s and every temp file is removed; no execFile or fs message or temp path reaches the caller.
+- **Why a helper:** `CGWindowListCreateImage` goes through `replayd`, which serves one live process per executable, so a daemon capturing in process would stall other tools' captures and be stalled by them. One helper runs per user, holding an `flock` on `$TMPDIR/perch-capture.lock` and registered in `perch-capture.helper`; it exits when idle or its daemon is gone. Other servers send it shots through a one-request slot, never overwritten; requests expire unserved. Only its owner kills a stalled helper. `PERCH_CAPTURE_HELPER=0` turns it off. Pinned by `test/screenshot-helper.test.mjs`.
 - **Refusals:** minimized windows and windows on another Space have no CGWindowID (`window_offscreen`); only a window's active tab renders, so an inactive tab needs `raise:true`.
 - **Element crop (`ref`/`selector`):** needs Accessibility (only the AX page area places the viewport in the window). `shot_clip` scrolls the element into view and records every scroll offset under an owner token; the crop is the element plus 8 CSS px, and the scroll is always put back. It refuses an element larger than the viewport, one clipped by a scrolling container, a window that isn't painting (covered or hidden, after a scroll), and another call mid-screenshot. `meta.clip` is the rect, `clipped:true` when the element was cut; a restore that got no answer becomes a `warning`. Pinned by `test/screenshot-element.test.mjs` and `test/screenshot.test.mjs`.
 
@@ -285,7 +285,6 @@ Each blocked layer returns an actionable error naming the exact toggle (`ERR.jsO
 - **`npm run smoke`** (live) must pass.
 - **`npm run bench`** (live, Canary) compares against `bench/baseline.json`. It serves `bench/fixture.html` on 127.0.0.1, navigates an existing about:blank scratch tab there and back, and compares byte counts only when the fixture's sha256 matches the baseline's. Unchanged code moves about 5% between runs, so smaller differences are noise.
 - **Every change is measured.** Perf work must improve its numbers; other work must not regress them. Put before/after in the commit message, and never report unchanged numbers as a gain. A regression needs a reason or a fix. If the change made perch faster, replace `bench/baseline.json` with the new run (`bench/runs/bench.json`) in the same commit. For a change a user would notice in an agent's session (fewer calls, a flow that works now), rerun `scripts/compare.mjs` and add a row to `bench/compare/README.md`. Runs land in `bench/runs/` (gitignored); no other bench history goes in the repo.
-- Temp dirs come only from `scripts/temp.mjs` (`test/tmp-cleanup.test.mjs`).
 
 ## Live checks
 
