@@ -323,8 +323,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   const nsString = (str) => ({
     js: str,
     dataUsingEncoding: (enc) => (enc === 0x94000100 ? { length: str.length * 2, bytes: str } : null),
-    // A text file in state.files; a request the capture helper watches for is queued.
-    writeToFileAtomicallyEncodingError: (path) => { state.files[path] = { text: str }; helperSaw(path); return true; },
+    // A text file in state.files.
+    writeToFileAtomicallyEncodingError: (path) => { state.files[path] = { text: str }; return true; },
   });
   const specifier = (resolveWin) => new Proxy({}, {
     get: (_, k) => { const w = resolveWin(); if (!w) throw gone(); const v = w[k]; return typeof v === "function" && !v.__specifier ? v.bind(w) : v; },
@@ -673,31 +673,51 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   // The capture helper, an osascript NSTask running the runtime's shotHelper.
   // state.helper (an object) makes it available: without it the capture lock is
   // held by another perch server, so flock fails and screencapture takes every
-  // shot. A request written to its `<prefix>.req` is served
-  // state.helper.ms (default 20) later by the runtime's own helperServe, which
-  // captures with CGWindowListCreateImage; state.helper.stall: never served;
-  // state.helper.exits: the helper ends at launch, unserved. state.helpers
-  // records each launch as {args, killed}. state.lockFile: the lock file made.
+  // shot unless that server's helper is registered (hostHelper below). A request
+  // moved into a helper's `<prefix>.req` slot is served state.helper.ms
+  // (default 20) after it landed by the runtime's own helperServe, which
+  // captures with CGWindowListCreateImage and writes the reply;
+  // state.helper.stall: never served; state.helper.exits: the helper ends at
+  // launch, unserved. state.helpers records each launch as {args, killed}.
+  // state.lockFile: the lock file made.
   const helpers = [];
-  let pendingReq = null;
-  const helperOf = (path) => helpers.find((h) => h.alive && path === h.prefix + ".req");
-  const helperSaw = (path) => { const h = helperOf(path); if (h) pendingReq = { h, path, at: clock.t }; };
+  let serving = false;
+  const live = (h) => h.alive && !(h.cfg() && h.cfg().goneAt <= clock.t);
+  const helperSaw = (path) => { const h = helpers.find((x) => x.alive && path === x.prefix + ".req"); if (h) h.seen = clock.t; };
   const helperServe = () => {
-    const p = pendingReq;
-    if (!p || !p.h.alive || state.helper.stall || clock.t < p.at + (state.helper.ms ?? 20)) return;
-    pendingReq = null;
-    const f = state.files[p.path];
-    delete state.files[p.path];
-    if (!f) return;
-    const q = JSON.parse(f.text);
-    const r = sandbox.__perch.helperServe(q);
-    state.files[q.out] = { text: JSON.stringify(r) };
+    if (serving) return;
+    serving = true;
+    try {
+      for (const h of helpers) {
+        const cfg = h.cfg(), req = h.prefix + ".req";
+        if (!live(h) || !cfg || cfg.stall || !(req in state.files)) continue;
+        if (h.seen == null) h.seen = clock.t;
+        if (clock.t < h.seen + (cfg.ms ?? 20)) continue;
+        const f = state.files[req];
+        delete state.files[req];
+        h.seen = null;
+        h.served = (h.served || 0) + 1;
+        sandbox.__perch.helperServe(JSON.parse(f.text));
+      }
+    } finally { serving = false; }
   };
   const fakeHelper = (task) => {
-    const h = { args: task.arguments.slice(), alive: !state.helper.exits, killed: false, filesAtLaunch: Object.keys(state.files) };
+    const h = { args: task.arguments.slice(), alive: !state.helper.exits, killed: false, filesAtLaunch: Object.keys(state.files), cfg: () => state.helper };
     h.prefix = /shotHelper\("([^"]+)", \d+\)$/.exec(h.args[3])[1];
     helpers.push(h);
     (state.helpers = state.helpers || []).push(h);
+    return h;
+  };
+  // Another perch server's helper: it holds the capture lock (so leave
+  // state.helper unset) and has registered itself in perch-capture.helper.
+  // spec: {pid (default 7001), prefix (default /tmp/fake/perch-900-h1), ms,
+  // stall, dead (its pid is gone), goneAt (the clock time it exits)}. Returns
+  // the helper; `served` counts the requests it took.
+  const hostHelper = (spec = {}) => {
+    const cfg = { pid: 7001, prefix: "/tmp/fake/perch-900-h1", ...spec };
+    const h = { foreign: true, pid: cfg.pid, prefix: cfg.prefix, alive: !cfg.dead, killed: false, cfg: () => cfg };
+    helpers.push(h);
+    state.files["/tmp/fake/perch-capture.helper"] = { text: JSON.stringify({ prefix: cfg.prefix, pid: cfg.pid }) };
     return h;
   };
   // screencapture as an NSTask: it runs on the fake clock and writes its image
@@ -712,7 +732,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         if (task.executableURL.path === "/usr/bin/osascript") {
           bump("helper");
           const h = fakeHelper(task);
-          task.processIdentifier = 4100 + helpers.length;
+          task.processIdentifier = h.pid = 4100 + helpers.length;
           tasks[task.processIdentifier] = task;
           task.helper = h;
           return true;
@@ -754,7 +774,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (!apps[name]) throw new Error("Application can't be found.");
       return apps[name];
     },
-    delay: (s) => { (state.delays = state.delays || []).push(s); clock.t += Math.round(s * 1000); },
+    // state.onDelay runs after each delay, on the advanced clock.
+    delay: (s) => { (state.delays = state.delays || []).push(s); clock.t += Math.round(s * 1000); if (state.onDelay) state.onDelay(); },
     Date: { now: () => clock.t },
     ObjC: {
       // AppKit's classes exist only once it is imported, as in real osascript.
@@ -783,7 +804,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       CGEventKeyboardSetUnicodeString: (e, len, bytes) => { e.text = bytes; e.len = len; },
       CGEventSetWindowLocation: (e, x, y) => { e.windowPoint = { x, y }; },
       SLEventPostToPid: (pid, e) => {
-        posted.push({ via: "skylight", pid, ...e });
+        posted.push({ via: "skylight", pid, ...e, at: clock.t });
         if (state.onPost) state.onPost(e);
         return 0;
       },
@@ -926,7 +947,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       },
       flock: (fd, op) => { bump("flock"); (state.flocks = state.flocks || []).push(op); return op & 2 && !state.helper ? -1 : 0; },
       getppid: () => { bump("getppid"); return state.ppid ?? 555; },
-      access: (path) => { if (state.helper) helperServe(); return path in state.files || path === state.lockFile ? 0 : -1; },
+      access: (path) => { helperServe(); return path in state.files || path === state.lockFile ? 0 : -1; },
       NSString: { stringWithString: (str) => nsString(str), stringWithContentsOfFileEncodingError: (path) => {
         const f = state.files[path];
         return f && f.text != null ? { isNil: () => false, js: f.text } : { isNil: () => true };
@@ -944,12 +965,18 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         return { isNil: () => false, length: bytes.length, base64EncodedStringWithOptions: () => ({ js: bytes.toString("base64") }) };
       } },
       NSTask: { alloc: { get init() { return fakeTask(); } } },
-      kill: (pid, sig) => { (state.sigkills = state.sigkills || []).push([pid, sig]); const t = tasks[pid]; if (t && sig === 9) { t.shot().killed = true; t.terminationStatus = 9; } return 0; },
+      // kill(pid, 0) probes a pid: alive while a helper with that pid is.
+      kill: (pid, sig) => { if (sig === 0) return helpers.some((h) => live(h) && h.pid === pid) ? 0 : -1; (state.sigkills = state.sigkills || []).push([pid, sig]); const t = tasks[pid]; if (t && sig === 9) { t.shot().killed = true; t.terminationStatus = 9; } return 0; },
       NSFileManager: { defaultManager: {
         removeItemAtPathError: (path) => { const had = path in state.files; delete state.files[path]; return had; },
-        fileExistsAtPath: (path) => { if (state.helper) helperServe(); return path in state.files || path === state.lockFile; },
+        fileExistsAtPath: (path) => { helperServe(); return path in state.files || path === state.lockFile; },
         createFileAtPathContentsAttributes: (path) => { state.lockFile = path; return true; },
-        moveItemAtPathToPathError: (from, to) => { if (!(from in state.files)) return false; state.files[to] = state.files[from]; delete state.files[from]; return true; },
+        // Never replaces an existing file, as NSFileManager refuses to.
+        moveItemAtPathToPathError: (from, to) => {
+          helperServe();
+          if (!(from in state.files) || to in state.files) return false;
+          state.files[to] = state.files[from]; delete state.files[from]; helperSaw(to); return true;
+        },
       } },
       // A crop keeps the pixels inside the image; the rect is recorded as shot.crop.
       CGImageCreateWithImageInRect: (img, r) => {
@@ -1005,7 +1032,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   };
   const ctx = vm.createContext(sandbox);
   return {
-    ctx, counts, geom, log, clock, apps, posted, cg: cgEntries, aeLog, sent,
+    ctx, counts, geom, log, clock, apps, posted, cg: cgEntries, aeLog, sent, hostHelper,
     aeBy: (app) => aeLog.filter(([a]) => a === app).map(([, k]) => k),
     // Reorder a window's tabs in place: tabs[w] is the live list the runtime reads.
     tabsOf: (name, w) => winsByApp[name][w].tabs,

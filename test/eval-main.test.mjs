@@ -100,6 +100,63 @@ test("world main sees the page's globals in one Apple Event, and leaves no eleme
   assert.equal(slots(dom).length, 1, "each kick sweeps the slots earlier calls read");
 });
 
+// ---- the default target: the kick goes to the front window's shown tab unread ----
+
+test("world main on the default Chrome tab is one Apple Event, as eval_js is", async () => {
+  const { world, dom } = install();
+  dom.main.figma = { currentPage: { name: "Cover" } };
+  const r = await handleCall("eval_js", { script: "return figma.currentPage.name", world: "main" });
+  assert.equal(r.isError, undefined, text(r));
+  assert.equal(text(r), "Cover");
+  assert.deepEqual(world.aeBy("Google Chrome"), ["tab.execute"]);
+  assert.equal(world.counts.NSAppleScript, 1, "the kick is bounded");
+});
+
+// The shown page `t` and a plain tab `u` beside it.
+function installTwo() {
+  const dom = twoWorlds();
+  const world = makeWorld({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, tabs: [{ url: "https://a.test/p", id: "t", dom }, { url: "https://b.test/", id: "u" }] }] }],
+    cg: [{ owner: "Google Chrome" }],
+  });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  vm.runInContext("window.__wait = () => new Promise((res) => { window.__go = res; })", dom.main);
+  world.reset();
+  return { world, dom };
+}
+const closeShown = (world) => { world.tabsOf("Google Chrome", 0).splice(0, 1); world.winSpec("Google Chrome", 0).active = 0; };
+const afterRuns = (world, n, f) => { world.state.afterExecute = () => (--n > 0 ? afterRuns(world, n, f) : f()); };
+
+test("world main {awaitPromise} on the default Chrome tab reads the shown tab's id once, after the kick", async () => {
+  const { world, dom } = installTwo();
+  afterRuns(world, 2, () => dom.main.__go(5));
+  const r = await handleCall("eval_js", { script: "return await __wait()", world: "main", awaitPromise: true });
+  assert.equal(text(r), "5");
+  const ae = world.aeBy("Google Chrome");
+  assert.deepEqual(ae.slice(0, 2), ["tab.execute", "tab.id"]);
+  assert.equal(ae.filter((k) => k === "tab.id").length, 1);
+});
+
+test("world main on the default Chrome tab that closes after its id is read is stale_tab", async () => {
+  const { world } = installTwo();
+  afterRuns(world, 2, () => closeShown(world));
+  const r = await handleCall("eval_js", { script: "return await __wait()", world: "main", awaitPromise: true });
+  assert.equal(r.isError, true);
+  assert.match(text(r), /^error: stale_tab: /);
+});
+
+// Between the kick and the id read, a closed or left tab makes the shown tab
+// another one, where the call's slot is missing: a coded timeout, never its value.
+test("world main on the default Chrome tab that the user leaves right after the kick fails closed", async () => {
+  const { world } = installTwo();
+  afterRuns(world, 1, () => { world.winSpec("Google Chrome", 0).active = 1; });
+  const r = await handleCall("eval_js", { script: "return await __wait()", world: "main", awaitPromise: true });
+  assert.equal(r.isError, true);
+  assert.match(text(r), /^error: timeout: eval_js \(world main\) lost its result before it settled; it may have run/);
+});
+
 test("world main returns undefined as null and keeps a thrown error's shape", async () => {
   install();
   assert.equal((await call({ script: "1", world: "main" })).t, "null");

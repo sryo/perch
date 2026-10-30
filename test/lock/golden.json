@@ -2377,10 +2377,9 @@
     }
    ],
    "isError": false,
-   "events": 2,
+   "events": 1,
    "ae": {
     "Google Chrome": [
-     "tab.id",
      "tab.execute"
     ]
    },

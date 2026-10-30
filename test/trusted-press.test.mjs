@@ -332,3 +332,32 @@ test("trusted press whose check throws after the key is ok:false and unverified"
   noRaw(o);
   assert.equal(keys(world).length, 2);
 });
+
+// ---- dropped replies (see test/nav-poll.test.mjs) ----
+
+// A key that navigates: Chrome never answers page JS that lands while the
+// document is replaced, so every read after the key goes unanswered. Each read is
+// bounded, and the key was sent, so the error never says to retry.
+test("trusted press whose key navigates ends within its bound, saying the press ran", async () => {
+  const { world } = background();
+  const post = world.state.onPost;
+  world.state.onPost = (e) => { post(e); if (e.kind === "key" && !e.down) world.state.hung = true; };
+  const t0 = world.clock.t;
+  const r = await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target });
+  assert.equal(r.isError, true, r.content[0].text);
+  assert.match(r.content[0].text, /^error: timeout: the press ran but .*don't press again, check the page/);
+  assert.doesNotMatch(r.content[0].text, /AppleEvent timed out/);
+  assert.ok(world.clock.t - t0 <= 1000 + 2000 + 4000 + 200, `took ${world.clock.t - t0}ms`);
+  assert.equal(keys(world).length, 2, "one key pair");
+});
+
+test("trusted press on a page that stops answering before the key posts nothing, within its bound", async () => {
+  const { world } = background();
+  world.state.hung = true;
+  const t0 = world.clock.t;
+  const r = await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target });
+  assert.equal(r.isError, true, r.content[0].text);
+  assert.match(r.content[0].text, /^error: timeout: page JS got no reply within .*navigating; retry/);
+  assert.ok(world.clock.t - t0 <= 2000 + 4000 + 200, `took ${world.clock.t - t0}ms`);
+  assert.equal(keys(world).length, 0);
+});

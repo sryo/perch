@@ -35,8 +35,9 @@ test("a trusted click on a hinted, shown Chrome tab reads its window once; a hid
   world.reset();
   const { o } = await call("click", { trusted: true, selector: "#b", target: { tabId: shown } });
   assert.equal(o.el, "button \"Go\"", JSON.stringify(o));
-  // Was 5: the window's tab ids, then its shown tab's id.
-  assert.equal(events(), 4, breakdown());
+  // Was 6: the window's tab ids, then its shown tab's id. The probe and the check
+  // are bounded executes, which the fake counts twice: live this is 3 events.
+  assert.equal(events(), 5, breakdown());
   world.reset();
   const { t } = await call("click", { trusted: true, selector: "#b", target: { tabId: hidden } });
   assert.match(t, /^error: tab_not_visible/);

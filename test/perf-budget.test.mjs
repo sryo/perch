@@ -322,9 +322,10 @@ test("the trusted click's hit test adds Accessibility reads only, no Apple Event
   // [Apple Events, AX reads] for background selector, background point, raised
   // selector. The AX reads are the window match and page area (13) plus the hit
   // test (4). A click by point reads its hit check after posting, as a selector
-  // click does; that check goes through the bounded execute, which the fake counts
-  // twice (NSAppleScript and tab.execute); live it is one event.
-  assert.deepEqual(cost, [[4, 17], [4, 17], [18, 17]]);
+  // click does. Every page read (probe or frames, calibration, check) goes through
+  // the bounded execute, which the fake counts twice (NSAppleScript and
+  // tab.execute); live each is one event: 3, 3 and 17.
+  assert.deepEqual(cost, [[5, 17], [5, 17], [30, 17]]);
 });
 
 // select {trusted} in a background tab, on a picker that opens only on trusted

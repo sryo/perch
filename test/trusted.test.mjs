@@ -190,6 +190,11 @@ test("trusted input reaches a background browser without changing app focus or c
   const targetUp = world.posted.find((e) => e.kind === "mouse" && e.type === 2 && e.pt.x >= 0);
   assert.equal(targetDown.flags, 0x100000, "Command flag lets WindowServer route the background press");
   assert.equal(targetUp.flags, undefined, "release without Command so the page receives an ordinary click");
+  // Live on Canary (shown tab, window in front and behind another app) every
+  // gap from 0 to 100ms between the off-screen pair and the press clicked 10/10;
+  // 10ms keeps the press ordered after the pair.
+  const sky = world.posted.filter((e) => e.via === "skylight");
+  assert.deepEqual(sky.slice(1).map((e, i) => e.at - sky[i].at), [15, 1, 10, 1], "primer, off-screen pair, press: ms between posts");
   assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 0, "never borrow the user's key focus");
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
   assert.equal(world.counts["win.index="], undefined);
@@ -876,4 +881,48 @@ test("a trusted click's readback that throws is ok:false and keeps the point", a
     noRaw(o);
     assert.equal(presses(world).length, 1);
   }
+});
+
+// ---- dropped replies (see test/nav-poll.test.mjs) ----
+
+// Page JS that lands while a navigation replaces the document never gets a reply.
+// Every read on a trusted path is bounded, and one after the post says it ran.
+test("a raised trusted fill whose typing navigates ends within its bound, saying the fill ran", async () => {
+  const { dom, world } = domTab(`<input id=i aria-label="Name">`, METRICS);
+  world.state.onPost = (e) => {
+    if (e.kind !== "key" || !e.down) return;
+    dom.document.getElementById("i").value += e.text;
+    world.state.hung = true;
+  };
+  const t0 = world.clock.t;
+  const r = await handleCall("fill", { trusted: true, raise: true, selector: "#i", text: "go", target: { tabIndex: 1 } });
+  assert.equal(r.isError, true, r.content[0].text);
+  assert.match(r.content[0].text, /^error: timeout: the fill ran but .*don't fill again, check the page/);
+  assert.ok(world.clock.t - t0 <= 2000 + 4000 + 1000, `took ${world.clock.t - t0}ms`);
+  assert.equal(downs(world).length, 1);
+});
+
+const NOTHING_RAN = /^error: timeout: page JS got no reply within .*navigating; retry/;
+for (const [what, aim] of [["by element", { selector: "#b" }], ["by point", { x: 106, y: 167 }]]) {
+  test(`a background trusted click ${what} on a page that stops answering posts nothing, within its bound`, async () => {
+    const { world } = backgroundTab(`<button id=b>Go</button>`, 1);
+    world.state.hung = true;
+    const t0 = world.clock.t;
+    const r = await handleCall("click", { trusted: true, ...aim, target: { tabIndex: 1 } });
+    assert.equal(r.isError, true, r.content[0].text);
+    assert.match(r.content[0].text, NOTHING_RAN);
+    assert.ok(world.clock.t - t0 <= 2000 + 4000 + 200, `took ${world.clock.t - t0}ms`);
+    assert.deepEqual(downs(world), []);
+  });
+}
+
+test("a trusted click with readback whose arm gets no reply posts nothing, within its bound", async () => {
+  const { world } = backgroundTab(`<button id=b>Go</button>`, 1);
+  world.state.hangIf = (js) => (js.includes("return rbArm(A.probed") ? "ran" : false);
+  const t0 = world.clock.t;
+  const r = await handleCall("click", { trusted: true, selector: "#b", readback: "#b", target: { tabIndex: 1 } });
+  assert.equal(r.isError, true, r.content[0].text);
+  assert.match(r.content[0].text, /^error: timeout: .*retry after checking the page/);
+  assert.ok(world.clock.t - t0 <= 5000 + 200, `took ${world.clock.t - t0}ms`);
+  assert.deepEqual(downs(world), []);
 });
