@@ -18,7 +18,7 @@ Adds to the tool descriptions; none for `activate_tab`, `close_tab`, `wait`, `co
 | `new_tab` | `shown:false`: page tools get `tab_not_visible` until shown; see `note`. |
 | `navigate` | Returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed; `timeout`: not committed yet, may still load. |
 | `eval_js` | `awaitPromise` only for real async. `ref` binds `el` (a parameter): `return __avis.add(el, 'x')`. |
-| `screenshot` | Minimized: last frame only. `ref`: element only; scroll restored; `clipped`: cut. |
+| `screenshot` | Off-screen window: last frame only. `ref`: element only; scroll restored; `clipped`: cut. |
 | `accessibility_snapshot` | Rows below; open shadow roots too. `max: 0`: header only. |
 | `click` | `label_pattern`: button/link name; ties: `candidates`. Natively disabled (own or fieldset's): `ok:false`, not clicked, trusted too; `aria-disabled` clicks. `readback` adds `invalid?`, `form?`, `settled:false` (still busy). `form`: {gone, alert, step} after a submit/Next; navigated: `page` {heading?, alert?}; decide success yourself. `hover: true`: JS events, not `:hover`. New tab: `opened.tabId`; `blocked`/`unconfirmed`+`href`. `trusted`: below. |
 | `press` | Background tabs too; Enter submits/clicks, Space clicks. `{ok, el, prevented?, focus?}` (`focus`: if moved). `trusted: true`: real keys in shown tab (named/letter/digit, +shift) if the page has the keyboard (else `tab_not_visible`: trusted click first); check `hit`. |
