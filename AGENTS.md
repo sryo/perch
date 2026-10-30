@@ -221,7 +221,7 @@ A popup blocker drops a synthetic click's new tab silently, so `click` reports b
 
 - `file_upload` reads the file in Node and ships it base64 in one page call, where a `DataTransfer` sets the input's `files`. It refuses a file over 25MB, or over 700KB without the daemon (one-shot osascript's argument limit). Rejected: a localhost server the page fetches from (local-network prompt).
 - The OS file dialog is opt-in (`raise:true`, foreground): a raised trusted click opens it and its Go to sheet takes the path; it fails closed (a chooser already open, the browser not in front) and counts only what the page shows. Pinned by `test/upload-chooser.test.mjs`.
-- A target that is not a file input is a drop zone: its own file input comes first; with none, the page dispatches `dragenter`/`dragover`/`drop` with the file. An unwired hidden input (no request, no mutation within 1s) falls back to a drop. A drop (`dropped:true, el`) counts when an input holds the file or its name shows (`shown`), else by `took` (`preview`, `request`); otherwise `ok:false`.
+- A target that is not a file input is a drop zone: its own file input comes first; with none, the page dispatches `dragenter`/`dragover`/`drop` with the file. An unwired hidden input (no request, no mutation within 1s) falls back to a drop. A drop (`dropped:true, el`) counts when an input holds the file, its name shows (`shown`) or `took` (`preview`, `request`).
 - Pinned by `test/upload.test.mjs`.
 
 ### Console and network (`console_capture`)
@@ -255,7 +255,7 @@ A popup blocker drops a synthetic click's new tab silently, so `click` reports b
 
 - A page's `alert`/`confirm`/`prompt` blocks its JS, so a call running page JS hangs. `rt()` watches every entry except `DIALOG_BLIND`: after `DIALOG_PROBE_MS` in flight (and every `DIALOG_REPROBE_MS` after) a one-shot osascript scans for a dialog; a hit aborts the call with `dialog_open`. A timeout that may be a hang (`HANG` phrases) is probed once more; a wait that ran out while the page answered is not.
 - **Attribution fails closed:** the scan is Accessibility only (no Apple Events while no dialog is open). A dialog counts only when its shape is a plain alert, confirm or prompt (structural, never by localized title; anything else is kind `other`: sign-in sheets, FedCM, passkey, permission bubbles), it is a child window directly above the target's window, the target is its window's shown tab, its heading names the tab's host, and the page is proven paused (a bounded no-op times out). Unproven JS dialogs (Safari, Arc, JS from Apple Events off) are neither reported nor answered.
-- **Leave-page sheets** (`ownSheet`, not Safari): the sole AXSheet on the target's window, two buttons, text only, a Chrome page not answering. `dialog_open` reports it; `press {dialog}` answers on structure (Enter leaves).
+- **Leave-page sheets** (`ownSheet`, not Safari): the sole AXSheet on the target's window, two buttons, text only. `dialog_open` reports it; `press {dialog}` answers on structure (Enter leaves).
 - **Answering:** `press {dialog}` needs `target.tabId`, presses buttons by position with `AXPress`, sets a prompt's text as `AXValue` and reads it back, never activates or raises, and reports a dialog the page opens right after as `next`.
 - Rejected: auto-dismissing dialogs, a separate dialog tool, and matching a dialog by browser alone (it answered dialogs in the user's other tabs). Pinned by `test/dialog.test.mjs`; live: `scripts/dialog-live.mjs`.
 
