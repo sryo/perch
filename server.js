@@ -2274,20 +2274,34 @@ function jxaRuntime(BROWSERS, HANG) {
     if (near.some(function (w) { return w.wid != null; })) near = near.filter(function (w) { return w.wid === I.windowNumber; });
     if (near.length !== 1) return null;
     const win = near[0].el;
-    let best = null, miss = Infinity, seen = 0;
-    const queue = [win];
-    while (queue.length && seen < 600) {
-      if (until != null && Date.now() > until) return null;
-      const el = queue.shift();
-      seen++;
-      if (String(ObjC.unwrap(attr(el, "AXRole"))) !== "AXWebArea") { queue.push.apply(queue, list(attr(el, "AXChildren"))); continue; }
-      const p = pair(el, "AXPosition", "x", "y"), s = pair(el, "AXSize", "w", "h");
-      if (!p || !s || !s[0]) continue;
-      const scale = s[0] / probe.iw, d = Math.abs(s[1] - probe.ih * scale);
-      if (scale > 0.2 && scale < 5 && d <= 2 && d < miss) { miss = d; best = { x: p[0], y: p[1], scale: scale, el: el }; }
+    const walk = function () {
+      let best = null, miss = Infinity, seen = 0, areas = 0;
+      const queue = [win];
+      while (queue.length && seen < 600) {
+        if (until != null && Date.now() > until) return { best: null, areas: -1 };
+        const el = queue.shift();
+        seen++;
+        if (String(ObjC.unwrap(attr(el, "AXRole"))) !== "AXWebArea") { queue.push.apply(queue, list(attr(el, "AXChildren"))); continue; }
+        areas++;
+        const p = pair(el, "AXPosition", "x", "y"), s = pair(el, "AXSize", "w", "h");
+        if (!p || !s || !s[0]) continue;
+        const scale = s[0] / probe.iw, d = Math.abs(s[1] - probe.ih * scale);
+        if (scale > 0.2 && scale < 5 && d <= 2 && d < miss) { miss = d; best = { x: p[0], y: p[1], scale: scale, el: el }; }
+      }
+      return { best: best, areas: areas };
+    };
+    let r = walk();
+    // Chromium builds a page's tree only once an assistive client asks for it, so
+    // a window opened since can show no web area at all. AXManualAccessibility on
+    // the app turns it on (once per process); the page shows up within a second.
+    if (!r.best && r.areas === 0 && !axWoken[I.pid]) {
+      axWoken[I.pid] = true;
+      try { $.AXUIElementSetAttributeValue($.AXUIElementCreateApplication(I.pid), $("AXManualAccessibility"), $(true)); } catch (e) {}
+      for (let i = 0; i < 10 && !r.best && r.areas === 0 && (until == null || Date.now() < until); i++) { delay(0.1); r = walk(); }
     }
-    return best;
+    return r.best;
   }
+  const axWoken = {};
 
   // The pid's AX windows within 8pt of the frame r, each as {el, wid}, wid being
   // the CGWindowID it reports (null when unreadable).

@@ -328,6 +328,27 @@ test("the trusted click's hit test adds Accessibility reads only, no Apple Event
   assert.deepEqual(cost, [[5, 17], [5, 17], [30, 17]]);
 });
 
+// Chromium builds a page's Accessibility tree only once an assistive client asks
+// for it: a window opened since then can show no web area (live: a fresh Canary
+// window refused every trusted click as "not on the page itself"). The aim then
+// sets AXManualAccessibility on the browser once, and the page shows up.
+test("a trusted click on a window whose page tree Chromium hasn't built wakes it once and clicks", async () => {
+  const dom = page(`<button id=b>Go</button>`, { url: "https://c0.test/" });
+  for (const [k, v] of Object.entries({ screenX: 0, screenY: 57, outerWidth: 654, innerWidth: 598, outerHeight: 600, innerHeight: 500 })) Object.defineProperty(dom, k, { value: v, configurable: true });
+  const cg = [{ owner: "Google Chrome", pid: 40, wid: 400, x: 0, y: 57, w: 854, h: 600, ax: { cold: true, web: [{ x: 56, y: 157, w: 598, h: 500 }] } }];
+  install({ browsers: [chrome([{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg });
+  // This fake page records no SkyLight press, so `hit` stays null: what matters is
+  // that the press was aimed at the page and posted, not refused.
+  const { o } = await call("click", { trusted: true, selector: "#b" });
+  assert.equal(o.aim, "ax", JSON.stringify(o));
+  assert.deepEqual(o.point, { x: 106, y: 167 });
+  assert.equal(o.delivery, "skylight");
+  assert.deepEqual(world.state.axManual, { 40: true });
+  world.reset();
+  await call("click", { trusted: true, selector: "#b" });
+  assert.equal(world.counts.AXSet, undefined, "set once per browser process");
+});
+
 // select {trusted} in a background tab, on a picker that opens only on trusted
 // input: start, the 400ms open poll, the shown-tab check, the typing step, the
 // list polls and pick, and the readback. The fake world answers each poll at
