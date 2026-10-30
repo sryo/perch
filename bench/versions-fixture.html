@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>perch versions fixture</title>
+<style>body{font:14px system-ui;margin:16px} label{display:block;margin:6px 0} #log{white-space:pre}</style>
+<h1>Versions fixture</h1>
+<p>A fixed page every perch version runs the same calls on. Text for get_text follows.</p>
+<form id=f onsubmit="event.preventDefault(); document.getElementById('log').textContent += 'submit\n'">
+  <label>Name <input id=t name=name></label>
+  <label>Size <select id=s name=size><option>One</option><option>Two</option><option>Three</option></select></label>
+  <label><input type=checkbox id=c name=ok> Agree</label>
+  <label>File <input type=file id=up name=up></label>
+  <button id=b type=button onclick="document.getElementById('log').textContent += 'click\n'">Go</button>
+</form>
+<nav><a href="#one">One</a> <a href="#two">Two</a> <a href="#three">Three</a></nav>
+<div id=log></div>
+<section>
+  <h2>Body text</h2>
+  <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer posuere erat a ante venenatis dapibus posuere velit aliquet. Cras mattis consectetur purus sit amet fermentum. Donec ullamcorper nulla non metus auctor fringilla. Maecenas sed diam eget risus varius blandit sit amet non magna.</p>
+  <p>Vestibulum id ligula porta felis euismod semper. Nullam quis risus eget urna mollis ornare vel eu leo. Aenean lacinia bibendum nulla sed consectetur. Etiam porta sem malesuada magna mollis euismod. Curabitur blandit tempus porttitor.</p>
+</section>

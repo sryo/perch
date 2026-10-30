@@ -20,7 +20,8 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 │   ├── trusted-live.mjs  # live trusted click/fill/press/select and new-tab checks (--yes; --background...)
 │   ├── dialog-live.mjs   # live alert/confirm/prompt check (--yes)
 │   ├── navigate-live.mjs # live Arc background-tab navigate check (--yes --arc; --background)
-│   ├── bench.mjs    # live latency/payload bench, compared against bench/baseline.json
+│   ├── bench.mjs    # live latency/payload bench vs bench/baseline.json
+│   ├── versions.mjs # A/B of perch versions, live or --offline
 │   ├── compare.mjs  # perch side of the perch vs Claude in Chrome suite
 │   ├── mcp-client.mjs  # tiny MCP stdio client shared by the live scripts
 │   ├── temp.mjs     # the only way tests and scripts make temp dirs; removed at test end or exit (tmp-cleanup.test.mjs)

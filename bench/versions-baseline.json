@@ -1,0 +1,3321 @@
+{
+  "date": "2026-10-30T19:15:12.554Z",
+  "macos": "27.2",
+  "browser": "Google Chrome Canary",
+  "fixture": {
+    "file": "bench/versions-fixture.html",
+    "sha256": "9c924cefab6f5717d65e9bb01fdfe89b0c7aabd89820db64e48ad6f706c0694b"
+  },
+  "reps": 10,
+  "versions": [
+    {
+      "ref": "c4010f4",
+      "sha": "c4010f4",
+      "locked": [
+        true,
+        true
+      ],
+      "results": {
+        "list_tabs": {
+          "n": 10,
+          "p50": 66,
+          "p90": 67,
+          "bytes": 319,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "list_tabs arc": {
+          "n": 10,
+          "p50": 99,
+          "p90": 101,
+          "bytes": 520,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 22,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js await shown": {
+          "n": 10,
+          "p50": 33,
+          "p90": 36,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 13,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await shown": {
+          "n": 10,
+          "p50": 33,
+          "p90": 51,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await long shown": {
+          "n": 10,
+          "p50": 33,
+          "p90": 39,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "accessibility_snapshot shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 536,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "get_text shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 17,
+          "bytes": 696,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "click shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 32,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "fill shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 19,
+          "bytes": 58,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "press shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 81,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "select shown": {
+          "n": 10,
+          "p50": 25,
+          "p90": 34,
+          "bytes": 53,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "wait shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 29,
+          "bytes": 23,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "file_upload shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 76,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "screenshot shown": {
+          "n": 10,
+          "p50": 70,
+          "p90": 84,
+          "bytes": 44404,
+          "ok": 10,
+          "err": 0,
+          "error": null,
+          "image": {
+            "w": 900,
+            "h": 760
+          }
+        },
+        "eval_js bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 22,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js await bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 45,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 13,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await bg": {
+          "n": 10,
+          "p50": 34,
+          "p90": 46,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await long bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 42,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "accessibility_snapshot bg": {
+          "n": 10,
+          "p50": 16,
+          "p90": 17,
+          "bytes": 644,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "get_text bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 703,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "click bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 32,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "fill bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 58,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "press bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 81,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "select bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 36,
+          "bytes": 53,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "wait bg": {
+          "n": 10,
+          "p50": 16,
+          "p90": 17,
+          "bytes": 23,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "file_upload bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 76,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "screenshot bg": {
+          "n": 10,
+          "p50": 34,
+          "p90": 35,
+          "bytes": 141,
+          "ok": 0,
+          "err": 10,
+          "error": "error: tab_not_visible: a background screenshot needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true"
+        },
+        "click trusted shown": {
+          "n": 10,
+          "p50": 1199,
+          "p90": 1283,
+          "bytes": 58,
+          "ok": 0,
+          "err": 10,
+          "error": "tab never became visible to measure"
+        },
+        "fill trusted shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 17,
+          "bytes": 68,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "navigate shown": {
+          "n": 3,
+          "p50": 133,
+          "p90": 134,
+          "bytes": 97,
+          "ok": 3,
+          "err": 0,
+          "error": null
+        },
+        "notify": {
+          "n": 1,
+          "p50": 4,
+          "p90": 4,
+          "bytes": 11,
+          "ok": 1,
+          "err": 0,
+          "error": null
+        },
+        "parallel 4x500ms await": {
+          "n": 5,
+          "p50": 3993,
+          "p90": 4174,
+          "bytes": 4,
+          "ok": 5,
+          "err": 0,
+          "error": null
+        },
+        "minimized eval_js": {
+          "n": 5,
+          "p50": 16,
+          "p90": 102,
+          "bytes": 22,
+          "ok": 5,
+          "err": 0,
+          "error": null
+        },
+        "minimized screenshot": {
+          "n": 5,
+          "p50": 51,
+          "p90": 53,
+          "bytes": 91,
+          "ok": 0,
+          "err": 5,
+          "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+        },
+        "minimized click trusted": {
+          "n": 5,
+          "p50": 50,
+          "p90": 50,
+          "bytes": 91,
+          "ok": 0,
+          "err": 5,
+          "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+        }
+      }
+    },
+    {
+      "ref": "6b0d9cf",
+      "sha": "6b0d9cf",
+      "locked": [
+        true,
+        true
+      ],
+      "results": {
+        "list_tabs": {
+          "n": 10,
+          "p50": 66,
+          "p90": 80,
+          "bytes": 319,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "list_tabs arc": {
+          "n": 10,
+          "p50": 101,
+          "p90": 105,
+          "bytes": 520,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 22,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js await shown": {
+          "n": 10,
+          "p50": 33,
+          "p90": 45,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 13,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await shown": {
+          "n": 10,
+          "p50": 34,
+          "p90": 51,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await long shown": {
+          "n": 10,
+          "p50": 34,
+          "p90": 42,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "accessibility_snapshot shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 517,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "get_text shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 696,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "click shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 18,
+          "bytes": 32,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "fill shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 43,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "press shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 63,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "select shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 21,
+          "bytes": 53,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "wait shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 23,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "file_upload shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 76,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "screenshot shown": {
+          "n": 10,
+          "p50": 57,
+          "p90": 74,
+          "bytes": 44048,
+          "ok": 10,
+          "err": 0,
+          "error": null,
+          "image": {
+            "w": 900,
+            "h": 760
+          }
+        },
+        "eval_js bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 22,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js await bg": {
+          "n": 10,
+          "p50": 34,
+          "p90": 41,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main bg": {
+          "n": 10,
+          "p50": 18,
+          "p90": 39,
+          "bytes": 13,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 34,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await long bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 52,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "accessibility_snapshot bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 625,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "get_text bg": {
+          "n": 10,
+          "p50": 16,
+          "p90": 18,
+          "bytes": 703,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "click bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 32,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "fill bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 43,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "press bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 63,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "select bg": {
+          "n": 10,
+          "p50": 16,
+          "p90": 17,
+          "bytes": 53,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "wait bg": {
+          "n": 10,
+          "p50": 16,
+          "p90": 18,
+          "bytes": 23,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "file_upload bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 76,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "screenshot bg": {
+          "n": 10,
+          "p50": 34,
+          "p90": 34,
+          "bytes": 141,
+          "ok": 0,
+          "err": 10,
+          "error": "error: tab_not_visible: a background screenshot needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true"
+        },
+        "click trusted shown": {
+          "n": 10,
+          "p50": 1450,
+          "p90": 1474,
+          "bytes": 58,
+          "ok": 0,
+          "err": 10,
+          "error": "tab never became visible to measure"
+        },
+        "fill trusted shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 68,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "navigate shown": {
+          "n": 3,
+          "p50": 133,
+          "p90": 140,
+          "bytes": 97,
+          "ok": 3,
+          "err": 0,
+          "error": null
+        },
+        "notify": {
+          "n": 1,
+          "p50": 10,
+          "p90": 10,
+          "bytes": 11,
+          "ok": 1,
+          "err": 0,
+          "error": null
+        },
+        "parallel 4x500ms await": {
+          "n": 5,
+          "p50": 3976,
+          "p90": 4045,
+          "bytes": 4,
+          "ok": 5,
+          "err": 0,
+          "error": null
+        },
+        "minimized eval_js": {
+          "n": 5,
+          "p50": 17,
+          "p90": 98,
+          "bytes": 22,
+          "ok": 5,
+          "err": 0,
+          "error": null
+        },
+        "minimized screenshot": {
+          "n": 5,
+          "p50": 34,
+          "p90": 36,
+          "bytes": 91,
+          "ok": 0,
+          "err": 5,
+          "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+        },
+        "minimized click trusted": {
+          "n": 5,
+          "p50": 33,
+          "p90": 38,
+          "bytes": 91,
+          "ok": 0,
+          "err": 5,
+          "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+        }
+      }
+    },
+    {
+      "ref": "1eccf8e",
+      "sha": "1eccf8e",
+      "locked": [
+        true,
+        true
+      ],
+      "results": {
+        "list_tabs": {
+          "n": 10,
+          "p50": 67,
+          "p90": 68,
+          "bytes": 319,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "list_tabs arc": {
+          "n": 10,
+          "p50": 100,
+          "p90": 102,
+          "bytes": 520,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 32,
+          "bytes": 22,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js await shown": {
+          "n": 10,
+          "p50": 34,
+          "p90": 51,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 13,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await shown": {
+          "n": 10,
+          "p50": 33,
+          "p90": 54,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await long shown": {
+          "n": 10,
+          "p50": 34,
+          "p90": 42,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "accessibility_snapshot shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 20,
+          "bytes": 517,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "get_text shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 696,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "click shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 19,
+          "bytes": 32,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "fill shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 43,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "press shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 63,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "select shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 24,
+          "bytes": 53,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "wait shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 23,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "file_upload shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 76,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "screenshot shown": {
+          "n": 10,
+          "p50": 61,
+          "p90": 84,
+          "bytes": 44048,
+          "ok": 10,
+          "err": 0,
+          "error": null,
+          "image": {
+            "w": 900,
+            "h": 760
+          }
+        },
+        "eval_js bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 22,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js await bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 40,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 29,
+          "bytes": 13,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 43,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await long bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 42,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "accessibility_snapshot bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 636,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "get_text bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 703,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "click bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 32,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "fill bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 43,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "press bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 63,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "select bg": {
+          "n": 10,
+          "p50": 19,
+          "p90": 38,
+          "bytes": 53,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "wait bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 23,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "file_upload bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 76,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "screenshot bg": {
+          "n": 10,
+          "p50": 34,
+          "p90": 35,
+          "bytes": 141,
+          "ok": 0,
+          "err": 10,
+          "error": "error: tab_not_visible: a background screenshot needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true"
+        },
+        "click trusted shown": {
+          "n": 10,
+          "p50": 1483,
+          "p90": 1549,
+          "bytes": 58,
+          "ok": 0,
+          "err": 10,
+          "error": "tab never became visible to measure"
+        },
+        "fill trusted shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 21,
+          "bytes": 68,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "navigate shown": {
+          "n": 3,
+          "p50": 118,
+          "p90": 118,
+          "bytes": 97,
+          "ok": 3,
+          "err": 0,
+          "error": null
+        },
+        "notify": {
+          "n": 1,
+          "p50": 4,
+          "p90": 4,
+          "bytes": 11,
+          "ok": 1,
+          "err": 0,
+          "error": null
+        },
+        "parallel 4x500ms await": {
+          "n": 5,
+          "p50": 4019,
+          "p90": 4134,
+          "bytes": 4,
+          "ok": 5,
+          "err": 0,
+          "error": null
+        },
+        "minimized eval_js": {
+          "n": 5,
+          "p50": 17,
+          "p90": 123,
+          "bytes": 22,
+          "ok": 5,
+          "err": 0,
+          "error": null
+        },
+        "minimized screenshot": {
+          "n": 5,
+          "p50": 75,
+          "p90": 299,
+          "bytes": 44156,
+          "ok": 5,
+          "err": 0,
+          "error": null,
+          "image": {
+            "w": 900,
+            "h": 760
+          }
+        },
+        "minimized click trusted": {
+          "n": 5,
+          "p50": 32,
+          "p90": 35,
+          "bytes": 91,
+          "ok": 0,
+          "err": 5,
+          "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+        }
+      }
+    },
+    {
+      "ref": "main",
+      "sha": "c5e8fda",
+      "locked": [
+        true,
+        true
+      ],
+      "results": {
+        "list_tabs": {
+          "n": 10,
+          "p50": 67,
+          "p90": 67,
+          "bytes": 319,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "list_tabs arc": {
+          "n": 10,
+          "p50": 100,
+          "p90": 103,
+          "bytes": 520,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 22,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js await shown": {
+          "n": 10,
+          "p50": 33,
+          "p90": 46,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 18,
+          "bytes": 13,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await shown": {
+          "n": 10,
+          "p50": 34,
+          "p90": 47,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await long shown": {
+          "n": 10,
+          "p50": 34,
+          "p90": 45,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "accessibility_snapshot shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 29,
+          "bytes": 517,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "get_text shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 17,
+          "bytes": 696,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "click shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 32,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "fill shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 43,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "press shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 25,
+          "bytes": 63,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "select shown": {
+          "n": 10,
+          "p50": 16,
+          "p90": 42,
+          "bytes": 53,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "wait shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 23,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "file_upload shown": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 76,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "screenshot shown": {
+          "n": 10,
+          "p50": 60,
+          "p90": 66,
+          "bytes": 44048,
+          "ok": 10,
+          "err": 0,
+          "error": null,
+          "image": {
+            "w": 900,
+            "h": 760
+          }
+        },
+        "eval_js bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 22,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js await bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 46,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main bg": {
+          "n": 10,
+          "p50": 16,
+          "p90": 18,
+          "bytes": 13,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 56,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "eval_js main await long bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 42,
+          "bytes": 1,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "accessibility_snapshot bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 636,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "get_text bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 703,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "click bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 32,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "fill bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 18,
+          "bytes": 43,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "press bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 63,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "select bg": {
+          "n": 10,
+          "p50": 19,
+          "p90": 36,
+          "bytes": 53,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "wait bg": {
+          "n": 10,
+          "p50": 17,
+          "p90": 17,
+          "bytes": 23,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "file_upload bg": {
+          "n": 10,
+          "p50": 16,
+          "p90": 17,
+          "bytes": 76,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "screenshot bg": {
+          "n": 10,
+          "p50": 33,
+          "p90": 38,
+          "bytes": 163,
+          "ok": 0,
+          "err": 10,
+          "error": "error: tab_not_visible: a background screenshot needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true; the screen is locked"
+        },
+        "click trusted shown": {
+          "n": 10,
+          "p50": 1543,
+          "p90": 1619,
+          "bytes": 80,
+          "ok": 0,
+          "err": 10,
+          "error": "tab never became visible to measure; the screen is locked"
+        },
+        "fill trusted shown": {
+          "n": 10,
+          "p50": 11,
+          "p90": 29,
+          "bytes": 68,
+          "ok": 10,
+          "err": 0,
+          "error": null
+        },
+        "navigate shown": {
+          "n": 3,
+          "p50": 117,
+          "p90": 118,
+          "bytes": 97,
+          "ok": 3,
+          "err": 0,
+          "error": null
+        },
+        "notify": {
+          "n": 1,
+          "p50": 5,
+          "p90": 5,
+          "bytes": 11,
+          "ok": 1,
+          "err": 0,
+          "error": null
+        },
+        "parallel 4x500ms await": {
+          "n": 5,
+          "p50": 1000,
+          "p90": 1248,
+          "bytes": 4,
+          "ok": 5,
+          "err": 0,
+          "error": null
+        },
+        "minimized eval_js": {
+          "n": 5,
+          "p50": 16,
+          "p90": 111,
+          "bytes": 22,
+          "ok": 5,
+          "err": 0,
+          "error": null
+        },
+        "minimized screenshot": {
+          "n": 5,
+          "p50": 75,
+          "p90": 186,
+          "bytes": 44215,
+          "ok": 5,
+          "err": 0,
+          "error": null,
+          "image": {
+            "w": 900,
+            "h": 760
+          }
+        },
+        "minimized click trusted": {
+          "n": 5,
+          "p50": 33,
+          "p90": 34,
+          "bytes": 113,
+          "ok": 0,
+          "err": 5,
+          "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space); the screen is locked"
+        }
+      }
+    }
+  ],
+  "condition": "screen locked for every version (scratch window shown, behind the lock); reps 10",
+  "unlocked": {
+    "date": "2026-10-30T19:07:41.154Z",
+    "condition": "screen unlocked; get_text bg bytes there grew with the page log (fixed in the harness since)",
+    "versions": [
+      {
+        "ref": "c4010f4",
+        "sha": "c4010f4",
+        "locked": [
+          false,
+          false
+        ],
+        "results": {
+          "list_tabs": {
+            "n": 10,
+            "p50": 66,
+            "p90": 68,
+            "bytes": 309,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "list_tabs arc": {
+            "n": 10,
+            "p50": 100,
+            "p90": 102,
+            "bytes": 520,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 21,
+            "bytes": 22,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js await shown": {
+            "n": 10,
+            "p50": 33,
+            "p90": 40,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 21,
+            "bytes": 13,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await shown": {
+            "n": 10,
+            "p50": 33,
+            "p90": 50,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await long shown": {
+            "n": 10,
+            "p50": 34,
+            "p90": 45,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "accessibility_snapshot shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 536,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "get_text shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 696,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "click shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 19,
+            "bytes": 32,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "fill shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 58,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "press shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 81,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "select shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 35,
+            "bytes": 53,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "wait shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 23,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "file_upload shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 76,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "screenshot shown": {
+            "n": 10,
+            "p50": 88,
+            "p90": 96,
+            "bytes": 148512,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 22,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js await bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 43,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 19,
+            "bytes": 13,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 41,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await long bg": {
+            "n": 10,
+            "p50": 34,
+            "p90": 45,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "accessibility_snapshot bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 615,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "get_text bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 703,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "click bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 32,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "fill bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 58,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "press bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 81,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "select bg": {
+            "n": 10,
+            "p50": 20,
+            "p90": 34,
+            "bytes": 53,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "wait bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 23,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "file_upload bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 76,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "screenshot bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 34,
+            "bytes": 141,
+            "ok": 0,
+            "err": 10,
+            "error": "error: tab_not_visible: a background screenshot needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true"
+          },
+          "click trusted shown": {
+            "n": 10,
+            "p50": 83,
+            "p90": 87,
+            "bytes": 161,
+            "ok": 0,
+            "err": 10,
+            "error": "the point is not on the page itself (embedded frame or browser UI); frame controls need accessibility_snapshot {frames:true} and an fN ref"
+          },
+          "fill trusted shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 20,
+            "bytes": 68,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "navigate shown": {
+            "n": 3,
+            "p50": 130,
+            "p90": 140,
+            "bytes": 97,
+            "ok": 3,
+            "err": 0,
+            "error": null
+          },
+          "notify": {
+            "n": 1,
+            "p50": 7,
+            "p90": 7,
+            "bytes": 11,
+            "ok": 1,
+            "err": 0,
+            "error": null
+          },
+          "parallel 4x500ms await": {
+            "n": 5,
+            "p50": 2210,
+            "p90": 2304,
+            "bytes": 4,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "minimized eval_js": {
+            "n": 5,
+            "p50": 17,
+            "p90": 97,
+            "bytes": 22,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "minimized screenshot": {
+            "n": 5,
+            "p50": 50,
+            "p90": 51,
+            "bytes": 91,
+            "ok": 0,
+            "err": 5,
+            "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+          },
+          "minimized click trusted": {
+            "n": 5,
+            "p50": 50,
+            "p90": 51,
+            "bytes": 91,
+            "ok": 0,
+            "err": 5,
+            "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+          }
+        }
+      },
+      {
+        "ref": "6b0d9cf",
+        "sha": "6b0d9cf",
+        "locked": [
+          false,
+          false
+        ],
+        "results": {
+          "list_tabs": {
+            "n": 10,
+            "p50": 67,
+            "p90": 68,
+            "bytes": 309,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "list_tabs arc": {
+            "n": 10,
+            "p50": 101,
+            "p90": 104,
+            "bytes": 520,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 22,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js await shown": {
+            "n": 10,
+            "p50": 33,
+            "p90": 41,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 19,
+            "bytes": 13,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await shown": {
+            "n": 10,
+            "p50": 34,
+            "p90": 42,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await long shown": {
+            "n": 10,
+            "p50": 33,
+            "p90": 45,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "accessibility_snapshot shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 517,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "get_text shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 696,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "click shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 32,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "fill shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 43,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "press shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 63,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "select shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 37,
+            "bytes": 53,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "wait shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 23,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "file_upload shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 76,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "screenshot shown": {
+            "n": 10,
+            "p50": 70,
+            "p90": 81,
+            "bytes": 148508,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 22,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js await bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 44,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 21,
+            "bytes": 13,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await bg": {
+            "n": 10,
+            "p50": 34,
+            "p90": 47,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await long bg": {
+            "n": 10,
+            "p50": 38,
+            "p90": 52,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "accessibility_snapshot bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 19,
+            "bytes": 596,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "get_text bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 768,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "click bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 32,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "fill bg": {
+            "n": 10,
+            "p50": 18,
+            "p90": 27,
+            "bytes": 43,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "press bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 63,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "select bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 53,
+            "bytes": 53,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "wait bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 26,
+            "bytes": 23,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "file_upload bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 19,
+            "bytes": 76,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "screenshot bg": {
+            "n": 10,
+            "p50": 36,
+            "p90": 64,
+            "bytes": 141,
+            "ok": 0,
+            "err": 10,
+            "error": "error: tab_not_visible: a background screenshot needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true"
+          },
+          "click trusted shown": {
+            "n": 10,
+            "p50": 50,
+            "p90": 71,
+            "bytes": 161,
+            "ok": 0,
+            "err": 10,
+            "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+          },
+          "fill trusted shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 68,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "navigate shown": {
+            "n": 3,
+            "p50": 117,
+            "p90": 117,
+            "bytes": 97,
+            "ok": 3,
+            "err": 0,
+            "error": null
+          },
+          "notify": {
+            "n": 1,
+            "p50": 8,
+            "p90": 8,
+            "bytes": 11,
+            "ok": 1,
+            "err": 0,
+            "error": null
+          },
+          "parallel 4x500ms await": {
+            "n": 5,
+            "p50": 2223,
+            "p90": 2284,
+            "bytes": 4,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "minimized eval_js": {
+            "n": 5,
+            "p50": 16,
+            "p90": 91,
+            "bytes": 22,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "minimized screenshot": {
+            "n": 5,
+            "p50": 35,
+            "p90": 36,
+            "bytes": 91,
+            "ok": 0,
+            "err": 5,
+            "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+          },
+          "minimized click trusted": {
+            "n": 5,
+            "p50": 34,
+            "p90": 34,
+            "bytes": 91,
+            "ok": 0,
+            "err": 5,
+            "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+          }
+        }
+      },
+      {
+        "ref": "1eccf8e",
+        "sha": "1eccf8e",
+        "locked": [
+          false,
+          false
+        ],
+        "results": {
+          "list_tabs": {
+            "n": 10,
+            "p50": 66,
+            "p90": 68,
+            "bytes": 309,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "list_tabs arc": {
+            "n": 10,
+            "p50": 100,
+            "p90": 101,
+            "bytes": 520,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 22,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js await shown": {
+            "n": 10,
+            "p50": 33,
+            "p90": 43,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 13,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await shown": {
+            "n": 10,
+            "p50": 33,
+            "p90": 54,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await long shown": {
+            "n": 10,
+            "p50": 34,
+            "p90": 43,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "accessibility_snapshot shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 517,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "get_text shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 696,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "click shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 32,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "fill shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 43,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "press shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 63,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "select shown": {
+            "n": 10,
+            "p50": 18,
+            "p90": 37,
+            "bytes": 53,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "wait shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 23,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "file_upload shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 76,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "screenshot shown": {
+            "n": 10,
+            "p50": 67,
+            "p90": 82,
+            "bytes": 157596,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 22,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js await bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 45,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 13,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 54,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await long bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 44,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "accessibility_snapshot bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 607,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "get_text bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 834,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "click bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 32,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "fill bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 43,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "press bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 63,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "select bg": {
+            "n": 10,
+            "p50": 18,
+            "p90": 38,
+            "bytes": 53,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "wait bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 23,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "file_upload bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 76,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "screenshot bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 36,
+            "bytes": 141,
+            "ok": 0,
+            "err": 10,
+            "error": "error: tab_not_visible: a background screenshot needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true"
+          },
+          "click trusted shown": {
+            "n": 10,
+            "p50": 52,
+            "p90": 68,
+            "bytes": 161,
+            "ok": 0,
+            "err": 10,
+            "error": "the point is not on the page itself (embedded frame or browser UI); frame controls need accessibility_snapshot {frames:true} and an fN ref"
+          },
+          "fill trusted shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 68,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "navigate shown": {
+            "n": 3,
+            "p50": 115,
+            "p90": 117,
+            "bytes": 97,
+            "ok": 3,
+            "err": 0,
+            "error": null
+          },
+          "notify": {
+            "n": 1,
+            "p50": 9,
+            "p90": 9,
+            "bytes": 11,
+            "ok": 1,
+            "err": 0,
+            "error": null
+          },
+          "parallel 4x500ms await": {
+            "n": 5,
+            "p50": 2219,
+            "p90": 2330,
+            "bytes": 4,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "minimized eval_js": {
+            "n": 5,
+            "p50": 17,
+            "p90": 88,
+            "bytes": 22,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "minimized screenshot": {
+            "n": 5,
+            "p50": 91,
+            "p90": 112,
+            "bytes": 149116,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "minimized click trusted": {
+            "n": 5,
+            "p50": 33,
+            "p90": 33,
+            "bytes": 91,
+            "ok": 0,
+            "err": 5,
+            "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+          }
+        }
+      },
+      {
+        "ref": "main",
+        "sha": "c5e8fda",
+        "locked": [
+          false,
+          false
+        ],
+        "results": {
+          "list_tabs": {
+            "n": 10,
+            "p50": 66,
+            "p90": 68,
+            "bytes": 309,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "list_tabs arc": {
+            "n": 10,
+            "p50": 100,
+            "p90": 101,
+            "bytes": 520,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 20,
+            "bytes": 22,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js await shown": {
+            "n": 10,
+            "p50": 33,
+            "p90": 43,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 13,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await shown": {
+            "n": 10,
+            "p50": 35,
+            "p90": 41,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await long shown": {
+            "n": 10,
+            "p50": 34,
+            "p90": 40,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "accessibility_snapshot shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 517,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "get_text shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 696,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "click shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 32,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "fill shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 43,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "press shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 63,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "select shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 36,
+            "bytes": 53,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "wait shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 23,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "file_upload shown": {
+            "n": 10,
+            "p50": 17,
+            "p90": 20,
+            "bytes": 76,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "screenshot shown": {
+            "n": 10,
+            "p50": 67,
+            "p90": 83,
+            "bytes": 157596,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js bg": {
+            "n": 10,
+            "p50": 15,
+            "p90": 19,
+            "bytes": 22,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js await bg": {
+            "n": 10,
+            "p50": 34,
+            "p90": 44,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 13,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 53,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "eval_js main await long bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 46,
+            "bytes": 1,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "accessibility_snapshot bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 21,
+            "bytes": 607,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "get_text bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 17,
+            "bytes": 900,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "click bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 18,
+            "bytes": 32,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "fill bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 43,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "press bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 17,
+            "bytes": 63,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "select bg": {
+            "n": 10,
+            "p50": 19,
+            "p90": 37,
+            "bytes": 53,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "wait bg": {
+            "n": 10,
+            "p50": 17,
+            "p90": 24,
+            "bytes": 23,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "file_upload bg": {
+            "n": 10,
+            "p50": 16,
+            "p90": 18,
+            "bytes": 76,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "screenshot bg": {
+            "n": 10,
+            "p50": 33,
+            "p90": 34,
+            "bytes": 141,
+            "ok": 0,
+            "err": 10,
+            "error": "error: tab_not_visible: a background screenshot needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true"
+          },
+          "click trusted shown": {
+            "n": 10,
+            "p50": 57,
+            "p90": 73,
+            "bytes": 161,
+            "ok": 0,
+            "err": 10,
+            "error": "the point is not on the page itself (embedded frame or browser UI); frame controls need accessibility_snapshot {frames:true} and an fN ref"
+          },
+          "fill trusted shown": {
+            "n": 10,
+            "p50": 16,
+            "p90": 23,
+            "bytes": 68,
+            "ok": 10,
+            "err": 0,
+            "error": null
+          },
+          "navigate shown": {
+            "n": 3,
+            "p50": 115,
+            "p90": 123,
+            "bytes": 97,
+            "ok": 3,
+            "err": 0,
+            "error": null
+          },
+          "notify": {
+            "n": 1,
+            "p50": 9,
+            "p90": 9,
+            "bytes": 11,
+            "ok": 1,
+            "err": 0,
+            "error": null
+          },
+          "parallel 4x500ms await": {
+            "n": 5,
+            "p50": 587,
+            "p90": 951,
+            "bytes": 4,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "minimized eval_js": {
+            "n": 5,
+            "p50": 17,
+            "p90": 76,
+            "bytes": 22,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "minimized screenshot": {
+            "n": 5,
+            "p50": 75,
+            "p90": 114,
+            "bytes": 149175,
+            "ok": 5,
+            "err": 0,
+            "error": null
+          },
+          "minimized click trusted": {
+            "n": 5,
+            "p50": 32,
+            "p90": 34,
+            "bytes": 91,
+            "ok": 0,
+            "err": 5,
+            "error": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+          }
+        }
+      }
+    ]
+  },
+  "offline": {
+    "date": "2026-10-30T19:15:36.598Z",
+    "condition": "main lock harness scenarios on each server.js, fake world",
+    "versions": [
+      {
+        "ref": "c4010f4",
+        "sha": "c4010f4",
+        "totals": {
+          "list_tabs": {
+            "ev": 70,
+            "bytes": 3404,
+            "err": 1,
+            "n": 12
+          },
+          "new_tab": {
+            "ev": 52,
+            "bytes": 601,
+            "err": 2,
+            "n": 11
+          },
+          "activate_tab": {
+            "ev": 25,
+            "bytes": 92,
+            "err": 1,
+            "n": 4
+          },
+          "close_tab": {
+            "ev": 14,
+            "bytes": 243,
+            "err": 3,
+            "n": 5
+          },
+          "eval_js": {
+            "ev": 52,
+            "bytes": 2724,
+            "err": 24,
+            "n": 40
+          },
+          "get_text": {
+            "ev": 21,
+            "bytes": 947,
+            "err": 3,
+            "n": 12
+          },
+          "navigate": {
+            "ev": 729,
+            "bytes": 1687,
+            "err": 5,
+            "n": 15
+          },
+          "accessibility_snapshot": {
+            "ev": 29,
+            "bytes": 4174,
+            "err": 1,
+            "n": 21
+          },
+          "wait": {
+            "ev": 54,
+            "bytes": 947,
+            "err": 9,
+            "n": 16
+          },
+          "fill": {
+            "ev": 144,
+            "bytes": 4536,
+            "err": 16,
+            "n": 37
+          },
+          "select": {
+            "ev": 44,
+            "bytes": 1232,
+            "err": 8,
+            "n": 16
+          },
+          "press": {
+            "ev": 26,
+            "bytes": 1577,
+            "err": 5,
+            "n": 16
+          },
+          "file_upload": {
+            "ev": 26,
+            "bytes": 682,
+            "err": 4,
+            "n": 9
+          },
+          "console_capture": {
+            "ev": 7,
+            "bytes": 416,
+            "err": 2,
+            "n": 8
+          },
+          "click": {
+            "ev": 144,
+            "bytes": 3391,
+            "err": 15,
+            "n": 35
+          },
+          "notify": {
+            "ev": 0,
+            "bytes": 33,
+            "err": 0,
+            "n": 3
+          },
+          "screenshot": {
+            "ev": 32,
+            "bytes": 963,
+            "err": 3,
+            "n": 10
+          },
+          "nonesuch": {
+            "ev": 0,
+            "bytes": 29,
+            "err": 1,
+            "n": 1
+          }
+        }
+      },
+      {
+        "ref": "6b0d9cf",
+        "sha": "6b0d9cf",
+        "totals": {
+          "list_tabs": {
+            "ev": 70,
+            "bytes": 3404,
+            "err": 1,
+            "n": 12
+          },
+          "new_tab": {
+            "ev": 52,
+            "bytes": 917,
+            "err": 2,
+            "n": 11
+          },
+          "activate_tab": {
+            "ev": 25,
+            "bytes": 92,
+            "err": 1,
+            "n": 4
+          },
+          "close_tab": {
+            "ev": 14,
+            "bytes": 243,
+            "err": 3,
+            "n": 5
+          },
+          "eval_js": {
+            "ev": 51,
+            "bytes": 2640,
+            "err": 24,
+            "n": 40
+          },
+          "get_text": {
+            "ev": 21,
+            "bytes": 838,
+            "err": 3,
+            "n": 12
+          },
+          "navigate": {
+            "ev": 728,
+            "bytes": 1760,
+            "err": 5,
+            "n": 15
+          },
+          "accessibility_snapshot": {
+            "ev": 29,
+            "bytes": 3536,
+            "err": 1,
+            "n": 21
+          },
+          "wait": {
+            "ev": 54,
+            "bytes": 947,
+            "err": 9,
+            "n": 16
+          },
+          "fill": {
+            "ev": 144,
+            "bytes": 4233,
+            "err": 16,
+            "n": 37
+          },
+          "select": {
+            "ev": 44,
+            "bytes": 1232,
+            "err": 8,
+            "n": 16
+          },
+          "press": {
+            "ev": 26,
+            "bytes": 1142,
+            "err": 5,
+            "n": 16
+          },
+          "file_upload": {
+            "ev": 27,
+            "bytes": 682,
+            "err": 4,
+            "n": 9
+          },
+          "console_capture": {
+            "ev": 7,
+            "bytes": 416,
+            "err": 2,
+            "n": 8
+          },
+          "click": {
+            "ev": 144,
+            "bytes": 3345,
+            "err": 15,
+            "n": 35
+          },
+          "notify": {
+            "ev": 0,
+            "bytes": 84,
+            "err": 1,
+            "n": 3
+          },
+          "screenshot": {
+            "ev": 32,
+            "bytes": 963,
+            "err": 3,
+            "n": 10
+          },
+          "nonesuch": {
+            "ev": 0,
+            "bytes": 29,
+            "err": 1,
+            "n": 1
+          }
+        }
+      },
+      {
+        "ref": "1eccf8e",
+        "sha": "1eccf8e",
+        "totals": {
+          "list_tabs": {
+            "ev": 70,
+            "bytes": 3404,
+            "err": 1,
+            "n": 12
+          },
+          "new_tab": {
+            "ev": 52,
+            "bytes": 917,
+            "err": 2,
+            "n": 11
+          },
+          "activate_tab": {
+            "ev": 25,
+            "bytes": 92,
+            "err": 1,
+            "n": 4
+          },
+          "close_tab": {
+            "ev": 14,
+            "bytes": 243,
+            "err": 3,
+            "n": 5
+          },
+          "eval_js": {
+            "ev": 51,
+            "bytes": 2640,
+            "err": 24,
+            "n": 40
+          },
+          "get_text": {
+            "ev": 21,
+            "bytes": 838,
+            "err": 3,
+            "n": 12
+          },
+          "navigate": {
+            "ev": 728,
+            "bytes": 1760,
+            "err": 5,
+            "n": 15
+          },
+          "accessibility_snapshot": {
+            "ev": 29,
+            "bytes": 3536,
+            "err": 1,
+            "n": 21
+          },
+          "wait": {
+            "ev": 54,
+            "bytes": 947,
+            "err": 9,
+            "n": 16
+          },
+          "fill": {
+            "ev": 144,
+            "bytes": 4233,
+            "err": 16,
+            "n": 37
+          },
+          "select": {
+            "ev": 44,
+            "bytes": 1232,
+            "err": 8,
+            "n": 16
+          },
+          "press": {
+            "ev": 26,
+            "bytes": 1142,
+            "err": 5,
+            "n": 16
+          },
+          "file_upload": {
+            "ev": 27,
+            "bytes": 682,
+            "err": 4,
+            "n": 9
+          },
+          "console_capture": {
+            "ev": 7,
+            "bytes": 416,
+            "err": 2,
+            "n": 8
+          },
+          "click": {
+            "ev": 144,
+            "bytes": 3345,
+            "err": 15,
+            "n": 35
+          },
+          "notify": {
+            "ev": 0,
+            "bytes": 84,
+            "err": 1,
+            "n": 3
+          },
+          "screenshot": {
+            "ev": 32,
+            "bytes": 963,
+            "err": 3,
+            "n": 10
+          },
+          "nonesuch": {
+            "ev": 0,
+            "bytes": 29,
+            "err": 1,
+            "n": 1
+          }
+        }
+      },
+      {
+        "ref": "main",
+        "sha": "c5e8fda",
+        "totals": {
+          "list_tabs": {
+            "ev": 70,
+            "bytes": 3412,
+            "err": 1,
+            "n": 12
+          },
+          "new_tab": {
+            "ev": 52,
+            "bytes": 917,
+            "err": 2,
+            "n": 11
+          },
+          "activate_tab": {
+            "ev": 25,
+            "bytes": 92,
+            "err": 1,
+            "n": 4
+          },
+          "close_tab": {
+            "ev": 14,
+            "bytes": 243,
+            "err": 3,
+            "n": 5
+          },
+          "eval_js": {
+            "ev": 51,
+            "bytes": 2640,
+            "err": 24,
+            "n": 40
+          },
+          "get_text": {
+            "ev": 21,
+            "bytes": 838,
+            "err": 3,
+            "n": 12
+          },
+          "navigate": {
+            "ev": 728,
+            "bytes": 1760,
+            "err": 5,
+            "n": 15
+          },
+          "accessibility_snapshot": {
+            "ev": 29,
+            "bytes": 3536,
+            "err": 1,
+            "n": 21
+          },
+          "wait": {
+            "ev": 54,
+            "bytes": 947,
+            "err": 9,
+            "n": 16
+          },
+          "fill": {
+            "ev": 144,
+            "bytes": 4233,
+            "err": 16,
+            "n": 37
+          },
+          "select": {
+            "ev": 44,
+            "bytes": 1232,
+            "err": 8,
+            "n": 16
+          },
+          "press": {
+            "ev": 26,
+            "bytes": 1142,
+            "err": 5,
+            "n": 16
+          },
+          "file_upload": {
+            "ev": 27,
+            "bytes": 682,
+            "err": 4,
+            "n": 9
+          },
+          "console_capture": {
+            "ev": 7,
+            "bytes": 416,
+            "err": 2,
+            "n": 8
+          },
+          "click": {
+            "ev": 144,
+            "bytes": 3345,
+            "err": 15,
+            "n": 35
+          },
+          "notify": {
+            "ev": 0,
+            "bytes": 84,
+            "err": 1,
+            "n": 3
+          },
+          "screenshot": {
+            "ev": 32,
+            "bytes": 963,
+            "err": 3,
+            "n": 10
+          },
+          "nonesuch": {
+            "ev": 0,
+            "bytes": 29,
+            "err": 1,
+            "n": 1
+          }
+        }
+      }
+    ]
+  }
+}
