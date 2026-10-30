@@ -1021,7 +1021,7 @@ test("fill {fields}: a trusted entry on a rich editor fails its slot and later e
   const o = await fill({ fields: [{ selector: "#bio", text: "Hi", trusted: true }, { label_pattern: "email", text: "a@b.test" }] });
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.equal(o.results[0].ok, false);
-  assert.match(o.results[0].error, /fill \{trusted:true\} supports plain inputs\/textareas only/);
+  assert.match(o.results[0].error, /trusted fill takes inputs\/textareas only; use plain fill$/);
   assert.equal(o.results[1].ok, true);
   assert.equal($(dom, "#bio").textContent, "");
   assert.equal($(dom, "[name=email]").value, "a@b.test");

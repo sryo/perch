@@ -5363,7 +5363,6 @@ function popSearch(root, lists, opts) {
 // el.click(), so page handlers (React's included) run as for a user click.
 const CHECK_LIB = String.raw`
 const CHECKABLE = "input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [role=switch], [role=menuitemcheckbox]";
-function isOn(el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; }
 // A box wholly above or left of the document that no visible, on-page label
 // names (an sr-only input sits off-page under a label people see), or one
 // trapLike flags. honeypot() leaves checkboxes and radios to this.
@@ -5935,11 +5934,11 @@ function sameNumber(s, text) {
   const d = String(s || "").replace(/\D/g, ""), t = String(text || "").replace(/\D/g, "");
   return d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t);
 }
+// Text with whitespace runs collapsed and trimmed; g: with none at all, as rich
+// editors compare (an unrendered one reads back without its line breaks).
+function flat(s, g) { return String(s || "").replace(/\s+/g, g ? "" : " ").trim(); }
 // Whether v still holds text as setPlain accepts it on the first read.
-function holdsText(v, text) {
-  const norm = function (s) { return String(s || "").trim().replace(/\s+/g, " "); };
-  return norm(v).indexOf(norm(text)) >= 0 || sameNumber(v, text);
-}
+function holdsText(v, text) { return flat(v).indexOf(flat(text)) >= 0 || sameNumber(v, text); }
 // The text of the option a native select shows, "" for none.
 function optText(s) {
   const o = s && s.selectedIndex >= 0 ? s.options[s.selectedIndex] : null;
@@ -5947,12 +5946,13 @@ function optText(s) {
 }
 `;
 
-// A click that changed nothing when it was sent ({el, ok, mates?}) and shows
-// now: the box in the state its ok result names, alone in its group.
+// isOn: a checkbox, radio or ARIA box's checked state (CHECK_LIB relies on it).
+// pendOn: a click that changed nothing when it was sent ({el, ok, mates?}) and
+// shows now: the box in the state its ok result names, alone in its group.
 const PEND_LIB = String.raw`
+function isOn(el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; }
 function pendOn(p) {
-  const on = function (el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; };
-  return p.el.isConnected && on(p.el) === (p.ok.checked !== false) && (!p.mates || p.mates.filter(on).length === 1);
+  return p.el.isConnected && isOn(p.el) === (p.ok.checked !== false) && (!p.mates || p.mates.filter(isOn).length === 1);
 }
 `;
 // Keeps what a write landed for fill_reread; needs TOK_LIB.
@@ -5975,12 +5975,12 @@ function frRecord(items, until) {
 // held before the write, or emptied, was reverted. A text field showing some
 // other value was reformatted by the page or written by another call, which is
 // a note; a select or radio group on another option is a miss, since no page
-// formats one option into another. A field that left the document can't be
+// formats one option into another, and so is a rich editor whose whole text
+// is not the text (old text kept beside it). A field that left the document can't be
 // judged here and is left as it was.
 const FR_JUDGE_LIB = HOLDS_LIB + PEND_LIB + String.raw`
 function frJudge(items) {
   const LATER = " after it was filled; ", BACK = LATER + "the page reverted the write", OTHER = LATER + "another value replaced it", PICKED = LATER + "the page chose another option";
-  const on = function (el) { return el.tagName === "INPUT" ? !!el.checked : attr(el, "aria-checked") === "true"; };
   const changed = function (kept) { return kept ? " changed to " + JSON.stringify(kept) : " was cleared"; };
   const recheck = {}, notes = {};
   const settled = {};
@@ -5990,13 +5990,13 @@ function frJudge(items) {
     if (!el.isConnected) return;
     let o, back;
     if (it.mates) {
-      if (on(el)) return;
-      const cur = it.mates.filter(on)[0];
+      if (isOn(el)) return;
+      const cur = it.mates.filter(isOn)[0];
       back = !cur || cur === it.pel;
       const name = cur && it.names ? it.names[it.mates.indexOf(cur)] : "";
       o = { error: it.id + (name ? changed(clip(name, 60)) : " is no longer selected") };
     } else if ("on" in it) {
-      const now = on(el);
+      const now = isOn(el);
       if (now === it.on) return;
       back = true;
       o = { checked: now, error: it.id + (!it.on ? ' changed to "checked"' : " was cleared") };
@@ -6015,13 +6015,13 @@ function frJudge(items) {
       }
     } else {
       const now = it.rich ? textOf(el) : el.value;
-      if (it.text === "" ? !now.trim() : !!now.trim() && (now === it.want || holdsText(now, it.text))) return;
+      if (it.rich ? flat(now, 1) === flat(it.text, 1) : it.text === "" ? !now.trim() : !!now.trim() && (now === it.want || holdsText(now, it.text))) return;
       back = now === it.prior || (it.text !== "" && !now.trim());
       o = { kept: clip(now, 60), error: it.id + changed(clip(now, 60)) };
     }
     if (it.hid) o.hidden = true;
     if (back) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id, reverted: true }, o, { error: o.error + BACK });
-    else if (it.mates || "st" in it) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id }, o, { error: o.error + PICKED });
+    else if (it.mates || "st" in it || it.rich) recheck[it.i] = Object.assign({ ok: false, kind: it.kind, el: it.id }, o, { error: o.error + (it.rich ? OTHER : PICKED) });
     else notes[it.i] = o.error + OTHER;
   });
   const out = { recheck: recheck };
@@ -6102,21 +6102,21 @@ function fillOne(a, only, onLand) {
   // handler queued), after this script returns. a.fr asks to keep what landed
   // for fill_reread, the next page call, under the token returned as fr.
   if (a.fr && !onLand) {
-    let got = null;
-    const out = fillOne(a, only, function (el, rich, prior) { got = { el: el, rich: rich, prior: prior }; });
-    if (got && out.ok === true) out.fr = frRecord([{ i: 0, el: got.el, id: out.el, kind: out.kind, rich: got.rich, text: a.text, want: got.rich ? textOf(got.el) : got.el.value, prior: got.prior, hid: !!out.hidden }]);
+    let g;
+    const out = fillOne(a, only, function (el, rich, prior) { g = { i: 0, el: el, rich: rich, text: a.text, want: rich ? textOf(el) : el.value, prior: prior }; });
+    if (g && out.ok === true) { g.id = out.el; g.kind = out.kind; g.hid = !!out.hidden; out.fr = frRecord([g]); }
     return out;
   }
   const text = a.text;
   // Compare non-whitespace counts: rich editors normalize whitespace on the way in.
   const want = Math.floor(text.replace(/\s/g, "").length * 0.9);
   const landed = function (s) {
-    if (text === "") return String(s || "").trim() === "";
-    return String(s || "").replace(/\s/g, "").length >= want || sameNumber(s, text);
+    s = String(s || "");
+    return text === "" ? !s.trim() : s.replace(/\s/g, "").length >= want || sameNumber(s, text);
   };
-  const isField = function (el) { return el.tagName === "TEXTAREA" || el.tagName === "INPUT"; };
+  const isField = function (el) { return /^(TEXTAREA|INPUT)$/.test(el.tagName); };
   function isRich(el) {
-    return !!el && (editable(el) || (!!el.matches && el.matches(".fr-element, .ql-editor, .ProseMirror")));
+    return !!el && (editable(el) || el.matches(".fr-element, .ql-editor, .ProseMirror"));
   }
   // Input types whose value the browser sanitizes on set: only the exact value
   // counts, and a miss names the format the type accepts.
@@ -6166,24 +6166,29 @@ function fillOne(a, only, onLand) {
     taType(el, text);
     return { pending: true, tok: tok };
   }
+  // Editors that keep their own model (ProseMirror, Lexical, Draft.js, Slate)
+  // take text only from the beforeinput/input the editing commands fire, and
+  // re-render a DOM write away: the editor's contents are selected and each
+  // line typed, a newline as a line break and a blank line as a paragraph.
+  // Only where a command is refused or missing is the text written as
+  // innerText (no HTML-string sink, which trips Trusted Types on Gmail-class
+  // pages) with synthetic input, change and blur events.
+  // The editor's whole text must be the text, whitespace aside: an editor
+  // typing at a stale cursor keeps the old text beside the new.
+  // -> true, false, or 2 (unseen): the commands ran and the editor still shows
+  // what it held, as one that renders from its model a task later does.
   function setRich(root) {
     prior = textOf(root);
     root.focus();
-    const doc = root.ownerDocument;
-    // Build nodes rather than assigning innerHTML: an HTML-string sink trips
-    // Trusted Types (require-trusted-types-for 'script') on Gmail-class pages.
-    while (root.firstChild) root.removeChild(root.firstChild);
-    text.split(/\n\n+/).forEach(function (para) {
-      const block = doc.createElement("div");
-      para.split("\n").forEach(function (line, i) {
-        if (i) block.appendChild(doc.createElement("br"));
-        block.appendChild(doc.createTextNode(line));
-      });
-      if (!block.childNodes.length) block.appendChild(doc.createElement("br"));
-      root.appendChild(block);
-    });
-    ["input", "change", "blur"].forEach(function (t) { root.dispatchEvent(new InputEvent(t, { bubbles: true, inputType: "insertText", data: text })); });
-    return landed(textOf(root));
+    const doc = root.ownerDocument, ex = function (c, v) { return doc.execCommand(c, false, v); };
+    let typed;
+    try {
+      typed = (doc.getSelection().selectAllChildren(root), text ? text.split(/(\n+)/).every(function (s) {
+        return s[0] != "\n" ? !s || ex("insertText", s) : ex(s[1] ? "insertParagraph" : "insertLineBreak");
+      }) : ex("delete"));
+    } catch (e) {}
+    if (!typed) { root.innerText = text; fire(root, ["input", "change", "blur"]); }
+    return flat(textOf(root), 1) === flat(text, 1) || (typed && textOf(root) === prior && 2);
   }
   function tryFill(el, host) {
     if (a.trusted) { const tok = rbTok(); window.__perch_ta = { key: taKey, tok: tok, el: el, held: true }; return { pending: true, tok: tok }; }
@@ -6194,9 +6199,11 @@ function fillOne(a, only, onLand) {
       if (onLand) onLand(el, false, prior);
       return { ok: true, kind: "plain", el: ident(el), len: el.value.length };
     }
-    if (!isRich(el) || !setRich(el)) return null;
+    if (!isRich(el)) return null;
+    const r = setRich(el), id = ident(host || el), k = clip(textOf(el), 60);
+    if (!r) return { ok: false, kind: "rich", el: id, kept: k, error: id + " holds " + JSON.stringify(k) + " instead of the text" };
     if (onLand) onLand(el, true, prior);
-    return { ok: true, kind: "rich", el: ident(host || el), len: textOf(el).length };
+    return { ok: true, kind: "rich", el: id, len: textOf(el).length, unseen: r > 1 || undefined };
   }
   // A typeahead holds only its pick (a companion's value or what its control
   // shows), never typed text alone.
@@ -6940,7 +6947,7 @@ if (holding) {
   if (r.out) return r.out;
   el = r.el;
 }
-if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, el: ident(el), error: "fill {trusted:true} supports plain inputs/textareas only" };
+if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return { ok: false, el: ident(el), error: "trusted fill takes inputs/textareas only; use plain fill" };
 if (el.disabled || el.readOnly) return { ok: false, error: ident(el) + " is disabled or read-only" };
 // A typeahead keeps only a picked suggestion: Node picks after the lookup.
 const ta = isTypeahead(el) && taParts(el);
@@ -7249,8 +7256,8 @@ A.toks.forEach(function (k) {
   Object.keys(j).forEach(function (i) {
     const x = j[i], e = x.error.indexOf(x.el + " ") === 0 ? x.error.slice(x.el.length + 1) : x.error;
     // A text write the page put back may take trusted input; a clear can't.
-    // Not one in a field no one sees: trusted typing can't reach it either.
-    const typed = items.some(function (it) { return String(it.i) === i && typeof it.text === "string" && it.text !== "" && !it.hid && !it.mates && !("st" in it) && !("on" in it); });
+    // Not one in a field no one sees or a rich editor: trusted typing can't reach it either.
+    const typed = items.some(function (it) { return String(it.i) === i && it.text && !it.hid && !it.rich; });
     l.push({ el: x.el, error: e + (typed && x.reverted ? A.hint : "") });
   });
 });
@@ -9488,7 +9495,7 @@ async function fill(args = {}) {
     if (trusted || raise) throw new Error("fill: `fields` takes trusted per entry, and no raise");
     if (fields_path != null) fields = normPatterns({ fields: await readFieldsFile(fields_path) }).fields;
     const r = await fillFields(fields, target, !!only_empty);
-    if (r && Array.isArray(r.results)) r.results = r.results.map((x, i) => fields[i] && fields[i].text != null && !fields[i].trusted ? hintTrusted(x) : x);
+    if (r && Array.isArray(r.results)) r.results = r.results.map(({ unseen, ...x }, i) => fields[i] && fields[i].text != null && !fields[i].trusted ? hintTrusted(x) : x);
     return r;
   }
   const { checked, option } = args;
@@ -9514,7 +9521,7 @@ async function fill(args = {}) {
   const r = trusted
     ? await trustedFill({ ...key, raise, target })
     : await runPage("fill", "fill", { ...key, fr: true }, target);
-  if (!trusted && r && r.fr) return hintTrusted(keepLate(r));
+  if (!trusted && r && r.fr) return hintTrusted(r.unseen ? await richSeen(r, target, body) : keepLate(r));
   if (!r || !r.pending) return trusted ? noTok(r) : hintTrusted(r);
   const out = { ...await (r.trusted ? pickSuggestion(target, r.tok, key) : pickTypeahead(key, target, r.tok).then(hintTrusted)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
   return r.ambiguous ? { ...out, ambiguous: r.ambiguous } : out;
@@ -9526,6 +9533,22 @@ function keepLate(r) {
   const { fr, ...out } = r;
   lateKeep(fr);
   return out;
+}
+// A rich editor that ran the editing commands but still shows what it held
+// renders from its model a task later: its record is read once more now. Where
+// no bounded read exists, or it dropped, the next call checks the record.
+async function richSeen(r, target, text) {
+  const { fr, unseen, ...out } = r;
+  const x = await rereadLast(target, fr, 0);
+  if (x && x.lost) return { ...out, ok: false, error: `${out.el}: the page changed before the text could be read back` };
+  if (!x || x.unbounded || x.dropped) {
+    lateKeep(fr);
+    return { ...out, ok: false, error: `${out.el} took the text but had not shown it yet; read it back with get_text before sending` };
+  }
+  const miss = x.recheck && x.recheck[0];
+  if (!miss) return { ...out, len: text.length };
+  const { len, ...rest } = out;
+  return { ...rest, ...miss };
 }
 const addNote = (o, n) => ({ ...o, note: o.note ? `${o.note}; ${n}` : n });
 // fill_reread's answer, {dropped} when its reply never came (the page may be
@@ -9622,7 +9645,7 @@ async function pickTypeahead(key, target, tok) {
 // appeared, or the field put its value back. Trusted typing may land either.
 const TRUSTED_HINT = "; retry with fill {trusted:true}";
 function hintTrusted(r) {
-  if (!r || r.ok !== false || r.trusted || r.hidden || typeof r.error !== "string") return r;
+  if (!r || r.ok !== false || r.trusted || r.hidden || r.kind === "rich" || typeof r.error !== "string") return r;
   const noList = r.kind === "typeahead" && !r.candidates && !r.ambiguous && /^no suggestion matched/.test(r.error);
   return noList || r.error.endsWith("the page reverted the write") ? { ...r, error: r.error + TRUSTED_HINT } : r;
 }
