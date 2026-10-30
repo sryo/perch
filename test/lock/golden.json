@@ -2900,7 +2900,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10965
+   "pageBytes": 10930
   },
   {
    "call": [
@@ -2923,7 +2923,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10981
+   "pageBytes": 10946
   },
   {
    "call": [
@@ -2947,7 +2947,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10980
+   "pageBytes": 10945
   },
   {
    "call": [
@@ -2959,7 +2959,7 @@
    "content": [
     {
      "type": "text",
-     "text": "Title\nword word word word word word word word word\n[truncated: chars 0-50 of 306; pass offset/maxChars for the rest]"
+     "text": "Title\nword word word word word word word word word\n[truncated: chars 0-50 of 306]"
     }
    ],
    "isError": false,
@@ -2970,7 +2970,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10962
+   "pageBytes": 10927
   },
   {
    "call": [
@@ -2983,7 +2983,7 @@
    "content": [
     {
      "type": "text",
-     "text": " word word word word word word word word word word\n[truncated: chars 50-100 of 306; pass offset/maxChars for the rest]"
+     "text": " word word word word word word word word word word\n[truncated: chars 50-100 of 306]"
     }
    ],
    "isError": false,
@@ -2994,7 +2994,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10963
+   "pageBytes": 10928
   },
   {
    "call": [
@@ -3017,7 +3017,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10984
+   "pageBytes": 10949
   }
  ],
  "get_text: by ref": [
@@ -3063,7 +3063,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10992
+   "pageBytes": 10957
   }
  ],
  "get_text: arc": [
@@ -3088,7 +3088,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10965
+   "pageBytes": 10930
   }
  ],
  "get_text: safari": [
@@ -3111,7 +3111,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10965
+   "pageBytes": 10930
   }
  ],
  "accessibility_snapshot: full page with form header": [

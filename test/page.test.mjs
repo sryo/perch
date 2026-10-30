@@ -94,7 +94,7 @@ test("get_text: text, html, ref, paging marker, no match", () => {
   const w = page(`<main id=m>Hello world</main>`);
   assert.equal(run(w, "get_text", { selector: "#m", maxChars: 20000, offset: 0 }), "Hello world");
   assert.match(run(w, "get_text", { html: true, maxChars: 20000, offset: 0 }), /^<html>/);
-  assert.equal(run(w, "get_text", { selector: "#m", maxChars: 5, offset: 2 }), "llo w\n[truncated: chars 2-7 of 11; pass offset/maxChars for the rest]");
+  assert.equal(run(w, "get_text", { selector: "#m", maxChars: 5, offset: 2 }), "llo w\n[truncated: chars 2-7 of 11]");
   assert.equal(run(w, "get_text", { selector: "#nope", maxChars: 5, offset: 0 }).ok, false);
   assert.deepEqual(run(w, "get_text", { ref: "4", maxChars: 5, offset: 0 }), { __perch_ref_miss: true, ref: "4" });
 });

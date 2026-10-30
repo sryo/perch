@@ -7079,7 +7079,7 @@ const r = resolveEl(A, A.html ? "html" : "body");
 if (r.out) return r.out;
 const s = A.html ? r.el.outerHTML : textOf(r.el);
 if (A.offset === 0 && s.length <= A.maxChars) return s;
-return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.offset + "-" + Math.min(A.offset + A.maxChars, s.length) + " of " + s.length + "; pass offset/maxChars for the rest]";
+return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.offset + "-" + Math.min(A.offset + A.maxChars, s.length) + " of " + s.length + "]";
 `,
 
   // Line format: "# {header json}", then "<ref> <role> <json name> key=<json>... flags".
