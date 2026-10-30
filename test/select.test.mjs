@@ -36,6 +36,11 @@ test("native select: exact text, value, word prefix, never mid-word; candidates 
   assert.deepEqual(miss.candidates, ["Pick", "Argentina", "Brazil"]);
 });
 
+test("a leading (?i) in label_pattern is accepted, not refused as an invalid group", async () => {
+  onPage(NATIVE);
+  assert.deepEqual((await select({ label_pattern: "(?i)^COUNTRY$", text: "Brazil" })).o, { ok: true, selected: "Brazil", el: `combobox "Country"` });
+});
+
 test("native select: a country or state typed in full picks its abbreviation, only when nothing literal matched", async () => {
   onPage(`<label>Country <select><option value="">Pick</option><option value=ca>Canada</option><option value=us>USA</option></select></label>`);
   assert.equal((await select({ label_pattern: "country", text: "United States" })).o.selected, "USA");
@@ -223,6 +228,40 @@ test("a combobox the page re-renders on pick is read from its new node, not the 
   // By id too, when the call named the control by selector.
   onPage(html, js);
   assert.equal((await select({ selector: "#color", text: "Green" })).o.ok, true);
+});
+
+// MUI Select: a div role=combobox named by aria-labelledby="<label id> <own id>",
+// so its name is the label plus the shown value; the required label carries an
+// aria-hidden asterisk. A mousedown opens a listbox portaled to the body.
+const MUI_SELECT = (labelled) => `<form><div class="MuiFormControl-root">
+  <label class="MuiInputLabel-root" id=deg-label>Degree<span aria-hidden=true class="MuiFormLabel-asterisk"> *</span></label>
+  <div class="MuiInputBase-root MuiOutlinedInput-root"><div id=deg tabindex=0 role=combobox aria-haspopup=listbox aria-expanded=false ${labelled ? 'aria-labelledby="deg-label deg"' : ""} class="MuiSelect-select">Bachelor</div>
+  <input aria-hidden=true tabindex=-1 class="MuiSelect-nativeInput" value="Bachelor"></div></div>
+  <div class="MuiFormControl-root"><label id=lvl-label>Degree level</label><div role=combobox aria-haspopup=listbox aria-labelledby="lvl-label" tabindex=0>Any</div></div></form>`;
+const MUI_SELECT_JS = `
+  const ctl = document.getElementById("deg"), nat = ctl.parentElement.querySelector("input");
+  ctl.addEventListener("mousedown", () => {
+    const pop = document.createElement("div");
+    pop.setAttribute("role", "presentation");
+    pop.className = "MuiPopover-root MuiMenu-root";
+    pop.innerHTML = '<div class="MuiPaper-root"><ul role=listbox id=deg-list aria-labelledby=deg-label>' + ["High school", "Bachelor", "Master", "PhD"].map((d) => '<li role=option>' + d + '</li>').join("") + '</ul></div>';
+    document.body.appendChild(pop);
+    ctl.setAttribute("aria-expanded", "true");
+    ctl.setAttribute("aria-controls", "deg-list");
+    pop.querySelectorAll("[role=option]").forEach((o) => o.addEventListener("click", () => {
+      ctl.textContent = o.textContent; nat.value = o.textContent;
+      pop.remove(); ctl.setAttribute("aria-expanded", "false"); ctl.removeAttribute("aria-controls");
+    }));
+  });`;
+
+test("select: an MUI Select named by aria-labelledby (label plus its own value) or a sibling label matches an anchored label_pattern", async () => {
+  for (const labelled of [true, false]) {
+    const { dom } = onPage(MUI_SELECT(labelled), MUI_SELECT_JS);
+    const { o } = await select({ label_pattern: "^Degree$", text: "Master" });
+    assert.equal(o.ok, true, JSON.stringify(o));
+    assert.equal(o.selected, "Master");
+    assert.equal(dom.document.getElementById("deg").textContent, "Master");
+  }
 });
 
 test("select validates its arguments before touching the page", async () => {

@@ -1681,3 +1681,100 @@ test("typeahead: a web component's suggestions, in an outer component's shadow r
   const inp = dom.document.getElementById("ac").shadowRoot.querySelector("spl-input").shadowRoot.querySelector("input");
   assert.equal(inp.value, "Tuscaloosa, AL, US");
 });
+
+// MUI Autocomplete with async options: typing opens a popper portaled to the
+// body that shows only a "Loading…" row while the lookup runs; the listbox
+// (named by the input's aria-controls) renders once the results land, and
+// aria-expanded says true only then. A press on an option sets the input.
+const MUI_INST = `<form><div class="MuiAutocomplete-root"><div class="MuiFormControl-root">
+  <label class="MuiFormLabel-root" id=inst-label for=inst>Institution<span aria-hidden=true class="MuiFormLabel-asterisk"> *</span></label>
+  <div class="MuiInputBase-root MuiAutocomplete-inputRoot"><input id=inst class="MuiAutocomplete-input" role=combobox aria-autocomplete=list aria-expanded=false autocomplete=off required>
+  <div class="MuiAutocomplete-endAdornment"><button type=button class="MuiAutocomplete-popupIndicator" aria-label=Open tabindex=-1>v</button></div></div></div></div>
+  <label>Name <input name=name></label></form>`;
+const UNIS = ["Universidad Nacional de Córdoba - UNC", "Universidad Nacional de Rosario - UNR", "Universidad Tecnológica Nacional - UTN"];
+const MUI_INST_JS = (ticks, unis = UNIS) => `
+  const unis = ${JSON.stringify(unis)};
+  const fold = (s) => s.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase();
+  const inp = document.getElementById("inst");
+  window.lookups = 0; window.picked = "";
+  let pop = null;
+  const close = () => { if (pop) pop.remove(); pop = null; inp.setAttribute("aria-expanded", "false"); inp.removeAttribute("aria-controls"); };
+  inp.addEventListener("input", () => {
+    window.__q = [];
+    const q = fold(inp.value);
+    if (!pop) { pop = document.createElement("div"); pop.setAttribute("role", "presentation"); pop.className = "MuiAutocomplete-popper MuiPopper-root"; document.body.appendChild(pop); }
+    pop.innerHTML = '<div class="MuiPaper-root MuiAutocomplete-paper"><div class="MuiAutocomplete-loading">Loading…</div></div>';
+    inp.setAttribute("aria-controls", "inst-listbox");
+    inp.setAttribute("aria-expanded", "false");
+    later(() => {
+      window.lookups++;
+      const hits = unis.filter((u) => q && fold(u).includes(q));
+      pop.firstChild.innerHTML = hits.length ? '<ul role=listbox id=inst-listbox class="MuiAutocomplete-listbox">' + hits.map((h) => '<li role=option class="MuiAutocomplete-option">' + h + '</li>').join("") + '</ul>' : '<div class="MuiAutocomplete-noOptions">No options</div>';
+      inp.setAttribute("aria-expanded", hits.length ? "true" : "false");
+      pop.querySelectorAll("[role=option]").forEach((o) => o.addEventListener("click", () => { window.picked = o.textContent; inp.value = o.textContent; close(); }));
+    }, ${ticks});
+  });
+  inp.addEventListener("blur", () => { window.__q = []; close(); inp.value = window.picked; });`;
+
+test("typeahead: an async MUI Autocomplete's loading row is waited out, past the usual bound, and a separator-suffixed option picked", async () => {
+  const { dom } = onPage(MUI_INST, MUI_INST_JS(70));
+  const o = await fill({ label_pattern: "^institution$", text: "Universidad Nacional de Córdoba" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Universidad Nacional de Córdoba - UNC");
+  assert.equal(dom.picked, "Universidad Nacional de Córdoba - UNC");
+  assert.equal(dom.lookups, 1, "no shorter retry once the list answered");
+});
+
+test("select: an async MUI Autocomplete's loading row is waited out before the miss", async () => {
+  const { dom } = onPage(MUI_INST, MUI_INST_JS(70));
+  const r = await handleCall("select", { label_pattern: "^institution$", text: "Universidad Nacional de Córdoba" });
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.selected, "Universidad Nacional de Córdoba - UNC");
+  assert.equal(dom.picked, "Universidad Nacional de Córdoba - UNC");
+});
+
+test("typeahead: a loading row that never clears costs a bounded wait, then the miss", async () => {
+  const { dom } = onPage(MUI_INST, MUI_INST_JS(100000));
+  const o = await fill({ label_pattern: "^institution$", text: "Universidad Nacional de Córdoba" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.match(o.error, /no suggestion matched/);
+  assert.equal(dom.picked, "");
+  assert.equal(dom.lookups, 0);
+});
+
+test("typeahead: among options starting with the text, the one continuing past a separator is picked; two such tie", async () => {
+  const { dom } = onPage(MUI_INST, MUI_INST_JS(3, ["Universidad Nacional de Córdoba Facultad de Derecho", "Universidad Nacional de Córdoba - UNC"]));
+  const o = await fill({ label_pattern: "^institution$", text: "Universidad Nacional de Córdoba" });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(dom.picked, "Universidad Nacional de Córdoba - UNC");
+  const two = onPage(MUI_INST, MUI_INST_JS(3, ["Universidad Nacional de Córdoba - UNC", "Universidad Nacional de Córdoba (Sede Norte)"]));
+  const t = await fill({ label_pattern: "^institution$", text: "Universidad Nacional de Córdoba" });
+  assert.equal(t.ok, false, JSON.stringify(t));
+  assert.equal(t.ambiguous, true);
+  assert.equal(two.dom.picked, "");
+});
+
+// A hand-rolled Alpine.js dropdown (Tailwind UI's select): a button toggling
+// x-show on @click, its list a sibling with no aria-controls, the DOM updated a
+// tick later as Alpine's effects are, and an Alpine v3 @click.outside on the
+// list that skips while the list is hidden.
+const ALPINE = `<form><div x-data><label id=team-label>Team</label><div class=relative>
+  <button type=button id=team aria-haspopup=listbox aria-expanded=false aria-labelledby="team-label team"><span>Pick one</span></button>
+  <ul role=listbox style="display:none" tabindex=-1><li role=option>Design</li><li role=option>Engineering</li><li role=option>Sales</li></ul></div></div>
+  <label>Name <input name=name></label></form>`;
+const ALPINE_JS = `
+  const btn = document.getElementById("team"), ul = btn.nextElementSibling;
+  let open = false;
+  const render = () => later(() => { ul.style.display = open ? "" : "none"; btn.setAttribute("aria-expanded", String(open)); }, 1);
+  btn.addEventListener("click", () => { open = !open; render(); });
+  ul.querySelectorAll("li").forEach((li) => li.addEventListener("click", () => { btn.firstElementChild.textContent = li.textContent; open = false; render(); }));
+  document.addEventListener("click", (e) => { if (ul.contains(e.target) || ul.style.display === "none") return; open = false; render(); });`;
+
+test("select: a hand-rolled Alpine dropdown toggled on click opens and picks", async () => {
+  const { dom } = onPage(ALPINE, ALPINE_JS);
+  const r = await handleCall("select", { label_pattern: "^team$", text: "Engineering" });
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal($(dom, "#team span").textContent, "Engineering");
+});
