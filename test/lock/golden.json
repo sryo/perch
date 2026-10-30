@@ -3223,7 +3223,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 88510
+   "pageBytes": 88587
   },
   {
    "call": [
@@ -3250,7 +3250,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36925
+   "pageBytes": 38018
   },
   {
    "call": [
@@ -3882,7 +3882,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15749
+   "pageBytes": 15757
   },
   {
    "call": [
@@ -4091,7 +4091,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":false,\"error\":\"/^go$/i matches only disabled: button \\\"Go\\\"\"}"
+     "text": "{\"ok\":false,\"error\":\"/^go[\\\\s*:]*$/i matches only disabled: button \\\"Go\\\"\"}"
     }
    ],
    "isError": false,
@@ -4102,7 +4102,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15747
+   "pageBytes": 15755
   },
   {
    "call": [
@@ -4819,7 +4819,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: press: trusted takes a named key (Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12), optionally with shift"
+     "text": "error: press: trusted takes a named key (Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12), a letter or a digit, optionally with shift (letters only)"
     }
    ],
    "isError": true,
@@ -5217,7 +5217,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73807
+   "pageBytes": 73884
   },
   {
    "call": [
@@ -5250,7 +5250,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73849
+   "pageBytes": 73926
   },
   {
    "call": [
@@ -5316,7 +5316,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73900
+   "pageBytes": 73977
   },
   {
    "call": [
@@ -5354,7 +5354,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73892
+   "pageBytes": 73969
   },
   {
    "call": [
@@ -5385,7 +5385,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 59721
+   "pageBytes": 59798
   }
  ],
  "fill: fields_path and bad fields": [
@@ -5411,7 +5411,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73805
+   "pageBytes": 73882
   },
   {
    "call": [
@@ -5540,7 +5540,7 @@
     ]
    },
    "pageScripts": 5,
-   "pageBytes": 228154
+   "pageBytes": 231697
   }
  ],
  "fill: late revert reported by the next call and held click": [
@@ -5642,7 +5642,7 @@
     ]
    },
    "pageScripts": 4,
-   "pageBytes": 142839
+   "pageBytes": 146866
   },
   {
    "call": [
@@ -5677,7 +5677,7 @@
     ]
    },
    "pageScripts": 11,
-   "pageBytes": 410612
+   "pageBytes": 424398
   },
   {
    "call": [
@@ -5770,7 +5770,7 @@
     ]
    },
    "pageScripts": 69,
-   "pageBytes": 2618696
+   "pageBytes": 2712428
   }
  ],
  "fill: trusted background and raised": [
@@ -5870,7 +5870,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 76285
+   "pageBytes": 76362
   }
  ],
  "fill: arc": [
@@ -5951,7 +5951,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36919
+   "pageBytes": 38012
   },
   {
    "call": [
@@ -5976,7 +5976,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 51659
+   "pageBytes": 52752
   },
   {
    "call": [
@@ -6001,7 +6001,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 51617
+   "pageBytes": 52710
   },
   {
    "call": [
@@ -6026,7 +6026,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 51614
+   "pageBytes": 52707
   },
   {
    "call": [
@@ -6051,7 +6051,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36913
+   "pageBytes": 38006
   },
   {
    "call": [
@@ -6076,7 +6076,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36912
+   "pageBytes": 38005
   },
   {
    "call": [
@@ -6101,7 +6101,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36908
+   "pageBytes": 38001
   },
   {
    "call": [
@@ -6126,7 +6126,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36909
+   "pageBytes": 38002
   },
   {
    "call": [
@@ -6151,7 +6151,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36912
+   "pageBytes": 38005
   },
   {
    "call": [
@@ -6199,7 +6199,7 @@
     ]
    },
    "pageScripts": 3,
-   "pageBytes": 108561
+   "pageBytes": 111950
   },
   {
    "call": [
@@ -6234,7 +6234,7 @@
     ]
    },
    "pageScripts": 11,
-   "pageBytes": 378853
+   "pageBytes": 391866
   }
  ],
  "select: trusted": [
@@ -6262,7 +6262,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36924
+   "pageBytes": 38017
   }
  ],
  "select: arc": [
@@ -6290,7 +6290,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36909
+   "pageBytes": 38002
   }
  ],
  "select: safari": [
@@ -6319,7 +6319,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36909
+   "pageBytes": 38002
   }
  ],
  "file_upload: input, label, drop zone, misses": [
