@@ -6724,10 +6724,10 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true}"
+     "text": "error: bad_args: notify needs a `message` (a non-empty string)"
     }
    ],
-   "isError": false,
+   "isError": true,
    "events": 0,
    "ae": {},
    "pageScripts": 0,

@@ -8741,6 +8741,7 @@ const consoleGens = new Map(), CONSOLE_GENS_MAX = 500;
 
 async function notify(args = {}) {
   const { message, title = "perch", subtitle, sound = "Glass" } = args;
+  if (typeof message !== "string" || !message) throw new Error("bad_args: notify needs a `message` (a non-empty string)");
   const opts = { withTitle: title };
   if (subtitle) opts.subtitle = subtitle;
   if (sound) opts.soundName = sound;

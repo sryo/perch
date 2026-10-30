@@ -224,6 +224,20 @@ test("accessibility_snapshot and console_capture through the tool layer (form ag
   assert.ok(read.entries.some((e) => /^warn: .*careful/.test(e)), JSON.stringify(read));
 });
 
+test("notify without a message is bad_args before any osascript runs", async () => {
+  const fast = DAEMONS.fast;
+  let ran = 0;
+  DAEMONS.fast = { run: async () => { ran++; return "ok"; } };
+  try {
+    for (const args of [{}, { message: "" }, { message: 7 }]) {
+      const r = await handleCall("notify", args);
+      assert.equal(r.isError, true, JSON.stringify(args));
+      assert.match(r.content[0].text, /^error: bad_args: notify needs a `message`/);
+    }
+  } finally { DAEMONS.fast = fast; }
+  assert.equal(ran, 0);
+});
+
 test("notify shows the message verbatim, quotes and newlines included (form agent CAPTCHA handoff)", async () => {
   const vm = await import("node:vm");
   const fast = DAEMONS.fast;
