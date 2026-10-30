@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { tempDir } from "../scripts/temp.mjs";
 import { join } from "node:path";
-import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, composeEvalScript, shapeTabs, formatResult, JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
+import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, buildEvalWrapper, composeEvalScript, shapeTabs, formatResult, JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 
 test("tool schemas stay within the token budget", () => {
@@ -104,4 +104,17 @@ test("formatResult: ref miss and page errors are isError; ok:false and strings a
   assert.equal(formatResult("# {}").content[0].text, "# {}");
   const img = formatResult({ __image: true, data: "AA", mimeType: "image/png", meta: { image: { w: 1, h: 1 } } });
   assert.deepEqual(img.content.map((c) => c.type), ["image", "text"]);
+});
+
+test("eval_js error: stack_head carries the location, not the name and message again", () => {
+  const run = (js) => JSON.parse(formatResult(JSON.parse((0, eval)(buildEvalWrapper(js)))).content[0].text);
+  const e = run("null.foo.bar");
+  assert.equal(e.__perch_error_name, "TypeError");
+  assert.match(e.__perch_error_stack_head, /^at /);
+  assert.ok(!e.__perch_error_stack_head.includes(e.__perch_error), e.__perch_error_stack_head);
+  // A multi-line message fills both lines the page keeps, leaving no location to send.
+  assert.equal(run("throw new Error('one\\ntwo')").__perch_error_stack_head, null);
+  assert.equal(run("throw 'str'").__perch_error_stack_head, null);
+  const odd = run("var x = new Error('m'); x.stack = 'custom | at f'; throw x");
+  assert.equal(odd.__perch_error_stack_head, "custom | at f");
 });

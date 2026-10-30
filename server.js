@@ -9550,6 +9550,16 @@ export async function composeEvalScript({ script, script_path, ref, rid, awaitPr
     `return (${awaitPromise ? "async " : ""}function (el) {\n${body}\n}).call(this, __perch_el);`;
 }
 
+// V8 opens a stack with "Name: message", already sent beside it, so the head keeps
+// only what follows (the page joins stack lines with " | ").
+function trimStackHead(e) {
+  const h = e.__perch_error_stack_head;
+  if (typeof h !== "string") return e;
+  const lead = String(e.__perch_error ? `${e.__perch_error_name}: ${e.__perch_error}` : e.__perch_error_name).replace(/\n/g, " | ");
+  if (h === lead) return { ...e, __perch_error_stack_head: null };
+  return h.startsWith(lead + " | ") ? { ...e, __perch_error_stack_head: h.slice(lead.length + 3).trim() } : e;
+}
+
 export function formatResult(result) {
   if (result && result.__image) {
     const content = [{ type: "image", data: result.data, mimeType: result.mimeType }];
@@ -9560,7 +9570,7 @@ export function formatResult(result) {
     return { content: [{ type: "text", text: `error: ref ${result.ref} is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)` }], isError: true };
   }
   if (result && typeof result === "object" && result.__perch_error !== undefined) {
-    return { content: [{ type: "text", text: JSON.stringify(result) }], isError: true };
+    return { content: [{ type: "text", text: JSON.stringify(trimStackHead(result)) }], isError: true };
   }
   return { content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }] };
 }
