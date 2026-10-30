@@ -261,7 +261,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"app\":\"Arc\",\"tabId\":\"arc:new1\"}"
+     "text": "{\"app\":\"Arc\",\"tabId\":\"arc:new1\",\"shown\":false,\"note\":\"page tools get tab_not_visible until it is shown: activate_tab (takes focus) when the user is away, or navigate a tab its window shows\"}"
     }
    ],
    "isError": false,
@@ -454,7 +454,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"app\":\"Arc\",\"tabId\":\"arc:new3\"}"
+     "text": "{\"app\":\"Arc\",\"tabId\":\"arc:new3\",\"shown\":false,\"note\":\"page tools get tab_not_visible until it is shown: activate_tab (takes focus) when the user is away, or navigate a tab its window shows\"}"
     }
    ],
    "isError": false,
@@ -1173,11 +1173,11 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":false,\"error\":\"load_failed: https://down.test/ did not load; the browser showed its error page\",\"tabId\":\"chrome:c1\"}"
+     "text": "{\"ok\":false,\"error\":\"load_failed: https://down.test/ did not load; the browser showed its error page; it may retry on its own, so check the tab's url before navigating again\",\"tabId\":\"chrome:c1\"}"
     }
    ],
    "isError": false,
-   "events": 7,
+   "events": 16,
    "ae": {
     "Google Chrome": [
      "windows.length(Google Chrome)",
@@ -1186,11 +1186,20 @@
      "win.id()",
      "tab.execute",
      "tab.loading",
-     "tab.execute"
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading"
     ]
    },
-   "pageScripts": 2,
-   "pageBytes": 888
+   "pageScripts": 6,
+   "pageBytes": 2024
   }
  ],
  "navigate: timeout not committed": [

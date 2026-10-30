@@ -44,7 +44,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // Errors start with a stable, browser-neutral code that clients branch on.
   const notVisible = (what) => "tab_not_visible: " + what + " needs the tab its window shows; activate_tab (takes focus) or retry later";
   const OFFSCREEN = "window_offscreen: the browser window isn't on screen (minimized or on another Space)";
-  const NEW_TAB_UNSHOWN = "its window still shows its previous tab, so page tools on this one get tab_not_visible until it is shown: activate_tab (takes focus) when the user is away, or navigate a tab its window shows instead";
+  const NEW_TAB_UNSHOWN = "page tools get tab_not_visible until it is shown: activate_tab (takes focus) when the user is away, or navigate a tab its window shows";
   const AMBIGUOUS = "window_ambiguous: another window of this browser has the same frame, so perch can't tell which is the target's; move or resize one";
   const TWINS = "window_ambiguous: two instances of this browser have windows on screen, so perch can't tell which is the target's; quit the other one";
 
@@ -3206,7 +3206,7 @@ function jxaRuntime(BROWSERS, HANG) {
           if (t.kind !== "safari" && read(function () { return t.tab.loading(); })) errAt = null;
           else if (errAt == null) errAt = Date.now();
           else if (Date.now() - errAt >= ERR_SETTLE_MS) return failed();
-          delay(0.05);
+          delay(0.15);
           continue;
         }
         errAt = null;
