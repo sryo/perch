@@ -744,7 +744,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       CGEventKeyboardSetUnicodeString: (e, len, bytes) => { e.text = bytes; e.len = len; },
       CGEventSetWindowLocation: (e, x, y) => { e.windowPoint = { x, y }; },
       SLEventPostToPid: (pid, e) => {
-        posted.push({ via: "skylight", pid, ...e });
+        posted.push({ via: "skylight", pid, ...e, at: clock.t });
         if (state.onPost) state.onPost(e);
         return 0;
       },

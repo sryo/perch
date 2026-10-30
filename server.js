@@ -1519,7 +1519,8 @@ function jxaRuntime(BROWSERS, HANG) {
     skyMouse(I, { x: -1, y: -1 }, 1, 1, 1, group);
     delay(0.001);
     skyMouse(I, { x: -1, y: -1 }, 2, 2, 1, group);
-    delay(0.1);
+    // 0 to 100ms all clicked live; 10ms keeps the press ordered after the pair.
+    delay(0.01);
     skyMouse(I, pt, 1, 3, 1, group);
     delay(0.001);
     skyMouse(I, pt, 2, 3, 1, group);
