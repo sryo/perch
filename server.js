@@ -14,13 +14,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 const exec = promisify(execFile);
 
 // `key` prefixes tab handles; `bundle` maps the system default browser to an app.
-const BROWSERS = [
+export const BROWSERS = [
   { app: "Google Chrome",        kind: "chrome", key: "chrome",      bundle: "com.google.Chrome" },
   { app: "Google Chrome Beta",   kind: "chrome", key: "chrome-beta", bundle: "com.google.Chrome.beta" },
   { app: "Google Chrome Canary", kind: "chrome", key: "canary",      bundle: "com.google.Chrome.canary" },
   { app: "Brave Browser",        kind: "chrome", key: "brave",       bundle: "com.brave.Browser" },
   { app: "Microsoft Edge",       kind: "chrome", key: "edge",        bundle: "com.microsoft.edgemac" },
   { app: "Vivaldi",              kind: "chrome", key: "vivaldi",     bundle: "com.vivaldi.Vivaldi" },
+  { app: "Helium",               kind: "chrome", key: "helium",      bundle: "net.imput.helium" },
   { app: "Arc",                  kind: "arc",    key: "arc",         bundle: "company.thebrowser.Browser" },
   { app: "Safari",               kind: "safari", key: "safari",      bundle: "com.apple.Safari" },
 ];
@@ -714,7 +715,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // navigate's page JS answers in tens of ms; a dropped reply costs at most this.
   const NAV_EXEC_SECS = 0.5;
   // Schemes of Chromium browsers' own pages (new tab, settings, devtools).
-  const BROWSER_PAGE = /^(chrome|chrome-untrusted|chrome-search|devtools|edge|brave|vivaldi|opera):/i;
+  const BROWSER_PAGE = /^(chrome|chrome-untrusted|chrome-search|devtools|edge|brave|vivaldi|helium|opera):/i;
   // The only urls the runtime hands a browser, checked before any Apple Event
   // for callers that skip Node's checkUrl.
   const loadable = function (tool, u) {

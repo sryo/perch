@@ -7599,7 +7599,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: no_browser: unknown browser 'nonesuch'; one of: Google Chrome, Google Chrome Beta, Google Chrome Canary, Brave Browser, Microsoft Edge, Vivaldi, Arc, Safari"
+     "text": "error: no_browser: unknown browser 'nonesuch'; one of: Google Chrome, Google Chrome Beta, Google Chrome Canary, Brave Browser, Microsoft Edge, Vivaldi, Helium, Arc, Safari"
     }
    ],
    "isError": true,

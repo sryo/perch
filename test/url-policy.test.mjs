@@ -68,10 +68,10 @@ const BEFORE = Object.fromEntries(Object.entries({
   "new_tab chrome": { "https://n.test/": "63597ee6e461", "HTTP://N.TEST/": "9b105f4f817e", "about:blank": "0bccf24daee8", "ABOUT:BLANK": "4dc47825f0cf", "(none)": "0bccf24daee8" },
   "new_tab arc": { "https://n.test/": "120046390fac", "HTTP://N.TEST/": "34e40066d8b7", "about:blank": "57202842ec1b", "ABOUT:BLANK": "42c94d492e90", "(none)": "57202842ec1b" },
   "new_tab safari": { "https://n.test/": "c6ea10cfe6e0", "HTTP://N.TEST/": "af75fbddd6dd", "about:blank": "ed52b752901f", "ABOUT:BLANK": "93198762b7ed", "(none)": "ed52b752901f" },
-  "navigate chrome front tab": { "https://n.test/": "2a9ee17595bf", "HTTP://N.TEST/": "b74edd37fe19", "about:blank": "983ee1a0490a", "ABOUT:BLANK": "4becdbb07c79" },
+  "navigate chrome front tab": { "https://n.test/": "d98ccce11e87", "HTTP://N.TEST/": "ea58d27e419a", "about:blank": "4cc30578d12a", "ABOUT:BLANK": "c76d86c8c4e5" },
   "navigate chrome background tab": { "https://n.test/": "f72180f51ef8", "HTTP://N.TEST/": "4ca6f831dc8a", "about:blank": "434b3bda941f", "ABOUT:BLANK": "5d5727e7c0e1" },
-  "navigate safari": { "https://n.test/": "c1b816dde80d", "HTTP://N.TEST/": "ec4d9f8b6a80", "about:blank": "e7dbcbb6fe31", "ABOUT:BLANK": "4f8f400011d2" },
-  "navigate raise:true": { "https://n.test/": "2a9ee17595bf", "HTTP://N.TEST/": "b74edd37fe19", "about:blank": "983ee1a0490a", "ABOUT:BLANK": "4becdbb07c79" },
+  "navigate safari": { "https://n.test/": "6560667c3c98", "HTTP://N.TEST/": "6cbc69b72435", "about:blank": "feb480f7f3cc", "ABOUT:BLANK": "0afa9e7f5461" },
+  "navigate raise:true": { "https://n.test/": "d98ccce11e87", "HTTP://N.TEST/": "ea58d27e419a", "about:blank": "4cc30578d12a", "ABOUT:BLANK": "c76d86c8c4e5" },
 }).flatMap(([c, o]) => Object.entries(o).map(([u, h]) => [`${c}|${u}`, h])));
 
 // The same calls with a file: url before the policy existed. navigate from a
@@ -80,10 +80,10 @@ const FILE_BEFORE = {
   "new_tab chrome": ["d7f298402483", "91a414df1711"],
   "new_tab arc": ["03b859562784", "38820901fa67"],
   "new_tab safari": ["3e8b546c42dd", "588b3fef6d00"],
-  "navigate chrome front tab": ["6ce8cc6d4bf9", "78da7bf4989d"],
+  "navigate chrome front tab": ["b097b76b04b6", "32002bab1052"],
   "navigate chrome background tab": ["fa381ae0b04e", "20ac90683ce5"],
-  "navigate safari": ["d905d0c75e09", "7abd1cab6ead"],
-  "navigate raise:true": ["026cce28283a", "4eb783779335"],
+  "navigate safari": ["32f5fc58fc63", "070d89d84f8e"],
+  "navigate raise:true": ["4b97862bd417", "1b4d0892b1df"],
 };
 
 const ACCEPTED = ["https://n.test/", "HTTP://N.TEST/", "about:blank", "ABOUT:BLANK", " https://n.test/ "];
@@ -150,7 +150,7 @@ test("navigate to a file: url from a window behind another app still needs raise
   const { seen, hash } = await observe("chromeAway", "navigate", { url: "file:///tmp/p.html" });
   assert.match(seen.text, /^error: tab_not_visible: .*raise:true/);
   assert.equal(seen.counts["tab.url="], undefined);
-  assert.equal(hash, "dbdec3284445", JSON.stringify(seen));
+  assert.equal(hash, "37bb8b0d4b45", JSON.stringify(seen));
 });
 
 test("the runtime refuses a raw call with a url it must not load, before any Apple Event", () => {
