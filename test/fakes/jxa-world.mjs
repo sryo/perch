@@ -470,13 +470,17 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   function axAttr(el, name) {
     if (el.role === "AXApplication") {
       if (name !== "AXWindows") return undefined;
+      // state.minimized: [{pid, wid, x, y, w, h, title}], windows with no on-screen CG entry that
+      // Accessibility still lists, as AXMinimized, with their CGWindowID.
       return axList(cgEntries.filter((c) => c.pid === el.pid && c.ax).map((c) => ({ role: "AXWindow", subrole: "AXStandardWindow", c }))
+        .concat((state.minimized || []).filter((m) => m.pid === el.pid && !state.axRedacted).map((m) => ({ role: "AXWindow", subrole: "AXStandardWindow", c: { ax: { web: [] }, axWid: m.wid, axTitle: m.title, x: m.x, y: m.y, w: m.w, h: m.h, minimized: true } })))
         .concat(state.dialogs.filter((d) => d.pid === el.pid).map((d) => ({ role: "AXWindow", subrole: "AXUnknown", d }))));
     }
     const box = el.role === "AXWindow" ? (el.c && (el.c.axFrame || el.c)) || (el.d && !el.inner ? dialogFrame(el.d) : null) : el.box;
     if (name === "AXRole") return el.role;
     if (name === "AXSubrole") return el.subrole;
     if (name === "AXTitle") return el.c ? el.c.axTitle : el.title;
+    if (name === "AXMinimized" && el.role === "AXWindow" && el.c) return !!el.c.minimized;
     if (name === "AXValue") return el.role === "AXTextField" ? el.d.value || "" : el.value;
     // A dialog `{pid, texts, buttons, field?}`, shaped as Chrome Canary showed it
     // live: a window (subrole AXUnknown) holding another, holding a group with
@@ -653,7 +657,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     NSRunningApplication: {
       runningApplicationsWithBundleIdentifier: (bundle) => {
         if (state.countFails) throw new Error("count read failed");
-        return { count: 1 + (state.twins || []).filter((x) => x.bundle === bundle).length };
+        const list = (state.pids || {})[bundle];
+        const n = 1 + (state.twins || []).filter((x) => x.bundle === bundle).length;
+        // state.pids[bundle]: the pids of that bundle's regular instances, for a read of their elements.
+        return { count: list ? list.length : n, objectAtIndex: (i) => ({ processIdentifier: list ? list[i] : 0, activationPolicy: 0, isHidden: !!(state.hidden || []).includes(list && list[i]) }) };
       },
       runningApplicationWithProcessIdentifier: (pid) => {
         const x = (state.twins || []).find((y) => y.pid === pid);
@@ -808,6 +815,37 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         if (state.onPost) state.onPost(e);
         return 0;
       },
+      // SkyLight's window capture: a window's pixels even when CG can't draw it (minimized).
+      // Recorded in state.shots as {sky: wid, options}; state.skyShotEmpty: no image.
+      SLSMainConnectionID: () => 99,
+      SLSHWCaptureWindowList: (_cid, bytes, count, options) => {
+        const wid = Buffer.from(bytes).readUInt32LE(0);
+        const shot = { sky: wid, options, count, run: state.shots.length };
+        state.shots.push(shot);
+        // Only a window CG can't draw has pixels here; a window CG found empty is gone.
+        const c = (state.minimized || []).find((m) => m.wid === wid);
+        const s = state.shotScale ?? 2;
+        const img = c && !state.skyShotEmpty ? { w: (c.w ?? 800) * s, h: (c.h ?? 600) * s, shot } : null;
+        return { count: img ? 1 : 0, objectAtIndex: () => img };
+      },
+      // Spaces: state.spaces = {current: [ids], all: [ids], windows: {spaceId: [{wid, pid}]}}.
+      SLSCopyManagedDisplaySpaces: () => {
+        const sp = state.spaces || { current: [1], all: [1] };
+        return [{ "Current Space": { id64: sp.current[0] }, Spaces: sp.all.map((id64) => ({ id64 })) }];
+      },
+      SLSCopyWindowsWithOptionsAndTags: (_cid, _owner, spaces) => {
+        const sp = state.spaces || { windows: {} };
+        return [].concat(...spaces.map((id) => (sp.windows[id] || []).map((w) => w.wid)));
+      },
+      SLSWindowQueryWindows: (_cid, wids) => {
+        const sp = state.spaces || { windows: {} };
+        const all = [].concat(...Object.values(sp.windows));
+        return { rows: wids.map((id) => all.find((w) => w.wid === id)).filter(Boolean), at: -1 };
+      },
+      SLSWindowQueryResultCopyWindows: (q) => q,
+      SLSWindowIteratorAdvance: (it) => ++it.at < it.rows.length,
+      SLSWindowIteratorGetPID: (it) => it.rows[it.at].pid,
+      SLSWindowIteratorGetWindowID: (it) => it.rows[it.at].wid,
       GetProcessForPID: (pid, psn) => { psn.writeUInt32LE(pid, 4); return 0; },
       _SLPSGetFrontProcess: (psn) => { psn.writeUInt32LE(cgEntries[0]?.pid ?? 100, 4); return 0; },
       SLPSPostEventRecordTo: (psn, bytes) => {
@@ -1003,7 +1041,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
           return { length: bytes.length, base64EncodedStringWithOptions: () => ({ js: bytes.toString("base64") }) };
         },
       }) } },
-      CGWindowListCopyWindowInfo: () => {
+      CGWindowListCopyWindowInfo: (option) => {
         bump("CGWindowList");
         // state.onCgList(): a test's hook as the window list is read (time spent resolving).
         if (state.onCgList) state.onCgList();
@@ -1015,7 +1053,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
           }
           rows.push(e);
         }
-        return rows.map((e) => ({
+        // Option 0 lists every window, minimized ones too (state.minimized, as {pid, wid, x, y, w, h, title}).
+        const hidden = option === 0 ? (state.minimized || []).map((m) => ({ owner: m.owner ?? "Google Chrome Canary", pid: m.pid, wid: m.wid, name: m.title, x: m.x, y: m.y, w: m.w, h: m.h })) : [];
+        return rows.concat(hidden).map((e) => ({
           kCGWindowLayer: e.layer ?? 0,
           kCGWindowOwnerName: e.owner,
           kCGWindowOwnerPID: e.pid ?? 100,

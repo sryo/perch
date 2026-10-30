@@ -1005,10 +1005,104 @@ function jxaRuntime(BROWSERS, HANG) {
       throw new Error(notVisible("a background screenshot") + ", or pass raise:true");
     }
     const I = ids(t);
-    if (I.windowNumber == null) throw new Error(OFFSCREEN);
+    if (I.windowNumber == null && !a.clip && !a.noSky && minimizedWindow(t, I)) {
+      I.warning = "minimized window: the image is the last frame the window server holds for it, not a live render";
+    }
+    if (I.windowNumber == null) throw new Error(offscreenMsg(t, I));
     if (I.ambiguous) axNamed(t, I);
     return { t: t, I: I };
   }
+  // A minimized window has no on-screen CG entry, so no CGWindowID from procs().
+  // Accessibility still lists it (AXMinimized) with the id: the one minimized AX
+  // window framed like the target's, among those titled like it. The browser's pid
+  // is read from the running apps, as it has no on-screen window either. None or
+  // several, no Accessibility grant, or two instances: not found, I is untouched.
+  function minimizedWindow(t, I) {
+    try {
+      if (!I.geom) return false;
+      const pid = I.pid != null ? I.pid : regularPid(t.app);
+      if (pid == null) return false;
+      const wid = minimizedByAx(t, I, pid) || minimizedByCg(t, I, pid);
+      if (wid == null) return false;
+      I.pid = pid;
+      I.windowNumber = wid;
+      I.minimized = true;
+      return true;
+    } catch (e) { return false; }
+  }
+  const nearGeom = function (f, g) { return Math.abs(f.x - g.x) <= 4 && Math.abs(f.w - g.w) <= 4 && Math.abs(f.y - g.y) <= 120 && Math.abs(f.h - g.h) <= 120; };
+  // One of several look-alikes, by the tab's window title: AppleScript's name is
+  // the page title, Accessibility's and CG's may carry the app name after it.
+  function titled(t, list, title, orUntitled) {
+    const name = String(t.win.name() || "");
+    return list.filter(function (w) { const x = title(w); return x === name || x.indexOf(name + ": ") === 0 || (orUntitled && !x); });
+  }
+  function byWindowTitle(t, list, title) {
+    const hit = titled(t, list, title, false);
+    return hit.length === 1 ? hit[0] : null;
+  }
+  // The id Accessibility reports for the one minimized AX window framed like the
+  // target's. Null when Accessibility is off or redacted (a locked screen lists
+  // windows with no AXMinimized and no id), or the window can't be told apart.
+  function minimizedByAx(t, I, pid) {
+    ObjC.import("ApplicationServices");
+    if (!$.AXIsProcessTrusted()) return null;
+    const ax = axInit();
+    const near = ax.list(ax.attr($.AXUIElementCreateApplication(pid), "AXWindows")).filter(function (w) {
+      const f = ax.frame(w), m = ax.attr(w, "AXMinimized");
+      return !!f && m != null && ObjC.unwrap(m) === true && nearGeom(f, I.geom);
+    });
+    const hit = near.length > 1 ? byWindowTitle(t, near, function (w) { return ax.str(w, "AXTitle"); }) : near[0];
+    return hit ? ax.wid(hit) : null;
+  }
+  // The same through CG's all-windows list (about 50ms, so only after Accessibility
+  // found nothing): the pid's off-screen layer-0 windows framed like the target's.
+  // Needs the Screen Recording grant for titles when several look alike.
+  function minimizedByCg(t, I, pid) {
+    let list = [];
+    try { list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(0, 0))) || []; } catch (e) { return null; }
+    const near = list.filter(function (w) {
+      const b = w.kCGWindowBounds || {};
+      return w.kCGWindowOwnerPID === pid && w.kCGWindowLayer === 0 && !w.kCGWindowIsOnscreen && b.Width >= 100 && b.Height >= 100
+        && nearGeom({ x: b.X, y: b.Y, w: b.Width, h: b.Height }, I.geom);
+    });
+    // A titled row must carry the tab's title, even when it is the only one; the
+    // title is an Apple Event, read only when some row has one.
+    if (!near.length) return null;
+    const hit = near.some(function (w) { return w.kCGWindowName; }) ? titled(t, near, function (w) { return w.kCGWindowName || ""; }, true) : near;
+    return hit.length === 1 ? Number(hit[0].kCGWindowNumber) : null;
+  }
+  // The pid of the one regular instance of a browser, whether or not it has a
+  // window on screen; null for none, or two (a twin can't be told apart).
+  function regularPid(name) {
+    try {
+      appKit();
+      const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(BUNDLE[name]), n = Number(apps.count), pids = [];
+      for (let i = 0; i < n; i++) {
+        const a = apps.objectAtIndex(i);
+        if (Number(a.activationPolicy) === 0) pids.push(Number(a.processIdentifier));
+      }
+      return pids.length === 1 ? pids[0] : null;
+    } catch (e) { return null; }
+  }
+  // window_offscreen, with the cause when the window server knows it: the app is
+  // hidden, or the pid has a window on a Space that isn't showing. Read only on
+  // this error path, from SkyLight's Space and window queries.
+  function offscreenMsg(t, I) {
+    try {
+      const pid = I && I.pid != null ? I.pid : regularPid(t.app);
+      if (pid == null) return OFFSCREEN;
+      appKit();
+      const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(BUNDLE[t.app]);
+      for (let i = 0; i < Number(apps.count); i++) {
+        const a = apps.objectAtIndex(i);
+        if (Number(a.processIdentifier) === pid && a.isHidden) return "window_offscreen: the browser is hidden (Cmd-H); unhide it";
+      }
+      if (onOtherSpace(pid)) return "window_offscreen: the browser window is on another Space (or a full-screen one); switch to it";
+    } catch (e) {}
+    return OFFSCREEN;
+  }
+
   // Tied CG entries (identical frames, say) leave the frame no use, so the
   // window is the one AX window titled like the target's whose CGWindowID is
   // among the tied ones. None, several, or no Accessibility: refused.
@@ -1194,7 +1288,7 @@ function jxaRuntime(BROWSERS, HANG) {
         if (!shotGranted()) return NO_GRANT;
         granted = true;
         const until = Date.now() + SHOT_CAPTURE_SECS * 1000;
-        const fast = helperShot({ wid: wid, format: format, maxWidth: maxWidth, map: map }, until);
+        const fast = helperShot({ wid: wid, format: format, maxWidth: maxWidth, map: map, noSky: skyOffCall }, until);
         if (fast) return fast;
         run = launchShot({ wid: wid, type: !map && format !== "jpeg" && fitsAsIs(points, maxWidth) ? "png" : "tiff", until: until });
       }
@@ -1284,8 +1378,9 @@ function jxaRuntime(BROWSERS, HANG) {
   const HELPER_POLL_SECS = 0.01;
   // helper: where shots go, this runtime's own ({task, prefix}) or another
   // server's ({pid, prefix}). helperOffCall: this call's noHelper
-  // (PERCH_CAPTURE_HELPER=0 in Node).
-  let helper = null, helperOff = 0, helperGen = 0, helperSeq = 0, helperOffCall = false, killBound = false;
+  // (PERCH_CAPTURE_HELPER=0 in Node). skyOffCall: this call's noSky
+  // (PERCH_CAPTURE_SKYLIGHT=0), which keeps a minimized window from being captured.
+  let helper = null, helperOff = 0, helperGen = 0, helperSeq = 0, helperOffCall = false, skyOffCall = false, killBound = false;
   const tmpPath = (name) => $.NSTemporaryDirectory().js + name;
   function shotLock() {
     const fm = $.NSFileManager.defaultManager, path = tmpPath("perch-capture.lock");
@@ -1413,7 +1508,10 @@ function jxaRuntime(BROWSERS, HANG) {
     let r = NO_IMAGE;
     try {
       // kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming (no shadow, as screencapture -o).
-      r = encodeShot($.CGWindowListCreateImage($.CGRectNull, 8, q.wid, 1), q.format, q.maxWidth, q.map);
+      let img = $.CGWindowListCreateImage($.CGRectNull, 8, q.wid, 1);
+      // CG answers a window it can't draw (minimized) with an image 0 pixels wide.
+      if (!q.noSky && !Number($.CGImageGetWidth(img))) img = skyShot(q.wid) || img;
+      r = encodeShot(img, q.format, q.maxWidth, q.map);
     } catch (e) {}
     const w = q.out + ".w";
     if ($(JSON.stringify(r)).writeToFileAtomicallyEncodingError(w, false, 4, $()) && Date.now() < q.until) $.NSFileManager.defaultManager.moveItemAtPathToPathError(w, q.out, $());
@@ -1589,11 +1687,76 @@ function jxaRuntime(BROWSERS, HANG) {
     mouse(I, pt, 2, 1, 0.0); // kCGEventLeftMouseUp
   }
 
+  // The window server's own queries and window capture, bound apart from the
+  // event posting below so a missing symbol costs only the feature that needs it.
+  // Private SPI: every caller treats a throw or an empty answer as "unknown".
+  const SKYLIGHT = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight";
+  let skyLoaded = false, skyConn = 0;
+  function skyLoad() {
+    if (skyLoaded) return true;
+    ObjC.bindFunction("dlopen", ["void *", ["char *", "int"]]);
+    if (!$.dlopen(SKYLIGHT, 2)) return false;
+    ObjC.bindFunction("SLSMainConnectionID", ["int", []]);
+    skyConn = Number($.SLSMainConnectionID());
+    skyLoaded = true;
+    return true;
+  }
+  // A uint32 behind a pointer, built with no pointer arithmetic: one byte at a
+  // time into NSMutableData at the byte offset the NSRange carries.
+  function u32Bytes(n) {
+    const data = $.NSMutableData.dataWithLength(4);
+    for (let i = 0; i < 4; i++) {
+      const one = $.NSMutableData.dataWithLength(1);
+      $.memset(one.mutableBytes, Math.floor(n / Math.pow(256, i)) % 256, 1);
+      data.replaceBytesInRangeWithBytesLength($.NSMakeRange(i, 1), one.mutableBytes, 1);
+    }
+    return data;
+  }
+  // The pixels of a window CGWindowListCreateImage can't draw (a minimized one):
+  // the window server's own capture, as yabai and AltTab take it. Options are
+  // kCGSWindowCaptureNominalResolution-free: ignore the global clip shape (1<<11,
+  // no shadow) and best resolution (1<<8). A CGImage, or null.
+  function skyShot(wid) {
+    try {
+      if (!skyLoad()) return null;
+      ObjC.bindFunction("memset", ["void *", ["void *", "int", "unsigned long"]]);
+      ObjC.bindFunction("SLSHWCaptureWindowList", ["id", ["int", "void *", "int", "unsigned int"]]);
+      const list = $.SLSHWCaptureWindowList(skyConn, u32Bytes(wid).mutableBytes, 1, (1 << 11) | (1 << 8));
+      return list && Number(list.count) > 0 ? list.objectAtIndex(0) : null;
+    } catch (e) { return null; }
+  }
+  // Whether the pid owns a window on a Space no display is showing (another
+  // desktop, or a full-screen window's own Space).
+  function onOtherSpace(pid) {
+    try {
+      if (!skyLoad()) return false;
+      ObjC.bindFunction("SLSCopyManagedDisplaySpaces", ["id", ["int"]]);
+      ObjC.bindFunction("SLSCopyWindowsWithOptionsAndTags", ["id", ["int", "int", "id", "int", "void *", "void *"]]);
+      ObjC.bindFunction("SLSWindowQueryWindows", ["id", ["int", "id", "int"]]);
+      ObjC.bindFunction("SLSWindowQueryResultCopyWindows", ["id", ["id"]]);
+      ObjC.bindFunction("SLSWindowIteratorAdvance", ["bool", ["id"]]);
+      ObjC.bindFunction("SLSWindowIteratorGetPID", ["int", ["id"]]);
+      const shown = {}, hidden = [];
+      ObjC.deepUnwrap($.SLSCopyManagedDisplaySpaces(skyConn)).forEach(function (d) {
+        shown[d["Current Space"].id64] = true;
+        d.Spaces.forEach(function (sp) { if (!shown[sp.id64] && hidden.indexOf(sp.id64) < 0) hidden.push(sp.id64); });
+      });
+      const away = hidden.filter(function (id) { return !shown[id]; });
+      if (!away.length) return false;
+      // Both tag sets are empty; options 2 includes windows of apps on all Spaces.
+      const zero = $.NSMutableData.dataWithLength(8);
+      const wids = ObjC.deepUnwrap($.SLSCopyWindowsWithOptionsAndTags(skyConn, 0, $(away), 2, zero.mutableBytes, zero.mutableBytes));
+      if (!wids || !wids.length) return false;
+      const rows = $.SLSWindowQueryResultCopyWindows($.SLSWindowQueryWindows(skyConn, $(wids), 0));
+      while ($.SLSWindowIteratorAdvance(rows)) if (Number($.SLSWindowIteratorGetPID(rows)) === pid) return true;
+      return false;
+    } catch (e) { return false; }
+  }
+
   let skyReady = false;
   function skyInit() {
     if (skyReady) return;
-    ObjC.bindFunction("dlopen", ["void *", ["char *", "int"]]);
-    if (!$.dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", 2)) {
+    if (!skyLoad()) {
       throw new Error("SkyLight framework unavailable; use raise:true for foreground trusted input");
     }
     ObjC.bindFunction("SLEventPostToPid", ["void", ["int", "void *"]]);
@@ -3445,6 +3608,7 @@ function jxaRuntime(BROWSERS, HANG) {
     // `image` {w,h}; without them the caller runs screencapture.
     shot(a) {
       helperOffCall = a.noHelper === true;
+      skyOffCall = a.noSky === true;
       if (a.clip) return shotClip(a);
       const I = shotGeom(a), c = capture(I.windowNumber, a.format, a.maxWidth, null, null, I.cgBounds || I.geom);
       if (c.noGrant) return { ok: false, error: SHOT_NO_GRANT };
@@ -4544,7 +4708,10 @@ async function screenshot(args = {}) {
   const { raise = false, target, format = "png", maxWidth = 1568, ref, selector } = args;
   const aimed = (ref != null && ref !== "") || (selector != null && selector !== "");
   // PERCH_CAPTURE_HELPER=0: every capture goes to screencapture (see the runtime's helperUp).
-  const noHelper = process.env.PERCH_CAPTURE_HELPER === "0" ? { noHelper: true } : {};
+  const noHelper = {
+    ...(process.env.PERCH_CAPTURE_HELPER === "0" && { noHelper: true }),
+    ...(process.env.PERCH_CAPTURE_SKYLIGHT === "0" && { noSky: true }),
+  };
   const g = await rt("shot", aimed
     ? { target, raise, format, maxWidth, ...noHelper, clip: pageFn("shot_clip", { ref, selector }), painted: pageFn("shot_painted", {}), restore: pageFn("shot_restore", {}) }
     : { target, raise, format, maxWidth, ...noHelper });
