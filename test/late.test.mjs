@@ -357,6 +357,37 @@ test("fill {fields}: a radio whose click renders a microtask later is checked, n
   assert.equal(one.o.ok, true, JSON.stringify(one.o));
 });
 
+// A Vue-style radio (a div role=radio with aria-checked, its native input
+// inside) and a Google-Forms-style one (a div role=radio in a radiogroup): the
+// click reaches the handler at once, but aria-checked moves only `ms` of page
+// time later, after the batch's first re-read. That re-read waits a little
+// more for it rather than answering a miss.
+const LAG_RADIO = `<form><div role=radiogroup aria-label=Shift>
+  <div role=radio id=a aria-checked=false tabindex=0 aria-label=Morning><input type=radio name=s value=m tabindex=-1 style="opacity:0"></div>
+  <div role=radio id=b aria-checked=false tabindex=0 aria-label=Evening></div></div><label>Name <input id=name name=name></label></form>`;
+const LAG_RADIO_JS = (ms) => `for (const r of document.querySelectorAll('[role=radio]')) r.addEventListener('click', () => {
+  setTimeout(() => { for (const x of document.querySelectorAll('[role=radio]')) x.setAttribute('aria-checked', String(x === r)); }, ${ms});
+});`;
+
+test("fill: a radio whose aria-checked moves a frame or a timer later is checked, alone and in fields", async () => {
+  for (const ms of [16, 60]) {
+    for (const [what, args] of [
+      ["single", { selector: "#a", checked: true }],
+      ["fields", { fields: [{ selector: "#b", checked: true }, { label_pattern: "^name", text: "Ada" }] }],
+      ["by option", { fields: [{ label_pattern: "shift", option: "Evening" }] }],
+    ]) {
+      const { world } = onPage(LAG_RADIO, LAG_RADIO_JS(ms));
+      const f = await call("fill", args);
+      assert.equal(f.o.ok, true, `${what} ${ms}ms ` + JSON.stringify(f.o));
+      assert.equal(execs(world), 3, "the pass, its re-read, and one read after the wait");
+    }
+  }
+  // A radio that answers within the re-read takes no wait.
+  const { world } = onPage(WK_RADIO, WK_RADIO_JS());
+  assert.equal((await call("fill", { selector: "#yd", checked: true })).o.ok, true);
+  assert.equal(execs(world), 2);
+});
+
 test("fill {fields}: a radio that never takes the click stays refused", async () => {
   for (const browser of ["chrome", "arc", "safari"]) {
     const { dom } = onPage(WK_RADIO, WK_RADIO_JS(0), browser);

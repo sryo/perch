@@ -4486,7 +4486,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 30298
+   "pageBytes": 30621
   },
   {
    "call": [
@@ -4513,7 +4513,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 30299
+   "pageBytes": 30622
   }
  ],
  "click: trusted raised": [
@@ -4557,7 +4557,7 @@
     ]
    },
    "pageScripts": 13,
-   "pageBytes": 147933
+   "pageBytes": 148256
   }
  ],
  "click: trusted needs the shown tab": [
@@ -5797,7 +5797,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 32672
+   "pageBytes": 32863
   },
   {
    "call": [
@@ -5840,7 +5840,7 @@
     ]
    },
    "pageScripts": 13,
-   "pageBytes": 151677
+   "pageBytes": 152000
   },
   {
    "call": [
@@ -5870,7 +5870,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 76362
+   "pageBytes": 76323
   }
  ],
  "fill: arc": [
@@ -6524,7 +6524,7 @@
     ]
    },
    "pageScripts": 13,
-   "pageBytes": 147668
+   "pageBytes": 147796
   }
  ],
  "console_capture: start, read, stop, network": [

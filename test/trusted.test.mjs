@@ -90,6 +90,27 @@ test("trusted_check reports whether the mousedown hit the element, then disarms"
   assert.equal(run(w, "trusted_cal", {}), null, "listeners removed after check");
 });
 
+// A mousedown on the element's label, or on a label wrapping it (a div
+// role=radio inside one, as in a Google-Forms-style option), activates it, so
+// it is a hit; a mousedown inside an open shadow tree under it is one too. A
+// label that names another control, or a mere ancestor, is not.
+test("trusted_check counts a mousedown on the element's label, a wrapping label, or inside its shadow tree", () => {
+  const w = page(`<label id=wrap><div id=r role=radio aria-checked=false aria-label=Yes><span id=dot></span></div><span id=t>Yes</span></label>
+    <label for=c id=lc>Agree</label><input type=checkbox id=c>
+    <label id=lo>Other <input id=o></label><div id=host></div><div id=box><button id=bb>Go</button></div>`);
+  const host = w.document.getElementById("host"), inner = host.attachShadow({ mode: "open" });
+  inner.innerHTML = `<span id=deep>x</span>`;
+  const press = (el) => el.dispatchEvent(new w.MouseEvent("mousedown", { bubbles: true, composed: true }));
+  const hit = (sel, target) => { run(w, "trusted_probe", { selector: sel }); press(target); return run(w, "trusted_check", {}).hit; };
+  const $ = (id) => w.document.getElementById(id);
+  assert.equal(hit("#r", $("t")), true, "the wrapping label's text");
+  assert.equal(hit("#r", $("dot")), true, "a descendant");
+  assert.equal(hit("#c", $("lc")), true, "a label for it");
+  assert.equal(hit("#host", inner.getElementById("deep")), true, "inside its shadow tree");
+  assert.equal(hit("#c", $("lo")), false, "another control's label");
+  assert.equal(hit("#bb", $("box")), false, "an ancestor that is no label");
+});
+
 test("background trusted fill rejects a value change without a trusted input event", () => {
   const w = page(`<input id=i value=old>`);
   w.document.execCommand = (_command, _ui, text) => {

@@ -5387,8 +5387,7 @@ function labelSeen(l) {
   return true;
 }
 function labelShown(el) {
-  if (el.tagName !== "INPUT" || !/^(checkbox|radio)$/i.test(el.type || "")) return false;
-  if (untabbable(el) || el.closest("[aria-hidden=true]")) return false;
+  if (el.tagName !== "INPUT" || !/^(checkbox|radio)$/i.test(el.type || "") || untabbable(el) || el.closest("[aria-hidden=true]")) return false;
   return Array.from(el.labels || []).some(labelSeen);
 }
 // Best-named boxes for a.label_pattern: nameTier over accName, then over the
@@ -5415,13 +5414,9 @@ function checkByLabel(a, only) {
     const candidates = shown.slice(0, 8).map(ident);
     return { out: only ? { ok: true, skipped: "ambiguous", candidates: candidates } : { ok: false, ambiguous: true, error: "several checkboxes/radios matched " + pat + " equally; narrow it, or use a selector or ref", candidates: candidates } };
   }
-  if (only) {
-    const trap = rank(all.filter(checkTrap))[0];
-    return { out: !rank(real).length && trap ? { ok: true, skipped: "trap", el: ident(trap) } : { ok: true, skipped: "absent" } };
-  }
-  const hidden = rank(real)[0];
+  const hidden = rank(real)[0], trap = rank(all.filter(checkTrap))[0];
+  if (only) return { out: !hidden && trap ? { ok: true, skipped: "trap", el: ident(trap) } : { ok: true, skipped: "absent" } };
   if (hidden) { const id = ident(hidden); return { out: { ok: false, el: id, error: id + " matched " + pat + " but is hidden; use ref or selector if it is the one" } }; }
-  const trap = rank(all.filter(checkTrap))[0];
   if (trap) { const id = ident(trap); return { out: { ok: false, el: id, error: id + " matched " + pat + " but it looks like a bot trap; leave it unchecked" } }; }
   return { out: { ok: false, error: "no checkbox/radio matched " + pat } };
 }
@@ -6032,20 +6027,19 @@ function frJudge(items) {
 `;
 
 const FILL_LIB = TOK_LIB + TYPEAHEAD_LIB + EMBED_LIB + HOLDS_LIB + FR_LIB + String.raw`
+// fill's note on text it put in a field that looks like a bot trap, "" for none:
 // trapLike, except that untabbable with autofill off as the only sign is no trap
-// on a required field: date pickers and masks look like that.
-function trapShaped(el) {
-  if (!trapLike(el, wanted(el))) return false;
-  if (!el.required && attr(el, "aria-required") !== "true") return true;
-  return honeypot(el, wanted(el)) || leaveBlank(el);
-}
-// fill's note on text it put in a field that looks like a bot trap.
+// on a required field (date pickers and masks look like that). A spinbutton in
+// a shown group or fieldset with a name is one part of a compound field (a
+// date's month or year): a pixel or clip on it is styling too.
 function trapWarning(el) {
+  const g = attr(el, "role") === "spinbutton" && el.closest("[role=group], fieldset"), w = wanted(el) || vis(g) && (labelText(g) || g.querySelector("legend"));
+  if (!trapLike(el, w)) return "";
   const why = leaveBlank(el) ? "its label or name says to leave it blank"
-    : honeypot(el, wanted(el)) ? "it sits where no one can see it" : "";
+    : honeypot(el, w) ? "it sits where no one can see it" : "";
   // Date pickers and masks are out of the tab order with autofill off too, so
   // that alone never advises clearing what may be a right date.
-  if (!why) return ident(el) + " is untabbable, autofill off: bot trap or date picker?";
+  if (!why) return el.required || attr(el, "aria-required") === "true" ? "" : ident(el) + " is untabbable, autofill off: bot trap or date picker?";
   return ident(el) + " looks like a bot trap (" + why + ") and was filled anyway; clear it with text \"\" if the form should leave it empty";
 }
 // Up to 2 visible, enabled buttons that may reveal a field fill found no match
@@ -6144,7 +6138,8 @@ function fillOne(a, only, onLand) {
   function setPlain(el) {
     prior = el.value;
     setNativeValue(el, text);
-    fire(el, ["input", "change", "blur"]);
+    // focusout too: React's onBlur and widgets that commit on it listen there.
+    fire(el, ["input", "change", "blur", "focusout"]);
     const t = el.tagName === "INPUT" ? (el.type || "text").toLowerCase() : "";
     if (!Object.prototype.hasOwnProperty.call(FORMATS, t)) {
       const v = el.value;
@@ -6228,7 +6223,7 @@ function fillOne(a, only, onLand) {
     if (!out) return { ok: false, error: ident(r.el) + " is not fillable or rejected the text" };
     if (!fieldVis(r.el)) out.hidden = true;
     if (out.ok === false) return out;
-    if (text !== "" && trapShaped(r.el)) out.warning = trapWarning(r.el);
+    if (text !== "") out.warning = trapWarning(r.el) || undefined;
     if (a.selector) {
       const hits = Array.from(document.querySelectorAll(a.selector)).filter(fieldVis);
       if (hits.length > 1) out.ambiguous = hits.slice(0, 3).map(ident);
@@ -6301,9 +6296,10 @@ function fillOne(a, only, onLand) {
   let shown = scored.filter(function (c) { return fieldVis(c.el); });
   // With nothing shown to fill: buttons that may show the field, or the frame it may sit in.
   const reveal = shown.length ? [] : revealers(re, nearHit), framed = !shown.length && !reveal.length && frameHint(inFrame);
+  const how = reveal.length ? REVEAL_HOW : "only after clicking a button";
   if (!scored.length) {
     const none = "no fillable field matched /" + a.label_pattern + "/i";
-    const out = { ok: false, error: framed ? none + framed : none + "; it may appear " + (reveal.length ? REVEAL_HOW : "only after clicking a button") };
+    const out = { ok: false, error: framed ? none + framed : none + "; it may appear " + how };
     if (reveal.length) out.reveal = reveal;
     if (passed.length) {
       out.error += "; candidates sit near matching text but carry other labels";
@@ -6317,7 +6313,7 @@ function fillOne(a, only, onLand) {
   if (!shown.length) {
     const el = ident(scored[0].el), hit = el + " matched /" + a.label_pattern + "/i but ";
     if (scored.every(function (c) { return trapLike(c.el); })) return only ? { ok: true, skipped: "trap", el: el } : { ok: false, el: el, error: hit + "it looks like a bot trap; leave it empty" };
-    const out = { ok: false, el: el, error: hit + "the field is hidden; " + (framed ? framed.slice(2) : "it may show " + (reveal.length ? REVEAL_HOW : "only after clicking a button")) + (reveal.length ? "" : ", or pass its ref or selector to fill it anyway") };
+    const out = { ok: false, el: el, error: hit + "the field is hidden; " + (framed ? framed.slice(2) : "it may show " + how) + (reveal.length ? "" : ", or pass its ref or selector to fill it anyway") };
     if (reveal.length) out.reveal = reveal;
     return out;
   }
@@ -6357,7 +6353,7 @@ function fillOne(a, only, onLand) {
   if (out.ok === false) return out;
   const rivals = shown.filter(function (c) { return best.s - c.s <= 10 && c.s >= 50; });
   if (rivals.length > 1) out.ambiguous = rivals.slice(0, 3).map(cid);
-  if (flagged.indexOf(best) >= 0 && trapShaped(best.el)) out.warning = trapWarning(best.el);
+  if (flagged.indexOf(best) >= 0) out.warning = trapWarning(best.el) || undefined;
   return out;
 }
 `;
@@ -6886,7 +6882,13 @@ if (prev && prev.off) prev.off();
 const st = window.__perch_trusted = { el: el, down: null, moves: [] };
 const href = !A.forFill && !A.select ? blankHref(el) : null;
 const onMove = function (e) { if (st.moves.length < 20) st.moves.push([e.clientX, e.clientY, e.screenX, e.screenY]); };
-const onDown = function (e) { st.down = el === e.target || el.contains(e.target); window.removeEventListener("mousedown", onDown, true); };
+// A mousedown on el, inside it (shadow trees too), or on a label of el's or one
+// wrapping it lands on el: a click there activates it.
+const onDown = function (e) {
+  const p = e.composedPath(), lab = p[0].closest && p[0].closest("label");
+  st.down = p.indexOf(el) >= 0 || !!lab && (lab.contains(el) || [].indexOf.call(el.labels || [], lab) >= 0);
+  window.removeEventListener("mousedown", onDown, true);
+};
 const onClick = function (e) { st.cancelled = e.defaultPrevented; };
 window.addEventListener("mousemove", onMove, true);
 window.addEventListener("mousedown", onDown, true);
@@ -6959,6 +6961,11 @@ if (e.ok && ta) {
   el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: A.text.slice(-1) }));
   return { pending: true, trusted: true, tok: tok };
 }
+// A number or spinbutton holding the same number landed (06 the widget shows
+// as 6). A widget that commits on focusout (a date part) takes the value only
+// once focus leaves it.
+if (e.trusted && (el.type === "number" || attr(el, "role") === "spinbutton") && /\d/.test(e.value) && +e.value === +A.text) e.ok = true;
+if (e.ok) { el.blur(); e.value = String(el.value || ""); }
 const ff = A.held && e.ok && window.__perch_ff;
 if (ff) {
   for (const k in ff.items) if (ff.items[k].el === el) delete ff.items[k];
@@ -7234,7 +7241,13 @@ return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "
   fill_reread: FR_JUDGE_LIB + String.raw`
 const m = window.__perch_fr, items = m && m[A.tok];
 if (!items) return { lost: true };
-const j = frJudge(items), left = items.until ? Math.ceil(items.until - performance.now()) : 0;
+const j = frJudge(items), now = performance.now();
+let left = items.until ? Math.ceil(items.until - now) : 0;
+// A click still not showing here, a frame after the pass that made it (a widget
+// that renders a frame or a timer later), is read once more 100ms of page time on.
+items.forEach(function (it) {
+  if (it.pend && !(j.settled && it.i in j.settled)) left = Math.max(left, Math.ceil((it.to = it.to || now + 100) - now));
+});
 if (left > 0 && !A.last) { j.wait = left; return j; }
 delete m[A.tok];
 return j;
@@ -7583,7 +7596,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
   if (!o.kind) o.kind = kind;
   if (ff && got && got.el && o.ok === true && !o.skipped) {
     const same = function (x) { return x.el === got.el || (!!x.group && !!got.group && x.group.opts[0] === got.group.opts[0]); };
-    Object.keys(ff.items).forEach(function (k) { if (same(ff.items[k])) delete ff.items[k]; });
+    for (const k in ff.items) if (same(ff.items[k])) delete ff.items[k];
     got.id = o.el;
     got.kind = o.kind;
     got.f = f;
@@ -7603,7 +7616,7 @@ for (let i = A.from || 0; i < A.fields.length; i++) {
   results.push(o);
 }
 const recheck = {};
-if (ff) Object.keys(ff.items).forEach(function (k) { const d = drift(ff.items[k]); if (d) recheck[k] = d; });
+if (ff) for (const k in ff.items) { const d = drift(ff.items[k]); if (d) recheck[k] = d; }
 const out = { results: results };
 if (Object.keys(recheck).length) out.recheck = recheck;
 // A click an earlier pass saw change nothing that has rendered since: ok now.
@@ -8543,7 +8556,8 @@ if (A.forFill && st.el) {
   const d = got.replace(/\D/g, ""), t = text.replace(/\D/g, "");
   const masked = d.length >= 7 && t.length >= 7 && (t.slice(-d.length) === d || d.slice(-t.length) === t);
   out.len = got.length;
-  out.ok = got === text || norm(got) === norm(text) || masked;
+  const num = (st.el.type === "number" || attr(st.el, "role") === "spinbutton") && /\d/.test(got) && +got === +text;
+  out.ok = got === text || norm(got) === norm(text) || masked || num;
   if (!out.ok) out.error = "trusted typing left a different value (" + got.length + " chars: " + JSON.stringify(clip(got, 40)) + ")";
   // A typeahead keeps only a picked suggestion: Node picks next.
   // Another call's typeahead state is left alone; the runtime compares tokens.
@@ -8552,6 +8566,7 @@ if (A.forFill && st.el) {
     if (out.hit !== true) { out.ok = false; out.error = "the click did not reach " + ident(st.el) + ", so no suggestion can be picked"; }
     else { ta.text = text; return { hit: true, pending: true, trusted: true, tok: ta.tok }; }
   }
+  if (out.ok && st.el === st.el.ownerDocument.activeElement) st.el.blur();
 }
 return out;
 `,
