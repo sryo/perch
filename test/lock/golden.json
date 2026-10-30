@@ -1,0 +1,7731 @@
+{
+ "list_tabs: all browsers": [
+  {
+   "call": [
+    "list_tabs",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c0\",\"url\":\"https://c0.test/\",\"title\":\"c0\"},{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c1\",\"url\":\"https://c1.test/\",\"title\":\"c1\",\"active\":true},{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c2\",\"url\":\"https://c2.test/\",\"title\":\"c2\"},{\"app\":\"Google Chrome\",\"tabId\":\"chrome:d0\",\"url\":\"https://d0.test/\",\"title\":\"d0\",\"active\":true},{\"app\":\"Arc\",\"tabId\":\"arc:a0\",\"url\":\"https://a0.test/\",\"title\":\"a0\",\"active\":true},{\"app\":\"Arc\",\"tabId\":\"arc:a1\",\"url\":\"https://a1.test/\",\"title\":\"a1\"},{\"app\":\"Safari\",\"tabId\":\"safari:5.0.1nidjgy\",\"url\":\"https://s0.test/\",\"title\":\"s0\",\"active\":true},{\"app\":\"Safari\",\"tabId\":\"safari:5.1.17riyr1\",\"url\":\"https://s1.test/\",\"title\":\"s1\"}],\"total\":8}"
+    }
+   ],
+   "isError": false,
+   "events": 14,
+   "ae": {
+    "Google Chrome": [
+     "tabs.url()",
+     "tabs.title()",
+     "tabs.id()",
+     "windows.activeTabIndex()(Google Chrome)"
+    ],
+    "Arc": [
+     "tabs.id()",
+     "tabs.url()",
+     "tabs.title()",
+     "tabs.location()",
+     "space.tabs.id()",
+     "windows.activeTab.id()(Arc)"
+    ],
+    "Safari": [
+     "tabs.url()",
+     "tabs.title()",
+     "windows.id()(Safari)",
+     "windows.currentTab.index()(Safari)"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "list_tabs: app filter": [
+  {
+   "call": [
+    "list_tabs",
+    {
+     "app": "arc"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[{\"app\":\"Arc\",\"tabId\":\"arc:a0\",\"url\":\"https://a0.test/\",\"title\":\"a0\",\"active\":true},{\"app\":\"Arc\",\"tabId\":\"arc:a1\",\"url\":\"https://a1.test/\",\"title\":\"a1\"}],\"total\":2}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Arc": [
+     "tabs.id()",
+     "tabs.url()",
+     "tabs.title()",
+     "tabs.location()",
+     "space.tabs.id()",
+     "windows.activeTab.id()(Arc)"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "list_tabs: urlContains, titleContains, limit": [
+  {
+   "call": [
+    "list_tabs",
+    {
+     "urlContains": "c1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c1\",\"url\":\"https://c1.test/\",\"title\":\"c1\",\"active\":true}],\"total\":1}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Google Chrome": [
+     "tabs.url()",
+     "tabs.title()",
+     "tabs.id()",
+     "windows.activeTabIndex()(Google Chrome)"
+    ],
+    "Arc": [
+     "tabs.url()"
+    ],
+    "Safari": [
+     "tabs.url()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "list_tabs",
+    {
+     "titleContains": "s"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[{\"app\":\"Safari\",\"tabId\":\"safari:5.0.1nidjgy\",\"url\":\"https://s0.test/\",\"title\":\"s0\",\"active\":true},{\"app\":\"Safari\",\"tabId\":\"safari:5.1.17riyr1\",\"url\":\"https://s1.test/\",\"title\":\"s1\"}],\"total\":2}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Google Chrome": [
+     "tabs.title()"
+    ],
+    "Arc": [
+     "tabs.title()"
+    ],
+    "Safari": [
+     "tabs.title()",
+     "tabs.url()",
+     "windows.id()(Safari)",
+     "windows.currentTab.index()(Safari)"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "list_tabs",
+    {
+     "limit": 2
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c0\",\"url\":\"https://c0.test/\",\"title\":\"c0\"},{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c1\",\"url\":\"https://c1.test/\",\"title\":\"c1\",\"active\":true}],\"total\":8}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Google Chrome": [
+     "tabs.url()",
+     "tabs.title()",
+     "tabs.id()",
+     "windows.activeTabIndex()(Google Chrome)"
+    ],
+    "Arc": [
+     "tabs.id()"
+    ],
+    "Safari": [
+     "tabs.url()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "list_tabs: no browser": [
+  {
+   "call": [
+    "list_tabs",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[],\"total\":0}"
+    }
+   ],
+   "isError": false,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "list_tabs: one browser unreadable warns beside the others": [
+  {
+   "call": [
+    "list_tabs",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c0\",\"url\":\"https://c0.test/\",\"title\":\"c0\"},{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c1\",\"url\":\"https://c1.test/\",\"title\":\"c1\",\"active\":true},{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c2\",\"url\":\"https://c2.test/\",\"title\":\"c2\"},{\"app\":\"Google Chrome\",\"tabId\":\"chrome:d0\",\"url\":\"https://d0.test/\",\"title\":\"d0\",\"active\":true},{\"app\":\"Arc\",\"tabId\":\"arc:a0\",\"url\":\"https://a0.test/\",\"title\":\"a0\",\"active\":true},{\"app\":\"Arc\",\"tabId\":\"arc:a1\",\"url\":\"https://a1.test/\",\"title\":\"a1\"}],\"total\":6,\"warning\":\"Safari not listed: timeout: the browser didn't answer an Apple Event in time; the call may have run, so check the page before retrying (AppleScript -1712)\"}"
+    }
+   ],
+   "isError": false,
+   "events": 10,
+   "ae": {
+    "Google Chrome": [
+     "tabs.url()",
+     "tabs.title()",
+     "tabs.id()",
+     "windows.activeTabIndex()(Google Chrome)"
+    ],
+    "Arc": [
+     "tabs.id()",
+     "tabs.url()",
+     "tabs.title()",
+     "tabs.location()",
+     "space.tabs.id()",
+     "windows.activeTab.id()(Arc)"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "new_tab: chrome": [
+  {
+   "call": [
+    "new_tab",
+    {
+     "url": "https://n.test/"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"app\":\"Google Chrome\",\"tabId\":\"chrome:new1\"}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "win.activeTabIndex()",
+     "tabs.id()",
+     "win.activeTabIndex()",
+     "tabs.id()",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 40
+  }
+ ],
+ "new_tab: arc": [
+  {
+   "call": [
+    "new_tab",
+    {
+     "url": "https://n.test/"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"app\":\"Arc\",\"tabId\":\"arc:new1\"}"
+    }
+   ],
+   "isError": false,
+   "events": 5,
+   "ae": {
+    "Arc": [
+     "windows.length(Arc)",
+     "tab.id",
+     "tabs.id()",
+     "tabs.id()",
+     "tab.id"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "new_tab: safari": [
+  {
+   "call": [
+    "new_tab",
+    {
+     "url": "https://n.test/"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"app\":\"Safari\",\"tabId\":\"safari:1.1.1qwc3sf\"}"
+    }
+   ],
+   "isError": false,
+   "events": 5,
+   "ae": {
+    "Safari": [
+     "windows.length(Safari)",
+     "win.currentTab.index()",
+     "win.currentTab.index()",
+     "tabs.url()",
+     "win.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "new_tab: default url and app by name": [
+  {
+   "call": [
+    "new_tab",
+    {
+     "app": "safari"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"app\":\"Safari\",\"tabId\":\"safari:5.2.ztntfp\"}"
+    }
+   ],
+   "isError": false,
+   "events": 5,
+   "ae": {
+    "Safari": [
+     "windows.length(Safari)",
+     "win.currentTab.index()",
+     "win.currentTab.index()",
+     "tabs.url()",
+     "win.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "new_tab",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"app\":\"Google Chrome\",\"tabId\":\"chrome:new3\"}"
+    }
+   ],
+   "isError": false,
+   "events": 5,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "win.activeTabIndex()",
+     "tabs.id()",
+     "win.activeTabIndex()",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "new_tab: bad_url": [
+  {
+   "call": [
+    "new_tab",
+    {
+     "url": "javascript:alert(1)"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: bad_url: new_tab takes an absolute http(s) or file URL, or about:blank; got javascript"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "new_tab: browser raised warns": [
+  {
+   "call": [
+    "new_tab",
+    {
+     "url": "about:blank"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"app\":\"Google Chrome\",\"tabId\":\"chrome:new2\",\"warning\":\"creating the tab brought the browser to the front\"}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "win.activeTabIndex()",
+     "tabs.id()",
+     "win.activeTabIndex()",
+     "win.activeTabIndex=",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "new_tab: chrome puts back the shown tab": [
+  {
+   "call": [
+    "new_tab",
+    {
+     "url": "about:blank"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"app\":\"Google Chrome\",\"tabId\":\"chrome:new3\"}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "win.activeTabIndex()",
+     "tabs.id()",
+     "win.activeTabIndex()",
+     "win.activeTabIndex=",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "new_tab: arc puts back the shown tab": [
+  {
+   "call": [
+    "new_tab",
+    {
+     "url": "about:blank"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"app\":\"Arc\",\"tabId\":\"arc:new3\"}"
+    }
+   ],
+   "isError": false,
+   "events": 8,
+   "ae": {
+    "Arc": [
+     "windows.length(Arc)",
+     "tab.id",
+     "tabs.id()",
+     "tabs.id()",
+     "tab.url=",
+     "tab.url",
+     "tab.id",
+     "tab.select"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "new_tab: safari puts back the shown tab": [
+  {
+   "call": [
+    "new_tab",
+    {
+     "url": "about:blank"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"app\":\"Safari\",\"tabId\":\"safari:1.3.ztntfp\"}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Safari": [
+     "windows.length(Safari)",
+     "win.currentTab.index()",
+     "win.currentTab.index()",
+     "win.currentTab=",
+     "tabs.url()",
+     "win.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "activate_tab: chrome handle": [
+  {
+   "call": [
+    "activate_tab",
+    {
+     "target": {
+      "tabId": "chrome:c2"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 8,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "win.id()",
+     "win.index=",
+     "tab.id",
+     "tabs.id()",
+     "win.activeTabIndex=",
+     "activate(Google Chrome)"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "activate_tab: arc and safari handles": [
+  {
+   "call": [
+    "list_tabs",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c0\",\"url\":\"https://c0.test/\",\"title\":\"c0\"},{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c1\",\"url\":\"https://c1.test/\",\"title\":\"c1\",\"active\":true},{\"app\":\"Google Chrome\",\"tabId\":\"chrome:c2\",\"url\":\"https://c2.test/\",\"title\":\"c2\"},{\"app\":\"Google Chrome\",\"tabId\":\"chrome:d0\",\"url\":\"https://d0.test/\",\"title\":\"d0\",\"active\":true},{\"app\":\"Arc\",\"tabId\":\"arc:a0\",\"url\":\"https://a0.test/\",\"title\":\"a0\",\"active\":true},{\"app\":\"Arc\",\"tabId\":\"arc:a1\",\"url\":\"https://a1.test/\",\"title\":\"a1\"},{\"app\":\"Safari\",\"tabId\":\"safari:5.0.1nidjgy\",\"url\":\"https://s0.test/\",\"title\":\"s0\",\"active\":true},{\"app\":\"Safari\",\"tabId\":\"safari:5.1.17riyr1\",\"url\":\"https://s1.test/\",\"title\":\"s1\"}],\"total\":8}"
+    }
+   ],
+   "isError": false,
+   "events": 14,
+   "ae": {
+    "Google Chrome": [
+     "tabs.url()",
+     "tabs.title()",
+     "tabs.id()",
+     "windows.activeTabIndex()(Google Chrome)"
+    ],
+    "Arc": [
+     "tabs.id()",
+     "tabs.url()",
+     "tabs.title()",
+     "tabs.location()",
+     "space.tabs.id()",
+     "windows.activeTab.id()(Arc)"
+    ],
+    "Safari": [
+     "tabs.url()",
+     "tabs.title()",
+     "windows.id()(Safari)",
+     "windows.currentTab.index()(Safari)"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "activate_tab",
+    {
+     "target": {
+      "tabId": "arc:a1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 8,
+   "ae": {
+    "Arc": [
+     "windows.length(Arc)",
+     "tabs.id()",
+     "tab.id",
+     "win.id()",
+     "win.index=",
+     "tab.id",
+     "tab.select",
+     "activate(Arc)"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "activate_tab",
+    {
+     "target": {
+      "tabId": "safari:5.1.17riyr1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Safari": [
+     "tabs.url()",
+     "win.id()",
+     "win.index=",
+     "win.currentTab.index()",
+     "win.currentTab=",
+     "activate(Safari)"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "close_tab: closes, then stale": [
+  {
+   "call": [
+    "close_tab",
+    {
+     "tabId": "chrome:c2"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"closed\":\"chrome:c2\"}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tabs.length",
+     "tab.close"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "close_tab",
+    {
+     "tabId": "chrome:c2"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: stale_tab: tab chrome:c2 is gone; re-run list_tabs"
+    }
+   ],
+   "isError": true,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "close_tab: refuses a window's last tab": [
+  {
+   "call": [
+    "close_tab",
+    {
+     "tabId": "chrome:d0"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"last tab in its window; closing it would close the window\"}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tabs.id()",
+     "tabs.length"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "close_tab: safari handle": [
+  {
+   "call": [
+    "list_tabs",
+    {
+     "app": "safari"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[{\"app\":\"Safari\",\"tabId\":\"safari:5.0.1nidjgy\",\"url\":\"https://s0.test/\",\"title\":\"s0\",\"active\":true},{\"app\":\"Safari\",\"tabId\":\"safari:5.1.17riyr1\",\"url\":\"https://s1.test/\",\"title\":\"s1\"}],\"total\":2}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Safari": [
+     "tabs.url()",
+     "tabs.title()",
+     "windows.id()(Safari)",
+     "windows.currentTab.index()(Safari)"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "close_tab",
+    {
+     "tabId": "safari:5.1.17riyr1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"closed\":\"safari:5.1.17riyr1\"}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Safari": [
+     "tabs.url()",
+     "tabs.length",
+     "tab.close"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "safari: a tab found off its handle's index answers moved": [
+  {
+   "call": [
+    "list_tabs",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[{\"app\":\"Safari\",\"tabId\":\"safari:3.0.byxoys\",\"url\":\"https://o.test/\",\"title\":\"\",\"active\":true},{\"app\":\"Safari\",\"tabId\":\"safari:3.1.1puzom\",\"url\":\"https://u.test/\",\"title\":\"\"}],\"total\":2}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Safari": [
+     "tabs.url()",
+     "tabs.title()",
+     "windows.id()(Safari)",
+     "windows.currentTab.index()(Safari)"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "target": {
+      "tabId": "safari:3.1.1puzom"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "1"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Safari": [
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 851
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 2",
+     "target": {
+      "tabId": "safari:3.1.1puzom"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "2"
+    },
+    {
+     "type": "text",
+     "text": "{\"tabId\":\"safari:3.0.1puzom\",\"moved\":true,\"warning\":\"tab moved; tabId refreshed\"}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Safari": [
+     "doJavaScript",
+     "tabs.url()",
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 972
+  },
+  {
+   "call": [
+    "get_text",
+    {
+     "target": {
+      "tabId": "safari:3.1.1puzom"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "x"
+    },
+    {
+     "type": "text",
+     "text": "{\"tabId\":\"safari:3.0.1puzom\",\"moved\":true,\"warning\":\"tab moved; tabId refreshed\"}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Safari": [
+     "doJavaScript",
+     "tabs.url()",
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 11583
+  }
+ ],
+ "close_tab: bad_args without tabId": [
+  {
+   "call": [
+    "close_tab",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: close_tab requires `tabId`"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "navigate: chrome ok": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://b.test/next"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"url\":\"https://b.test/next\",\"waited\":true,\"tabId\":\"chrome:t0\"}"
+    }
+   ],
+   "isError": false,
+   "events": 7,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.loading",
+     "tab.url",
+     "win.id()",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 890
+  },
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://b.test/next#part"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"url\":\"https://b.test/next#part\",\"waited\":true,\"tabId\":\"chrome:t0\"}"
+    }
+   ],
+   "isError": false,
+   "events": 5,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.loading",
+     "tab.url",
+     "win.id()",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 616
+  }
+ ],
+ "navigate: arc ok": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://b.test/next"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"url\":\"https://b.test/next\",\"waited\":true,\"tabId\":\"arc:t0\"}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Arc": [
+     "tab.id",
+     "tab.loading",
+     "tab.url",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 890
+  },
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://b.test/next#part"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"url\":\"https://b.test/next#part\",\"waited\":true,\"tabId\":\"arc:t0\"}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Arc": [
+     "tab.id",
+     "tab.loading",
+     "tab.url",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 616
+  }
+ ],
+ "navigate: safari ok": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://b.test/next"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"url\":\"https://b.test/next\",\"waited\":true,\"tabId\":\"safari:1.0.1e8cd02\"}"
+    }
+   ],
+   "isError": false,
+   "events": 7,
+   "ae": {
+    "Safari": [
+     "windows.length(Safari)",
+     "tabs.length",
+     "win.currentTab.index()",
+     "doJavaScript",
+     "doJavaScript",
+     "win.id()",
+     "tabs.url()"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 890
+  },
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://b.test/next#part"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"url\":\"https://b.test/next#part\",\"waited\":true,\"tabId\":\"safari:1.0.1e8cd02\"}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Safari": [
+     "windows.length(Safari)",
+     "tabs.length",
+     "win.currentTab.index()",
+     "doJavaScript",
+     "win.id()",
+     "tabs.url()"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 616
+  }
+ ],
+ "navigate: targeted, redirect reports requested": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://b.test/",
+     "target": {
+      "tabId": "chrome:c0"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"url\":\"https://b.test/final\",\"requested\":\"https://b.test/\",\"waited\":true,\"tabId\":\"chrome:c0\"}"
+    }
+   ],
+   "isError": false,
+   "events": 8,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tab.loading",
+     "tab.url",
+     "win.id()",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 882
+  }
+ ],
+ "navigate: load_failed stayed (204)": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://dl.test/file.zip",
+     "target": {
+      "tabId": "chrome:c1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"load_failed: the tab stayed on https://c1.test/, as a download, a 204 or a load the page dropped leaves it\",\"tabId\":\"chrome:c1\"}"
+    }
+   ],
+   "isError": false,
+   "events": 19,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tab.loading",
+     "tab.url",
+     "win.id()",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.url"
+    ]
+   },
+   "pageScripts": 10,
+   "pageBytes": 3172
+  }
+ ],
+ "navigate: load_failed error page": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://down.test/",
+     "target": {
+      "tabId": "chrome:c1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"load_failed: https://down.test/ did not load; the browser showed its error page\",\"tabId\":\"chrome:c1\"}"
+    }
+   ],
+   "isError": false,
+   "events": 8,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tab.loading",
+     "tab.url",
+     "win.id()",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 888
+  }
+ ],
+ "navigate: timeout not committed": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://slow.test/",
+     "target": {
+      "tabId": "chrome:c1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"timeout: https://slow.test/ had not committed after 15000ms; the tab shows https://slow.test/; it may still load, check before retrying\",\"tabId\":\"chrome:c1\"}"
+    }
+   ],
+   "isError": false,
+   "events": 630,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tab.loading",
+     "tab.url",
+     "win.id()",
+     "tab.execute",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute",
+     "tab.loading",
+     "tab.url",
+     "tab.loading",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 262,
+   "pageBytes": 74728
+  }
+ ],
+ "navigate: bad_url": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "ftp://x.test/"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: bad_url: navigate takes an absolute http(s) or file URL, or about:blank; got ftp"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "navigate: from a chrome internal page sets the url": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://b.test/"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"url\":\"https://b.test/\",\"waited\":true,\"tabId\":\"chrome:i\",\"warning\":\"navigating from outside the page may bring the browser to the front\"}"
+    }
+   ],
+   "isError": false,
+   "events": 8,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.loading",
+     "tab.url",
+     "tab.id",
+     "tab.url=",
+     "tab.loading",
+     "win.id()",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 284
+  },
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://b.test/",
+     "raise": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"url\":\"https://b.test/\",\"waited\":true,\"tabId\":\"chrome:i\"}"
+    }
+   ],
+   "isError": false,
+   "events": 7,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.loading",
+     "tab.url",
+     "win.id()",
+     "tab.execute",
+     "tab.loading",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 882
+  }
+ ],
+ "navigate: arc background tab is tab_not_visible": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "https://b.test/",
+     "target": {
+      "tabId": "arc:a1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: tab_not_visible: navigate can't run page JS in a tab its window doesn't show; loading it from outside the page would bring the browser to the front: pass raise:true to allow that, or activate_tab first"
+    }
+   ],
+   "isError": true,
+   "events": 4,
+   "ae": {
+    "Arc": [
+     "windows.length(Arc)",
+     "tabs.id()",
+     "tab.id",
+     "tab.id"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "navigate: file url allowed": [
+  {
+   "call": [
+    "navigate",
+    {
+     "url": "file:///tmp/proto/a.html",
+     "target": {
+      "tabId": "chrome:c1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"url\":\"file:///tmp/proto/a.html\",\"waited\":true,\"tabId\":\"chrome:c1\",\"warning\":\"navigating from outside the page may bring the browser to the front\"}"
+    }
+   ],
+   "isError": false,
+   "events": 10,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tab.loading",
+     "tab.url",
+     "win.id()",
+     "tab.execute",
+     "tab.id",
+     "tab.url=",
+     "tab.loading",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 652
+  }
+ ],
+ "eval_js: sync value, default target": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return document.title + location.href"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "https://a.test/p"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 396
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return {a: [1, 'x', null]}"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"a\":[1,\"x\",null]}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 385
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return undefined"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "null"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 375
+  }
+ ],
+ "eval_js: arc": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return location.href"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "https://a.test/p"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Arc": [
+     "tab.id",
+     "tab.url",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 379
+  }
+ ],
+ "eval_js: safari": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return location.href"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "https://a.test/p"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Safari": [
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 379
+  }
+ ],
+ "eval_js: thrown error": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "throw new TypeError('boom')"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"__perch_error\":\"boom\",\"__perch_error_name\":\"TypeError\",\"__perch_error_stack_head\":\"at eval (eval at tab.execute (<fake>), <anonymous>:1:269)\"}"
+    }
+   ],
+   "isError": true,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 386
+  }
+ ],
+ "eval_js: syntax error": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return ("
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: Unexpected token '}'"
+    }
+   ],
+   "isError": true,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 367
+  }
+ ],
+ "eval_js: awaitPromise": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return await Promise.resolve(41 + 1)",
+     "awaitPromise": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "42"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 910
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "await null; throw new Error('late boom')",
+     "awaitPromise": true,
+     "timeout": 2000
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"__perch_error\":\"late boom\",\"__perch_error_name\":\"Error\",\"__perch_error_stack_head\":\"at evalmachine.<anonymous>:1:450\"}"
+    }
+   ],
+   "isError": true,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 914
+  }
+ ],
+ "eval_js: timeout argument checks": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "timeout": 5000
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: bad_args: eval_js `timeout` bounds awaitPromise; pass awaitPromise:true or drop it"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "awaitPromise": true,
+     "timeout": 5
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: bad_args: eval_js timeout is in milliseconds (1000 to 300000); got 5"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "awaitPromise": true,
+     "timeout": 400000
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: bad_args: eval_js awaits at most 300000ms (5 min); got 400000. Start a longer job without awaiting it, then check on it with wait {expression}"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "eval_js: no script": [
+  {
+   "call": [
+    "eval_js",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: eval_js requires `script` or `script_path`"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "eval_js: script_path runs before script": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script_path": "<tmp>/lib.js",
+     "script": "return window.__lib * 6"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "42"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 402
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script_path": "<tmp>/missing.js"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: cannot read <tmp>/missing.js: ENOENT: no such file or directory, open '<tmp>/missing.js'"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "eval_js: world main": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1 + 1",
+     "world": "main"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "2"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 2325
+  }
+ ],
+ "eval_js: world main with ref is refused": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "world": "main",
+     "ref": "1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: eval_js: ref binds an element in perch's own world, so it can't go with world:\"main\"; find the element in the script instead"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "eval_js: ref binds el, then stale": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":1}\n1 button \"Go\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35162
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return el.id",
+     "ref": "1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "b"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 1345
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return el.id",
+     "ref": "999"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: ref 999 is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return el.id",
+     "ref": "1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: ref 1 is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)"
+    }
+   ],
+   "isError": true,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 1345
+  }
+ ],
+ "eval_js: frame ref refused": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "ref": "f1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: eval_js: frame refs need click {trusted:true}"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "wait: readyState on a loaded page": [
+  {
+   "call": [
+    "wait",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"waited\":0}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 11004
+  },
+  {
+   "call": [
+    "wait",
+    {
+     "readyState": "interactive"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"waited\":0}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 11007
+  }
+ ],
+ "wait: selector found and timeout": [
+  {
+   "call": [
+    "wait",
+    {
+     "selector": "#a"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"waited\":0}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 11020
+  },
+  {
+   "call": [
+    "wait",
+    {
+     "selector": "#nope",
+     "timeout": 300
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: timeout: wait timed out after 300ms"
+    }
+   ],
+   "isError": true,
+   "events": 7,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 6,
+   "pageBytes": 66138
+  },
+  {
+   "call": [
+    "wait",
+    {
+     "selector": "##bad",
+     "timeout": 300
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: wait: bad selector: ##bad"
+    }
+   ],
+   "isError": true,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 11023
+  }
+ ],
+ "wait: expression value, bad expression, timeout": [
+  {
+   "call": [
+    "wait",
+    {
+     "expression": "document.querySelector('#a').textContent"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"waited\":0,\"value\":\"x\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 234
+  },
+  {
+   "call": [
+    "wait",
+    {
+     "expression": "("
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: bad_args: wait `expression` does not parse: SyntaxError: Unexpected token ')'"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "wait",
+    {
+     "expression": "window.nope",
+     "timeout": 300
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: timeout: wait timed out after 300ms; last value: null"
+    }
+   ],
+   "isError": true,
+   "events": 7,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 6,
+   "pageBytes": 1230
+  },
+  {
+   "call": [
+    "wait",
+    {
+     "expression": "null.x",
+     "timeout": 300
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: timeout: wait timed out after 300ms; the expression threw TypeError: Cannot read properties of null (reading 'x')"
+    }
+   ],
+   "isError": true,
+   "events": 7,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 6,
+   "pageBytes": 1200
+  }
+ ],
+ "wait: quiet": [
+  {
+   "call": [
+    "wait",
+    {
+     "quiet": 500
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"waited\":500,\"quietFor\":500}"
+    }
+   ],
+   "isError": false,
+   "events": 12,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 11,
+   "pageBytes": 135011
+  },
+  {
+   "call": [
+    "wait",
+    {
+     "quiet": 500,
+     "selector": "#s"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: wait: `quiet` takes no selector or expression"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "wait",
+    {
+     "quiet": 5000,
+     "timeout": 1000
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: wait: `quiet` must be shorter than `timeout`"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "wait: arc selector": [
+  {
+   "call": [
+    "wait",
+    {
+     "selector": "#a"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"waited\":0}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Arc": [
+     "tab.id",
+     "tab.url",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 11020
+  }
+ ],
+ "wait: safari selector": [
+  {
+   "call": [
+    "wait",
+    {
+     "selector": "#a"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"waited\":0}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Safari": [
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 11020
+  }
+ ],
+ "get_text: body, selector, html, paging": [
+  {
+   "call": [
+    "get_text",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "Title\nword word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word "
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10965
+  },
+  {
+   "call": [
+    "get_text",
+    {
+     "selector": "h1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "Title"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10981
+  },
+  {
+   "call": [
+    "get_text",
+    {
+     "selector": "h1",
+     "html": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "<h1>Title</h1>"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10980
+  },
+  {
+   "call": [
+    "get_text",
+    {
+     "maxChars": 50
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "Title\nword word word word word word word word word\n[truncated: chars 0-50 of 306; pass offset/maxChars for the rest]"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10962
+  },
+  {
+   "call": [
+    "get_text",
+    {
+     "maxChars": 50,
+     "offset": 50
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": " word word word word word word word word word word\n[truncated: chars 50-100 of 306; pass offset/maxChars for the rest]"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10963
+  },
+  {
+   "call": [
+    "get_text",
+    {
+     "selector": "#nope"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no element for selector #nope\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10984
+  }
+ ],
+ "get_text: by ref": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":1}\n1 button \"Go now\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35162
+  },
+  {
+   "call": [
+    "get_text",
+    {
+     "ref": "1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "Go now"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10992
+  }
+ ],
+ "get_text: arc": [
+  {
+   "call": [
+    "get_text",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "hello"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Arc": [
+     "tab.id",
+     "tab.url",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10965
+  }
+ ],
+ "get_text: safari": [
+  {
+   "call": [
+    "get_text",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "hello"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Safari": [
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10965
+  }
+ ],
+ "accessibility_snapshot: full page with form header": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":8,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 heading \"Apply\" level=1\n2 textbox \"Email\" name=\"email\" type=\"email\" required\n3 combobox \"Country\" name=\"c\" options=[\"Choose\",\"Argentina\",\"Brazil\"] required\n4 checkbox \"Terms\" name=\"t\" required\n5 button \"Send\"\n6 dialog \"Cookies\"\n7 button \"Accept\"\n8 link \"Help\" href=\"/help\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35162
+  }
+ ],
+ "targeted calls on a page tool by tool": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":4}\n1 textbox \"Name\"\n2 combobox \"Size\" options=[\"S\",\"M\"] value=\"S\"\n3 textbox \"CV\" type=\"file\"\n4 button \"Go\""
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35162
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "ref": "1",
+     "text": "Ada",
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Name\\\"\",\"len\":3}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 29879
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "fields": [
+      {
+       "ref": "1",
+       "text": "Bo"
+      }
+     ],
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Name\\\"\",\"len\":2}]}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 88510
+  },
+  {
+   "call": [
+    "select",
+    {
+     "ref": "2",
+     "text": "M",
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"selected\":\"M\",\"el\":\"combobox \\\"Size\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 36925
+  },
+  {
+   "call": [
+    "press",
+    {
+     "key": "Enter",
+     "ref": "4",
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\",\"prevented\":false,\"focus\":\"button \\\"Go\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 27194
+  },
+  {
+   "call": [
+    "file_upload",
+    {
+     "path": "<tmp>/cv.txt",
+     "ref": "3",
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"name\":\"cv.txt\",\"size\":5,\"type\":\"text/plain\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 18221
+  },
+  {
+   "call": [
+    "console_capture",
+    {
+     "mode": "start",
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"started\":true,\"bridge\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 14380
+  },
+  {
+   "call": [
+    "console_capture",
+    {
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"entries\":[]}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10870
+  },
+  {
+   "call": [
+    "click",
+    {
+     "ref": "4",
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15761
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "ref": "1",
+     "text": "x"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: ref 1 is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "accessibility_snapshot: max, role, query": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "max": 0
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":0,\"truncated\":true,\"omitted\":8,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35160
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "max": 2
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":2,\"truncated\":true,\"omitted\":6,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 dialog \"Cookies\"\n2 button \"Accept\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35160
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "role": "button"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":2,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n3 button \"Send\"\n4 button \"Accept\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35166
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "role": [
+      "textbox",
+      "combobox"
+     ]
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":2,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n5 textbox \"Email\" name=\"email\" type=\"email\" required\n6 combobox \"Country\" name=\"c\" options=[\"Choose\",\"Argentina\",\"Brazil\"] required"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35180
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "query": "help|terms"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":2,\"matched\":2,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n7 checkbox \"Terms\" name=\"t\" required\n8 link \"Help\" href=\"/help\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35170
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "query": "("
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: accessibility_snapshot: invalid query: Invalid regular expression: /(/i: Unterminated group"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "accessibility_snapshot: arc": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "max": 3
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":3,\"truncated\":true,\"omitted\":5,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 textbox \"Email\" name=\"email\" type=\"email\" required\n2 dialog \"Cookies\"\n3 button \"Accept\""
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Arc": [
+     "tab.id",
+     "tab.url",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35160
+  }
+ ],
+ "accessibility_snapshot: safari": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "max": 3
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":3,\"truncated\":true,\"omitted\":5,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 textbox \"Email\" name=\"email\" type=\"email\" required\n2 dialog \"Cookies\"\n3 button \"Accept\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Safari": [
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35160
+  }
+ ],
+ "accessibility_snapshot: same-origin and cross-origin iframes": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":1,\"iframes\":[{\"src\":\"https://jobs.example/acme/apply\",\"w\":600,\"h\":800,\"same\":false}]}\n1 heading \"Careers\" level=1"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35162
+  }
+ ],
+ "accessibility_snapshot: frames from Accessibility": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "frames": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://form.test/\",\"title\":\"\",\"ready\":\"complete\",\"count\":1,\"iframes\":[{\"src\":\"https://js.pay.example/v3/card\",\"w\":400,\"h\":150,\"same\":false}],\"frames\":{\"count\":3}}\n1 heading \"Shop\" level=1\nf1 textbox \"Card number\" frame=\"js.pay.example\" secure\nf2 button \"Pay\" frame=\"js.pay.example\"\nf3 checkbox \"Verify\" frame=\"challenges.cloudflare.com\" handoff"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "win.bounds()"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35176
+  },
+  {
+   "call": [
+    "click",
+    {
+     "ref": "f2",
+     "trusted": true,
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"ref\":\"f2\",\"frame\":\"js.pay.example\",\"point\":{\"x\":160,\"y\":410},\"aim\":\"ax\",\"delivery\":\"skylight\",\"before\":{\"role\":\"button\",\"name\":\"Pay\",\"focused\":false},\"after\":{\"role\":\"button\",\"name\":\"Pay\",\"focused\":false},\"hit\":null}"
+    }
+   ],
+   "isError": false,
+   "events": 5,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tab.id",
+     "win.bounds()",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10612
+  },
+  {
+   "call": [
+    "click",
+    {
+     "ref": "f3",
+     "trusted": true,
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"ref\":\"f3\",\"frame\":\"challenges.cloudflare.com\",\"error\":\"checkbox \\\"Verify\\\" is sign-in, challenge or password UI; hand it to the user\"}"
+    }
+   ],
+   "isError": false,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "click",
+    {
+     "ref": "f1",
+     "trusted": true,
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"ref\":\"f1\",\"frame\":\"js.pay.example\",\"error\":\"textbox \\\"Card number\\\" is sign-in, challenge or password UI; hand it to the user\"}"
+    }
+   ],
+   "isError": false,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "click",
+    {
+     "ref": "f2"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: click: frame refs need click {trusted:true}"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "ref": "f2",
+     "text": "x"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: fill: frame refs need click {trusted:true}"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "accessibility_snapshot: frames unreadable when the walk fails": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "frames": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://form.test/\",\"title\":\"\",\"ready\":\"complete\",\"count\":1,\"frames\":{\"error\":\"frames_unreadable: Accessibility could not read the page's frames; the page rows are unaffected, retry for frame rows\"}}\n1 heading \"Shop\" level=1"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "win.bounds()"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35176
+  }
+ ],
+ "accessibility_snapshot: hidden with reveal, unpicked, pressed, expanded": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":7,\"form\":{\"fields\":2,\"requiredEmpty\":2,\"unpicked\":1}}\n1 button \"Attach\"\n2 button \"Enter manually\"\n3 textbox \"Location\" value=\"Buenos\" required unpicked\n4 button \"Bold\" pressed\n5 button \"Menu\" expanded\n6 button \"Submit application\"\n7 textbox \"Cover Letter\" name=\"cover_letter\" type=\"textarea\" required hidden reveal=\"2\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35162
+  }
+ ],
+ "accessibility_snapshot: frames unreadable without Accessibility": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "frames": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://form.test/\",\"title\":\"\",\"ready\":\"complete\",\"count\":1,\"frames\":{\"error\":\"Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch (Codex / ChatGPT / Terminal / iTerm), then retry.\"}}\n1 heading \"Shop\" level=1"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35176
+  }
+ ],
+ "click: selector, label, ref, hover, coordinates": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#a"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Save\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15745
+  },
+  {
+   "call": [
+    "click",
+    {
+     "label_pattern": "^save$"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Save\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15749
+  },
+  {
+   "call": [
+    "click",
+    {
+     "label_pattern": "save"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Save\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15747
+  },
+  {
+   "call": [
+    "click",
+    {
+     "label_pattern": "nothing"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no button or link matched /nothing/i\",\"names\":[\"Save\",\"Save draft\",\"Docs\"]}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15750
+  },
+  {
+   "call": [
+    "click",
+    {
+     "label_pattern": "("
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: click: invalid label_pattern: Invalid regular expression: /(/i: Unterminated group"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "role": "link"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":1}\n1 link \"Docs\" href=\"/p#x\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35164
+  },
+  {
+   "call": [
+    "click",
+    {
+     "ref": "1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"link \\\"Docs\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15761
+  },
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#a",
+     "hover": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Save\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 13761
+  },
+  {
+   "call": [
+    "click",
+    {
+     "x": 10,
+     "y": 10
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: click requires `ref`, `selector`, or `label_pattern` (x/y is screen coords, trusted:true only)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "click",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: click requires `ref`, `selector`, or `label_pattern` (x/y is screen coords, trusted:true only)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return window.n"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "3"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 374
+  }
+ ],
+ "click: disabled refused": [
+  {
+   "call": [
+    "click",
+    {
+     "label_pattern": "^go$"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"/^go$/i matches only disabled: button \\\"Go\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15747
+  },
+  {
+   "call": [
+    "click",
+    {
+     "label_pattern": "inner"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"el\":\"button \\\"Inner\\\"\",\"error\":\"button \\\"Inner\\\" is disabled; nothing was clicked\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15748
+  },
+  {
+   "call": [
+    "click",
+    {
+     "label_pattern": "soft"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"/soft/i matches only disabled: button \\\"Soft\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15747
+  }
+ ],
+ "click: arc": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#a"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Arc": [
+     "tab.id",
+     "tab.url",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15745
+  }
+ ],
+ "click: safari": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#a"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Safari": [
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15745
+  }
+ ],
+ "click: readback changed, unchanged, invalid": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#t",
+     "readback": "#out"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Toggle\\\"\",\"readback\":\"done\",\"changed\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 49207
+  },
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#t",
+     "readback": "#out"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Toggle\\\"\",\"readback\":\"done\",\"changed\":false}"
+    }
+   ],
+   "isError": false,
+   "events": 13,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 12,
+   "pageBytes": 285047
+  },
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#s",
+     "readback": "#out"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Send\\\"\",\"readback\":\"done\",\"changed\":true,\"invalid\":[\"Email\"]}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 49207
+  },
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#t",
+     "readback": "#nope"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Toggle\\\"\",\"readback\":null,\"changed\":false}"
+    }
+   ],
+   "isError": false,
+   "events": 13,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 12,
+   "pageBytes": 285059
+  }
+ ],
+ "click: readback on a busy page is settled:false": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#b",
+     "readback": "#s"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Submit\\\"\",\"readback\":\"Idle\",\"changed\":false,\"settled\":false}"
+    }
+   ],
+   "isError": false,
+   "events": 43,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 42,
+   "pageBytes": 992496
+  }
+ ],
+ "click: _blank link opens a tab": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#a"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"link \\\"Open\\\"\",\"opened\":{\"tabId\":\"chrome:pop1\",\"url\":\"https://n.test/doc\"}}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tabs.id()",
+     "tab.execute",
+     "tabs.id()",
+     "tab.url",
+     "tab.id"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 16572
+  }
+ ],
+ "click: _blank link with no tab is unconfirmed": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#a"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"link \\\"Open\\\"\",\"unconfirmed\":true,\"href\":\"https://n.test/doc\",\"note\":\"no new tab within 0.5s; it may be blocked or still opening: list_tabs urlContains href\"}"
+    }
+   ],
+   "isError": false,
+   "events": 9,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tabs.id()",
+     "tab.execute",
+     "tabs.id()",
+     "tabs.id()",
+     "tabs.id()",
+     "tabs.id()",
+     "tabs.id()",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 16572
+  }
+ ],
+ "click: trusted background": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#b",
+     "trusted": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Buy\\\"\",\"point\":{\"x\":106,\"y\":167},\"calibrated\":true,\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"skylight\",\"hit\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 30298
+  },
+  {
+   "call": [
+    "click",
+    {
+     "label_pattern": "buy",
+     "trusted": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Buy\\\"\",\"point\":{\"x\":106,\"y\":167},\"calibrated\":true,\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"skylight\",\"hit\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 30299
+  }
+ ],
+ "click: trusted raised": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#b",
+     "trusted": true,
+     "raise": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Buy\\\"\",\"point\":{\"x\":106,\"y\":167},\"calibrated\":true,\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"hid\",\"hit\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 18,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.id()",
+     "win.index=",
+     "activate(Google Chrome)",
+     "win.bounds()",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 13,
+   "pageBytes": 147933
+  }
+ ],
+ "click: trusted needs the shown tab": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#b",
+     "trusted": true,
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: tab_not_visible: a background trusted click needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true"
+    }
+   ],
+   "isError": true,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "click: trusted without Accessibility": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#b",
+     "trusted": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch (Codex / ChatGPT / Terminal / iTerm), then retry."
+    }
+   ],
+   "isError": true,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.id"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "press: keys, chords, selector, focus": [
+  {
+   "call": [
+    "press",
+    {
+     "key": "Enter",
+     "selector": "#i"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\",\"prevented\":false,\"focus\":\"textbox \\\"City\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 12463
+  },
+  {
+   "call": [
+    "press",
+    {
+     "key": "Space",
+     "selector": "#b"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\",\"prevented\":false,\"focus\":\"button \\\"Go\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 12459
+  },
+  {
+   "call": [
+    "press",
+    {
+     "key": "Tab"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\",\"prevented\":false,\"focus\":\"textbox \\\"City\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 12458
+  },
+  {
+   "call": [
+    "press",
+    {
+     "key": "cmd+k"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\",\"prevented\":false,\"focus\":\"textbox \\\"City\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 12457
+  },
+  {
+   "call": [
+    "press",
+    {
+     "key": "Escape",
+     "selector": "#nope"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no element for selector #nope\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 12468
+  },
+  {
+   "call": [
+    "press",
+    {
+     "key": "NotAKey"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: press: unknown key NotAKey"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return [window.sent, window.b]"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "[1,1]"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 389
+  }
+ ],
+ "press: trusted": [
+  {
+   "call": [
+    "press",
+    {
+     "key": "Enter",
+     "selector": "#i",
+     "trusted": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\",\"key\":\"Enter\",\"hit\":true,\"focus\":\"textbox \\\"City\\\"\",\"delivery\":\"skylight\"}"
+    }
+   ],
+   "isError": false,
+   "events": 5,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 3,
+   "pageBytes": 33675
+  },
+  {
+   "call": [
+    "press",
+    {
+     "key": "cmd+k",
+     "trusted": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: press: trusted takes a named key (Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12), optionally with shift"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "press: trusted when the page lacks the keyboard": [
+  {
+   "call": [
+    "press",
+    {
+     "key": "Enter",
+     "selector": "#i",
+     "trusted": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: tab_not_visible: a background trusted press needs the keyboard in the target's page: another browser window has the keyboard (or it can't be told apart); click {trusted:true, raise:true} on the page first"
+    }
+   ],
+   "isError": true,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10612
+  }
+ ],
+ "press: arc": [
+  {
+   "call": [
+    "press",
+    {
+     "key": "ArrowDown",
+     "selector": "#i"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\",\"prevented\":false,\"focus\":\"textbox \\\"City\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Arc": [
+     "tab.id",
+     "tab.url",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 12471
+  }
+ ],
+ "press: safari": [
+  {
+   "call": [
+    "press",
+    {
+     "key": "ArrowDown",
+     "selector": "#i"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"City\\\"\",\"prevented\":false,\"focus\":\"textbox \\\"City\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Safari": [
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 12471
+  }
+ ],
+ "fill: plain by label, selector, ref; clear; text_path": [
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "first",
+     "text": "Ada"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"First name\\\"\",\"len\":3}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 29876
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "selector": "[name=email]",
+     "text": "ada@x.test"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Email\\\"\",\"len\":10}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 44588
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "query": "Bio"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"title\":\"\",\"ready\":\"complete\",\"count\":1,\"matched\":1,\"form\":{\"fields\":4,\"requiredEmpty\":0}}\n1 textbox \"Bio\" type=\"textarea\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 49866
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "ref": "1",
+     "text": "Hello"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Bio\\\"\",\"len\":5}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 29881
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "first",
+     "text": ""
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"First name\\\"\",\"len\":0}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 44576
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "born",
+     "text": "tomorrow"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"el\":\"textbox \\\"Born\\\"\",\"kept\":\"\",\"error\":\"textbox \\\"Born\\\" expects YYYY-MM-DD; the page kept \\\"\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 44583
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "ref": "1",
+     "text_path": "<tmp>/bio.txt"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Bio\\\"\",\"len\":18}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 29895
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "nothing",
+     "text": "x"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no fillable field matched /nothing/i; it may appear only after clicking a button\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 44579
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "text": "x"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: fill requires `ref`, `selector`, or `label_pattern`"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "first"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: fill requires `text` or `text_path` (checked/option: use fields)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "fill: rich editor and hidden field": [
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "message",
+     "text": "Hi there"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"rich\",\"el\":\"textbox \\\"Message\\\"\",\"len\":8}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 29883
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "selector": "#h",
+     "text": "x"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"hid\\\" hidden\",\"len\":1,\"hidden\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 44569
+  }
+ ],
+ "fill: checkbox, radio, ambiguous": [
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "terms",
+     "checked": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"check\",\"el\":\"checkbox \\\"Terms\\\"\",\"checked\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 73807
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "fields": [
+      {
+       "label_pattern": "terms",
+       "checked": true
+      },
+      {
+       "label_pattern": "size",
+       "option": "Large"
+      }
+     ]
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"kind\":\"check\",\"el\":\"checkbox \\\"Terms\\\"\",\"checked\":true},{\"ok\":true,\"kind\":\"radio\",\"selected\":\"Large\",\"el\":\"radiogroup \\\"Size\\\"\"}],\"form\":{\"requiredEmpty\":0}}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 73849
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "name",
+     "text": "x"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Name\\\"\",\"len\":1,\"ambiguous\":[\"textbox \\\"Name\\\"\",\"textbox \\\"Name\\\"\"]}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 29873
+  }
+ ],
+ "fill: fields with form census, only_empty, preference list": [
+  {
+   "call": [
+    "fill",
+    {
+     "fields": [
+      {
+       "label_pattern": "first",
+       "text": "Ada"
+      },
+      {
+       "label_pattern": "country",
+       "option": [
+        "Chile",
+        "Brazil"
+       ]
+      },
+      {
+       "label_pattern": "nothing",
+       "text": "x"
+      }
+     ]
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"results\":[{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"First\\\"\",\"len\":3},{\"ok\":true,\"selected\":\"Brazil\",\"el\":\"combobox \\\"Country\\\"\",\"pref\":1,\"kind\":\"select\"},{\"ok\":false,\"error\":\"no fillable field matched /nothing/i; it may appear only after clicking a button\",\"kind\":\"text\"}],\"form\":{\"requiredEmpty\":2,\"left\":[{\"name\":\"last\",\"label\":\"Last\"},{\"name\":\"p\",\"label\":\"Phone\"}]}}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 73900
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "only_empty": true,
+     "fields": [
+      {
+       "label_pattern": "first",
+       "text": "Bob"
+      },
+      {
+       "label_pattern": "last",
+       "text": "L"
+      },
+      {
+       "label_pattern": "nothing",
+       "text": "x"
+      }
+     ]
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"kind\":\"plain\",\"skipped\":\"has value\",\"el\":\"textbox \\\"First\\\"\",\"value\":\"Ada\"},{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Last\\\"\",\"len\":1},{\"ok\":true,\"skipped\":\"absent\",\"kind\":\"text\"}],\"skipped\":2,\"form\":{\"requiredEmpty\":1,\"left\":[{\"name\":\"p\",\"label\":\"Phone\"}]}}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 73892
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "fields": [
+      {
+       "label_pattern": "country",
+       "option": [
+        "Chile",
+        "Peru"
+       ]
+      }
+     ]
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"results\":[{\"ok\":false,\"error\":\"no matching option\",\"candidates\":[\"Choose\",\"Argentina\",\"Brazil\"],\"tried\":[\"Chile\",\"Peru\"],\"kind\":\"select\"}]}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 59721
+  }
+ ],
+ "fill: fields_path and bad fields": [
+  {
+   "call": [
+    "fill",
+    {
+     "fields_path": "<tmp>/f.json"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"First\\\"\",\"len\":3}],\"form\":{\"requiredEmpty\":0}}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 73805
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "fields_path": "<tmp>/bad.json"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: fill: fields_path: bad JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "fields": []
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: fill: fields: empty; pass [{ref|selector|label_pattern, text|checked|option}]"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "fields": [
+      {
+       "text": "x"
+      }
+     ]
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: fill: fields[0] requires `ref`, `selector`, or `label_pattern`"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "fields": [
+      {
+       "label_pattern": "first",
+       "text": "x",
+       "raise": true
+      }
+     ]
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: fill: fields[0]: raise is not taken inside fields; fill that field alone with raise:true"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "fill: fields after a pick that leaves the page are unverified": [
+  {
+   "call": [
+    "fill",
+    {
+     "fields": [
+      {
+       "label_pattern": "state",
+       "text": "Cordoba"
+      },
+      {
+       "label_pattern": "level",
+       "option": "senior"
+      },
+      {
+       "label_pattern": "city",
+       "text": "Rio"
+      }
+     ]
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"results\":[{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"State\\\"\",\"len\":7,\"unverified\":true},{\"kind\":\"select\",\"ok\":true,\"selected\":\"Senior\",\"el\":\"combobox \\\"Level\\\"\"},{\"ok\":false,\"error\":\"the page changed after fields[1]; not filled\"}],\"unverified\":1,\"warning\":\"the page changed after fields[1]; earlier fields may have been cleared, check them\"}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 5,
+   "pageBytes": 228154
+  }
+ ],
+ "fill: late revert reported by the next call and held click": [
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "zip",
+     "text": "2000"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Zip\\\"\",\"len\":4}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 29875
+  },
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#go"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"nothing clicked: a field filled earlier no longer holds its value (late); fill it again (fill {trusted:true} if the page converts or clears it on blur), then retry\",\"late\":[{\"el\":\"textbox \\\"Zip\\\"\",\"error\":\"was cleared after it was filled; the page reverted the write; retry with fill {trusted:true}\"}]}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 30461
+  },
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#go"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Go\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 15746
+  }
+ ],
+ "fill: typeahead pick and miss": [
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "city",
+     "text": "Buenos Aires"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"typeahead\",\"el\":\"combobox \\\"City\\\"\",\"selected\":\"Buenos Aires\"}"
+    }
+   ],
+   "isError": false,
+   "events": 5,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 4,
+   "pageBytes": 142839
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "city",
+     "text": "Ber"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"kind\":\"typeahead\",\"el\":\"combobox \\\"City\\\"\",\"error\":\"several suggestions matched \\\"Ber\\\" equally; give a more specific text (the text was withdrawn)\",\"candidates\":[\"Berlin\",\"Bern\"],\"ambiguous\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 12,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 11,
+   "pageBytes": 410612
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "city",
+     "text": "Zzz"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"combobox \\\"City\\\"\",\"len\":3,\"note\":\"no suggestion was picked; the typed text stays\"}"
+    }
+   ],
+   "isError": false,
+   "events": 70,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 69,
+   "pageBytes": 2618696
+  }
+ ],
+ "fill: trusted background and raised": [
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "email",
+     "text": "a@b.test",
+     "trusted": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"trusted\":true,\"value\":\"a@b.test\",\"el\":\"textbox \\\"Email\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 32672
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "selector": "#e",
+     "text": "c@d.test",
+     "trusted": true,
+     "raise": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"el\":\"textbox \\\"Email\\\"\",\"calibrated\":true,\"calibration\":[[0,0]],\"aim\":\"ax\",\"delivery\":\"hid\",\"hit\":true,\"len\":0,\"ok\":false,\"error\":\"trusted typing left a different value (0 chars: \\\"\\\")\"}"
+    }
+   ],
+   "isError": false,
+   "events": 18,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.id()",
+     "win.index=",
+     "activate(Google Chrome)",
+     "win.bounds()",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 13,
+   "pageBytes": 151677
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "fields": [
+      {
+       "selector": "#e",
+       "text": "e@f.test",
+       "trusted": true
+      }
+     ]
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"results\":[{\"kind\":\"plain\",\"ok\":true,\"trusted\":true,\"value\":\"e@f.test\",\"el\":\"textbox \\\"Email\\\"\"}]}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 76285
+  }
+ ],
+ "fill: arc": [
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "name",
+     "text": "Ada"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Name\\\"\",\"len\":3}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Arc": [
+     "tab.id",
+     "tab.url",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 29875
+  }
+ ],
+ "fill: safari": [
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "name",
+     "text": "Ada"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"kind\":\"plain\",\"el\":\"textbox \\\"Name\\\"\",\"len\":3}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Safari": [
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 29875
+  }
+ ],
+ "select: native exact, word, ambiguous, miss, disabled": [
+  {
+   "call": [
+    "select",
+    {
+     "label_pattern": "country",
+     "text": "Brazil"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"selected\":\"Brazil\",\"el\":\"combobox \\\"Country\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 36919
+  },
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#c",
+     "text": "ar"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"selected\":\"Argentina\",\"el\":\"combobox \\\"Country\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 51659
+  },
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#c",
+     "text": "Brazil"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"selected\":\"Brazil\",\"el\":\"combobox \\\"Country\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 51617
+  },
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#p",
+     "text": "pro"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"ambiguous\":true,\"error\":\"several options matched \\\"pro\\\" equally; give a more specific text\",\"candidates\":[\"Pro monthly\",\"Pro yearly\"]}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 51614
+  },
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#c",
+     "text": "Chile"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"el\":\"combobox \\\"Country\\\"\",\"error\":\"option \\\"Chile\\\" is disabled in combobox \\\"Country\\\"; the form will not submit it\",\"disabled\":[\"Chile\"]}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 36913
+  },
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#c",
+     "text": "Peru"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no matching option\",\"candidates\":[\"Choose\",\"Argentina\",\"Brazil\",\"Chile\"]}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 36912
+  },
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#c",
+     "text": ""
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no matching option\",\"candidates\":[\"Choose\",\"Argentina\",\"Brazil\",\"Chile\"]}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 36908
+  },
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#d",
+     "text": "A"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"el\":\"combobox \\\"Off\\\"\",\"error\":\"combobox \\\"Off\\\" is disabled; the form will not submit it\"}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 36909
+  },
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#nope",
+     "text": "A"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no element for selector #nope\"}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 36912
+  },
+  {
+   "call": [
+    "select",
+    {
+     "label_pattern": "country"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: select requires `text` (the option to choose)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "select: custom listbox": [
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#c",
+     "text": "banana"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"selected\":\"Banana\",\"el\":\"combobox \\\"Fruit\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 3,
+   "pageBytes": 108561
+  },
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#c",
+     "text": "Cherry"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no option of this control matched\",\"candidates\":[\"Apple\",\"Banana\"],\"open\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 12,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 11,
+   "pageBytes": 378853
+  }
+ ],
+ "select: trusted": [
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#s",
+     "text": "M",
+     "trusted": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"selected\":\"M\",\"el\":\"combobox \\\"Size\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 36924
+  }
+ ],
+ "select: arc": [
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#c",
+     "text": "B"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"selected\":\"B\",\"el\":\"combobox \\\"C\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Arc": [
+     "tab.id",
+     "tab.url",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 36909
+  }
+ ],
+ "select: safari": [
+  {
+   "call": [
+    "select",
+    {
+     "selector": "#c",
+     "text": "B"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"selected\":\"B\",\"el\":\"combobox \\\"C\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Safari": [
+     "windows.length(Safari)",
+     "tabs.length",
+     "win.currentTab.index()",
+     "doJavaScript"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 36909
+  }
+ ],
+ "file_upload: input, label, drop zone, misses": [
+  {
+   "call": [
+    "file_upload",
+    {
+     "path": "<tmp>/cv.txt",
+     "selector": "#f"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"name\":\"cv.txt\",\"size\":5,\"type\":\"text/plain\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 18210
+  },
+  {
+   "call": [
+    "file_upload",
+    {
+     "path": "<tmp>/cv.txt",
+     "label_pattern": "resume"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"name\":\"cv.txt\",\"size\":5,\"type\":\"text/plain\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 18219
+  },
+  {
+   "call": [
+    "file_upload",
+    {
+     "path": "<tmp>/cv.txt"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"name\":\"cv.txt\",\"size\":5,\"type\":\"text/plain\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 18194
+  },
+  {
+   "call": [
+    "file_upload",
+    {
+     "path": "<tmp>/cv.txt",
+     "selector": "#z"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"name\":\"cv.txt\",\"size\":5,\"type\":\"text/plain\",\"dropped\":true,\"el\":\"generic \\\"Drop files\\\"\",\"shown\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 18210
+  },
+  {
+   "call": [
+    "file_upload",
+    {
+     "path": "<tmp>/missing.txt",
+     "selector": "#f"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: cannot read <tmp>/missing.txt: ENOENT: no such file or directory, stat '<tmp>/missing.txt'"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "file_upload",
+    {
+     "selector": "#f"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: file_upload requires `path`"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "file_upload",
+    {
+     "path": "<tmp>/cv.txt",
+     "selector": "#nope"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no element for selector #nope\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 18213
+  },
+  {
+   "call": [
+    "file_upload",
+    {
+     "path": "<tmp>/cv.txt",
+     "selector": "#f",
+     "raise": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"the point is not on the page itself (embedded frame or browser UI); frame controls need accessibility_snapshot {frames:true} and an fN ref\"}"
+    }
+   ],
+   "isError": false,
+   "events": 20,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()",
+     "tab.execute",
+     "tab.id",
+     "win.id()",
+     "win.index=",
+     "activate(Google Chrome)",
+     "win.bounds()",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 13,
+   "pageBytes": 148407
+  }
+ ],
+ "console_capture: start, read, stop, network": [
+  {
+   "call": [
+    "console_capture",
+    {
+     "mode": "read"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"console_capture not started on this page (or it navigated since)\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10870
+  },
+  {
+   "call": [
+    "console_capture",
+    {
+     "mode": "start"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"started\":true,\"bridge\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 14380
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "console.log('hello', 1); console.error('bad'); return 1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "1"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 414
+  },
+  {
+   "call": [
+    "console_capture",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"entries\":[\"log: hello 1\",\"error: bad\"]}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 10870
+  },
+  {
+   "call": [
+    "console_capture",
+    {
+     "mode": "stop"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"entries\":[]}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 11017
+  },
+  {
+   "call": [
+    "console_capture",
+    {
+     "mode": "network"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"requests\":[\"200 fetch 84ms 1.2kB https://api.test/r1\"]}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 11624
+  },
+  {
+   "call": [
+    "console_capture",
+    {
+     "mode": "net"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: console_capture: unknown mode 'net' (expected start | read | stop | network)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "notify: message, title, subtitle, sound": [
+  {
+   "call": [
+    "notify",
+    {
+     "message": "Done"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "notify",
+    {
+     "message": "Done",
+     "title": "T",
+     "subtitle": "S",
+     "sound": ""
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "notify",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "screenshot: window, jpeg, maxWidth": [
+  {
+   "call": [
+    "screenshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "image",
+     "mimeType": "image/png",
+     "bytes": 33
+    },
+    {
+     "type": "text",
+     "text": "{\"window\":{\"x\":0,\"y\":57,\"w\":854,\"h\":600},\"image\":{\"w\":1568,\"h\":1102}}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "screenshot",
+    {
+     "format": "jpeg",
+     "maxWidth": 400
+    }
+   ],
+   "content": [
+    {
+     "type": "image",
+     "mimeType": "image/jpeg",
+     "bytes": 33
+    },
+    {
+     "type": "text",
+     "text": "{\"window\":{\"x\":0,\"y\":57,\"w\":854,\"h\":600},\"image\":{\"w\":400,\"h\":281}}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "screenshot",
+    {
+     "maxWidth": 0,
+     "target": {
+      "tabId": "chrome:x"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "image",
+     "mimeType": "image/png",
+     "bytes": 33
+    },
+    {
+     "type": "text",
+     "text": "{\"window\":{\"x\":0,\"y\":57,\"w\":854,\"h\":600},\"image\":{\"w\":1708,\"h\":1200}}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tab.id",
+     "win.bounds()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "screenshot",
+    {
+     "raise": true
+    }
+   ],
+   "content": [
+    {
+     "type": "image",
+     "mimeType": "image/png",
+     "bytes": 33
+    },
+    {
+     "type": "text",
+     "text": "{\"window\":{\"x\":0,\"y\":57,\"w\":854,\"h\":600},\"image\":{\"w\":1568,\"h\":1102}}"
+    }
+   ],
+   "isError": false,
+   "events": 5,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.id()",
+     "win.index=",
+     "activate(Google Chrome)",
+     "win.bounds()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "screenshot: element by selector and ref": [
+  {
+   "call": [
+    "screenshot",
+    {
+     "selector": "#b"
+    }
+   ],
+   "content": [
+    {
+     "type": "image",
+     "mimeType": "image/png",
+     "bytes": 33
+    },
+    {
+     "type": "text",
+     "text": "{\"window\":{\"x\":0,\"y\":57,\"w\":854,\"h\":600},\"image\":{\"w\":432,\"h\":112},\"clip\":{\"x\":296,\"y\":384,\"w\":432,\"h\":112},\"aim\":\"ax\"}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 25092
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://form.test/\",\"title\":\"\",\"ready\":\"complete\",\"count\":1}\n1 button \"Buy\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35162
+  },
+  {
+   "call": [
+    "screenshot",
+    {
+     "ref": "1"
+    }
+   ],
+   "content": [
+    {
+     "type": "image",
+     "mimeType": "image/png",
+     "bytes": 33
+    },
+    {
+     "type": "text",
+     "text": "{\"window\":{\"x\":0,\"y\":57,\"w\":854,\"h\":600},\"image\":{\"w\":432,\"h\":112},\"clip\":{\"x\":296,\"y\":384,\"w\":432,\"h\":112},\"aim\":\"ax\"}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 25103
+  },
+  {
+   "call": [
+    "screenshot",
+    {
+     "selector": "#nope"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no element for selector #nope\"}"
+    }
+   ],
+   "isError": false,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 13783
+  }
+ ],
+ "screenshot: element past the viewport edge is clipped": [
+  {
+   "call": [
+    "screenshot",
+    {
+     "selector": "#b"
+    }
+   ],
+   "content": [
+    {
+     "type": "image",
+     "mimeType": "image/png",
+     "bytes": 33
+    },
+    {
+     "type": "text",
+     "text": "{\"window\":{\"x\":0,\"y\":57,\"w\":854,\"h\":600},\"image\":{\"w\":576,\"h\":116},\"clip\":{\"x\":112,\"y\":1084,\"w\":576,\"h\":116},\"aim\":\"ax\",\"clipped\":true}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()",
+     "tab.execute",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 25092
+  }
+ ],
+ "screenshot: no Screen Recording grant": [
+  {
+   "call": [
+    "screenshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"screenshot: needs the Screen Recording grant for the app running perch (System Settings > Privacy & Security > Screen Recording); nothing was captured\"}"
+    }
+   ],
+   "isError": false,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "screenshot: window_offscreen": [
+  {
+   "call": [
+    "screenshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+    }
+   ],
+   "isError": true,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "tab.id",
+     "win.bounds()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "dialog_open and press {dialog}": [
+  {
+   "call": [
+    "wait",
+    {
+     "expression": "false",
+     "timeout": 1000,
+     "target": {
+      "tabId": "chrome:5"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: dialog_open: a prompt (\"Your name?\") is open and pauses the page; answer it with press {key:\"Enter\"|\"Escape\", dialog:true, target:{tabId}} (a string answers a prompt). The page JS stopped at the dialog and its result is lost; check the page after answering."
+    }
+   ],
+   "isError": true,
+   "events": 9,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tab.execute",
+     "tabs.id()",
+     "tab.id",
+     "win.bounds()",
+     "tab.url",
+     "win.id()",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 2,
+   "pageBytes": 203
+  },
+  {
+   "call": [
+    "press",
+    {
+     "key": "Enter",
+     "dialog": "Ada",
+     "target": {
+      "tabId": "chrome:5"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"dialog\":\"prompt\",\"message\":\"Your name?\",\"answer\":\"accept\",\"text\":\"Ada\"}"
+    }
+   ],
+   "isError": false,
+   "events": 6,
+   "ae": {
+    "Google Chrome": [
+     "tabs.id()",
+     "tab.id",
+     "win.bounds()",
+     "tab.url",
+     "win.id()",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 4
+  },
+  {
+   "call": [
+    "press",
+    {
+     "key": "Enter",
+     "dialog": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: press {dialog} requires `target.tabId` (from list_tabs), so it can never answer a dialog on a tab it was not aimed at"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "errors: stale_tab across tools": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "target": {
+      "tabId": "chrome:gone"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: stale_tab: tab chrome:gone is gone; re-run list_tabs"
+    }
+   ],
+   "isError": true,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "get_text",
+    {
+     "target": {
+      "tabId": "chrome:gone"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: stale_tab: tab chrome:gone is gone; re-run list_tabs"
+    }
+   ],
+   "isError": true,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "wait",
+    {
+     "target": {
+      "tabId": "chrome:gone"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: stale_tab: tab chrome:gone is gone; re-run list_tabs"
+    }
+   ],
+   "isError": true,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "activate_tab",
+    {
+     "target": {
+      "tabId": "chrome:gone"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: stale_tab: tab chrome:gone is gone; re-run list_tabs"
+    }
+   ],
+   "isError": true,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "click",
+    {
+     "selector": "a",
+     "target": {
+      "tabId": "chrome:gone"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: stale_tab: tab chrome:gone is gone; re-run list_tabs"
+    }
+   ],
+   "isError": true,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "target": {
+      "tabId": "safari:5.9.abc"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: stale_tab: tab safari:5.9.abc is gone (closed or navigated); re-run list_tabs"
+    }
+   ],
+   "isError": true,
+   "events": 4,
+   "ae": {
+    "Safari": [
+     "doJavaScript",
+     "tabs.url()",
+     "windows.length(Safari)",
+     "win.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "target": {
+      "tabId": "nope"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: stale_tab: tab nope is gone; re-run list_tabs"
+    }
+   ],
+   "isError": true,
+   "events": 5,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tabs.id()"
+    ],
+    "Arc": [
+     "windows.length(Arc)",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "errors: tab_not_visible on an Arc background tab": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "target": {
+      "tabId": "arc:a1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: tab_not_visible: eval_js needs the tab its window shows; activate_tab (takes focus) or retry later"
+    }
+   ],
+   "isError": true,
+   "events": 4,
+   "ae": {
+    "Arc": [
+     "windows.length(Arc)",
+     "tabs.id()",
+     "tab.id",
+     "tab.id"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "errors: tab_not_scriptable on a browser page": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: Chromium internal page execute"
+    }
+   ],
+   "isError": true,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 367
+  },
+  {
+   "call": [
+    "get_text",
+    {
+     "target": {
+      "tabId": "arc:m"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: tab_not_scriptable: get_text can't run on the browser's own pages (new tab, settings); navigate the tab to a web page first (with raise:true, unless its window is in front)"
+    }
+   ],
+   "isError": true,
+   "events": 4,
+   "ae": {
+    "Arc": [
+     "windows.length(Arc)",
+     "tabs.id()",
+     "tab.id",
+     "tab.url"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "errors: no_browser": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: no_browser: no browser window with an open tab"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "new_tab",
+    {
+     "url": "https://n.test/"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: no_browser: no browser is running (new_tab never launches one)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "list_tabs",
+    {
+     "app": "nonesuch"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: no_browser: unknown browser 'nonesuch'; one of: Google Chrome, Google Chrome Beta, Google Chrome Canary, Brave Browser, Microsoft Edge, Vivaldi, Arc, Safari"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "errors: timeout from a hung page and a quit browser": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "target": {
+      "tabId": "chrome:c1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: timeout: the browser didn't answer an Apple Event in time; the call may have run, so check the page before retrying (AppleScript -1712)"
+    }
+   ],
+   "isError": true,
+   "events": 2,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: timeout: the browser didn't answer an Apple Event in time; the call may have run, so check the page before retrying (AppleScript -1712)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "target": {
+      "tabId": "chrome:c1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: no_browser: the browser quit or isn't running; open it, then re-run list_tabs (AppleScript -600)"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "list_tabs",
+    {
+     "app": "chrome"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"tabs\":[],\"total\":0}"
+    }
+   ],
+   "isError": false,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "target": {
+      "tabId": "chrome:c1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: timeout: the browser didn't answer an Apple Event in time; the call may have run, so check the page before retrying (AppleScript -1712)"
+    }
+   ],
+   "isError": true,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 367
+  }
+ ],
+ "errors: permission messages": [
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "target": {
+      "tabId": "chrome:c1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: JavaScript-from-AppleEvents is off. Enable it: Chromium-family → View > Developer > Allow JavaScript from Apple Events. Safari → Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events."
+    }
+   ],
+   "isError": true,
+   "events": 3,
+   "ae": {
+    "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 367
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "return 1",
+     "target": {
+      "tabId": "chrome:c1"
+     }
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, ticking the target browser under the app running your agent (Terminal, iTerm, VS Code, Claude, Codex...)."
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "errors: unknown tool and bad label_pattern": [
+  {
+   "call": [
+    "nonesuch",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: unknown tool: nonesuch"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "label_pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "text": "x"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"error\":\"no fillable field matched /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/i; it may appear only after clicking a button\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 30269
+  }
+ ],
+ "errors: window_ambiguous with a second instance": [
+  {
+   "call": [
+    "click",
+    {
+     "selector": "#b",
+     "trusted": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: window_ambiguous: two instances of this browser have windows on screen, so perch can't tell which is the target's; quit the other one"
+    }
+   ],
+   "isError": true,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.id"
+    ]
+   },
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ]
+}
