@@ -1791,7 +1791,8 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     const group = Date.now() % 1000000000;
     skyMouse(I, pt, 5, 2, 0, group);
-    delay(0.015);
+    // 0 to 15ms all clicked 70/70 live on Canary; 5ms keeps the primer ordered first.
+    delay(0.005);
     skyMouse(I, { x: -1, y: -1 }, 1, 1, 1, group);
     delay(0.001);
     skyMouse(I, { x: -1, y: -1 }, 2, 2, 1, group);

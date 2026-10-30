@@ -194,7 +194,7 @@ test("trusted input reaches a background browser without changing app focus or c
   // gap from 0 to 100ms between the off-screen pair and the press clicked 10/10;
   // 10ms keeps the press ordered after the pair.
   const sky = world.posted.filter((e) => e.via === "skylight");
-  assert.deepEqual(sky.slice(1).map((e, i) => e.at - sky[i].at), [15, 1, 10, 1], "primer, off-screen pair, press: ms between posts");
+  assert.deepEqual(sky.slice(1).map((e, i) => e.at - sky[i].at), [5, 1, 10, 1], "primer, off-screen pair, press: ms between posts");
   assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 0, "never borrow the user's key focus");
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
   assert.equal(world.counts["win.index="], undefined);
