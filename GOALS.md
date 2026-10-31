@@ -49,6 +49,8 @@ When two goals conflict, the higher one wins.
 | 5 | p50/p95 per tool; Apple Events per call | `bench/baseline.json`, `test/perf-budget.test.mjs` |
 | 6 | no browser names in descriptions | `test/runtime.test.mjs` |
 
+Caps: `q3 k2 n2 b1 t1` (how firm each kind of number is: 3 never grows, 2 needs the owner's price, 1 may grow 10%, 0 only reported; fium RULES.md K6)
+
 ## Principles
 How the goals show up in every tool.
 - **Fail closed.** When perch can't prove an action lands where it should (the
