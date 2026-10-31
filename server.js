@@ -8049,16 +8049,20 @@ const href = !A.forFill && !A.select ? blankHref(el) : null;
 const onMove = function (e) { if (st.moves.length < 20) st.moves.push([e.clientX, e.clientY, e.screenX, e.screenY]); };
 // A mousedown on el, inside it (shadow trees too), or on a label of el's or one
 // wrapping it lands on el: a click there activates it.
+// pointerdown as well as mousedown: a page that cancels pointerdown (Figma's file
+// cards) suppresses the press's mousedown but still acts on the click.
 const onDown = function (e) {
   const p = e.composedPath(), lab = p[0].closest && p[0].closest("label");
   st.down = p.indexOf(el) >= 0 || !!lab && (lab.contains(el) || [].indexOf.call(el.labels || [], lab) >= 0);
+  window.removeEventListener("pointerdown", onDown, true);
   window.removeEventListener("mousedown", onDown, true);
 };
 const onClick = function (e) { st.cancelled = e.defaultPrevented; };
 window.addEventListener("mousemove", onMove, true);
+window.addEventListener("pointerdown", onDown, true);
 window.addEventListener("mousedown", onDown, true);
 if (href) window.addEventListener("click", onClick);
-st.off = function () { window.removeEventListener("mousemove", onMove, true); window.removeEventListener("mousedown", onDown, true); window.removeEventListener("click", onClick); };
+st.off = function () { window.removeEventListener("mousemove", onMove, true); window.removeEventListener("pointerdown", onDown, true); window.removeEventListener("mousedown", onDown, true); window.removeEventListener("click", onClick); };
 return {
   ok: true,
   el: ident(el),
@@ -9697,10 +9701,12 @@ const onDown = function (e) {
   const at = e.composedPath ? e.composedPath()[0] : e.target;
   st.down = true;
   st.at = at && at.nodeType === 1 ? ident(at) : null;
+  window.removeEventListener("pointerdown", onDown, true);
   window.removeEventListener("mousedown", onDown, true);
 };
+window.addEventListener("pointerdown", onDown, true);
 window.addEventListener("mousedown", onDown, true);
-st.off = function () { window.removeEventListener("mousedown", onDown, true); };
+st.off = function () { window.removeEventListener("pointerdown", onDown, true); window.removeEventListener("mousedown", onDown, true); };
 return out;`,
 
   // Drains recorded mouse moves as [clientX, clientY, screenX, screenY]; null if none.

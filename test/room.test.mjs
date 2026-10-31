@@ -483,3 +483,12 @@ test("new_tab in a room hands out its unused blank tab once, then opens new ones
   assert.equal(second.reused, undefined);
   assert.equal(R.room("work").log.filter((m) => m.method === "Target.createTarget").length, 1);
 });
+
+test("a trusted room click counts a press the page cancels at pointerdown", async () => {
+  use({ rooms: { work: { tabs: [{ url: "https://a.test/files", html: "<div id=card role=button aria-label='Plan, Design file' data-rect='10,20,200,120'>Plan</div>" }] } } });
+  await call("eval_js", { script: "const c = document.getElementById('card'); c.addEventListener('pointerdown', (e) => e.preventDefault()); c.addEventListener('click', () => history.pushState(null, '', '/design/plan')); return 1", target: tab() });
+  const o = await call("click", { selector: "#card", target: tab() });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.hit, true);
+  assert.equal(await call("eval_js", { script: "return location.pathname", target: tab() }), "/design/plan");
+});

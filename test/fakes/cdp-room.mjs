@@ -151,9 +151,14 @@ class FakeRoom {
         return run();
       }
       case "Input.dispatchMouseEvent": {
+        // Chrome's order: the pointer event first; a cancelled pointerdown suppresses
+        // the mouse events of that press, but the click still fires.
         const map = { mousePressed: "mousedown", mouseReleased: "mouseup", mouseMoved: "mousemove" };
         const el = this.hitAt(t.dom, params.x, params.y);
-        this.trusted(t.dom, el, map[params.type], { clientX: params.x, clientY: params.y, button: 0 });
+        const at = { clientX: params.x, clientY: params.y, button: 0 };
+        const pointer = this.trusted(t.dom, el, map[params.type].replace("mouse", "pointer"), at);
+        if (params.type === "mousePressed") t.suppressed = pointer.defaultPrevented;
+        if (!(t.suppressed && params.type !== "mouseMoved")) this.trusted(t.dom, el, map[params.type], at);
         if (params.type === "mousePressed" && typeof el.focus === "function") el.focus();
         if (params.type === "mouseReleased") this.trusted(t.dom, el, "click", { clientX: params.x, clientY: params.y });
         return ok();
