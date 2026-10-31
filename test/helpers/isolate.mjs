@@ -6,7 +6,7 @@
 // Set before any later server.js instance loads (the lock harness loads one per
 // scenario): each reads ROOMS_HOME at load.
 process.env.ROOMS_HOME = "/nonexistent/perch-test-rooms";
-import { DAEMONS, deps, roomsReset } from "../../server.js";
+const { DAEMONS, deps, roomsReset } = await import("../../server.js");
 
 const refuse = (what) => { throw new Error(`test isolation: ${what} reached the real system; install a fake world or stub deps.exec first`); };
 for (const lane of Object.keys(DAEMONS)) DAEMONS[lane] = { run: async () => refuse(`DAEMONS.${lane}`) };
