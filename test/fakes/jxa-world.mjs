@@ -467,8 +467,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   const axPoint = (x, y) => ({ description: `<AXValue 0x1> {value = x:${x.toFixed(6)} y:${y.toFixed(6)} type = kAXValueCGPointType}` });
   const axSize = (w, h) => ({ description: `<AXValue 0x2> {value = w:${w.toFixed(6)} h:${h.toFixed(6)} type = kAXValueCGSizeType}` });
   const dialogFrame = (d) => d.frame || { x: 175, y: 120, w: 450, h: 160 };
+  const axCold = (c) => c.ax.cold && !(state.axManual && state.axManual[c.pid]) && !(state.axRole && state.axRole[c.pid]);
   function axAttr(el, name) {
     if (el.role === "AXApplication") {
+      // Chrome builds a page's tree once a client reads the app's AXRole (state.axRole[pid]).
+      if (name === "AXRole") { (state.axRole = state.axRole || {})[el.pid] = true; return "AXApplication"; }
       if (name !== "AXWindows") return undefined;
       // state.minimized: [{pid, wid, x, y, w, h, title}], windows with no on-screen CG entry that
       // Accessibility still lists, as AXMinimized, with their CGWindowID.
@@ -510,9 +513,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     if (name === "AXSize") return box ? axSize(box.w, box.h) : undefined;
     if (name === "AXChildren") {
       // ax.cold: Chromium hasn't built the page's tree; it shows no web area until
-      // AXManualAccessibility is set on the app (state.axManual[pid]).
+      // a client reads the app's AXRole, or (Electron) sets AXManualAccessibility on it.
       if (el.role === "AXWindow") {
-        const cold = el.c.ax.cold && !(state.axManual && state.axManual[el.c.pid]);
+        const cold = axCold(el.c);
         return axList([{ role: "AXToolbar" }, { role: "AXGroup", kids: cold ? [] : el.c.ax.web.map((box) => ({ role: "AXWebArea", box })) }]);
       }
       // A page's own role=dialog also maps to AXApplicationDialog; it is not a JS dialog.
@@ -641,7 +644,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     for (const c of cgEntries) {
       if (c.pid !== pid || !c.ax || !inBox(c.axFrame || c)) continue;
       const win = { role: "AXWindow", subrole: "AXStandardWindow", c };
-      const web = c.ax.cold && !(state.axManual && state.axManual[c.pid]) ? null : c.ax.web.find(inBox);
+      const web = axCold(c) ? null : c.ax.web.find(inBox);
       if (!web) return link([{ role: "AXButton", title: "Reload" }, { role: "AXToolbar" }, win]);
       const chain = [{ role: "AXWebArea", box: web }, { role: "AXGroup" }, win];
       for (let fs = web.frames || [], f; (f = fs.filter((g) => inBox(g.box)).pop()); fs = f.frames || []) chain.unshift({ role: "AXWebArea", fr: f, box: f.box });
@@ -944,7 +947,11 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       },
       AXUIElementSetAttributeValue: (el, name, value) => {
         bump("AXSet");
-        if (el.role === "AXApplication" && name.js === "AXManualAccessibility") { (state.axManual = state.axManual || {})[el.pid] = true; return 0; }
+        // ax.noManual: Chrome, which rejects the Electron-only attribute.
+        if (el.role === "AXApplication" && name.js === "AXManualAccessibility") {
+          if (cgEntries.some((c) => c.pid === el.pid && c.ax && c.ax.noManual)) return -25205;
+          (state.axManual = state.axManual || {})[el.pid] = true; return 0;
+        }
         if (el.path && name.js === "AXValue") { el.pn.field = value.js; return 0; }
         if (el.role !== "AXTextField" || name.js !== "AXValue") return -25205;
         el.d.value = value.js;

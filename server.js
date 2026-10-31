@@ -2301,16 +2301,20 @@ function jxaRuntime(BROWSERS, HANG) {
     };
     let r = walk();
     // Chromium builds a page's tree only once an assistive client asks for it, so
-    // a window opened since can show no web area at all. AXManualAccessibility on
-    // the app turns it on (once per process); the page shows up within a second.
-    if (!r.best && r.areas === 0 && !axWoken[I.pid]) {
-      axWoken[I.pid] = true;
-      try { $.AXUIElementSetAttributeValue($.AXUIElementCreateApplication(I.pid), $("AXManualAccessibility"), $(true)); } catch (e) {}
+    // a window opened since can show no web area at all. Chrome builds it when the
+    // app's AXRole is read (it rejects AXManualAccessibility, which Electron needs
+    // instead); the page shows up within a second. Chrome drops the tree again for
+    // a page hidden about 5 minutes, so a wake older than that is redone.
+    if (!r.best && r.areas === 0 && !(Date.now() - axWoken[I.pid] < AX_WAKE_MS)) {
+      axWoken[I.pid] = Date.now();
+      const app = $.AXUIElementCreateApplication(I.pid);
+      attr(app, "AXRole");
+      try { $.AXUIElementSetAttributeValue(app, $("AXManualAccessibility"), $(true)); } catch (e) {}
       for (let i = 0; i < 10 && !r.best && r.areas === 0 && (until == null || Date.now() < until); i++) { delay(0.1); r = walk(); }
     }
     return r.best;
   }
-  const axWoken = {};
+  const axWoken = {}, AX_WAKE_MS = 5 * 60000;
 
   // The pid's AX windows within 8pt of the frame r, each as {el, wid}, wid being
   // the CGWindowID it reports (null when unreadable).

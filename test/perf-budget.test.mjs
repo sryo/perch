@@ -333,7 +333,8 @@ test("the trusted click's hit test adds Accessibility reads only, no Apple Event
 // Chromium builds a page's Accessibility tree only once an assistive client asks
 // for it: a window opened since then can show no web area (live: a fresh Canary
 // window refused every trusted click as "not on the page itself"). The aim then
-// sets AXManualAccessibility on the browser once, and the page shows up.
+// reads the app's AXRole and sets AXManualAccessibility on it, once per 5 minutes,
+// and the page shows up.
 test("a trusted click on a window whose page tree Chromium hasn't built wakes it once and clicks", async () => {
   const dom = page(`<button id=b>Go</button>`, { url: "https://c0.test/" });
   for (const [k, v] of Object.entries({ screenX: 0, screenY: 57, outerWidth: 654, innerWidth: 598, outerHeight: 600, innerHeight: 500 })) Object.defineProperty(dom, k, { value: v, configurable: true });
@@ -348,7 +349,39 @@ test("a trusted click on a window whose page tree Chromium hasn't built wakes it
   assert.deepEqual(world.state.axManual, { 40: true });
   world.reset();
   await call("click", { trusted: true, selector: "#b" });
-  assert.equal(world.counts.AXSet, undefined, "set once per browser process");
+  assert.equal(world.counts.AXSet, undefined, "woken once per browser process within 5 minutes");
+});
+
+// Chrome rejects AXManualAccessibility (Electron's attribute) and builds the
+// page's tree when a client reads the app's AXRole instead.
+const coldChrome = (ax) => {
+  const dom = page(`<button id=b>Go</button>`, { url: "https://c0.test/" });
+  for (const [k, v] of Object.entries({ screenX: 0, screenY: 57, outerWidth: 654, innerWidth: 598, outerHeight: 600, innerHeight: 500 })) Object.defineProperty(dom, k, { value: v, configurable: true });
+  const cg = [{ owner: "Google Chrome", pid: 41, wid: 410, x: 0, y: 57, w: 854, h: 600, ax: { cold: true, web: [{ x: 56, y: 157, w: 598, h: 500 }], ...ax } }];
+  install({ browsers: [chrome([{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg });
+};
+
+test("a cold Chrome that rejects AXManualAccessibility wakes when its app's AXRole is read", async () => {
+  coldChrome({ noManual: true });
+  const { o } = await call("click", { trusted: true, selector: "#b" });
+  assert.equal(o.aim, "ax", JSON.stringify(o));
+  assert.deepEqual(world.state.axRole, { 41: true });
+});
+
+// Chrome turns a page's tree off again once the page has been hidden for about
+// 5 minutes, so a browser woken longer ago than that is woken again.
+test("a browser's page tree is woken again once 5 minutes have passed since the last wake", async () => {
+  coldChrome({ noManual: true });
+  await call("click", { trusted: true, selector: "#b" });
+  const cool = () => { world.state.axRole = {}; world.reset(); };
+  cool();
+  world.clock.t += 4 * 60_000;
+  const early = (await call("click", { trusted: true, selector: "#b" })).o;
+  assert.notEqual(early.aim, "ax", "within 5 minutes the cached wake stands: " + JSON.stringify(early));
+  cool();
+  world.clock.t += 2 * 60_000;
+  const { o } = await call("click", { trusted: true, selector: "#b" });
+  assert.equal(o.aim, "ax", JSON.stringify(o));
 });
 
 // select {trusted} in a background tab, on a picker that opens only on trusted
