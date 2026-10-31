@@ -10341,8 +10341,41 @@ async function withScreenWhy(out) {
   return out;
 }
 
+// macOS locks the screen once the display sleeps, and a locked screen refuses
+// trusted input. So every call keeps the display (and with it the system) awake
+// for awake.ms after it, through one `caffeinate -d -i -w <pid>` child: -w ends it
+// with this process, a crash included, and the idle timer ends it otherwise.
+// Off with PERCH_AWAKE=0; PERCH_AWAKE_MS sets the time. Only the entry point turns it on.
+export const awake = { on: false, ms: 600000, spawn, proc: null, timer: null };
+function holdAwake() {
+  if (!awake.on) return;
+  if (!awake.proc) {
+    let p = null;
+    try { p = awake.spawn("caffeinate", ["-d", "-i", "-w", String(process.pid)], { stdio: "ignore" }); } catch {}
+    if (p) {
+      const gone = () => { if (awake.proc === p) awake.proc = null; };
+      p.on("exit", gone);
+      p.on("error", gone);
+      if (p.unref) p.unref();
+      awake.proc = p;
+    }
+  }
+  clearTimeout(awake.timer);
+  awake.timer = setTimeout(releaseAwake, awake.ms);
+  if (awake.timer.unref) awake.timer.unref();
+}
+export function releaseAwake() {
+  clearTimeout(awake.timer);
+  awake.timer = null;
+  const p = awake.proc;
+  awake.proc = null;
+  if (p) { try { p.kill(); } catch {} }
+}
+
 export async function handleCall(name, args = {}) {
-  return withScreenWhy(await handleCallCore(name, args));
+  holdAwake();
+  try { return withScreenWhy(await handleCallCore(name, args)); }
+  finally { holdAwake(); }
 }
 
 async function handleCallCore(name, args = {}) {
@@ -10402,7 +10435,10 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   server.setRequestHandler(CallToolRequestSchema, (req) => handleCall(req.params.name, req.params.arguments || {}));
   // The daemons' pipes keep node alive, so a closed client would leave this
   // process and its osascript REPLs running for good.
+  awake.on = process.env.PERCH_AWAKE !== "0";
+  if (Number(process.env.PERCH_AWAKE_MS) > 0) awake.ms = Number(process.env.PERCH_AWAKE_MS);
   const shutdown = () => {
+    releaseAwake();
     for (const d of Object.values(DAEMONS)) { try { d.kill(); } catch {} }
     process.exit(0);
   };

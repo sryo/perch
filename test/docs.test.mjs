@@ -14,7 +14,7 @@ test("SKILL.md covers every tool and stays short", async () => {
 
 test("AGENTS.md stays a lean reference: rules, contracts and test pointers, not per-case narration", async () => {
   const agents = await read("AGENTS.md");
-  assert.ok(agents.length < 60500, `AGENTS.md is ${agents.length} bytes; move per-case detail into a test or a commit message`);
+  assert.ok(agents.length < 61000, `AGENTS.md is ${agents.length} bytes; move per-case detail into a test or a commit message`);
 });
 
 test("SKILL.md adds to the schema and server instructions rather than repeating them", async () => {

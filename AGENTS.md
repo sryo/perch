@@ -56,6 +56,7 @@ A warm REPL runs a realistic script in about 25ms against about 90ms cold; the s
 - **Start-up:** the prelude round-trip is the ready handshake. The server calls `warm()` on the fast and slow lanes once connected, so no tool call pays the cold start. `warm()` never throws; a failed spawn is retried by the next call. Each handshake also imports AppKit and sets the prohibited activation policy, so the lanes never get a Dock icon.
 - **Failure policy:** a timeout, a mid-call exit or `abort(err, token)` (the dialog watchdog) kills the REPL and the next call respawns it. None is retried, because the script may already have opened a tab or posted a click. Only a script that never reached stdin (`notSent`) falls back to one-shot.
 - **Off switch:** `PERCH_DAEMON=0` runs every call one-shot.
+- **Display awake:** macOS locks the screen once the display sleeps, and a locked screen refuses trusted input. Each call (`handleCall`) holds one `caffeinate -d -i -w <pid>` child for `awake.ms` (10 min, `PERCH_AWAKE_MS`) after it, refreshed by later calls; the idle timer, shutdown or this process's death (`-w`) ends it. Only the entry point turns it on; `PERCH_AWAKE=0` turns it off. Pinned by `test/awake.test.mjs`.
 
 ### Targeting (`resolve`)
 
