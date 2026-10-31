@@ -4250,7 +4250,7 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   try {
     out = DIALOG_BLIND.has(fn) && !(args && args.clip)
       ? await jxa(script, { lane, timeout })
-      : await watchDialogs(args && args.target ? args.target : {}, lane, (token) => jxa(script, { lane, timeout, token }));
+      : await watchDialogs(args && args.target ? args.target : {}, lane, (token) => jxa(script, { lane, timeout, token }), CANCELLABLE.has(fn) && c0 ? c0.signal : null);
   } catch (e) {
     const m = e && typeof e.message === "string" ? LATE_ERR_RE.exec(e.message) : null;
     if (m) {
@@ -4418,10 +4418,17 @@ async function findDialog(target) {
   try { return (await deps.dialogs(target))[0] || null; } catch { return null; }
 }
 
-async function watchDialogs(target, lane, run) {
+// A client's cancel (notifications/cancelled) stops the calls that only wait on
+// the page; the rest may have acted, so they finish, as a timeout never cuts them.
+const CANCELLABLE = new Set(["wait", "evalKicked"]);
+const cancelled = () => new Error("cancelled: the client cancelled the call; perch stopped waiting on the page, where the code may still be running");
+
+async function watchDialogs(target, lane, run, signal) {
   const d = DAEMONS[lane] || DAEMONS.fast;
   const token = {};
   let timer = null, done = false;
+  const onCancel = () => { if (!done) d.abort(cancelled(), token); };
+  if (signal && d && typeof d.abort === "function") signal.addEventListener("abort", onCancel, { once: true });
   const probe = async () => {
     const hit = await findDialog(target);
     if (done) return;
@@ -4432,7 +4439,8 @@ async function watchDialogs(target, lane, run) {
   let err;
   try { return await run(token); }
   catch (e) { err = e; }
-  finally { done = true; clearTimeout(timer); }
+  finally { done = true; clearTimeout(timer); if (signal) signal.removeEventListener("abort", onCancel); }
+  if (signal && signal.aborted && err.message.startsWith("cancelled: ")) throw err;
   const hit = hung(err.message) && await findDialog(target);
   throw hit ? dialogOpen(hit) : err;
 }
@@ -11293,26 +11301,28 @@ export function releaseAwake() {
 }
 
 const roomArgs = (args) => !!args && (isRoomTab(args.target && args.target.tabId) || isRoomTab(args.tabId) || ROOM_APP.test(String(args.app)));
-export async function handleCall(name, args = {}) {
+// opts.signal: the request's AbortSignal, which the MCP SDK fires on the client's cancel.
+export async function handleCall(name, args = {}, opts = {}) {
   const kind = roomArgs(args) ? "system" : "display";
   holdAwake(kind);
   try {
-    const out = await handleCallCore(name, args);
+    const out = await handleCallCore(name, args, opts.signal);
     return kind === "system" ? out : withScreenWhy(out);
   }
   finally { holdAwake(kind); }
 }
 
-async function handleCallCore(name, args = {}) {
+async function handleCallCore(name, args = {}, signal) {
   const handler = Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : null;
   let note = null;
   try {
     if (!handler) throw new Error(`unknown tool: ${name}`);
+    if (signal && signal.aborted) throw cancelled();
     guardFrameRefs(name, args);
     args = normPatterns(args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
-    note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name) };
+    note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name), signal };
     const roomTab = ROOM_LEASE_TOOLS.has(name) ? args.target?.tabId ?? (name === "close_tab" ? args.tabId : null) : null;
     const leaseTab = isRoomTab(roomTab) ? roomTab : null;
     const lockKey = leaseTab ? tabKey({ tabId: leaseTab }) : tabLockKey(name, args);
@@ -11355,11 +11365,16 @@ function withLate(out, late) {
 
 export { TOOLS };
 
-// Start only when run as the entry point (realpath: npm's bin is a symlink), so tests can import.
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+export function createServer() {
   const server = new Server({ name: "perch", version: "0.2.0" }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
-  server.setRequestHandler(CallToolRequestSchema, (req) => handleCall(req.params.name, req.params.arguments || {}));
+  server.setRequestHandler(CallToolRequestSchema, (req, extra) => handleCall(req.params.name, req.params.arguments || {}, { signal: extra && extra.signal }));
+  return server;
+}
+
+// Start only when run as the entry point (realpath: npm's bin is a symlink), so tests can import.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const server = createServer();
   // The daemons' pipes keep node alive, so a closed client would leave this
   // process and its osascript REPLs running for good.
   awake.on = process.env.PERCH_AWAKE !== "0";
