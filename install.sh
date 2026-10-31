@@ -17,9 +17,9 @@ PERCH_SCOPE="${PERCH_SCOPE:-user}"
 [[ "$(uname -s)" == "Darwin" ]] || { echo "perch only works on macOS." >&2; exit 1; }
 
 command -v git >/dev/null || { echo "git not found. Run: xcode-select --install" >&2; exit 1; }
-command -v node >/dev/null || { echo "node not found. Install Node 18+ from https://nodejs.org" >&2; exit 1; }
+command -v node >/dev/null || { echo "node not found. Install Node 20+ from https://nodejs.org" >&2; exit 1; }
 node_major="$(node -p 'process.versions.node.split(".")[0]')"
-[[ "$node_major" -ge 18 ]] || { echo "node $node_major < 18. Upgrade Node." >&2; exit 1; }
+[[ "$node_major" -ge 20 ]] || { echo "node $node_major < 20. Upgrade Node." >&2; exit 1; }
 HAS_CLAUDE=0; HAS_CODEX=0; HAS_COPILOT=0
 command -v claude >/dev/null && HAS_CLAUDE=1
 command -v codex >/dev/null && HAS_CODEX=1
