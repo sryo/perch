@@ -3574,7 +3574,10 @@ function jxaRuntime(BROWSERS, HANG) {
         const viaPage = kind === "chrome" && /^https?:\/\//i.test(a.url);
         const tab = ap.Tab({ url: later ? "arc://newtab" : viaPage ? "about:blank" : a.url });
         win.tabs.push(tab);
-        // Push appends, so the index still names the tab shown before.
+        // Push appends, so the index still names the tab shown before. Selecting it back
+        // happens only under the user's focus grant (new_tab doesn't run without one),
+        // and it gives the user back the tab they were working in, which the made tab
+        // took over: it serves them, not perch's own tidiness (GOALS.md goal 1).
         if (kind === "chrome" && prev != null) {
           try { if (win.activeTabIndex() !== prev) win.activeTabIndex = prev; } catch (e) {}
         }
