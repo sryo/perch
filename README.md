@@ -14,4 +14,4 @@ The first time, allow two things once: macOS asks whether the app running your a
 
 ## Use
 
-Ask your agent for things in a tab you have open: "fill this application from my resume", "what does this page say about pricing?", "click through the signup and tell me what breaks". It works in background tabs and asks before it brings a browser to the front.
+Ask your agent for things in a tab you have open: "fill this application from my resume", "what does this page say about pricing?", "click through the signup and tell me what breaks".
