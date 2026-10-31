@@ -12,7 +12,11 @@ The benchmark to beat is Claude in Chrome (`bench/compare/`), not Playwright.
 
 ## Constraints (never traded)
 - The user's own browser, as it is: no extension, no debug port, no relaunch,
-  no separate profile.
+  no separate profile. The one exception is a room (the `rooms` CLI): its own
+  Chromium on one persistent profile in a Linux VM, reached over a loopback
+  DevTools port behind a token, for work that must go on while the Mac is
+  locked or a window is minimized. A call reaches a room only by a `room:`
+  handle, and nothing a room does touches the user's screen or browser.
 - Single-file server, one runtime dependency, one-command install.
 
 ## Goals, in priority order

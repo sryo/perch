@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execFile, spawn } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
@@ -4217,6 +4217,7 @@ async function jxaOneShot(script, { timeout = JXA_DEFAULT_TIMEOUT } = {}) {
 // Calls a runtime entry. `raw` returns the entry's string result untouched
 // (page JSON from eval); otherwise the result is JSON round-tripped.
 async function rt(fn, args, { raw = false, lane, timeout } = {}) {
+  if (roomCall(fn, args)) return roomRt(fn, args);
   const tabId = args && args.target && args.target.tabId;
   const safari = typeof tabId === "string" && tabId.startsWith("safari:");
   if (safari) {
@@ -4541,6 +4542,681 @@ function mainResult(text) {
 
 const parsePage = (raw) => { if (raw === "") return null; try { return JSON.parse(raw); } catch { return raw; } };
 
+// ---- rooms ----
+//
+// A room (the `rooms` CLI) is one Chromium on one persistent profile in its own
+// Linux VM, with DevTools on host loopback behind a token. Its tabs are
+// room:<name>:<targetId>, and every call on one goes over that endpoint, never
+// Apple Events: no window, cursor or keyboard of the user's is involved, so
+// trusted input is CDP's own (Input.*, isTrusted in the page) and a background
+// tab answers like a shown one. The page scripts are the ones every browser
+// runs; ROOM_FNS mirrors the runtime entry points (jxaRuntime) that tools reach
+// through rt, on CDP. Page JS runs in an isolated world named "perch", as
+// Chrome's Apple Events JS does. Registry: $ROOMS_HOME/rooms.json (~/.rooms).
+// Untargeted calls never reach a room; list_tabs without `app` adds the rooms
+// that are up after the browsers. Not in rooms: frame rows and fN refs, the
+// file chooser (file_upload still sets the file through the page), the late
+// revert check. Tests: test/room.test.mjs on test/fakes/cdp-room.mjs.
+export const rooms = {
+  home: process.env.ROOMS_HOME || join(homedir(), ".rooms"),
+  fetch: (...a) => globalThis.fetch(...a),
+  WebSocket: globalThis.WebSocket,
+  conns: new Map(),
+};
+export function roomsReset(over = {}) {
+  for (const c of rooms.conns.values()) c.then((x) => x.close(), () => {});
+  rooms.conns.clear();
+  Object.assign(rooms, over);
+}
+
+const ROOM_HANDLE = /^room:([a-z][a-z0-9-]{0,30}):(.+)$/;
+export const ROOM_APP = /^room(?::([a-z][a-z0-9-]{0,30}))?$/;
+const isRoomTab = (tabId) => typeof tabId === "string" && tabId.startsWith("room:");
+const roomCall = (fn, args) => isRoomTab(args && args.target && args.target.tabId) ||
+  (fn === "newTab" && ROOM_APP.test(String(args && args.app))) ||
+  (args && args.target && args.target.tabId == null && ROOM_APP.test(String(args.target.app)));
+// A page call's cap: the runtime's POLL_EXEC_SECS, and STEP_EXEC_SECS for a step.
+const ROOM_EXEC_SECS = 2, ROOM_STEP_SECS = 5, ROOM_SEND_MS = 30000;
+const ROOM_MAY_HAVE_RUN = "; it may have run, and the page may be navigating; retry after checking the page";
+
+function roomRegistry() {
+  const file = join(rooms.home, "rooms.json");
+  let reg;
+  try { reg = JSON.parse(readFileSync(file, "utf8")); }
+  catch (e) { if (e.code === "ENOENT") return {}; throw new Error(`no_browser: can't read ${file}: ${e.message}`); }
+  return (reg && reg.rooms) || {};
+}
+
+const roomNoReply = (secs) => Object.assign(new Error(`timeout: ${HANG.noReply}${secs}s`), { noReply: true });
+const roomDialog = (p) => ({ kind: p.type === "beforeunload" ? "leave" : p.type, message: p.message || "" });
+
+// One browser-level connection per room, kept open: sessions are flattened onto it.
+function roomConn(name) {
+  let p = rooms.conns.get(name);
+  if (!p) {
+    p = roomConnect(name);
+    p.then((c) => { c.entry = p; }, () => {});
+    rooms.conns.set(name, p);
+    p.catch(() => { if (rooms.conns.get(name) === p) rooms.conns.delete(name); });
+  }
+  return p;
+}
+async function roomConnect(name) {
+  const r = roomRegistry()[name];
+  if (!r || !r.cdp) throw new Error(`no_browser: no room '${name}'; rooms init ${name}, then rooms up ${name}`);
+  const down = () => new Error(`no_browser: room '${name}' is not up; rooms up ${name}`);
+  let url;
+  try {
+    const res = await rooms.fetch(`http://${r.cdp.host}:${r.cdp.port}/${r.cdp.token}/json/version`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) throw down();
+    url = (await res.json()).webSocketDebuggerUrl;
+  } catch { throw down(); }
+  if (typeof url !== "string") throw down();
+  const sock = new rooms.WebSocket(url);
+  await new Promise((res, rej) => { sock.onopen = () => res(); sock.onerror = () => rej(down()); });
+  const conn = { name, sock, id: 0, pending: new Map(), sessions: new Map(), bySession: new Map(), closed: false };
+  conn.send = (method, params = {}, sessionId, ms = ROOM_SEND_MS) => {
+    if (conn.closed) return Promise.reject(down());
+    const id = ++conn.id;
+    sock.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+    return new Promise((res, rej) => {
+      const t = setTimeout(() => { conn.pending.delete(id); rej(roomNoReply(Math.round(ms / 100) / 10)); }, ms);
+      conn.pending.set(id, { res, rej, t, method, sessionId });
+    });
+  };
+  conn.close = () => { conn.closed = true; try { sock.close(); } catch {} };
+  sock.onmessage = (m) => {
+    const msg = JSON.parse(typeof m.data === "string" ? m.data : String(m.data));
+    if (msg.id != null) {
+      const p = conn.pending.get(msg.id);
+      if (!p) return;
+      conn.pending.delete(msg.id);
+      clearTimeout(p.t);
+      if (msg.error) p.rej(new Error(`${p.method}: ${msg.error.message}`));
+      else p.res(msg.result);
+      return;
+    }
+    const S = msg.sessionId ? conn.bySession.get(msg.sessionId) : null;
+    const P = msg.params || {};
+    if (msg.method === "Page.javascriptDialogOpening" && S) {
+      S.dialog = roomDialog(P);
+      // The page is paused: a page call waiting on it gets the dialog now.
+      for (const [id, p] of conn.pending) {
+        if (p.sessionId !== S.id || p.method !== "Runtime.evaluate") continue;
+        conn.pending.delete(id); clearTimeout(p.t); p.rej(dialogOpen(S.dialog));
+      }
+    } else if (msg.method === "Page.javascriptDialogClosed" && S) S.dialog = null;
+    else if (msg.method === "Page.frameNavigated" && S && P.frame && !P.frame.parentId) { S.ctx = null; S.loaderId = P.frame.loaderId; }
+    else if (msg.method === "Target.detachedFromTarget") {
+      const s = conn.bySession.get(P.sessionId);
+      if (s) { conn.bySession.delete(P.sessionId); conn.sessions.delete(s.targetId); }
+    }
+  };
+  sock.onclose = () => {
+    conn.closed = true;
+    for (const p of conn.pending.values()) { clearTimeout(p.t); p.rej(down()); }
+    conn.pending.clear();
+    if (rooms.conns.get(name) === conn.entry) rooms.conns.delete(name);
+  };
+  return conn;
+}
+
+const roomGone = (tabId) => new Error(`stale_tab: ${tabId} is gone (closed or crashed); re-run list_tabs`);
+function roomSession(conn, targetId, tabId) {
+  let s = conn.sessions.get(targetId);
+  if (!s) {
+    s = (async () => {
+      let r;
+      try { r = await conn.send("Target.attachToTarget", { targetId, flatten: true }); }
+      catch (e) { throw /No target/i.test(e.message) ? roomGone(tabId) : e; }
+      const S = { id: r.sessionId, targetId, ctx: null, dialog: null, loaderId: null };
+      conn.bySession.set(S.id, S);
+      await conn.send("Page.enable", {}, S.id);
+      return S;
+    })();
+    conn.sessions.set(targetId, s);
+    s.catch(() => { if (conn.sessions.get(targetId) === s) conn.sessions.delete(targetId); });
+  }
+  return s;
+}
+async function roomTarget(target, tool) {
+  const tabId = target && target.tabId;
+  const m = ROOM_HANDLE.exec(String(tabId));
+  if (!m) throw new Error(`bad_args: ${tool} on a room needs target.tabId, a room:<name>:<id> handle from list_tabs {app:"room"}`);
+  const conn = await roomConn(m[1]);
+  return { conn, S: await roomSession(conn, m[2], tabId), name: m[1], targetId: m[2], tabId };
+}
+const roomPages = async (conn) => (await conn.send("Target.getTargets")).targetInfos.filter((x) => x.type === "page");
+
+// Page JS in perch's isolated world. A world lost to a navigation is made again
+// and the script sent again: a world that's gone ran nothing.
+async function roomExec(t, js, secs = ROOM_EXEC_SECS) {
+  const { conn, S } = t;
+  for (let i = 0; ; i++) {
+    if (S.dialog) throw dialogOpen(S.dialog);
+    let ctx, r;
+    try {
+      ctx = await roomCtx(t);
+      r = await conn.send("Runtime.evaluate", { expression: js, contextId: ctx, returnByValue: true }, S.id, secs * 1000);
+    } catch (e) {
+      if (/Cannot find context|Session with given id not found|No frame/i.test(e.message)) {
+        if (/Session with given id/i.test(e.message)) { conn.sessions.delete(S.targetId); throw roomGone(t.tabId); }
+        S.ctx = null;
+        if (i < 3) continue;
+      }
+      throw e;
+    }
+    if (r.exceptionDetails) {
+      const d = r.exceptionDetails;
+      throw new Error(`tab_not_scriptable: the page script did not run: ${String((d.exception && d.exception.description) || d.text).split("\n")[0].slice(0, 200)}`);
+    }
+    return r.result ? r.result.value : undefined;
+  }
+}
+function roomCtx(t) {
+  const { conn, S } = t;
+  if (S.ctx == null) {
+    S.ctx = (async () => {
+      const { frameTree } = await conn.send("Page.getFrameTree", {}, S.id);
+      return (await conn.send("Page.createIsolatedWorld", { frameId: frameTree.frame.id, worldName: "perch" }, S.id)).executionContextId;
+    })();
+    S.ctx.catch(() => {});
+  }
+  return S.ctx;
+}
+// eval_js {world:"main"} and {awaitPromise}: one Runtime.evaluate that awaits the
+// script, in the page's own world (no injected <script>, so no CSP or Trusted
+// Types refusal) or perch's, with the result shapes of the kicked protocol.
+async function roomEval(js, target, { main, awaitPromise, timeout }) {
+  const t = await roomTarget(target, "eval_js"), what = main ? "world main" : "awaitPromise";
+  if (t.S.dialog) throw dialogOpen(t.S.dialog);
+  const run = awaitPromise ? `await (async function(){${js}\n})()` : `(function(){${js}\n})()`;
+  const expression = `(async function(){var E=${main ? MW_ERROR_SHAPE : ERROR_SHAPE},o;try{var r=${run};o={value:r===undefined?null:r}}catch(e){o=E(e)}try{return JSON.stringify(o)}catch(e){return JSON.stringify(E(e))}})()`;
+  let r;
+  for (let i = 0; ; i++) {
+    try {
+      r = await t.conn.send("Runtime.evaluate", { expression, ...(main ? {} : { contextId: await roomCtx(t) }), awaitPromise: true, returnByValue: true }, t.S.id, timeout + JXA_OVERHEAD);
+      break;
+    } catch (e) {
+      if (e.noReply) throw new Error(`timeout: eval_js (${what}) timed out after ${timeout}ms; the code ran and may still be running, so check the page before running it again`);
+      if (/Cannot find context/i.test(e.message) && i < 2) { t.S.ctx = null; continue; }
+      if (/context was destroyed|Inspected target navigated/i.test(e.message)) throw new Error(`timeout: eval_js (${what}) lost its result before ${main ? "it" : "the promise"} settled${ROOM_MAY_HAVE_RUN}`);
+      throw e;
+    }
+  }
+  if (r.exceptionDetails) throw new Error(`tab_not_scriptable: the page script did not run: ${String((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text).split("\n")[0].slice(0, 200)}`);
+  const text = r.result ? r.result.value : "";
+  if (main) return mainResult(text);
+  const v = parsePage(text);
+  return v && Object.hasOwn(v, "value") ? v.value : v;
+}
+const roomValue = (r) => { try { return r != null && r !== "" ? JSON.parse(String(r)) : null; } catch { return null; } };
+// A read is sent once more after a dropped reply; a step never is.
+async function roomRead(t, js) {
+  try { return JSON.parse(String(await roomExec(t, js))); }
+  catch (e) { if (!e.noReply) throw e; return JSON.parse(String(await roomExec(t, js, 2 * ROOM_EXEC_SECS))); }
+}
+async function roomStep(t, js) {
+  try { return JSON.parse(String(await roomExec(t, js, ROOM_STEP_SECS))); }
+  catch (e) { if (e.noReply) throw new Error(`timeout: ${HANG.noReply}${ROOM_STEP_SECS}s${ROOM_MAY_HAVE_RUN}`); throw e; }
+}
+async function roomAfterStep(tool, f) {
+  try { return await f(); } catch (e) {
+    if (!e.noReply) throw e;
+    throw new Error(`timeout: the ${tool}${HANG.ranNoReply}; the page may be navigating; don't ${tool} again, check the page`);
+  }
+}
+const roomFatal = (e) => /^(stale_tab|dialog_open|no_browser): /.test(e.message);
+// The runtime's poll: `js` until non-null/non-false (or `done(v)`), each failed
+// run a "not yet"; with `step`, a dropped reply ends it.
+async function roomPoll(t, js, timeout, interval, step, done, start = Date.now()) {
+  const deadline = start + timeout;
+  for (;;) {
+    let v = null;
+    const src = typeof js === "function" ? js() : js;
+    try { v = roomValue(await roomExec(t, src, step ? ROOM_STEP_SECS : Math.max(0.1, Math.min(ROOM_EXEC_SECS, (deadline - Date.now()) / 1000)))); }
+    catch (e) { if (roomFatal(e) || (step && e.noReply)) throw e; }
+    if (done ? done(v) : v !== null && v !== false) return { value: v, waited: Date.now() - start };
+    const left = deadline - Date.now();
+    if (left > 0) await sleep(Math.min(typeof interval === "function" ? interval(Date.now() - start) : interval, left));
+    if (Date.now() >= deadline) return null;
+  }
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const roomThrew = (v) => !!v && v.__perch_error != null;
+const roomFault = (v) => { const n = v && v.__perch_error_name; return typeof n === "string" && /^[A-Za-z_$][\w$]{0,39}$/.test(n) ? n : "Error"; };
+const roomArmFault = (tool, v) => ({ ok: false, error: `${tool}: the page script failed on this page (${roomFault(v)}); nothing was ${tool === "press" ? "pressed" : "clicked"}` });
+const roomCheckFault = (tool, v) => `${tool}: the ${tool === "press" ? "key" : "click"} was sent; the page script failed checking it (${roomFault(v)}); outcome unverified`;
+// The tab is shown inside the room (no window of the user's moves) so it paints
+// for a screenshot and takes input like a foreground tab.
+const roomShow = (t) => t.conn.send("Target.activateTarget", { targetId: t.targetId });
+// Answers what the trusted recorder saw at the press, read before the release:
+// a link's click navigates on release, and the check after it would read the
+// next document.
+const ROOM_DOWN = "JSON.stringify(window.__perch_trusted?{down:window.__perch_trusted.down}:null)";
+async function roomMouseClick(t, x, y) {
+  const at = { x, y, button: "left", clickCount: 1 };
+  await t.conn.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, t.S.id);
+  await t.conn.send("Input.dispatchMouseEvent", { type: "mousePressed", buttons: 1, ...at }, t.S.id);
+  let down = null;
+  try { down = roomValue(await roomExec(t, ROOM_DOWN)); } catch {}
+  await t.conn.send("Input.dispatchMouseEvent", { type: "mouseReleased", buttons: 0, ...at }, t.S.id);
+  return down;
+}
+// A check that read another document (hit undefined) after a press the page
+// recorded: the click landed and the page navigated.
+function roomLanded(check, down) {
+  if (!check || check.hit !== undefined || !down || down.down == null) return check;
+  return Object.assign({}, check, { hit: down.down, note: "the page navigated after the click" });
+}
+// CDP modifier bits: Alt 1, Ctrl 2, Meta 4, Shift 8. The room is Linux, where
+// cmd does nothing, so cmd is sent as ctrl. A chord types no text.
+async function roomKey(t, chord) {
+  const k = parseKey(chord);
+  const ctrl = k.ctrlKey || k.metaKey, chorded = ctrl || k.altKey;
+  const text = chorded ? undefined : k.key === "Enter" ? "\r" : k.key.length === 1 ? k.key : undefined;
+  const ev = { key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, modifiers: (k.altKey ? 1 : 0) | (ctrl ? 2 : 0) | (k.shiftKey ? 8 : 0) };
+  await t.conn.send("Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", ...ev, ...(text && { text, unmodifiedText: text }) }, t.S.id);
+  await t.conn.send("Input.dispatchKeyEvent", { type: "keyUp", ...ev }, t.S.id);
+}
+
+async function roomClickBlank(t, href, tok, go) {
+  let before = null;
+  try { before = new Set((await roomPages(t.conn)).map((p) => p.targetId)); } catch {}
+  const r = await go();
+  if (!r) return r;
+  const mine = r.tok === tok, taken = r.taken === tok;
+  delete r.tok; delete r.taken;
+  if (taken) return { ok: false, error: "click: another perch call on this tab sent this click; not verified" };
+  if (r.ok !== true) return r;
+  if (!mine) return { ok: false, error: "click: sent on another perch call's element; not verified" };
+  return before ? roomOpened(t, r, before, href) : r;
+}
+// The tab a click opened, by the room's target list before and after.
+async function roomOpened(t, r, before, href) {
+  const cancelled = !!r.cancelled;
+  delete r.cancelled;
+  for (const end = Date.now() + (cancelled ? 0 : 500); ;) {
+    const fresh = (await roomPages(t.conn).catch(() => [])).find((p) => !before.has(p.targetId));
+    if (fresh) {
+      delete r.blocked; delete r.href; delete r.note;
+      r.opened = { tabId: `room:${t.name}:${fresh.targetId}`, url: fresh.url };
+      return r;
+    }
+    if (Date.now() >= end) break;
+    await sleep(50);
+  }
+  if (!cancelled && !r.opened && !r.blocked) {
+    r.unconfirmed = true; r.href = href;
+    r.note = "no new tab within 0.5s; it may be blocked or still opening: list_tabs urlContains href";
+  }
+  return r;
+}
+async function roomReadback(t, a, tok) {
+  let lost = false;
+  const mine = (v) => { if (v && ((v.tok != null && v.tok !== tok) || v.done)) lost = true; return !lost; };
+  const v = await roomAfterStep("click", async () => {
+    const r = await roomPoll(t, a.read, a.settle, 50, false, (x) => !mine(x) || (!!x && !x.pending));
+    if (lost) return null;
+    const f = r ? r.value : await roomRead(t, a.readFinal);
+    mine(f);
+    return f;
+  });
+  if (lost) return { ok: false, error: "timeout: click sent, but another perch call on this tab took over its readback state; the outcome is not verified" };
+  if (roomThrew(v)) return { ok: false, error: `click: the click was sent; the page script failed reading it back (${roomFault(v)}); outcome unverified` };
+  if (v) delete v.tok;
+  return v;
+}
+async function roomProbe(t, js) {
+  for (let i = 0; ; i++) {
+    const p = await roomRead(t, js);
+    if (!p || !p.retry) return p;
+    if (i >= 20) return { ok: false, error: "tab never became visible to measure" };
+    await sleep(50);
+  }
+}
+const roomClickCheck = async (t, a) => {
+  const r = a.wait ? await roomPoll(t, a.wait, 300, 25) : null;
+  return r ? r.value : roomRead(t, a.check);
+};
+// A trusted click at the probed element's center, in page (CSS) pixels: CDP's
+// own coordinate space, so no calibration or Accessibility walk is needed.
+async function roomAimedClick(t, a, tool, before) {
+  const p = await roomProbe(t, a.probe);
+  if (!p || !p.ok) return { stop: p };
+  if (a.tok != null && p.tok !== a.tok) return { stop: { ok: false, lost: true } };
+  const bad = before && await before(p);
+  if (roomThrew(bad)) return { stop: roomArmFault(tool, bad) };
+  if (bad && bad.ok === false) return { stop: bad };
+  const pt = { x: Math.round(p.cx), y: Math.round(p.cy) };
+  const down = await roomMouseClick(t, pt.x, pt.y);
+  const check = roomLanded(await roomAfterStep(tool, () => roomClickCheck(t, a)), down);
+  const out = { ok: check.hit === true, el: p.el, point: pt, aim: "cdp", delivery: "cdp" };
+  return { out: roomThrew(check) ? Object.assign(out, { ok: false, error: roomCheckFault(tool, check) }) : Object.assign(out, check), probe: p };
+}
+function roomLastSeen(v) {
+  if (!v) return "";
+  if (v.x != null) return "; the expression threw " + v.x;
+  return v.n === false ? "" : "; last value: " + JSON.stringify(v.n);
+}
+async function roomListTabs(only, quiet) {
+  const reg = roomRegistry();
+  if (only && !reg[only]) throw new Error(`no_browser: no room '${only}'; rooms init ${only}, then rooms up ${only}`);
+  const names = only ? [only] : Object.keys(reg);
+  const lists = await Promise.all(names.map(async (n) => {
+    try { return { rows: (await roomPages(await roomConn(n))).map((p) => ({ app: `room:${n}`, tabId: `room:${n}:${p.targetId}`, url: p.url || "", title: p.title || "" })) }; }
+    catch (e) { return { rows: [], failed: `room:${n} not listed: ${e.message}` }; }
+  }));
+  const rows = lists.flatMap((l) => l.rows), failed = quiet ? [] : lists.filter((l) => l.failed).map((l) => l.failed);
+  return { rows, failed };
+}
+
+const ROOM_FNS = {
+  async evalJs(a) {
+    const t = await roomTarget(a.target, a.tool || "eval_js");
+    const v = await roomExec(t, a.js);
+    if (!a.reread) return v;
+    let o = null;
+    try { o = JSON.parse(String(v)); } catch {}
+    if (!o || typeof o !== "object" || o.fr == null) return v;
+    const js = a.reread.split('"@perch_fr_tok@"').join(JSON.stringify(o.fr));
+    try { o.rr = JSON.parse(String(await roomExec(t, js))); } catch (e) { o.rr = e.noReply ? { dropped: true } : null; }
+    return JSON.stringify(o);
+  },
+  async reread(a) {
+    const t = await roomTarget(a.target, "fill");
+    try { return await roomExec(t, a.js); } catch (e) { if (e.noReply) return JSON.stringify({ dropped: true }); throw e; }
+  },
+  async wait(a) {
+    const t = await roomTarget(a.target, "wait"), start = Date.now(), interval = a.interval || 50;
+    if (a.quiet) {
+      let last = start, quietFor = 0, armed = false, tok = null, act = null;
+      const r = await roomPoll(t, () => (armed ? a.js : a.arm), a.timeout, interval, false, (v) => {
+        const now = Date.now();
+        if (v && v.__perch_error) return true;
+        if (!v || v.fresh || v.tok !== tok || v.act !== act) last = now;
+        if (v) { armed = true; tok = v.tok; act = v.act; }
+        quietFor = now - last;
+        return quietFor >= a.quiet;
+      }, start);
+      if (!r) throw new Error(`timeout: wait timed out after ${a.timeout}ms; the page never stayed quiet for ${a.quiet}ms`);
+      if (r.value.__perch_error) throw new Error(`wait: the page script failed on this page (${roomFault(r.value)}); nothing verified`);
+      return { waited: Date.now() - start, quietFor };
+    }
+    let last = null;
+    const done = a.tok ? (v) => !!v && (!!v.seen || !!v.lost || v.tok !== a.tok)
+      : a.expr ? (v) => { if (v) last = v; return !!v && !!v.y; } : null;
+    const r = await roomPoll(t, a.js, a.timeout, interval, false, done, start);
+    if (!r) throw new Error(`timeout: wait timed out after ${a.timeout}ms${a.expr ? roomLastSeen(last) : ""}`);
+    if (r.value && r.value.bad && a.selector) throw new Error("wait: bad selector: " + a.selector);
+    if (r.value && r.value.__perch_error) throw new Error(`wait: the page script failed on this page (${roomFault(r.value)}); nothing verified`);
+    return r;
+  },
+  // Done when the main frame has committed the navigation's own loader (from
+  // Page.frameNavigated) and its document reads complete. A same-document
+  // navigation has no loader and is done at once.
+  async navigate(a) {
+    const t = await roomTarget(a.target, "navigate"), start = Date.now();
+    if (t.S.dialog) throw dialogOpen(t.S.dialog);
+    const r = await t.conn.send("Page.navigate", { url: a.url }, t.S.id, a.timeout);
+    if (r.errorText) return { loadFailed: true };
+    const state = "JSON.stringify({href:location.href,ready:document.readyState})";
+    if (!r.loaderId) return { href: (await roomRead(t, state)).href, waited: true };
+    const left = () => a.timeout - (Date.now() - start);
+    while (t.S.loaderId !== r.loaderId && left() > 0) await sleep(25);
+    if (t.S.loaderId !== r.loaderId) {
+      const now = (await roomPages(t.conn).catch(() => [])).find((p) => p.targetId === t.targetId);
+      return { notCommitted: now ? now.url : "", after: a.timeout };
+    }
+    const done = await roomPoll(t, state, Math.max(0, left()), 50, false, (v) => !!v && v.ready === "complete");
+    if (done) return { href: done.value.href, waited: true };
+    let now = null;
+    try { now = await roomRead(t, state); } catch {}
+    return { href: now ? now.href : a.url, waited: false };
+  },
+  async newTab(a) {
+    const name = ROOM_APP.exec(String(a.app))[1];
+    if (!name) throw new Error("bad_args: new_tab in a room takes app:\"room:<name>\"");
+    const conn = await roomConn(name);
+    const { targetId } = await conn.send("Target.createTarget", { url: a.url, background: true });
+    return { app: `room:${name}`, tabId: `room:${name}:${targetId}` };
+  },
+  async activate(a) {
+    const t = await roomTarget(a.target, "activate_tab");
+    await roomShow(t);
+    return true;
+  },
+  async closeTab(a) {
+    const t = await roomTarget(a.target, "close_tab");
+    if ((await roomPages(t.conn)).length <= 1) return { ok: false, error: "last tab in the room; closing it would leave the room with no page" };
+    await t.conn.send("Target.closeTarget", { targetId: t.targetId });
+    t.conn.sessions.delete(t.targetId);
+    t.conn.bySession.delete(t.S.id);
+    return { ok: true, closed: t.tabId };
+  },
+  async clickPage(a) {
+    const t = await roomTarget(a.target, "click");
+    const v = await roomExec(t, a.click);
+    let r = null;
+    try { r = JSON.parse(String(v)); } catch {}
+    if (!r || !r.blank) return v;
+    return JSON.stringify(await roomClickBlank(t, r.blank.href, r.tok, async () => JSON.parse(String(await roomExec(t, a.go)))));
+  },
+  async click(a) {
+    const t = await roomTarget(a.target, "click");
+    let r = await roomStep(t, a.click);
+    if (r && r.blank) r = await roomClickBlank(t, r.blank.href, r.tok, () => roomStep(t, a.go));
+    if (!r || r.ok !== true) return r;
+    const tok = r.rbTok;
+    delete r.rbTok;
+    return Object.assign(r, await roomReadback(t, a, tok));
+  },
+  async trustedClick(a) {
+    const t = await roomTarget(a.target, "click");
+    await roomShow(t);
+    let tok = null, before = null, href = null;
+    const arm = async (A) => {
+      if (A && A.blank) { before = new Set((await roomPages(t.conn)).map((p) => p.targetId)); href = A.blank.href; }
+      const r = a.arm ? await roomStep(t, a.arm) : null;
+      if (r && r.tok) tok = r.tok;
+      return r;
+    };
+    let out;
+    if (a.x != null) {
+      const f = await roomRead(t, a.frames);
+      if (!f || !f.rects) return { ok: false, error: "could not check the page for embedded frames at that point, so nothing was clicked" + (roomThrew(f) ? ` (${roomFault(f)})` : "") };
+      if (f.rects.some((r) => a.x >= r[0] && a.x < r[2] && a.y >= r[1] && a.y < r[3])) {
+        return { ok: false, error: `point ${Math.round(a.x)},${Math.round(a.y)} is on an embedded frame; reach frame controls with eval_js in the frame's own tab, or click the element by ref` };
+      }
+      const bad = await arm();
+      if (roomThrew(bad)) return roomArmFault("click", bad);
+      if (bad && bad.ok === false) return bad;
+      const down = await roomMouseClick(t, a.x, a.y);
+      const check = roomLanded(await roomAfterStep("click", () => roomClickCheck(t, a)), down);
+      out = { ok: true, point: { x: a.x, y: a.y }, delivery: "cdp" };
+      if (roomThrew(check)) return Object.assign(out, { ok: false, error: roomCheckFault("click", check) });
+      if (check.hit === undefined) out.note = "the page changed after the click (it may have navigated), so whether it landed is unknown";
+      else if (check.hit !== true) return Object.assign(out, { ok: false, hit: false, error: `no click reached the page at ${a.x},${a.y}` });
+      else Object.assign(out, { hit: true }, check.el ? { el: check.el } : {});
+    } else {
+      const c = await roomAimedClick(t, a, "click", arm);
+      if (c.stop) return c.stop;
+      out = c.out;
+      if (before && out.ok) await roomOpened(t, out, before, href);
+      delete out.cancelled;
+    }
+    return a.arm ? Object.assign(out, await roomReadback(t, a, tok)) : out;
+  },
+  async trustedFill(a) {
+    const t = await roomTarget(a.target, "fill");
+    await roomShow(t);
+    const p = await roomProbe(t, a.probe);
+    if (!p || !p.ok) return p;
+    const pt = { x: Math.round(p.cx), y: Math.round(p.cy) };
+    await roomMouseClick(t, pt.x, pt.y);
+    await t.conn.send("Input.insertText", { text: a.chunks.join("") }, t.S.id);
+    const out = Object.assign({ el: p.el, aim: "cdp", delivery: "cdp" }, await roomAfterStep("fill", () => roomRead(t, a.check)));
+    if (!roomThrew(out) && out.ok !== false && (p.tok != null || out.pending) && !(out.pending && out.tok === p.tok)) {
+      return { ok: false, kind: "typeahead", el: p.el, hit: out.hit, delivery: "cdp", error: "another perch call on this tab took over this fill's suggestions; not verified" };
+    }
+    return out;
+  },
+  async trustedPress(a) {
+    const t = await roomTarget(a.target, "press");
+    await roomShow(t);
+    const arm = await roomStep(t, a.arm);
+    if (roomThrew(arm)) return roomArmFault("press", arm);
+    if (!arm || arm.ok === false || arm.__perch_ref_miss) return arm;
+    await roomKey(t, a.key);
+    const check = await roomAfterStep("press", async () => {
+      const r = await roomPoll(t, a.check, 1000, 25);
+      return r ? r.value : roomRead(t, a.final);
+    });
+    if (roomThrew(check)) return { ok: false, el: arm.el, key: a.key, delivery: "cdp", error: roomCheckFault("press", check) };
+    const out = Object.assign({ ok: check.hit === true, el: arm.el, key: a.key }, check, { delivery: "cdp" });
+    if (check.hit === null) out.error = "no key reached the page";
+    return out;
+  },
+  async select(a) {
+    const t = await roomTarget(a.target, a.tool || "select");
+    const r = a.start ? await roomStep(t, a.start) : { pending: true };
+    if (!r || !r.pending) return r;
+    const tok = r.tok != null ? r.tok : a.tok;
+    let lost = false, last = null;
+    const own = (v) => { if (tok != null && v && typeof v === "object" && (v.lost || (v.tok != null && v.tok !== tok))) lost = true; return !lost; };
+    const until = (js, ms, step) => roomPoll(t, js, ms, 50, step, (v) => { if (!own(v)) return true; if (v && v.pending) last = v; return v != null && v !== false && !v.pending; });
+    const once = (v) => { own(v); return v; };
+    return roomAfterStep(a.tool || "select", async () => {
+      const X = a.trusted, used = [];
+      const done = (o) => {
+        if (lost) o = a.tool === "fill" ? { ok: false, kind: "typeahead", error: "another perch call on this tab took over this fill's suggestions; not verified" } : { ok: false, error: "another perch call on this tab took over this select; not verified" };
+        if (used.length && o) o.trusted = used;
+        if (o && typeof o === "object") delete o.tok;
+        return o;
+      };
+      const selectClick = async (part) => {
+        await roomShow(t);
+        const c = await roomAimedClick(t, { probe: part, check: X.check, tok }, "select");
+        if (c.stop) return c.stop.lost ? (lost = true) : c.stop.gone ? null : c.stop;
+        if (!c.out.ok) return { ok: false, hit: c.out.hit, el: c.out.el, error: `the trusted click on ${c.out.el} did not land on it (hit: ${c.out.hit}); nothing was picked` };
+        used.push(part === X.option ? "option" : "control");
+        return null;
+      };
+      let typed = false;
+      if (X && !(await until(X.open, 400))) {
+        if (lost) return done(null);
+        const c = await selectClick(X.control);
+        if (c) return done(c);
+        if (!(await until(X.open, 400))) {
+          if (lost) return done(null);
+          const r2 = once(await roomStep(t, X.type));
+          if (lost) return done(null);
+          if (r2 && r2.ok) { used.push("typed"); typed = true; }
+          else if (!r2 || !r2.none) return done(r2);
+        }
+      }
+      if (lost) return done(null);
+      let picked = await until(a.pick, a.short || a.wait || 2500, true);
+      if (!picked && !lost && a.short) {
+        let p = once(await roomRead(t, a.probe)), spent = a.short;
+        if (p === "declared" && a.step) {
+          picked = await until(a.pick, a.step, true);
+          spent += a.step;
+          if (!picked && !lost) p = once(await roomRead(t, a.probe));
+        }
+        if (!picked && !lost && p === true) picked = await until(a.pick, a.wait - spent, true);
+      }
+      if (!picked && !lost && last && last.busy) picked = await until(a.pick, 2000, true);
+      if (lost) return done(null);
+      if (picked && picked.value.settled) picked = null;
+      if (!picked && !a.missFinal) return done(once(await roomRead(t, a.miss)));
+      if (!picked) {
+        const m = await until(a.miss, a.settle);
+        if (lost) return done(null);
+        return done(m ? m.value : once(await roomRead(t, a.missFinal)));
+      }
+      if (picked.value.ok === false || picked.value.__perch_error != null) return done(picked.value);
+      const pressed = picked.value.picked;
+      if (X && !typed && !(await until(X.keep, 500))) {
+        if (lost) return done(null);
+        const c = await selectClick(X.option);
+        if (c) return done(c);
+      }
+      if (lost) return done(null);
+      const read = await until(a.read, 500);
+      const out = read ? read.value : once(await roomRead(t, a.readFinal));
+      if (out && out.ok === false && typeof pressed === "string" && /^the page changed/.test(out.error)) out.pressed = pressed;
+      return done(out);
+    });
+  },
+  // The page rows only: a room's embedded frames aren't walked (no Accessibility
+  // tree of the VM's windows reaches the host), so frame rows say so.
+  async snapshotFrames(a) {
+    const t = await roomTarget(a.target, "accessibility_snapshot");
+    return { page: await roomExec(t, a.js), tabId: t.tabId, error: "frames_unreadable: a room's embedded frames aren't walked; the page rows are unaffected" };
+  },
+  async frameClick() {
+    throw new Error("tab_not_scriptable: frame refs (fN) don't reach into a room; click the element by its page ref");
+  },
+  async shot(a) {
+    const t = await roomTarget(a.target, "screenshot");
+    await roomShow(t);
+    const format = a.format === "jpeg" ? "jpeg" : "png";
+    let clip = null, c = null;
+    if (a.clip) {
+      c = await roomRead(t, a.clip);
+      if (!c || c.ok !== true) {
+        if (c && c.unpainted) return { ok: false, error: "screenshot: the window isn't painting (covered or hidden); show the window or scroll the element into view and call again; nothing was captured" };
+        if (!roomThrew(c)) return c;
+        return roomFault(c) === "PerchStaleRef" ? c : { ok: false, error: `screenshot: the page script failed on this page (${roomFault(c)}); nothing was captured` };
+      }
+      if (c.moved) await roomPoll(t, a.painted, 500, 25, false, (v) => !v || v.painted || v.gone || v.token !== c.token);
+      clip = { x: c.x, y: c.y, width: c.w, height: c.h, scale: a.maxWidth > 0 && Math.max(c.w, c.h) > a.maxWidth ? a.maxWidth / Math.max(c.w, c.h) : 1 };
+    }
+    const cap = (extra) => t.conn.send("Page.captureScreenshot", { format, ...(format === "jpeg" && { quality: 80 }), ...extra }, t.S.id);
+    let data;
+    try {
+      ({ data } = await cap(clip ? { clip } : {}));
+      let dims = imageDims(Buffer.from(data, "base64"));
+      if (!clip && dims && a.maxWidth > 0 && Math.max(dims.w, dims.h) > a.maxWidth) {
+        const vp = await roomRead(t, "JSON.stringify({w:innerWidth,h:innerHeight})");
+        ({ data } = await cap({ clip: { x: 0, y: 0, width: vp.w, height: vp.h, scale: (a.maxWidth / Math.max(dims.w, dims.h)) * (dims.w / vp.w) } }));
+        dims = imageDims(Buffer.from(data, "base64"));
+      }
+      const out = { data, image: dims, geom: { x: 0, y: 0, w: dims ? dims.w : 0, h: dims ? dims.h : 0 }, windowNumber: -1 };
+      if (clip) Object.assign(out, { clip: { x: c.x, y: c.y, w: c.w, h: c.h }, aim: "cdp" });
+      return out;
+    } finally {
+      if (a.restore) await roomRead(t, a.restore).catch(() => {});
+    }
+  },
+  async chooser(a) {
+    if (a.probe) return { open: false };
+    throw new Error("tab_not_scriptable: a room has no file chooser perch can answer; file_upload sets the file through the page");
+  },
+  async dialogs(a) {
+    const t = await roomTarget(a.target, "press");
+    return t.S.dialog ? [t.S.dialog] : [];
+  },
+  async answerDialog(a) {
+    const t = await roomTarget(a.target, "press");
+    const d = t.S.dialog;
+    if (!d) return { ok: false, error: "no dialog is open on the target tab" };
+    if (a.text != null && d.kind !== "prompt") return { ok: false, error: `the open dialog is ${d.kind === "alert" ? "an alert" : "a " + d.kind}, not a prompt; answer it without text` };
+    await t.conn.send("Page.handleJavaScriptDialog", { accept: a.key === "Enter", ...(a.text != null && { promptText: a.text }) }, t.S.id);
+    t.S.dialog = null;
+    const r = { ok: true, dialog: d.kind, message: d.message, answer: a.key === "Enter" ? "accept" : "dismiss" };
+    if (a.text != null) r.text = a.text;
+    return r;
+  },
+};
+
+async function roomRt(fn, args) {
+  const f = Object.hasOwn(ROOM_FNS, fn) ? ROOM_FNS[fn] : null;
+  if (!f) throw new Error(`tab_not_scriptable: ${fn} isn't available on a room tab`);
+  return f(args);
+}
+
 // ---- tools ----
 
 export function shapeTabs(rows, { urlContains, titleContains, limit = 50 } = {}) {
@@ -4563,7 +5239,20 @@ function listFailure(f) {
 
 async function listTabs(args = {}) {
   const { urlContains = null, titleContains = null, limit = 50 } = args;
-  const r = await rt("listTabs", { app: args.app || null, urlContains, titleContains, limit });
+  const room = ROOM_APP.exec(String(args.app));
+  if (room) {
+    const r = await roomListTabs(room[1]);
+    if (r.failed.length && !r.rows.length) throw new Error(r.failed[0].replace(/^room:[^ ]+ not listed: /, ""));
+    const out = shapeTabs(r.rows, args);
+    if (r.failed.length) out.warning = r.failed.join("; ");
+    return out;
+  }
+  // Rooms that are up list after the browsers when no app is named; one that is down is left out quietly.
+  const [r, roomed] = await Promise.all([
+    rt("listTabs", { app: args.app || null, urlContains, titleContains, limit }),
+    args.app ? null : roomListTabs(null, true).catch(() => null),
+  ]);
+  if (roomed && roomed.rows.length) r.rows = r.rows.concat(roomed.rows);
   // A browser that couldn't be read fails the call when nothing else listed, so
   // "no tabs" always means none.
   if (r.failed && !r.rows.length && !r.more) throw new Error(listFailure(r.failed[0]));
@@ -4600,6 +5289,7 @@ async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFA
   // here and keeps the main-world protocol.
   const pageWorld = typeof target?.tabId === "string" ? target.tabId.startsWith("safari:") : /^safari$/i.test(target?.app || "");
   const main = world === "main" && !pageWorld;
+  if ((main || awaitPromise) && isRoomTab(target && target.tabId)) return roomEval(script, target, { main, awaitPromise, timeout });
   if (!main && !awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
   const key = `__perch_${main ? "mw" : "async"}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const lane = timeout > JXA_DEFAULT_TIMEOUT ? takeLongLane() : "slow";
@@ -4710,6 +5400,7 @@ async function newTab(url, app) {
 // "canary", or a unique substring), so callers needn't spell them exactly.
 export function matchApp(name) {
   if (name == null || name === "") return null;
+  if (ROOM_APP.test(String(name))) return String(name);
   const q = String(name).toLowerCase();
   const b = BROWSERS.find((x) => x.app.toLowerCase() === q) || BROWSERS.find((x) => x.key === q);
   if (b) return b.app;
@@ -9654,9 +10345,11 @@ function ansiKey(k) {
 async function trustedPress({ key, ref, selector, target }) {
   const k = parseKey(key);
   const v = VKEYS[k.code] || ansiKey(k);
-  if (!v || k.metaKey || k.ctrlKey || k.altKey) throw new Error("press: trusted takes a named key (Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12), a letter or a digit, optionally with shift (letters only)");
+  // A room's keys are CDP events for the page, never posted to an app's menus.
+  const room = isRoomTab(target && target.tabId);
+  if (!room && (!v || k.metaKey || k.ctrlKey || k.altKey)) throw new Error("press: trusted takes a named key (Enter, Escape, Tab, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown, F1-F12), a letter or a digit, optionally with shift (letters only)");
   return rt("trustedPress", {
-    target, key, vk: v[0], uni: v[1], flags: k.shiftKey ? 0x20000 : 0,
+    target, key, vk: v ? v[0] : 0, uni: v ? v[1] : k.key, flags: k.shiftKey ? 0x20000 : 0,
     probe: pageFn("viewport", {}),
     arm: pageFn("trusted_key_arm", { ref, selector, key: k.key, shift: k.shiftKey }),
     check: pageFn("trusted_key_check", {}),
@@ -10061,7 +10754,7 @@ async function select(args = {}, prefs = null) {
 }
 
 // Shared guidance lives here once instead of in every tool description.
-export const INSTRUCTIONS = `perch drives the user's own macOS browsers over AppleScript. Which browser a tab lives in is perch's concern, not the caller's.
+export const INSTRUCTIONS = `perch drives the user's own macOS browsers over AppleScript, and rooms (list_tabs {app:"room"}). Callers never branch on browser.
 Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With no target, tools use the active tab of the topmost browser window.
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
@@ -10345,37 +11038,51 @@ async function withScreenWhy(out) {
 // trusted input. So every call keeps the display (and with it the system) awake
 // for awake.ms after it, through one `caffeinate -d -i -w <pid>` child: -w ends it
 // with this process, a crash included, and the idle timer ends it otherwise.
-// Off with PERCH_AWAKE=0; PERCH_AWAKE_MS sets the time. Only the entry point turns it on.
-export const awake = { on: false, ms: 600000, spawn, proc: null, timer: null };
-function holdAwake() {
+// A room call holds the system only (`caffeinate -i`): the room's Chromium is in
+// a VM that pauses if the Mac sleeps, but it needs no display, so the screen can
+// sleep and lock. Off with PERCH_AWAKE=0; PERCH_AWAKE_MS sets the time. Only the
+// entry point turns it on.
+export const awake = { on: false, ms: 600000, spawn, proc: null, timer: null, sys: null, sysTimer: null };
+const AWAKE_SLOTS = { display: ["proc", "timer", ["-d", "-i"]], system: ["sys", "sysTimer", ["-i"]] };
+function holdAwake(kind = "display") {
   if (!awake.on) return;
-  if (!awake.proc) {
+  const [slot, timer, flags] = AWAKE_SLOTS[kind];
+  if (!awake[slot]) {
     let p = null;
-    try { p = awake.spawn("caffeinate", ["-d", "-i", "-w", String(process.pid)], { stdio: "ignore" }); } catch {}
+    try { p = awake.spawn("caffeinate", [...flags, "-w", String(process.pid)], { stdio: "ignore" }); } catch {}
     if (p) {
-      const gone = () => { if (awake.proc === p) awake.proc = null; };
+      const gone = () => { if (awake[slot] === p) awake[slot] = null; };
       p.on("exit", gone);
       p.on("error", gone);
       if (p.unref) p.unref();
-      awake.proc = p;
+      awake[slot] = p;
     }
   }
-  clearTimeout(awake.timer);
-  awake.timer = setTimeout(releaseAwake, awake.ms);
-  if (awake.timer.unref) awake.timer.unref();
+  clearTimeout(awake[timer]);
+  awake[timer] = setTimeout(() => release(slot, timer), awake.ms);
+  if (awake[timer].unref) awake[timer].unref();
 }
-export function releaseAwake() {
-  clearTimeout(awake.timer);
-  awake.timer = null;
-  const p = awake.proc;
-  awake.proc = null;
+function release(slot, timer) {
+  clearTimeout(awake[timer]);
+  awake[timer] = null;
+  const p = awake[slot];
+  awake[slot] = null;
   if (p) { try { p.kill(); } catch {} }
 }
+export function releaseAwake() {
+  release("proc", "timer");
+  release("sys", "sysTimer");
+}
 
+const roomArgs = (args) => !!args && (isRoomTab(args.target && args.target.tabId) || ROOM_APP.test(String(args.app)));
 export async function handleCall(name, args = {}) {
-  holdAwake();
-  try { return withScreenWhy(await handleCallCore(name, args)); }
-  finally { holdAwake(); }
+  const kind = roomArgs(args) ? "system" : "display";
+  holdAwake(kind);
+  try {
+    const out = await handleCallCore(name, args);
+    return kind === "system" ? out : withScreenWhy(out);
+  }
+  finally { holdAwake(kind); }
 }
 
 async function handleCallCore(name, args = {}) {
