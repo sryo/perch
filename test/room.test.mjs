@@ -3,6 +3,8 @@
 // against the fake endpoint; the isolate preload makes any Apple Event a failure.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { handleCall, rooms, roomsReset } from "../server.js";
 import { makeRooms } from "./fakes/cdp-room.mjs";
 
@@ -302,4 +304,72 @@ test("press chords carry CDP modifiers, type no text, and cmd is ctrl in a room"
   k = keys();
   assert.equal(k[0].modifiers, 2);
   assert.equal(k[0].text, undefined);
+});
+
+test("two perch server copies gate one room tab until its five-second lease expires", async () => {
+  const R = makeRooms();
+  const other = await import(`../server.js?second-room-lease=${Date.now()}`);
+  roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  other.roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  await call("eval_js", { script: "return 1", target: tab() });
+  const denied = await other.handleCall("eval_js", { script: "return 2", target: tab() });
+  assert.match(denied.content[0].text, /tab_held: .*pid \d+/);
+  const dir = join(R.home, "run", "leases");
+  const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
+  const lease = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, JSON.stringify({ ...lease, last: Date.now() - 6000 }));
+  const got = await other.handleCall("eval_js", { script: "return 2", target: tab() });
+  assert.equal(got.content[0].text, "2");
+});
+
+test("a lease transfer releases a key left down by the previous server", async () => {
+  const shared = makeRooms({ rooms: { jobs: { tabs: [{ url: "https://a.test/", html: "<input id=n>" }] } } });
+  const other = await import(`../server.js?room-key-recovery=${Date.now()}`);
+  roomsReset({ home: shared.home, fetch: shared.fetch, WebSocket: shared.WebSocket });
+  other.roomsReset({ home: shared.home, fetch: shared.fetch, WebSocket: shared.WebSocket });
+  const room = shared.room("jobs"), original = room.handle.bind(room);
+  let failed = false;
+  room.handle = (ws, msg) => {
+    if (!failed && msg.method === "Input.dispatchKeyEvent" && msg.params.type === "keyUp") {
+      failed = true;
+      room.reply(ws, { id: msg.id, error: { code: -32000, message: "key-up reply failed" } });
+    } else original(ws, msg);
+  };
+  const first = await handleCall("press", { key: "Enter", selector: "#n", trusted: true, target: tab() });
+  assert.equal(first.isError, true);
+  const dir = join(shared.home, "run", "leases");
+  const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
+  const lease = JSON.parse(readFileSync(path, "utf8"));
+  assert.equal(lease.held.type, "key");
+  writeFileSync(path, JSON.stringify({ ...lease, last: Date.now() - 6000 }));
+  const got = await other.handleCall("eval_js", { script: "return 3", target: tab() });
+  assert.equal(got.content[0].text, "3");
+  assert.equal(room.log.filter((x) => x.method === "Input.dispatchKeyEvent" && x.params.type === "keyUp").length, 1);
+  assert.equal(JSON.parse(readFileSync(path, "utf8")).held, null);
+});
+
+test("a lease transfer releases a mouse button left down by the previous server", async () => {
+  const shared = makeRooms({ rooms: { jobs: { tabs: [{ url: "https://a.test/", html: "<button id=b data-rect='0,0,80,30'>Go</button>" }] } } });
+  const other = await import(`../server.js?room-mouse-recovery=${Date.now()}`);
+  roomsReset({ home: shared.home, fetch: shared.fetch, WebSocket: shared.WebSocket });
+  other.roomsReset({ home: shared.home, fetch: shared.fetch, WebSocket: shared.WebSocket });
+  const room = shared.room("jobs"), original = room.handle.bind(room);
+  let failed = false;
+  room.handle = (ws, msg) => {
+    if (!failed && msg.method === "Input.dispatchMouseEvent" && msg.params.type === "mouseReleased") {
+      failed = true;
+      room.reply(ws, { id: msg.id, error: { code: -32000, message: "mouse-up reply failed" } });
+    } else original(ws, msg);
+  };
+  const first = await handleCall("click", { selector: "#b", trusted: true, target: tab() });
+  assert.equal(first.isError, true);
+  const dir = join(shared.home, "run", "leases");
+  const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
+  const lease = JSON.parse(readFileSync(path, "utf8"));
+  assert.equal(lease.held.type, "mouse");
+  writeFileSync(path, JSON.stringify({ ...lease, last: Date.now() - 6000 }));
+  const got = await other.handleCall("eval_js", { script: "return 4", target: tab() });
+  assert.equal(got.content[0].text, "4");
+  assert.equal(room.log.filter((x) => x.method === "Input.dispatchMouseEvent" && x.params.type === "mouseReleased").length, 1);
+  assert.equal(JSON.parse(readFileSync(path, "utf8")).held, null);
 });

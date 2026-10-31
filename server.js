@@ -4,7 +4,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execFile, spawn } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
@@ -4571,6 +4572,59 @@ export function roomsReset(over = {}) {
   Object.assign(rooms, over);
 }
 
+const ROOM_OWNER = randomBytes(12).toString("hex");
+const ROOM_LEASE_IDLE_MS = 5000;
+const roomLeaseFile = (tabId) => join(rooms.home, "run", "leases", createHash("sha256").update(tabId).digest("hex") + ".json");
+async function roomLeaseChange(tabId, update) {
+  const path = roomLeaseFile(tabId), lock = path + ".lock";
+  mkdirSync(join(rooms.home, "run", "leases"), { recursive: true, mode: 0o700 });
+  let held = false;
+  for (let n = 0; n < 50; n++) {
+    try { mkdirSync(lock, { mode: 0o700 }); held = true; break; }
+    catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      try { if (Date.now() - statSync(lock).mtimeMs > ROOM_LEASE_IDLE_MS) rmSync(lock, { recursive: true, force: true }); } catch {}
+      await sleep(10);
+    }
+  }
+  if (!held) throw new Error("tab_held: room tab lease is busy; retry");
+  try {
+    let state = null;
+    try { state = JSON.parse(readFileSync(path, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; }
+    const next = update(state);
+    if (next) {
+      const tmp = path + "." + ROOM_OWNER + ".tmp";
+      writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
+      renameSync(tmp, path);
+    }
+    return { old: state, next };
+  } finally { rmSync(lock, { recursive: true, force: true }); }
+}
+async function roomHeld(tabId, held) {
+  await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, held } : null);
+}
+async function withRoomLease(tabId, note, fn) {
+  const { old } = await roomLeaseChange(tabId, (s) => {
+    const other = s && s.owner !== ROOM_OWNER;
+    let live = false;
+    if (other && s.active && s.pid) { try { process.kill(s.pid, 0); live = true; } catch {} }
+    if (other && (live || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
+    return { owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: true, held: s?.held ?? null };
+  });
+  note.lease = tabId;
+  try {
+    if (old?.held) {
+      const t = await roomTarget({ tabId }, "lease recovery");
+      if (old.held.type === "key") await t.conn.send("Input.dispatchKeyEvent", { type: "keyUp", ...old.held.event }, t.S.id);
+      if (old.held.type === "mouse") await t.conn.send("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", buttons: 0, clickCount: 1, ...old.held.point }, t.S.id);
+      await roomHeld(tabId, null);
+    }
+    return await fn();
+  } finally {
+    await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, active: false, last: Date.now() } : null);
+  }
+}
+
 const ROOM_HANDLE = /^room:([a-z][a-z0-9-]{0,30}):(.+)$/;
 export const ROOM_APP = /^room(?::([a-z][a-z0-9-]{0,30}))?$/;
 const isRoomTab = (tabId) => typeof tabId === "string" && tabId.startsWith("room:");
@@ -4799,10 +4853,13 @@ const ROOM_DOWN = "JSON.stringify(window.__perch_trusted?{down:window.__perch_tr
 async function roomMouseClick(t, x, y) {
   const at = { x, y, button: "left", clickCount: 1 };
   await t.conn.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, t.S.id);
+  const lease = callNotes.getStore()?.lease;
+  if (lease) await roomHeld(lease, { type: "mouse", point: { x, y } });
   await t.conn.send("Input.dispatchMouseEvent", { type: "mousePressed", buttons: 1, ...at }, t.S.id);
   let down = null;
   try { down = roomValue(await roomExec(t, ROOM_DOWN)); } catch {}
   await t.conn.send("Input.dispatchMouseEvent", { type: "mouseReleased", buttons: 0, ...at }, t.S.id);
+  if (lease) await roomHeld(lease, null);
   return down;
 }
 // A check that read another document (hit undefined) after a press the page
@@ -4818,8 +4875,11 @@ async function roomKey(t, chord) {
   const ctrl = k.ctrlKey || k.metaKey, chorded = ctrl || k.altKey;
   const text = chorded ? undefined : k.key === "Enter" ? "\r" : k.key.length === 1 ? k.key : undefined;
   const ev = { key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, modifiers: (k.altKey ? 1 : 0) | (ctrl ? 2 : 0) | (k.shiftKey ? 8 : 0) };
+  const lease = callNotes.getStore()?.lease;
+  if (lease) await roomHeld(lease, { type: "key", event: ev });
   await t.conn.send("Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", ...ev, ...(text && { text, unmodifiedText: text }) }, t.S.id);
   await t.conn.send("Input.dispatchKeyEvent", { type: "keyUp", ...ev }, t.S.id);
+  if (lease) await roomHeld(lease, null);
 }
 
 async function roomClickBlank(t, href, tok, go) {
@@ -10789,12 +10849,12 @@ async function select(args = {}, prefs = null) {
 }
 
 // Shared guidance lives here once instead of in every tool description.
-export const INSTRUCTIONS = `perch drives the user's own macOS browsers over AppleScript, and rooms (list_tabs {app:"room"}). Callers never branch on browser.
+export const INSTRUCTIONS = `perch drives macOS browsers and rooms (list_tabs {app:"room"}) with one API.
 Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With no target, tools use the active tab of the topmost browser window.
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
 Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
-Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), bad_url (only http(s), file or about:blank), bad_args (fix the call). Only activate_tab and raise:true take focus.`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: activate_tab, which takes focus, or retry later), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another pid holds a room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call). Only activate_tab and raise:true take focus.`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
 const TARGET = { type: "object", properties: { tabId: { type: "string" }, app: { type: "string" } } };
@@ -11040,6 +11100,7 @@ export function withTabLock(key, fn) {
   return run;
 }
 const LOCKED_TOOLS = new Set(["fill", "select", "file_upload"]);
+const ROOM_LEASE_TOOLS = new Set(["navigate", "activate_tab", "close_tab", "eval_js", "wait", "console_capture", "click", "press", "fill", "select", "file_upload"]);
 const tabLockKey = (name, args) =>
   LOCKED_TOOLS.has(name) || (name === "click" && (args.readback || args.trusted)) ||
   (name === "press" && args.trusted) || (name === "wait" && args.quiet != null) ||
@@ -11109,7 +11170,7 @@ export function releaseAwake() {
   release("sys", "sysTimer");
 }
 
-const roomArgs = (args) => !!args && (isRoomTab(args.target && args.target.tabId) || ROOM_APP.test(String(args.app)));
+const roomArgs = (args) => !!args && (isRoomTab(args.target && args.target.tabId) || isRoomTab(args.tabId) || ROOM_APP.test(String(args.app)));
 export async function handleCall(name, args = {}) {
   const kind = roomArgs(args) ? "system" : "display";
   holdAwake(kind);
@@ -11130,8 +11191,10 @@ async function handleCallCore(name, args = {}) {
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
     note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name) };
-    const lockKey = tabLockKey(name, args);
-    const call = () => callNotes.run(note, () => handler(args));
+    const roomTab = ROOM_LEASE_TOOLS.has(name) ? args.target?.tabId ?? (name === "close_tab" ? args.tabId : null) : null;
+    const leaseTab = isRoomTab(roomTab) ? roomTab : null;
+    const lockKey = leaseTab ? tabKey({ tabId: leaseTab }) : tabLockKey(name, args);
+    const call = () => callNotes.run(note, () => leaseTab ? withRoomLease(leaseTab, note, () => handler(args)) : handler(args));
     let result = await (lockKey ? withTabLock(lockKey, call) : call());
     // A miss names the ref as the agent was shown it.
     if (result && result.__perch_ref_miss && note.refs && note.refs.toPage) {

@@ -95,4 +95,6 @@ test("a room call holds system-only caffeinate, never the display", async () => 
 test("new_tab and list_tabs aimed at a room hold system-only too", async () => {
   await handleCall("no_such_tool", { app: "room:main" });
   assert.deepEqual(spawned[0].args, ["-i", "-w", String(process.pid)]);
+  await handleCall("no_such_tool", { tabId: "room:main:T1" });
+  assert.equal(spawned.length, 1, "close_tab-style room handles also leave the display free");
 });

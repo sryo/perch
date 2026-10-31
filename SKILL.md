@@ -4,9 +4,9 @@ description: Drive the user's own macOS browsers (Chrome family, Arc, Safari) vi
 allowed-tools: mcp__perch__*
 ---
 
-# perch: macOS browser bridge
+# perch
 
-Targeting, element hints and error codes: the server instructions. `app` matches loosely (`"canary"`).
+Targeting and errors: server instructions. `app` matches `"canary"`.
 
 ## Tools
 
