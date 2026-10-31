@@ -4,11 +4,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execFile, spawn } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
-import { readFileSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { basename, join, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -4707,6 +4707,7 @@ async function roomConnect(name) {
       const s = conn.bySession.get(P.sessionId);
       if (s) { conn.bySession.delete(P.sessionId); conn.sessions.delete(s.targetId); }
     }
+    else if ((msg.method === "Browser.downloadWillBegin" || msg.method === "Browser.downloadProgress") && conn.download) conn.download(msg.method, P);
   };
   sock.onclose = () => {
     conn.closed = true;
@@ -4714,6 +4715,9 @@ async function roomConnect(name) {
     conn.pending.clear();
     if (rooms.conns.get(name) === conn.entry) rooms.conns.delete(name);
   };
+  // Browser-level default for this room connection. A `download` click
+  // (roomDownloadClick) allows one download, then restores deny even if the click fails.
+  await conn.send("Browser.setDownloadBehavior", { behavior: "deny" }).catch(() => {});
   return conn;
 }
 
@@ -10389,7 +10393,51 @@ async function chooserUpload({ selector, ref, label_pattern, target, abs, name }
   return { ok: true, el, chooser: true, shown: true };
 }
 
+// A room click that should start a download. Chromium in the room writes into
+// its /downloads mount, which is ~/.rooms/downloads/<name> on the Mac; for this
+// one click the room allows downloads (saved under their guid), then deny comes
+// back even if the click throws. The guid file is renamed to the site's
+// suggested name, with " (n)" before the extension when that name is taken.
+const ROOM_DOWNLOAD_START_MS = 3000, ROOM_DOWNLOAD_MS = 25000;
+async function roomDownloadClick(args) {
+  if (!isRoomTab(args.target?.tabId)) throw new Error("bad_args: click: `download` is for room tabs (room:<name>:<id>)");
+  if (args.hover) throw new Error("click: hover starts no download");
+  const t = await roomTarget(args.target, "click");
+  const dir = join(rooms.home, "downloads", t.name);
+  let begun = null, done = null;
+  t.conn.download = (method, P) => {
+    if (method === "Browser.downloadWillBegin") begun = P;
+    else if (begun && P.guid === begun.guid && (P.state === "completed" || P.state === "canceled")) done = P;
+  };
+  const until = async (seen, ms) => {
+    for (const end = Date.now() + ms; !seen() && Date.now() < end;) await new Promise((r) => setTimeout(r, 100));
+    return seen();
+  };
+  await t.conn.send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: "/downloads", eventsEnabled: true });
+  try {
+    const { download, ...rest } = args;
+    const clicked = await click(rest);
+    if (!clicked || clicked.ok === false) return clicked;
+    if (!await until(() => begun, ROOM_DOWNLOAD_START_MS)) return { ...clicked, ok: false, error: `click: no download started within ${ROOM_DOWNLOAD_START_MS / 1000}s; nothing was saved` };
+    if (!await until(() => done, ROOM_DOWNLOAD_MS)) return { ...clicked, ok: false, error: `timeout: ${begun.suggestedFilename} had not finished downloading after ${ROOM_DOWNLOAD_MS / 1000}s; it may still land in ${dir} as ${begun.guid}` };
+    if (done.state !== "completed") return { ...clicked, ok: false, error: `click: the download of ${begun.suggestedFilename} was canceled` };
+    const taken = new Set(readdirSync(dir));
+    const base = basename(begun.suggestedFilename || "download").replace(/^\.+/, "") || "download";
+    const dot = base.lastIndexOf(".");
+    const [stem, ext] = dot > 0 ? [base.slice(0, dot), base.slice(dot)] : [base, ""];
+    let name = base;
+    for (let n = 1; taken.has(name); n++) name = `${stem} (${n})${ext}`;
+    const file = join(dir, name);
+    renameSync(join(dir, begun.guid), file);
+    return { ...clicked, download: { file, bytes: statSync(file).size } };
+  } finally {
+    t.conn.download = null;
+    await t.conn.send("Browser.setDownloadBehavior", { behavior: "deny" }).catch(() => {});
+  }
+}
+
 async function click(args = {}) {
+  if (args.download) return roomDownloadClick(args);
   const { ref = null, selector = null, label_pattern = null, x = null, y = null, trusted = false, raise = false, hover = false, target, readback = null } = args;
   if (readback != null && (typeof readback !== "string" || !readback.trim())) throw new Error("click: `readback` must be a CSS selector");
   if (hover && (trusted || readback || x != null || y != null)) throw new Error("click: hover is untrusted and element-only");
@@ -10968,6 +11016,7 @@ const TOOLS = [
     raise: { type: "boolean" },
     readback: { type: "string", description: "CSS; its text once changed (2s cap; ~0.7s quiet, 1.2s hidden tab): {readback,changed,url?} +form/page." },
     hover: { type: "boolean" },
+    download: { type: "boolean" },
     target: TARGET,
   }),
   tool("press", "Key or chord (Enter, Escape, Tab, ArrowDown, cmd+k) to ref/selector or the focused element; emulates Enter/Space/Tab defaults. `trusted`: real key events in the shown tab; check `hit`. `dialog`, with target.tabId: Enter/Escape answers its JS or leave-page dialog; a string fills it.", {
@@ -11001,7 +11050,7 @@ const TOOLS = [
   }, ["text"]),
 ];
 
-export const SCHEMA_BUDGET = 9600;
+export const SCHEMA_BUDGET = 9650;
 
 function awaitTimeout({ timeout, awaitPromise }) {
   if (timeout == null) return JXA_DEFAULT_TIMEOUT;

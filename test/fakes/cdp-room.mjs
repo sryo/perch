@@ -12,7 +12,7 @@ import { page } from "../helpers/page.mjs";
 
 const TOKEN = "ab".repeat(24);
 
-export function makeRooms({ rooms = { jobs: {} }, down = [] } = {}) {
+export function makeRooms({ rooms = { work: {} }, down = [] } = {}) {
   const home = tempDir("perch-rooms-");
   const reg = { version: 1, rooms: {} };
   const byPort = new Map();
@@ -113,7 +113,7 @@ class FakeRoom {
         this.sessions.set(s, params.targetId);
         return ok({ sessionId: s });
       }
-      case "Page.enable": case "Runtime.enable": return ok();
+      case "Page.enable": case "Runtime.enable": case "Browser.setDownloadBehavior": return ok();
       case "Page.getFrameTree": return ok({ frameTree: { frame: { id: "F-" + this.sessions.get(sessionId), url: t.dom.location.href } } });
       case "Page.createIsolatedWorld": t.worlds++; return ok({ executionContextId: 100 + t.worlds });
       case "Page.navigate": {

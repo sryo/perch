@@ -14,6 +14,17 @@ export const JUSTIFIED = {
   tel: "an autocomplete token example",
   "aria-disabled": "a page attribute click ignores (click: disabled refused clicks one), not a result key",
   input: "prose: the trusted `input` event a trusted fill verifies, not a result key",
+  // The Rooms section: rooms CLI words, and room errors the JXA golden world never reaches (test/room.test.mjs covers them).
+  rooms: "the rooms CLI's name",
+  room: "the list_tabs/new_tab app value for rooms",
+  up: "a rooms CLI command",
+  down: "a rooms CLI command",
+  restore: "a rooms CLI command",
+  teleport: "a rooms CLI command",
+  flags: "a rooms CLI command",
+  signed_out: "a room handoff error, tested in test/room.test.mjs",
+  tab_held: "a room lease error, tested in test/room.test.mjs",
+  "click.download": "room tabs only, which the JXA golden world has none of; tested in test/room.test.mjs",
 };
 
 const golden = JSON.parse(readFileSync(new URL("./golden.json", import.meta.url), "utf8"));
