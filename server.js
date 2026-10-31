@@ -4625,6 +4625,8 @@ async function withRoomLease(tabId, note, fn) {
     // An exited process holds nothing; the idle window only spans a live one's gap between calls.
     let live = false;
     if (other && s.pid) { try { process.kill(s.pid, 0); live = true; } catch (e) { live = e.code === "EPERM"; } }
+    // "user" is rooms' viewer: a person is watching or driving the tab until they close it.
+    if (other && live && s.owner === "user" && s.active) throw new Error("tab_held: room tab held by the user in rooms view; retry after they close it (rooms logs <room> --follow --until handoff.ended)");
     if (other && live && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
     return { owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: true, held: s?.held ?? null };
   });
@@ -4994,7 +4996,7 @@ async function roomListTabs(only, quiet) {
   return { rows, failed };
 }
 
-const ROOM_LOGIN_PATH = /(^|\/)(login|log-in|signin|sign-in|sign_in|auth|session\/new)([\/?#]|$)/i;
+export const ROOM_LOGIN_PATH = /(^|\/)(login|log-in|signin|sign-in|sign_in|auth|session\/new)([\/?#]|$)/i;
 async function roomHandoff(t, href) {
   let u, login = false;
   try {
@@ -5096,7 +5098,9 @@ const ROOM_FNS = {
         if (!old) return { app: `room:${name}`, tabId, reused: true };
       }
     }
-    const { targetId } = await conn.send("Target.createTarget", { url: a.url, background: true });
+    // Its own window: a room tab behind another in one window is hidden and gets no animation
+    // frames (requestAnimationFrame never fires), so canvas apps like Figma stall until activated.
+    const { targetId } = await conn.send("Target.createTarget", { url: a.url, background: true, newWindow: true });
     return { app: `room:${name}`, tabId: `room:${name}:${targetId}` };
   },
   async activate(a) {
@@ -5526,7 +5530,7 @@ async function navigate(url, target, raise) {
   if (r && r.handoff && isRoomTab(target?.tabId)) {
     const room = ROOM_HANDLE.exec(target.tabId)[1];
     const kind = r.handoff === "challenge_frame" ? "challenge" : "signed_out";
-    const command = `rooms view ${room} --signin ${committed}`;
+    const command = `rooms signin ${room} ${committed}`;
     try { await rooms.notify({ title: `Room ${room} needs you`, message: `Open ${command} to complete ${kind === "challenge" ? "the challenge" : "sign-in"}.` }); } catch {}
     return { ok: false, error: `${kind}: ${committed} needs the user; run ${command}`, url: committed,
       handoff: { status: "pending", room, reason: r.handoff, command }, ...tab };

@@ -99,8 +99,8 @@ test("room navigation to a login path is a pending user handoff and notifies", a
   const o = await call("navigate", { url: "https://a.test/login", target: tab() });
   assert.equal(o.ok, false);
   assert.match(o.error, /^signed_out: /);
-  assert.deepEqual(o.handoff, { status: "pending", room: "work", reason: "login_path", command: "rooms view work --signin https://a.test/login" });
-  assert.match(notices[0].message, /rooms view work/);
+  assert.deepEqual(o.handoff, { status: "pending", room: "work", reason: "login_path", command: "rooms signin work https://a.test/login" });
+  assert.match(notices[0].message, /rooms signin work/);
 });
 
 test("room navigation with a visible password field or challenge frame needs the user", async () => {
@@ -136,12 +136,13 @@ test("navigate to a url that fails to load is load_failed", async () => {
   assert.match(await fails("navigate", { url: "https://nowhere.test/", target: tab() }), /^load_failed: /);
 });
 
-test("new_tab opens a background tab in the room, close_tab closes it, and the last tab stays", async () => {
+test("new_tab opens a background tab in its own room window (so it keeps rendering frames), close_tab closes it, and the last tab stays", async () => {
   use();
   const o = await call("new_tab", { app: "room:work", url: "about:blank" });
   assert.deepEqual([o.app, o.tabId], ["room:work", "room:work:T0002"]);
   const created = R.room("work").log.find((m) => m.method === "Target.createTarget");
   assert.equal(created.params.background, true);
+  assert.equal(created.params.newWindow, true);
   assert.deepEqual(await call("close_tab", { tabId: o.tabId }), { ok: true, closed: o.tabId });
   assert.match(await fails("close_tab", { tabId: "room:work:T0001" }), /last tab/);
 });
@@ -491,4 +492,25 @@ test("a trusted room click counts a press the page cancels at pointerdown", asyn
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.hit, true);
   assert.equal(await call("eval_js", { script: "return location.pathname", target: tab() }), "/design/plan");
+});
+
+// rooms spells this pattern too (DEFAULT_SIGNED_OUT in rooms/rooms.mjs, pinned by its
+// test/contract.test.mjs); change both together.
+test("the room sign-in path pattern is the one rooms checks sites with", async () => {
+  const { ROOM_LOGIN_PATH } = await import("../server.js");
+  assert.equal(ROOM_LOGIN_PATH.source, "(^|\\/)(login|log-in|signin|sign-in|sign_in|auth|session\\/new)([\\/?#]|$)");
+  assert.equal(ROOM_LOGIN_PATH.flags, "i");
+});
+
+test("a tab the user is driving in rooms view is held by the user, and perch says so", async () => {
+  const R = makeRooms();
+  roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  const { createHash } = await import("node:crypto");
+  const { mkdirSync } = await import("node:fs");
+  const dir = join(R.home, "run", "leases");
+  mkdirSync(dir, { recursive: true });
+  const t = tab();
+  writeFileSync(join(dir, createHash("sha256").update(t.tabId).digest("hex") + ".json"), JSON.stringify({ owner: "user", pid: process.pid, last: Date.now(), active: true, held: null, since: new Date().toISOString() }));
+  const denied = await handleCall("eval_js", { script: "return 1", target: t });
+  assert.match(denied.content[0].text, /tab_held: room tab held by the user in rooms view/);
 });

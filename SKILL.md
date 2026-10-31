@@ -73,7 +73,7 @@ Room tabs answer like shown ones: no `tab_not_visible`, `activate_tab` or `raise
 
 | Error | Next |
 |---|---|
-| `signed_out` / `challenge` (`handoff.status: "pending"`) | The user's; perch has notified them. Show `handoff.command` (`rooms view <room> --signin <url>`), wait, `navigate` again. Never type credentials. |
+| `signed_out` / `challenge` (`handoff.status: "pending"`) | The user's; perch has notified them. Show `handoff.command` (`rooms signin <room> <url>`), wait, `navigate` again. Never type credentials. |
 | `no_browser: room 'x' is not up` | Run `rooms up x` in a shell, then retry. |
 | `no_browser: no room 'x'` | Setup is the user's (`rooms init x`). |
 | `tab_held` | Another agent has the tab: retry after 5s idle, or `new_tab`. |
