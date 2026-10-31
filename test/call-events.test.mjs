@@ -84,6 +84,7 @@ test("the default target is one read of the front window's shown tab on Chrome a
     [arc([{ id: "W1", active: 1, tabs: tabs(3, "a") }, { id: "W2", active: 0, tabs: tabs(1, "b") }]), "Arc", "a1"],
   ]) {
     install({ browsers: [spec], cg: [{ owner: "Terminal" }, { owner }] });
+    world.run("__perch.focusOk(1)"); // Node's focus gate let it through
     const g = JSON.parse(rt("activate", {}));
     assert.equal(g, true);
     // activate: resolve, then focus (window id, select check, raise, activate).

@@ -9,6 +9,8 @@ import { TOOLS } from "../../server.js";
 // Leftovers the fake world can't reach, or that are words in SKILL.md rather
 // than result keys, each with why.
 export const JUSTIFIED = {
+  // The lock's world runs under the suite's focus grant; test/focus-grant.test.mjs covers the refusal.
+  needs_focus: "the refusal without a focus grant (test/focus-grant.test.mjs)",
   // The call budget: the golden world sets no PERCH_CALL_MAX_MS; test/await-job.test.mjs covers it.
   "wait.job": "resumes an eval_js job, which only a call budget makes (test/await-job.test.mjs)",
   PERCH_CALL_MAX_MS: "an env var, not a result key (test/await-job.test.mjs)",

@@ -23,8 +23,10 @@ The benchmark to beat is Claude in Chrome (`bench/compare/`), not Playwright.
 When two goals conflict, the higher one wins.
 
 1. **Never take the user's foreground.** No app activation, tab selection,
-   keyboard redirection or cursor move unless the call opts in
-   (`activate_tab`, `raise:true`). A refused action is better than a stolen one.
+   keyboard redirection or cursor move unless the user allowed it: a call that
+   needs focus (`activate_tab`, `raise:true`) runs only under the user's own,
+   timed focus grant, and otherwise answers `needs_focus`. The background path or
+   a room comes first. A refused action is better than a stolen one.
 2. **Correct outcomes, verified.** Report what actually happened on the page
    (readback, value checks, `trusted`/`hit`). `{ok:false}` beats a false `ok`.
 3. **As few agent turns as success needs.** Each call costs the model a turn,
@@ -40,7 +42,7 @@ When two goals conflict, the higher one wins.
 ## How we know
 | Goal | Metric | Where |
 |---|---|---|
-| 1 | foreground app, key process, cursor unchanged | `scripts/trusted-live.mjs --background`, `npm run smoke` |
+| 1 | foreground app, key process, cursor unchanged; focus only under the user's grant | `scripts/trusted-live.mjs --background`, `npm run smoke`, `test/focus-grant.test.mjs` |
 | 2 | readback hits, navigate success rate | `bench/compare/README.md` |
 | 3 | calls per task that succeeds | `bench/compare/README.md` |
 | 4 | `tools/list` chars under `SCHEMA_BUDGET`; payload sizes | `test/schema.test.mjs`, `bench/baseline.json` |
