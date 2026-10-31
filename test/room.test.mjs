@@ -531,3 +531,13 @@ test("a tab new_tab makes is leased before navigate, so another server's new_tab
   const denied = await other.handleCall("navigate", { url: "https://b.test/", target: { tabId: mine.tabId } });
   assert.match(denied.content[0].text, /tab_held/);
 });
+
+test("close_tab deletes the tab's lease file", async () => {
+  const { leases } = await twoServers({}, "close-room-lease");
+  const o = await call("new_tab", { app: "room:work" });
+  await call("eval_js", { script: "return 1", target: { tabId: o.tabId } });
+  await call("eval_js", { script: "return 1", target: tab() });
+  assert.equal(leases().length, 2);
+  await call("close_tab", { tabId: o.tabId });
+  assert.equal(leases().length, 1);
+});

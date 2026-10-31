@@ -5134,6 +5134,7 @@ const ROOM_FNS = {
     const t = await roomTarget(a.target, "close_tab");
     if ((await roomPages(t.conn)).length <= 1) return { ok: false, error: "last tab in the room; closing it would leave the room with no page" };
     await t.conn.send("Target.closeTarget", { targetId: t.targetId });
+    await roomLeaseChange(t.tabId, () => null);
     t.conn.sessions.delete(t.targetId);
     t.conn.bySession.delete(t.S.id);
     return { ok: true, closed: t.tabId };
