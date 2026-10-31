@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execFile, spawn } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
 import { readFileSync, readdirSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -11395,9 +11395,18 @@ function withLate(out, late) {
 
 export { TOOLS };
 
+// SKILL.md as a resource, for clients that read MCP resources but load no skills
+// (Codex). It costs nothing in tools/list.
+const SKILL_URI = "perch://skill", SKILL_FILE = fileURLToPath(new URL("./SKILL.md", import.meta.url));
+
 export function createServer() {
-  const server = new Server({ name: "perch", version: "0.2.0" }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
+  const server = new Server({ name: "perch", version: "0.2.0" }, { capabilities: { tools: {}, resources: {} }, instructions: INSTRUCTIONS });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources: [{ uri: SKILL_URI, name: "perch skill", description: "How to drive the user's browsers with perch: targeting, verification, errors.", mimeType: "text/markdown" }] }));
+  server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+    if (req.params.uri !== SKILL_URI) throw new Error(`unknown resource: ${req.params.uri}`);
+    return { contents: [{ uri: SKILL_URI, mimeType: "text/markdown", text: readFileSync(SKILL_FILE, "utf8") }] };
+  });
   server.setRequestHandler(CallToolRequestSchema, (req, extra) => handleCall(req.params.name, req.params.arguments || {}, { signal: extra && extra.signal }));
   return server;
 }
