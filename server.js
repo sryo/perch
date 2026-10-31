@@ -4561,11 +4561,13 @@ export const rooms = {
   home: process.env.ROOMS_HOME || join(homedir(), ".rooms"),
   fetch: (...a) => globalThis.fetch(...a),
   WebSocket: globalThis.WebSocket,
+  notify: (a) => notify(a),
   conns: new Map(),
 };
 export function roomsReset(over = {}) {
   for (const c of rooms.conns.values()) c.then((x) => x.close(), () => {});
   rooms.conns.clear();
+  rooms.notify = (a) => notify(a);
   Object.assign(rooms, over);
 }
 
@@ -4911,6 +4913,27 @@ async function roomListTabs(only, quiet) {
   return { rows, failed };
 }
 
+const ROOM_LOGIN_PATH = /(^|\/)(login|log-in|signin|sign-in|sign_in|auth|session\/new)([\/?#]|$)/i;
+async function roomHandoff(t, href) {
+  let u, login = false;
+  try {
+    u = new URL(href);
+    login = HANDOFF_HOST.test(u.hostname.toLowerCase()) || ROOM_LOGIN_PATH.test(u.pathname + u.search);
+    const site = roomRegistry()[t.name]?.sites?.find((s) => s.origin === u.origin);
+    if (site && new RegExp(site.signedOut, "i").test(u.pathname + u.search)) login = true;
+  } catch {}
+  let page;
+  try {
+    page = await roomRead(t, `JSON.stringify({password:[...document.querySelectorAll('input[type=password]')].some(x=>!x.hidden&&getComputedStyle(x).display!=='none'&&getComputedStyle(x).visibility!=='hidden'),frames:[...document.querySelectorAll('iframe')].map(x=>x.src)})`);
+  } catch { return login ? "login_path" : null; }
+  const challenge = page.frames?.some((src) => {
+    try { return handoffFrame(src) && /^https?:/.test(src); } catch { return false; }
+  });
+  if (challenge) return "challenge_frame";
+  if (login) return "login_path";
+  return page.password ? "password_field" : null;
+}
+
 const ROOM_FNS = {
   async evalJs(a) {
     const t = await roomTarget(a.target, a.tool || "eval_js");
@@ -4961,7 +4984,10 @@ const ROOM_FNS = {
     const r = await t.conn.send("Page.navigate", { url: a.url }, t.S.id, a.timeout);
     if (r.errorText) return { loadFailed: true };
     const state = "JSON.stringify({href:location.href,ready:document.readyState})";
-    if (!r.loaderId) return { href: (await roomRead(t, state)).href, waited: true };
+    if (!r.loaderId) {
+      const href = (await roomRead(t, state)).href;
+      return { href, waited: true, handoff: await roomHandoff(t, href) };
+    }
     const left = () => a.timeout - (Date.now() - start);
     while (t.S.loaderId !== r.loaderId && left() > 0) await sleep(25);
     if (t.S.loaderId !== r.loaderId) {
@@ -4969,10 +4995,11 @@ const ROOM_FNS = {
       return { notCommitted: now ? now.url : "", after: a.timeout };
     }
     const done = await roomPoll(t, state, Math.max(0, left()), 50, false, (v) => !!v && v.ready === "complete");
-    if (done) return { href: done.value.href, waited: true };
+    if (done) return { href: done.value.href, waited: true, handoff: await roomHandoff(t, done.value.href) };
     let now = null;
     try { now = await roomRead(t, state); } catch {}
-    return { href: now ? now.href : a.url, waited: false };
+    const href = now ? now.href : a.url;
+    return { href, waited: false, handoff: now ? await roomHandoff(t, href) : null };
   },
   async newTab(a) {
     const name = ROOM_APP.exec(String(a.app))[1];
@@ -5384,6 +5411,14 @@ async function navigate(url, target, raise) {
   // it finished loading, with no check ever answered, or on a tab that can't be
   // checked (an arc: url, an Arc tab whose url can't be read yet).
   const committed = r && r.href != null ? r.href : url;
+  if (r && r.handoff && isRoomTab(target?.tabId)) {
+    const room = ROOM_HANDLE.exec(target.tabId)[1];
+    const kind = r.handoff === "challenge_frame" ? "challenge" : "signed_out";
+    const command = `rooms view ${room} --signin ${committed}`;
+    try { await rooms.notify({ title: `Room ${room} needs you`, message: `Open ${command} to complete ${kind === "challenge" ? "the challenge" : "sign-in"}.` }); } catch {}
+    return { ok: false, error: `${kind}: ${committed} needs the user; run ${command}`, url: committed,
+      handoff: { status: "pending", room, reason: r.handoff, command }, ...tab };
+  }
   const out = { ok: true, url: committed };
   if (!same(committed, url)) out.requested = url;
   out.waited = !!(r && r.waited);

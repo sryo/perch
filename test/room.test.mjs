@@ -88,6 +88,45 @@ test("navigate loads the url and reports the committed one", async () => {
   assert.equal(await call("eval_js", { script: "return document.getElementById('p').textContent", target: tab() }), "B");
 });
 
+test("room navigation to a login path is a pending user handoff and notifies", async () => {
+  use({ rooms: { jobs: { sites: { "https://a.test/login": "<h1>Sign in</h1><input type=password>" } } } });
+  const notices = [];
+  rooms.notify = async (a) => { notices.push(a); return { ok: true }; };
+  const o = await call("navigate", { url: "https://a.test/login", target: tab() });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /^signed_out: /);
+  assert.deepEqual(o.handoff, { status: "pending", room: "jobs", reason: "login_path", command: "rooms view jobs --signin https://a.test/login" });
+  assert.match(notices[0].message, /rooms view jobs/);
+});
+
+test("room navigation with a visible password field or challenge frame needs the user", async () => {
+  use({ rooms: { jobs: { sites: {
+    "https://a.test/account": "<h1>Account</h1><input type=password>",
+    "https://a.test/apply": "<h1>Apply</h1><iframe src='https://www.google.com/recaptcha/api2/anchor'></iframe>",
+  } } } });
+  const notices = [];
+  rooms.notify = async (a) => { notices.push(a); return { ok: true }; };
+  const signIn = await call("navigate", { url: "https://a.test/account", target: tab() });
+  assert.equal(signIn.ok, false);
+  assert.equal(signIn.handoff.reason, "password_field");
+  const challenge = await call("navigate", { url: "https://a.test/apply", target: tab() });
+  assert.equal(challenge.ok, false);
+  assert.match(challenge.error, /^challenge: /);
+  assert.equal(challenge.handoff.reason, "challenge_frame");
+  assert.equal(notices.length, 2);
+});
+
+test("room navigation obeys the site's registered signed-out pattern", async () => {
+  use({ rooms: { jobs: {
+    registeredSites: [{ origin: "https://a.test", url: "https://a.test/", signedOut: "/session-expired" }],
+    sites: { "https://a.test/session-expired": "<h1>Session expired</h1>" },
+  } } });
+  rooms.notify = async () => ({ ok: true });
+  const o = await call("navigate", { url: "https://a.test/session-expired", target: tab() });
+  assert.equal(o.ok, false);
+  assert.equal(o.handoff.reason, "login_path");
+});
+
 test("navigate to a url that fails to load is load_failed", async () => {
   use();
   assert.match(await fails("navigate", { url: "https://nowhere.test/", target: tab() }), /^load_failed: /);

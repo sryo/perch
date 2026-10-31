@@ -18,7 +18,7 @@ export function makeRooms({ rooms = { jobs: {} }, down = [] } = {}) {
   const byPort = new Map();
   let port = 9300;
   for (const [name, spec] of Object.entries(rooms)) {
-    reg.rooms[name] = { name, profile: join(home, "profiles", name), cdp: { host: "127.0.0.1", port, token: TOKEN } };
+    reg.rooms[name] = { name, profile: join(home, "profiles", name), sites: spec.registeredSites || [], cdp: { host: "127.0.0.1", port, token: TOKEN } };
     byPort.set(port, new FakeRoom(name, spec, down.includes(name)));
     port++;
   }
