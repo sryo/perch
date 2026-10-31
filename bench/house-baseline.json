@@ -1,0 +1,266 @@
+{
+  "metrics": {
+    "schema chars": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        9707
+      ]
+    },
+    "lock events list_tabs": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        70
+      ]
+    },
+    "lock result bytes list_tabs": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        3412
+      ]
+    },
+    "lock events new_tab": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        52
+      ]
+    },
+    "lock result bytes new_tab": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        917
+      ]
+    },
+    "lock events activate_tab": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        25
+      ]
+    },
+    "lock result bytes activate_tab": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        92
+      ]
+    },
+    "lock events close_tab": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        14
+      ]
+    },
+    "lock result bytes close_tab": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        243
+      ]
+    },
+    "lock events eval_js": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        51
+      ]
+    },
+    "lock result bytes eval_js": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        2640
+      ]
+    },
+    "lock events get_text": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        21
+      ]
+    },
+    "lock result bytes get_text": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        838
+      ]
+    },
+    "lock events navigate": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        728
+      ]
+    },
+    "lock result bytes navigate": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        1760
+      ]
+    },
+    "lock events accessibility_snapshot": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        29
+      ]
+    },
+    "lock result bytes accessibility_snapshot": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        3536
+      ]
+    },
+    "lock events wait": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        54
+      ]
+    },
+    "lock result bytes wait": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        947
+      ]
+    },
+    "lock events fill": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        144
+      ]
+    },
+    "lock result bytes fill": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        4233
+      ]
+    },
+    "lock events select": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        44
+      ]
+    },
+    "lock result bytes select": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        1232
+      ]
+    },
+    "lock events press": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        26
+      ]
+    },
+    "lock result bytes press": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        1142
+      ]
+    },
+    "lock events file_upload": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        27
+      ]
+    },
+    "lock result bytes file_upload": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        682
+      ]
+    },
+    "lock events console_capture": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        7
+      ]
+    },
+    "lock result bytes console_capture": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        416
+      ]
+    },
+    "lock events click": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        144
+      ]
+    },
+    "lock result bytes click": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        3345
+      ]
+    },
+    "lock events notify": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        0
+      ]
+    },
+    "lock result bytes notify": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        84
+      ]
+    },
+    "lock events screenshot": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        32
+      ]
+    },
+    "lock result bytes screenshot": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        963
+      ]
+    },
+    "lock events nonesuch": {
+      "dir": "lower",
+      "kind": "count",
+      "samples": [
+        0
+      ]
+    },
+    "lock result bytes nonesuch": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        29
+      ]
+    }
+  },
+  "limits": {
+    "schema chars": 9750
+  }
+}

@@ -18,13 +18,13 @@
 // costs more events or newly fails against the first --refs entry.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, symlinkSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, symlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { serveFixture } from "./bench.mjs";
-import { stats, compareRuns, lockSteps, lockTotals, lockDiff } from "./versions-lib.mjs";
+import { stats, compareRuns, lockTotals, lockDiff, recordLock } from "./versions-lib.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -227,16 +227,8 @@ function table(versions) {
 // One version's server.js with this checkout's lock harness and fake world, in a
 // scratch directory, recorded fresh: the golden it writes is that version's.
 function offlineSteps(ref) {
-  const sha = git("rev-parse", "--short", ref), dir = join(tmpdir(), `perch-versions-lock-${sha}`);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(join(dir, "test"), { recursive: true });
-  mkdirSync(join(dir, "scripts"));
-  writeFileSync(join(dir, "server.js"), git("show", `${sha}:server.js`) + "\n");
-  for (const f of ["package.json", "scripts/temp.mjs", "test/lock.test.mjs"]) writeFileSync(join(dir, f), readFileSync(join(ROOT, f)));
-  for (const d of ["test/lock", "test/fakes", "test/helpers", "test/fixtures"]) execFileSync("cp", ["-R", join(ROOT, d), join(dir, d)]);
-  symlinkSync(join(ROOT, "node_modules"), join(dir, "node_modules"));
-  execFileSync("node", ["--import", "./test/helpers/isolate.mjs", "--test", "test/lock.test.mjs"], { cwd: dir, env: { ...process.env, PERCH_LOCK_WRITE: "1" }, stdio: "ignore" });
-  return { ref, sha, steps: lockSteps(JSON.parse(readFileSync(join(dir, "test/lock/golden.json"), "utf8"))) };
+  const sha = git("rev-parse", "--short", ref);
+  return { ref, sha, steps: recordLock(git("show", `${sha}:server.js`) + "\n", ROOT, join(tmpdir(), `perch-versions-lock-${sha}`)) };
 }
 
 function offline() {

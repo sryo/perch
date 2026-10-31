@@ -11,6 +11,11 @@
 // byte counts are compared only when both runs used the same fixture (its sha256).
 // Replacing the baseline is a deliberate copy: cp bench/runs/bench.json bench/baseline.json
 //   --navigate   also time navigate (reloads the fixture in the scratch tab)
+//   --house <out.json>  also write the run in fium's format (fium RULES.md K2), with
+//                the behaviour lock's Apple Events and result bytes per tool; judge it
+//                with fium price compare bench/house-baseline.json <out.json> (offline metrics) and
+//                bench/house-live-baseline.json <out.json> --noise bench/noise.json (live rows)
+//   --offline    no browser: only the schema and lock metrics (needs --house)
 
 import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { realpathSync } from "node:fs";
@@ -19,7 +24,10 @@ import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 import { connect, text, ROOT } from "./mcp-client.mjs";
+import { recordLock, lockTotals } from "./versions-lib.mjs";
+import { SCHEMA_BUDGET } from "../server.js";
 
 // The last occurrence of a flag wins, so `npm run bench -- --app arc` overrides
 // the --app canary that the npm script passes first.
@@ -32,7 +40,34 @@ export function parseArgs(argv) {
     app: opt("--app"),
     tab: opt("--tab"),
     navigate: argv.includes("--navigate"),
+    house: opt("--house"),
+    offline: argv.includes("--offline"),
   };
+}
+
+// The run in house's format: each live row's timings and result bytes, the
+// tools/list size under its SCHEMA_BUDGET limit, and per tool the behaviour
+// lock's Apple Events (fake world) and result bytes.
+export function houseRun({ results, samples, lock }) {
+  const metrics = {};
+  for (const [k, v] of Object.entries(results)) {
+    if (k === "schema" || v.error) continue;
+    metrics[`${k} ms`] = { dir: "lower", kind: "time", samples: samples[k] || [v.p50] };
+    metrics[`${k} bytes`] = { dir: "lower", kind: "bytes", samples: [v.bytes] };
+  }
+  if (results.schema) metrics["schema chars"] = { dir: "lower", kind: "bytes", samples: [results.schema.chars] };
+  for (const [tool, t] of Object.entries(lock)) {
+    metrics[`lock events ${tool}`] = { dir: "lower", kind: "count", samples: [t.ev] };
+    metrics[`lock result bytes ${tool}`] = { dir: "lower", kind: "bytes", samples: [t.bytes] };
+  }
+  return { metrics, limits: { "schema chars": SCHEMA_BUDGET } };
+}
+
+// The summary baseline's live rows in house's format: one sample (its p50) per
+// time metric. Its schema size is left out: the offline baseline measures that.
+export function houseFromBaseline(old) {
+  const { schema, ...rows } = old.results || {};
+  return houseRun({ results: rows, samples: {}, lock: {} });
 }
 
 export const FIXTURE_FILE = "bench/fixture.html";
@@ -109,12 +144,19 @@ const WARMUP = 3;
 const pct = (xs, p) => xs.slice().sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))];
 
 async function main() {
-  const { runs: RUNS, out: OUT, compare: COMPARE, app: APP, tab: TAB, navigate } = parseArgs(process.argv.slice(2));
+  const { runs: RUNS, out: OUT, compare: COMPARE, app: APP, tab: TAB, navigate, house: HOUSE, offline: OFFLINE } = parseArgs(process.argv.slice(2));
+  if (OFFLINE) {
+    if (!HOUSE) throw new Error("--offline writes only the house run; pass --house <out.json>");
+    const client = await connect({ timeoutMs: 60000 });
+    let chars;
+    try { chars = JSON.stringify((await client.rpc("tools/list", {})).result.tools).length; } finally { client.close(); }
+    return writeHouse(HOUSE, { results: { schema: { chars } }, samples: {} });
+  }
   const html = await readFile(resolve(ROOT, FIXTURE_FILE));
   const fixture = { file: FIXTURE_FILE, sha256: fixtureHash(html) };
   const server = await serveFixture(html);
   const client = await connect({ timeoutMs: 60000 });
-  const results = {};
+  const results = {}, samples = {};
   let benched = null;
   let scratch = null;
   let target = null;
@@ -132,6 +174,7 @@ async function main() {
         bytes = JSON.stringify(res.content).length;
       }
       results[name] = { p50: +pct(ms, 0.5).toFixed(1), p95: +pct(ms, 0.95).toFixed(1), min: +Math.min(...ms).toFixed(1), bytes };
+      samples[name] = ms.map((x) => +x.toFixed(1));
     } catch (e) {
       results[name] = { error: e.message.slice(0, 200) };
     }
@@ -195,9 +238,19 @@ async function main() {
     await mkdir(dirname(p), { recursive: true });
     await writeFile(p, JSON.stringify(report, null, 2) + "\n");
   }
+  if (HOUSE) await writeHouse(HOUSE, { results, samples });
   // No baseline, or one that isn't bench JSON: just print this run.
   const baseline = await readFile(resolve(ROOT, COMPARE), "utf8").then((s) => JSON.parse(s)).catch(() => null);
   if (baseline?.results) console.log("\n" + compareLines(baseline, report).join("\n"));
+}
+
+async function writeHouse(out, { results, samples }) {
+  const src = await readFile(resolve(ROOT, "server.js"), "utf8");
+  const lock = lockTotals(recordLock(src, ROOT, resolve(tmpdir(), `perch-bench-lock-${process.pid}`)));
+  const p = resolve(ROOT, out);
+  await mkdir(dirname(p), { recursive: true });
+  await writeFile(p, JSON.stringify(houseRun({ results, samples, lock }), null, 2) + "\n");
+  console.log(`house run: ${out}`);
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -1,5 +1,8 @@
 // The arithmetic of scripts/versions.mjs: per-call stats over reps, and the
 // flags a run raises against a baseline.
+import { readFileSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 
 const pick = (sorted, q) => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)];
 const median = (sorted) => {
@@ -76,4 +79,20 @@ export function lockDiff(before, after) {
     if (a.err && !b.err) out.push({ kind: "fails", step, detail: "" });
   }
   return out;
+}
+
+// Records the behaviour lock for `serverJs` (a server.js source) with `root`'s lock
+// harness and fake world, in scratch directory `dir`, and returns its lockSteps.
+export function recordLock(serverJs, root, dir) {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(join(dir, "test"), { recursive: true });
+  mkdirSync(join(dir, "scripts"));
+  writeFileSync(join(dir, "server.js"), serverJs);
+  for (const f of ["package.json", "scripts/temp.mjs", "test/lock.test.mjs"]) writeFileSync(join(dir, f), readFileSync(join(root, f)));
+  for (const d of ["test/lock", "test/fakes", "test/helpers", "test/fixtures"]) execFileSync("cp", ["-R", join(root, d), join(dir, d)]);
+  symlinkSync(join(root, "node_modules"), join(dir, "node_modules"));
+  execFileSync("node", ["--import", "./test/helpers/isolate.mjs", "--test", "test/lock.test.mjs"], { cwd: dir, env: { ...process.env, PERCH_LOCK_WRITE: "1" }, stdio: "ignore" });
+  const steps = lockSteps(JSON.parse(readFileSync(join(dir, "test/lock/golden.json"), "utf8")));
+  rmSync(dir, { recursive: true, force: true });
+  return steps;
 }

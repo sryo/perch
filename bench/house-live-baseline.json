@@ -1,0 +1,133 @@
+{
+  "metrics": {
+    "list_tabs ms": {
+      "dir": "lower",
+      "kind": "time",
+      "samples": [
+        66.9
+      ]
+    },
+    "list_tabs bytes": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        11039
+      ]
+    },
+    "list_tabs limit:1 ms": {
+      "dir": "lower",
+      "kind": "time",
+      "samples": [
+        66.6
+      ]
+    },
+    "list_tabs limit:1 bytes": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        293
+      ]
+    },
+    "eval_js explicit target ms": {
+      "dir": "lower",
+      "kind": "time",
+      "samples": [
+        16.9
+      ]
+    },
+    "eval_js explicit target bytes": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        28
+      ]
+    },
+    "eval_js awaitPromise ms": {
+      "dir": "lower",
+      "kind": "time",
+      "samples": [
+        33.2
+      ]
+    },
+    "eval_js awaitPromise bytes": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        28
+      ]
+    },
+    "wait readyState ms": {
+      "dir": "lower",
+      "kind": "time",
+      "samples": [
+        16.8
+      ]
+    },
+    "wait readyState bytes": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        53
+      ]
+    },
+    "accessibility_snapshot ms": {
+      "dir": "lower",
+      "kind": "time",
+      "samples": [
+        16.6
+      ]
+    },
+    "accessibility_snapshot bytes": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        766
+      ]
+    },
+    "get_text 2000 ms": {
+      "dir": "lower",
+      "kind": "time",
+      "samples": [
+        16.9
+      ]
+    },
+    "get_text 2000 bytes": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        674
+      ]
+    },
+    "screenshot png ms": {
+      "dir": "lower",
+      "kind": "time",
+      "samples": [
+        85.1
+      ]
+    },
+    "screenshot png bytes": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        329258
+      ]
+    },
+    "screenshot jpeg ms": {
+      "dir": "lower",
+      "kind": "time",
+      "samples": [
+        83.5
+      ]
+    },
+    "screenshot jpeg bytes": {
+      "dir": "lower",
+      "kind": "bytes",
+      "samples": [
+        259747
+      ]
+    }
+  },
+  "limits": {
+    "schema chars": 9750
+  }
+}
