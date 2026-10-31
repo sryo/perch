@@ -11287,7 +11287,7 @@ export function withTabLock(key, fn) {
   return run;
 }
 const LOCKED_TOOLS = new Set(["fill", "select", "file_upload"]);
-const ROOM_LEASE_TOOLS = new Set(["navigate", "activate_tab", "close_tab", "eval_js", "wait", "console_capture", "click", "press", "fill", "select", "file_upload"]);
+const ROOM_LEASE_TOOLS = new Set(["navigate", "activate_tab", "close_tab", "eval_js", "wait", "console_capture", "click", "press", "fill", "select", "file_upload", "accessibility_snapshot", "screenshot", "get_text"]);
 const tabLockKey = (name, args) =>
   LOCKED_TOOLS.has(name) || (name === "click" && (args.readback || args.trusted)) ||
   (name === "press" && args.trusted) || (name === "wait" && args.quiet != null) ||

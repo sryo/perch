@@ -541,3 +541,16 @@ test("close_tab deletes the tab's lease file", async () => {
   await call("close_tab", { tabId: o.tabId });
   assert.equal(leases().length, 1);
 });
+
+test("a foreign snapshot, screenshot or get_text is tab_held and leaves the holder's refs alive", async () => {
+  const { other } = await twoServers({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<button onclick=\"this.textContent='done'\">Apply</button>" }] } } }, "read-room-lease");
+  const snap = (await handleCall("accessibility_snapshot", { target: tab() })).content[0].text;
+  const ref = /^(\S+) button "Apply"/m.exec(snap)[1];
+  for (const [name, args] of [["accessibility_snapshot", {}], ["screenshot", {}], ["get_text", {}]]) {
+    const r = await other.handleCall(name, { ...args, target: tab() });
+    assert.match(r.content[0].text, /tab_held/, name);
+  }
+  const o = await call("click", { ref, target: tab() });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(await call("eval_js", { script: "return document.querySelector('button').textContent", target: tab() }), "done");
+});
