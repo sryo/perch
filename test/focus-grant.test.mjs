@@ -36,6 +36,10 @@ for (const [label, tool, args] of [
   ["screenshot {raise}", "screenshot", { raise: true, target: { tabId: "chrome:b" } }],
   ["click {trusted, raise}", "click", { trusted: true, raise: true, x: 10, y: 10 }],
   ["new_tab file:", "new_tab", { app: "Google Chrome", url: "file:///tmp/p.html" }],
+  // Live (Canary, 2026-10-31): a tab made through AppleScript brings a Chromium
+  // browser to the front even into a window behind other apps.
+  ["new_tab on Chromium", "new_tab", { app: "Google Chrome", url: "about:blank" }],
+  ["new_tab in the default browser", "new_tab", { url: "about:blank" }],
 ]) {
   test(`without a grant, ${label} answers needs_focus and sends nothing`, async () => {
     const r = await handleCall(tool, args);
@@ -77,7 +81,7 @@ test("a grant written by another process is honoured", async () => {
 });
 
 test("calls that move no focus need no grant", async () => {
-  for (const [tool, args] of [["list_tabs", {}], ["eval_js", { script: "return 1", target: { tabId: "chrome:a" } }], ["new_tab", { app: "Google Chrome", url: "about:blank" }]]) {
+  for (const [tool, args] of [["list_tabs", {}], ["eval_js", { script: "return 1", target: { tabId: "chrome:a" } }], ["new_tab", { app: "Safari", url: "about:blank" }]]) {
     const r = await handleCall(tool, args);
     assert.doesNotMatch(r.content[0].text, /needs_focus/, tool);
   }

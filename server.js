@@ -11373,12 +11373,14 @@ function logRaise(rec) {
 }
 
 // Whether a call would move the user's focus: raise:true, activate_tab, or a
-// Chromium new_tab with a file: url, which loads from outside the page and raises
-// its window. Rooms run in a VM, so nothing there moves the Mac's focus.
+// new_tab outside Safari. Live (Canary), a tab made through AppleScript brings a
+// Chromium browser to the front even into a window behind other apps; an untargeted
+// new_tab may land in one. Safari's is unverified. Rooms run in a VM, so nothing
+// there moves the Mac's focus.
 function movesFocus(name, args) {
   if (roomArgs(args)) return false;
   if (name === "activate_tab" || args.raise === true) return true;
-  return name === "new_tab" && /^\s*file:/i.test(String(args.url || "")) && !/^safari$/i.test(String(args.app || ""));
+  return name === "new_tab" && !/^safari$/i.test(String(args.app || ""));
 }
 const needsFocus = (name) => new Error(`needs_focus: ${name} would bring the browser to the front, and the user has not allowed perch to take focus; nothing was sent. Try the call without raise (most run in the background), or move the flow into a room (new_tab {from: tabId, app:"room:<name>"}), or ask the user to allow it: they run \`perch focus allow 15m\` in a terminal`);
 

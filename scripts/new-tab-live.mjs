@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Live check that new_tab takes no focus: one new_tab {about:blank} into Canary with
-// another app in front, under frontGuard. It records the front app's pid and every
-// Canary window's minimized state before and after, so a raise or a restored window
-// fails it, then closes only the tab it made. It never opens a window, minimizes or
+// another app in front, under frontGuard. new_tab on Chromium needs the user's focus
+// grant (it raised the window live), so without one this checks it is refused. It
+// records the front app's pid and every Canary window's minimized state before and
+// after, so a raise or a restored window fails it, then closes only the tab it made. It never opens a window, minimizes or
 // restores one, or activates an app; the user's windows are read, not changed.
 //   node scripts/new-tab-live.mjs --yes
 // Expect: front pid unchanged; minimized states unchanged; the tab in the first
@@ -25,18 +26,22 @@ if (!before) { console.error("Canary isn't running; new_tab never launches it, s
 const client = await connect({ timeoutMs: 60000, env: { ...process.env, PERCH_AWAKE: "0" } });
 let made = null, failed = 0;
 try {
-  const r = await frontGuard(frontPid).step("new_tab about:blank", () => client.call("new_tab", { app: "canary", url: "about:blank" }));
+  // The tab is noted as soon as it exists, so a raise that trips the guard still has it closed.
+  const r = await frontGuard(frontPid).step("new_tab about:blank", () => client.call("new_tab", { app: "canary", url: "about:blank" }).then((res) => {
+    try { if (!res.isError) made = JSON.parse(text(res)).tabId; } catch {}
+    return res;
+  }));
   const out = text(r);
   const after = minimized();
   const same = JSON.stringify(after) === JSON.stringify(before);
   if (!same) failed++;
   console.log(`${same ? "PASS" : "FAIL"} minimized states ${same ? "unchanged" : `changed: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`}`);
   if (r.isError) {
-    const allMin = before.every(([, m]) => m);
-    if (!(allMin && /no_browser: every .* window is minimized/.test(out))) failed++;
-    console.log(`${allMin && /no_browser/.test(out) ? "PASS" : "FAIL"} new_tab answered: ${out}`);
+    // No grant: refused, nothing made. All windows minimized: no_browser, nothing restored.
+    const ok = /^error: needs_focus: /.test(out) || (before.every(([, m]) => m) && /no_browser: every .* window is minimized/.test(out));
+    if (!ok) failed++;
+    console.log(`${ok ? "PASS" : "FAIL"} new_tab answered: ${out}`);
   } else {
-    made = JSON.parse(out).tabId;
     console.log(`PASS front app unchanged; made ${made}`);
   }
 } catch (e) {
