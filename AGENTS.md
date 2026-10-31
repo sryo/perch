@@ -289,7 +289,7 @@ Live verification is Chrome Canary first; Arc and Safari paths not yet run live 
 
 Each blocked layer returns an actionable error naming the exact toggle (`ERR.jsOff`, `ERR.automation`; `test/docs.test.mjs` pins the paths). perch never prompts for Accessibility or Screen Recording.
 
-## Testing and measuring
+## Test
 
 - **`npm test`** (unit, no browser) must be green before every commit. Tests run against the fake osascript REPL and fake JXA world in `test/fakes/` and happy-dom for page scripts; `test/runtime.test.mjs` also compiles the runtime with real osascript. Write the failing test first.
 - **`test/perf-budget.test.mjs`** pins Apple Events per call and page script sizes; `test/call-events.test.mjs` pins per-call event trims; `test/schema.test.mjs` keeps `tools/list` under `SCHEMA_BUDGET`; `test/docs.test.mjs` keeps SKILL.md and this file honest and capped.
