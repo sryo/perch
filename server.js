@@ -5070,6 +5070,16 @@ const ROOM_FNS = {
     const name = ROOM_APP.exec(String(a.app))[1];
     if (!name) throw new Error("bad_args: new_tab in a room takes app:\"room:<name>\"");
     const conn = await roomConn(name);
+    // A blank tab nobody has driven (the room starts with one) is handed out
+    // before a new one is made; writing its lease first keeps two callers off the same tab.
+    if (a.url === "about:blank") {
+      for (const p of await roomPages(conn)) {
+        if (p.url !== "about:blank" || p.attached || p.openerId) continue;
+        const tabId = `room:${name}:${p.targetId}`;
+        const { old } = await roomLeaseChange(tabId, (s) => s || { owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: false, held: null });
+        if (!old) return { app: `room:${name}`, tabId, reused: true };
+      }
+    }
     const { targetId } = await conn.send("Target.createTarget", { url: a.url, background: true });
     return { app: `room:${name}`, tabId: `room:${name}:${targetId}` };
   },
@@ -10469,7 +10479,10 @@ async function roomDownloadClick(args) {
 
 async function click(args = {}) {
   if (args.download) return roomDownloadClick(args);
-  const { ref = null, selector = null, label_pattern = null, x = null, y = null, trusted = false, raise = false, hover = false, target, readback = null } = args;
+  // A room has no cursor or window of the user's to disturb, so its clicks are
+  // real input unless the caller passes trusted:false; pages that ignore el.click() still open.
+  const roomDefault = isRoomTab(args.target?.tabId) && !args.hover;
+  const { ref = null, selector = null, label_pattern = null, x = null, y = null, trusted = roomDefault, raise = false, hover = false, target, readback = null } = args;
   if (readback != null && (typeof readback !== "string" || !readback.trim())) throw new Error("click: `readback` must be a CSS selector");
   if (hover && (trusted || readback || x != null || y != null)) throw new Error("click: hover is untrusted and element-only");
   if (label_pattern != null) {

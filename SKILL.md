@@ -60,26 +60,26 @@ No `ready`: complete. Values are JSON. Keys: `name` (HTML name), `type`, `value`
 
 ## Rooms
 
-A room is one Chromium on a persistent, signed-in profile in a VM on this Mac (`rooms` CLI). Use one when the site must stay signed in across runs, the work shouldn't touch the user's windows, or the Mac may be locked; else the user's browser.
+A room is a signed-in Chromium in a VM on this Mac (`rooms` CLI). Use one when a site must stay signed in, the work shouldn't touch the user's windows, or the Mac may be locked.
 
 | Step | Call |
 |---|---|
-| Find | `list_tabs {app:"room"}` or `{app:"room:work"}`; ids are `room:<name>:<targetId>`. `list_tabs` without `app` lists rooms that are up after the browsers. |
+| Find | `list_tabs {app:"room"}` or `{app:"room:work"}`; ids are `room:<name>:<targetId>`. No `app`: rooms that are up list after the browsers. |
 | Open | `new_tab {app:"room:work"}`, then `navigate`. |
 | Act | Any tool with that `target.tabId`. Untargeted calls never reach a room. |
-| Move | `new_tab {from: <browser tabId>, app:"room:work"}`: same URL, page state stays behind; refill. Errors needing the user's window suggest it. |
+| Move | `new_tab {from: <browser tabId>, app:"room:work"}`: same URL, page state stays behind; refill. `from` stays open. Errors needing the user's window suggest it. |
 
-Every room tab answers like a shown one: no `tab_not_visible`, `activate_tab` or `raise`; `trusted` is CDP input, no cursor or focus. Not in rooms: `frames` rows and `fN` refs, the file chooser (`file_upload` sets the file through the page), the `late` check. Downloads are denied except in `click {download: true}`, which returns `download.file`, its path on this Mac.
+Room tabs answer like shown ones: no `tab_not_visible`, `activate_tab` or `raise`. `click` is trusted by default (CDP input, no cursor or focus; `trusted:false` for `el.click()`). Not in rooms: `frames` rows and `fN` refs, the file chooser (`file_upload` sets the file through the page), the `late` check. Downloads are denied except in `click {download: true}`, which returns `download.file`, its path on this Mac.
 
 | Error | Next |
 |---|---|
 | `signed_out` / `challenge` (`handoff.status: "pending"`) | The user's; perch has notified them. Show `handoff.command` (`rooms view <room> --signin <url>`), wait, `navigate` again. Never type credentials. |
 | `no_browser: room 'x' is not up` | Run `rooms up x` in a shell, then retry. |
-| `no_browser: no room 'x'` | Setup is the user's: `rooms init x`, `rooms up x`, then sign in. |
+| `no_browser: no room 'x'` | Setup is the user's (`rooms init x`). |
 | `tab_held` | Another agent has the tab: retry after 5s idle, or `new_tab`. |
 | `stale_tab` | Closed or crashed: `list_tabs {app:"room:x"}`. |
 
-`rooms check x` lists which sites are signed out (exit 1 if any). Leave `rooms down`, `restore`, `teleport` and `flags` to the user.
+When done, close the tabs you opened, `from` too; never the user's. `rooms check x` lists signed-out sites (exit 1 if any). Leave `rooms down`, `restore`, `teleport` and `flags` to the user.
 
 ## Permissions
 

@@ -147,7 +147,7 @@ test("new_tab opens a background tab in the room, close_tab closes it, and the l
 });
 
 test("click with readback reports what changed", async () => {
-  use({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<button id=b>Save</button><p id=s>Idle</p>" }] } } });
+  use({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<button id=b data-rect='10,20,100,40'>Save</button><p id=s>Idle</p>" }] } } });
   await call("eval_js", { script: "document.getElementById('b').addEventListener('click', () => setTimeout(() => { document.getElementById('s').textContent = 'Saved'; }, 20)); return 1", target: tab() });
   const o = await call("click", { selector: "#b", readback: "#s", target: tab() });
   assert.equal(o.ok, true);
@@ -409,7 +409,7 @@ test("clicking a cross-origin iframe opens its src in a room tab, but a challeng
 
 test("a scoped room download allows one click, then denies later downloads", async () => {
   use({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<button id=d>Download</button>" }] } } });
-  const result = await call("click", { selector: "#d", download: true, target: tab() });
+  const result = await call("click", { selector: "#d", download: true, trusted: false, target: tab() });
   assert.equal(result.ok, false, "a click with no saved file is not verified as a download");
   assert.match(result.error, /no download started/);
   const behavior = R.room("work").log.filter((x) => x.method === "Browser.setDownloadBehavior").map((x) => x.params.behavior);
@@ -462,4 +462,24 @@ test("a browser error that needs the user's window suggests a room, the URL's ow
   assert.match(roomHint("tab_not_visible: hidden", {}), /room:work.*\(rooms: work, mail\)/);
   assert.equal(roomHint("stale_tab: gone", {}), "stale_tab: gone");
   assert.equal(roomHint("window_offscreen: x", { target: tab() }), "window_offscreen: x");
+});
+
+test("a room click is trusted by default; trusted:false falls back to el.click()", async () => {
+  use({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<button id=b data-rect='10,20,100,40'>Open</button><p id=s>0</p>" }] } } });
+  await call("eval_js", { script: "document.getElementById('b').addEventListener('click', (e) => { if (e.isTrusted) document.getElementById('s').textContent = 'opened'; }); return 1", target: tab() });
+  const o = await call("click", { selector: "#b", target: tab() });
+  assert.equal(o.delivery, "cdp", JSON.stringify(o));
+  assert.equal(await call("eval_js", { script: "return document.getElementById('s').textContent", target: tab() }), "opened");
+  const before = R.room("work").log.filter((m) => m.method === "Input.dispatchMouseEvent").length;
+  await call("click", { selector: "#b", trusted: false, target: tab() });
+  assert.equal(R.room("work").log.filter((m) => m.method === "Input.dispatchMouseEvent").length, before);
+});
+
+test("new_tab in a room hands out its unused blank tab once, then opens new ones", async () => {
+  use({ rooms: { work: { tabs: [{ url: "about:blank", html: "" }, { url: "https://a.test/", html: "" }] } } });
+  const first = await call("new_tab", { app: "room:work" });
+  assert.deepEqual(first, { app: "room:work", tabId: "room:work:T0001", reused: true });
+  const second = await call("new_tab", { app: "room:work" });
+  assert.equal(second.reused, undefined);
+  assert.equal(R.room("work").log.filter((m) => m.method === "Target.createTarget").length, 1);
 });
