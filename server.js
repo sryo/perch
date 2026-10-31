@@ -3545,9 +3545,18 @@ function jxaRuntime(BROWSERS, HANG) {
       const ap = app(name);
       if (!ap.running()) throw new Error("no_browser: " + name + " must already be running (new_tab never launches it)");
       if (!ap.windows.length) throw new Error("no_browser: " + name + " needs an existing window (new_tab never makes one)");
+      // The first window that isn't minimized: a tab made in a minimized one restores
+      // it and brings the browser forward (live, Canary). One bulk read; unreadable
+      // counts as on screen.
+      let at = 0, mins = null;
+      try { mins = kind === "safari" ? ap.windows.miniaturized() : ap.windows.minimized(); } catch (e) {}
+      if (mins) {
+        at = mins.indexOf(false);
+        if (at < 0) throw new Error("no_browser: every " + name + " window is minimized, and new_tab never restores one; ask the user to restore one");
+      }
       let win, newId = null, shown = null;
       if (kind === "chrome" || kind === "arc") {
-        win = ap.windows[0];
+        win = ap.windows[at];
         let prev = null;
         try { prev = kind === "chrome" ? win.activeTabIndex() : win.activeTab.id(); } catch (e) {}
         let beforeIds = null;
@@ -3607,7 +3616,7 @@ function jxaRuntime(BROWSERS, HANG) {
         }
       } else {
         // Safari: documents[0].tabs throws under JXA; windows[0].tabs works.
-        win = ap.windows[0];
+        win = ap.windows[at];
         let created = false, prev = null;
         try { prev = win.currentTab.index(); } catch (e) {}
         try { win.tabs.push(ap.Tab({ url: a.url })); created = true; } catch (e) {}

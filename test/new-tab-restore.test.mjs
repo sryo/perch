@@ -100,3 +100,28 @@ for (const [label, make, app, url] of [["Chrome", chrome, "Google Chrome", "http
     assert.equal(world.tabsOf(app, 0).length, 2);
   });
 }
+
+// Live (Canary, 2026-10-31): new_tab made its tab in the app's first window, which
+// was minimized, and the browser restored that window and took the user's focus.
+// new_tab picks the first window that isn't minimized, and refuses when every one
+// is: it never restores a window.
+for (const [label, make, app] of cases) {
+  test(`new_tab skips a minimized ${label} window and never restores it`, async () => {
+    install({ browsers: [make([{ id: 1, active: 0, tabs: tabs(2, "m"), minimized: true }, { id: 2, active: 0, tabs: tabs(1, "s") }])], cg: [{ owner: "Terminal" }, { owner: app }] });
+    const { r, o } = await call("new_tab", { app, url: "about:blank" });
+    assert.equal(r.isError, undefined, JSON.stringify(o));
+    assert.equal(world.tabsOf(app, 0).length, 2, "nothing made in the minimized window");
+    assert.equal(world.tabsOf(app, 1).length, 2, "the tab went to the window on screen");
+    assert.deepEqual(world.log.filter(([k]) => k === "deminiaturize"), []);
+    noActivate();
+  });
+
+  test(`new_tab refuses when every ${label} window is minimized`, async () => {
+    install({ browsers: [make([{ id: 1, active: 0, tabs: tabs(1, "m"), minimized: true }])], cg: [{ owner: "Terminal" }] });
+    const { t } = await call("new_tab", { app, url: "about:blank" });
+    assert.match(t, /^error: no_browser: .*minimized.*new_tab never restores/);
+    assert.equal(world.tabsOf(app, 0).length, 1);
+    assert.deepEqual(world.log.filter(([k]) => k === "deminiaturize"), []);
+    noActivate();
+  });
+}

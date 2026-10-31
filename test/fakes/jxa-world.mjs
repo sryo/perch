@@ -261,6 +261,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
           if (b.dropOnCreate) return;
           const tab = makeTab({ url: t.url, id: "new" + w.tabs.length }, b, w);
           if (b.kind === "arc" && state.arcSlowUrl && /^arc:/.test(t.url)) tab.slow = { ...state.arcSlowUrl, target: null }; w.tabs.push(tab); log.push(["newTab", b.name, t.url]);
+          // Live (Canary): a tab made in a minimized window restores the window and brings the browser forward.
+          if (w.spec.minimized) { w.spec.minimized = false; log.push(["deminiaturize", b.name, w.spec.id]); log.push(["activate", b.name]); }
           // b.selectOnCreate: the browser shows the tab it just made. b.raiseOnCreate:
           // it also brings its windows to the front.
           if (b.selectOnCreate) w.spec.active = w.tabs.length - 1;
@@ -368,6 +370,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         }
         if (k === "byId") return (id) => specifier(() => { const w = wins.find((x) => String(x.spec.id) === String(id)); return w && w.win; });
         if (k === "id") return () => { bump(`windows.id()(${b.name})`, b.name); return wins.map((w) => w.spec.id); };
+        // A window spec's `minimized: true`; Safari names the property miniaturized.
+        if (k === (b.kind === "safari" ? "miniaturized" : "minimized")) return () => { bump(`windows.${k}()(${b.name})`, b.name); return wins.map((w) => !!w.spec.minimized); };
         if (k === "name") return () => { bump(`windows.name()(${b.name})`, b.name); return wins.map((w) => w.spec.name ?? (w.tabs[w.spec.active]?.spec.title || "")); };
         // Every window's elements in one event (nested arrays, one per window); counted like a per-window bulk read.
         if (k === "tabs") return {
