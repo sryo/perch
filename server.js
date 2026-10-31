@@ -4634,9 +4634,10 @@ async function roomLeaseChange(tabId, update) {
     return { old: state, next };
   } finally { rmSync(lock, { recursive: true, force: true }); }
 }
-const roomLeaseNew = () => ({ owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: false, held: null });
-async function roomHeld(tabId, held) {
-  await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, held } : undefined);
+const roomLeaseNew = () => ({ owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: false, stuck: null });
+// stuck: a mouse button or key this lease's holder pressed and has not yet released.
+async function roomStuck(tabId, stuck) {
+  await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, stuck } : undefined);
 }
 async function withRoomLease(tabId, note, fn) {
   const { old } = await roomLeaseChange(tabId, (s) => {
@@ -4647,15 +4648,15 @@ async function withRoomLease(tabId, note, fn) {
     // "user" is rooms' viewer: a person is watching or driving the tab until they close it.
     if (other && live && s.owner === "user" && s.active) throw new Error("tab_held: room tab held by the user in rooms view; retry after they close it (rooms logs <room> --follow --until handoff.ended)");
     if (other && live && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
-    return { owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: true, held: s?.held ?? null };
+    return { owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: true, stuck: s?.stuck ?? null };
   });
   note.lease = tabId;
   try {
-    if (old?.held) {
+    if (old?.stuck) {
       const t = await roomTarget({ tabId }, "lease recovery");
-      if (old.held.type === "key") await t.conn.send("Input.dispatchKeyEvent", { type: "keyUp", ...old.held.event }, t.S.id);
-      if (old.held.type === "mouse") await t.conn.send("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", buttons: 0, clickCount: 1, ...old.held.point }, t.S.id);
-      await roomHeld(tabId, null);
+      if (old.stuck.type === "key") await t.conn.send("Input.dispatchKeyEvent", { type: "keyUp", ...old.stuck.event }, t.S.id);
+      if (old.stuck.type === "mouse") await t.conn.send("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", buttons: 0, clickCount: 1, ...old.stuck.point }, t.S.id);
+      await roomStuck(tabId, null);
     }
     return await fn();
   } finally {
@@ -4896,12 +4897,12 @@ async function roomMouseClick(t, x, y) {
   const at = { x, y, button: "left", clickCount: 1 };
   await t.conn.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, t.S.id);
   const lease = callNotes.getStore()?.lease;
-  if (lease) await roomHeld(lease, { type: "mouse", point: { x, y } });
+  if (lease) await roomStuck(lease, { type: "mouse", point: { x, y } });
   await t.conn.send("Input.dispatchMouseEvent", { type: "mousePressed", buttons: 1, ...at }, t.S.id);
   let down = null;
   try { down = roomValue(await roomExec(t, ROOM_DOWN)); } catch {}
   await t.conn.send("Input.dispatchMouseEvent", { type: "mouseReleased", buttons: 0, ...at }, t.S.id);
-  if (lease) await roomHeld(lease, null);
+  if (lease) await roomStuck(lease, null);
   return down;
 }
 // A check that read another document (hit undefined) after a press the page
@@ -4918,10 +4919,10 @@ async function roomKey(t, chord) {
   const text = chorded ? undefined : k.key === "Enter" ? "\r" : k.key.length === 1 ? k.key : undefined;
   const ev = { key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, modifiers: (k.altKey ? 1 : 0) | (ctrl ? 2 : 0) | (k.shiftKey ? 8 : 0) };
   const lease = callNotes.getStore()?.lease;
-  if (lease) await roomHeld(lease, { type: "key", event: ev });
+  if (lease) await roomStuck(lease, { type: "key", event: ev });
   await t.conn.send("Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", ...ev, ...(text && { text, unmodifiedText: text }) }, t.S.id);
   await t.conn.send("Input.dispatchKeyEvent", { type: "keyUp", ...ev }, t.S.id);
-  if (lease) await roomHeld(lease, null);
+  if (lease) await roomStuck(lease, null);
 }
 
 async function roomClickBlank(t, href, tok, go) {

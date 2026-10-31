@@ -359,12 +359,12 @@ test("a lease transfer releases a key left down by the previous server", async (
   const dir = join(shared.home, "run", "leases");
   const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
   const lease = JSON.parse(readFileSync(path, "utf8"));
-  assert.equal(lease.held.type, "key");
+  assert.equal(lease.stuck.type, "key");
   writeFileSync(path, JSON.stringify({ ...lease, last: Date.now() - 6000 }));
   const got = await other.handleCall("eval_js", { script: "return 3", target: tab() });
   assert.equal(got.content[0].text, "3");
   assert.equal(room.log.filter((x) => x.method === "Input.dispatchKeyEvent" && x.params.type === "keyUp").length, 1);
-  assert.equal(JSON.parse(readFileSync(path, "utf8")).held, null);
+  assert.equal(JSON.parse(readFileSync(path, "utf8")).stuck, null);
 });
 
 test("a lease transfer releases a mouse button left down by the previous server", async () => {
@@ -385,12 +385,12 @@ test("a lease transfer releases a mouse button left down by the previous server"
   const dir = join(shared.home, "run", "leases");
   const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
   const lease = JSON.parse(readFileSync(path, "utf8"));
-  assert.equal(lease.held.type, "mouse");
+  assert.equal(lease.stuck.type, "mouse");
   writeFileSync(path, JSON.stringify({ ...lease, last: Date.now() - 6000 }));
   const got = await other.handleCall("eval_js", { script: "return 4", target: tab() });
   assert.equal(got.content[0].text, "4");
   assert.equal(room.log.filter((x) => x.method === "Input.dispatchMouseEvent" && x.params.type === "mouseReleased").length, 1);
-  assert.equal(JSON.parse(readFileSync(path, "utf8")).held, null);
+  assert.equal(JSON.parse(readFileSync(path, "utf8")).stuck, null);
 });
 
 test("clicking a cross-origin iframe opens its src in a room tab, but a challenge frame is handed off", async () => {
@@ -510,7 +510,7 @@ test("a tab the user is driving in rooms view is held by the user, and perch say
   const dir = join(R.home, "run", "leases");
   mkdirSync(dir, { recursive: true });
   const t = tab();
-  writeFileSync(join(dir, createHash("sha256").update(t.tabId).digest("hex") + ".json"), JSON.stringify({ owner: "user", pid: process.pid, last: Date.now(), active: true, held: null, since: new Date().toISOString() }));
+  writeFileSync(join(dir, createHash("sha256").update(t.tabId).digest("hex") + ".json"), JSON.stringify({ owner: "user", pid: process.pid, last: Date.now(), active: true, stuck: null, since: new Date().toISOString() }));
   const denied = await handleCall("eval_js", { script: "return 1", target: t });
   assert.match(denied.content[0].text, /tab_held: room tab held by the user in rooms view/);
 });
