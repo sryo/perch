@@ -65,7 +65,7 @@ A room is a signed-in Chromium in a VM on this Mac (`rooms` CLI). Use one when a
 | Step | Call |
 |---|---|
 | Find | `list_tabs {app:"room"}` or `{app:"room:work"}`; ids are `room:<name>:<targetId>`. No `app`: rooms that are up list after the browsers. |
-| Open | `new_tab {app:"room:work"}`, then `navigate`. |
+| Open | `new_tab {app:"room:work"}`, then `navigate`. Yours until `close_tab` (rows: `holder`, `mine`). Subagent: own `label`, tabId `room:work:<label>`; reuse it to get the tab back. |
 | Act | Any tool with that `target.tabId`. Untargeted calls never reach a room. |
 | Move | `new_tab {from: <browser tabId>, app:"room:work"}`: same URL, page state stays behind; refill. `from` stays open. Errors needing the user's window suggest it. |
 
@@ -76,7 +76,7 @@ Room tabs answer like shown ones: no `tab_not_visible`, `activate_tab` or `raise
 | `signed_out` / `challenge` (`handoff.status: "pending"`) | The user's; perch has notified them. Show `handoff.command` (`rooms signin <room> <url>`), wait, `navigate` again. Never type credentials. |
 | `no_browser: room 'x' is not up` | Run `rooms up x` in a shell, then retry. |
 | `no_browser: no room 'x'` | Setup is the user's (`rooms init x`). |
-| `tab_held` | Another agent has the tab: retry after 5s idle, or `new_tab`. |
+| `tab_held` | Another agent has the tab: retry after 5s idle (unless claimed), or `new_tab`. |
 | `stale_tab` | Closed or crashed: `list_tabs {app:"room:x"}`. |
 
 When done, close the tabs you opened, `from` too; never the user's. `rooms check x` lists signed-out sites (exit 1 if any). Leave `rooms down`, `restore`, `teleport` and `flags` to the user.

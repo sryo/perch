@@ -4605,10 +4605,27 @@ export function roomsReset(over = {}) {
 }
 
 const ROOM_OWNER = randomBytes(12).toString("hex");
-const ROOM_LEASE_IDLE_MS = 5000;
-const roomLeaseFile = (tabId) => join(rooms.home, "run", "leases", createHash("sha256").update(tabId).digest("hex") + ".json");
-async function roomLeaseChange(tabId, update) {
-  const path = roomLeaseFile(tabId), lock = path + ".lock";
+const ROOM_LEASE_IDLE_MS = 5000, ROOM_CLAIM_IDLE_MS = 15 * 60000;
+const ROOM_LABEL = /^[a-z][a-z0-9-]{0,30}$/;
+const roomFile = (dir, tabId) => join(rooms.home, "run", dir, createHash("sha256").update(tabId).digest("hex") + ".json");
+const roomLeaseFile = (tabId) => roomFile("leases", tabId);
+const roomClaimFile = (tabId) => roomFile("claims", tabId);
+const pidAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
+};
+const readJson = (path) => {
+  try { return JSON.parse(readFileSync(path, "utf8")); } catch (e) { if (e.code === "ENOENT") return null; throw e; }
+};
+function writeJson(path, v) {
+  mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
+  const tmp = path + "." + ROOM_OWNER + ".tmp";
+  writeFileSync(tmp, JSON.stringify(v), { mode: 0o600 });
+  renameSync(tmp, path);
+}
+const roomLeaseChange = (tabId, update) => roomFileChange(roomLeaseFile(tabId), update);
+async function roomFileChange(path, update) {
+  const lock = path + ".lock";
   mkdirSync(join(rooms.home, "run", "leases"), { recursive: true, mode: 0o700 });
   let held = false;
   for (let n = 0; n < 50; n++) {
@@ -4621,34 +4638,74 @@ async function roomLeaseChange(tabId, update) {
   }
   if (!held) throw new Error("tab_held: room tab lease is busy; retry");
   try {
-    let state = null;
-    try { state = JSON.parse(readFileSync(path, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; }
+    const state = readJson(path);
     // undefined leaves the lease as it is and null removes it, as rooms' leases.mjs reads them.
     const next = update(state);
     if (next === null) rmSync(path, { force: true });
-    else if (next !== undefined) {
-      const tmp = path + "." + ROOM_OWNER + ".tmp";
-      writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
-      renameSync(tmp, path);
-    }
+    else if (next !== undefined) writeJson(path, next);
     return { old: state, next };
   } finally { rmSync(lock, { recursive: true, force: true }); }
 }
-const roomLeaseNew = () => ({ owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: false, stuck: null });
+const roomLeaseNew = (tabId) => ({ owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: false, stuck: null, tabId });
 // stuck: a mouse button or key this lease's holder pressed and has not yet released.
 async function roomStuck(tabId, stuck) {
   await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, stuck } : undefined);
 }
-async function withRoomLease(tabId, note, fn) {
+
+// A claim (run/claims, beside the lease, which rooms' viewer overwrites) keeps a tab
+// new_tab made its server's, or with a label one agent's, past the lease's idle window:
+// until close_tab, its server's exit or ROOM_CLAIM_IDLE_MS without a call. A labeled tab
+// answers only to room:<name>:<label>, so subagents of one server stay apart. Claims
+// change only under their tab's lease lock.
+const roomClaimLive = (c) => !!c && pidAlive(c.pid) && Date.now() - c.last <= ROOM_CLAIM_IDLE_MS;
+function roomClaim(tabId) {
+  const c = readJson(roomClaimFile(tabId));
+  if (c && !roomClaimLive(c)) { rmSync(roomClaimFile(tabId), { force: true }); return null; }
+  return c;
+}
+const roomClaimSet = (tabId, c) => c ? writeJson(roomClaimFile(tabId), c) : rmSync(roomClaimFile(tabId), { force: true });
+const roomClaimNew = (room, tabId, label) => ({ room, tabId, label, owner: ROOM_OWNER, pid: process.pid, last: Date.now() });
+const roomClaimHeld = (c) => `tab_held: room tab claimed ${c.label ? `as ${c.label} ` : ""}by pid ${c.pid}; open your own with new_tab {app:"room:${c.room}", label}`;
+const jsonFiles = (dir) => { try { return readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => join(dir, f)); } catch { return []; } };
+function roomClaims() {
+  return jsonFiles(join(rooms.home, "run", "claims")).map((f) => { try { return readJson(f); } catch { return null; } }).filter(Boolean);
+}
+// room:<name>:<label> names the tab claimed under that label; null for a targetId handle.
+function roomLabeled(handle) {
+  const m = ROOM_HANDLE.exec(String(handle));
+  if (!m || !ROOM_LABEL.test(m[2])) return null;
+  const c = roomClaims().find((x) => x.room === m[1] && x.label === m[2] && roomClaimLive(x));
+  if (!c) throw new Error(`stale_tab: no tab is claimed as ${m[2]} in room ${m[1]}; new_tab {app:"room:${m[1]}", label:"${m[2]}"} opens one`);
+  return { tabId: c.tabId, label: m[2] };
+}
+// Clears what dead servers left, and claims and leases of tabs the room no longer has.
+// A lease with input stuck down stays, so its next holder releases it.
+async function roomReap(name, pages) {
+  const ids = new Set(pages.map((p) => `room:${name}:${p.targetId}`));
+  const gone = (tabId) => typeof tabId === "string" && tabId.startsWith(`room:${name}:`) && !ids.has(tabId);
+  const stale = (c) => !!c && (!roomClaimLive(c) || gone(c.tabId));
+  for (const c of roomClaims()) {
+    if (stale(c)) await roomLeaseChange(c.tabId, () => { if (stale(readJson(roomClaimFile(c.tabId)))) roomClaimSet(c.tabId, null); return undefined; });
+  }
+  const dead = (s) => !!s && !s.stuck && (!pidAlive(s.pid) || gone(s.tabId));
+  for (const f of jsonFiles(join(rooms.home, "run", "leases"))) {
+    let s = null;
+    try { s = readJson(f); } catch {}
+    if (dead(s)) await roomFileChange(f, (now) => dead(now) ? null : undefined);
+  }
+}
+async function withRoomLease(tabId, note, fn, label = null) {
   const { old } = await roomLeaseChange(tabId, (s) => {
     const other = s && s.owner !== ROOM_OWNER;
     // An exited process holds nothing; the idle window only spans a live one's gap between calls.
-    let live = false;
-    if (other && s.pid) { try { process.kill(s.pid, 0); live = true; } catch (e) { live = e.code === "EPERM"; } }
+    const live = other && pidAlive(s.pid);
     // "user" is rooms' viewer: a person is watching or driving the tab until they close it.
-    if (other && live && s.owner === "user" && s.active) throw new Error("tab_held: room tab held by the user in rooms view; retry after they close it (rooms logs <room> --follow --until handoff.ended)");
-    if (other && live && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
-    return { owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: true, stuck: s?.stuck ?? null };
+    if (live && s.owner === "user" && s.active) throw new Error("tab_held: room tab held by the user in rooms view; retry after they close it (rooms logs <room> --follow --until handoff.ended)");
+    const c = roomClaim(tabId);
+    if (c && (c.owner !== ROOM_OWNER || (c.label ?? null) !== label)) throw new Error(roomClaimHeld(c));
+    if (live && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
+    if (c) roomClaimSet(tabId, { ...c, last: Date.now() });
+    return { ...roomLeaseNew(tabId), active: true, stuck: s?.stuck ?? null };
   });
   note.lease = tabId;
   try {
@@ -4779,7 +4836,7 @@ function roomSession(conn, targetId, tabId) {
   return s;
 }
 async function roomTarget(target, tool) {
-  const tabId = target && target.tabId;
+  const tabId = roomLabeled(target && target.tabId)?.tabId ?? (target && target.tabId);
   const m = ROOM_HANDLE.exec(String(tabId));
   if (!m) throw new Error(`bad_args: ${tool} on a room needs target.tabId, a room:<name>:<id> handle from list_tabs {app:"room"}`);
   const conn = await roomConn(m[1]);
@@ -5009,11 +5066,31 @@ async function roomListTabs(only, quiet) {
   if (only && !reg[only]) throw new Error(`no_browser: no room '${only}'; rooms init ${only}, then rooms up ${only}`);
   const names = only ? [only] : Object.keys(reg);
   const lists = await Promise.all(names.map(async (n) => {
-    try { return { rows: (await roomPages(await roomConn(n))).map((p) => ({ app: `room:${n}`, tabId: `room:${n}:${p.targetId}`, url: p.url || "", title: p.title || "" })) }; }
+    try {
+      const pages = await roomPages(await roomConn(n));
+      await roomReap(n, pages);
+      return { rows: pages.map((p) => roomRow(n, p)) };
+    }
     catch (e) { return { rows: [], failed: `room:${n} not listed: ${e.message}` }; }
   }));
   const rows = lists.flatMap((l) => l.rows), failed = quiet ? [] : lists.filter((l) => l.failed).map((l) => l.failed);
   return { rows, failed };
+}
+
+// holder: who has the tab (a claim's label or pid, a lease's pid, or "user" at rooms' viewer); mine: this server.
+function roomRow(n, p) {
+  const tabId = `room:${n}:${p.targetId}`, row = { app: `room:${n}`, tabId, url: p.url || "", title: p.title || "" };
+  let c = null, s = null;
+  try { c = readJson(roomClaimFile(tabId)); s = readJson(roomLeaseFile(tabId)); } catch {}
+  if (roomClaimLive(c)) {
+    if (c.label) row.tabId = `room:${n}:${c.label}`;
+    row.holder = c.label || `pid ${c.pid}`;
+    if (c.owner === ROOM_OWNER) row.mine = true;
+  } else if (s && pidAlive(s.pid) && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) {
+    row.holder = s.owner === "user" ? "user" : `pid ${s.pid}`;
+    if (s.owner === ROOM_OWNER) row.mine = true;
+  }
+  return row;
 }
 
 export const ROOM_LOGIN_PATH = /(^|\/)(login|log-in|signin|sign-in|sign_in|auth|session\/new)([\/?#]|$)/i;
@@ -5107,24 +5184,45 @@ const ROOM_FNS = {
   async newTab(a) {
     const name = ROOM_APP.exec(String(a.app))[1];
     if (!name) throw new Error("bad_args: new_tab in a room takes app:\"room:<name>\"");
+    const label = a.label ?? null;
+    if (label != null && !ROOM_LABEL.test(String(label))) throw new Error("bad_args: new_tab label is lowercase letters, digits and dashes, starting with a letter (31 at most)");
     const conn = await roomConn(name);
+    const pages = await roomPages(conn);
+    const out = (tabId, reused) => ({ app: `room:${name}`, tabId: label ? `room:${name}:${label}` : tabId, ...(reused ? { reused } : {}) });
+    const claim = (tabId) => roomClaimSet(tabId, roomClaimNew(name, tabId, label));
+    // A label already claimed is its server's to have back, or a dead server's to take over.
+    const had = label && roomClaims().find((c) => c.room === name && c.label === label && pages.some((p) => c.tabId === `room:${name}:${p.targetId}`));
+    if (had) {
+      await roomLeaseChange(had.tabId, () => {
+        const c = roomClaim(had.tabId);
+        if (c && c.owner !== ROOM_OWNER) throw new Error(roomClaimHeld(c));
+        claim(had.tabId);
+        return undefined;
+      });
+      return out(had.tabId, true);
+    }
+    await roomReap(name, pages);
     // A blank tab nobody has driven (the room starts with one) is handed out
-    // before a new one is made; writing its lease first keeps two callers off the same tab.
+    // before a new one is made; writing its lease and claim first keeps two callers off it.
     if (a.url === "about:blank") {
-      for (const p of await roomPages(conn)) {
+      for (const p of pages) {
         if (p.url !== "about:blank" || p.attached || p.openerId) continue;
         const tabId = `room:${name}:${p.targetId}`;
-        const { old } = await roomLeaseChange(tabId, (s) => s || roomLeaseNew());
-        if (!old) return { app: `room:${name}`, tabId, reused: true };
+        const { next } = await roomLeaseChange(tabId, (s) => {
+          if (s || roomClaim(tabId)) return undefined;
+          claim(tabId);
+          return roomLeaseNew(tabId);
+        });
+        if (next) return out(tabId, true);
       }
     }
     // Its own window: a room tab behind another in one window is hidden and gets no animation
     // frames (requestAnimationFrame never fires), so canvas apps like Figma stall until activated.
-    // Leased as made, or a blank one is the next caller's unused tab above.
+    // Leased and claimed as made, or a blank one is the next caller's unused tab above.
     const { targetId } = await conn.send("Target.createTarget", { url: a.url, background: true, newWindow: true });
     const tabId = `room:${name}:${targetId}`;
-    await roomLeaseChange(tabId, () => roomLeaseNew());
-    return { app: `room:${name}`, tabId };
+    await roomLeaseChange(tabId, () => { claim(tabId); return roomLeaseNew(tabId); });
+    return out(tabId);
   },
   async activate(a) {
     const t = await roomTarget(a.target, "activate_tab");
@@ -5135,7 +5233,7 @@ const ROOM_FNS = {
     const t = await roomTarget(a.target, "close_tab");
     if ((await roomPages(t.conn)).length <= 1) return { ok: false, error: "last tab in the room; closing it would leave the room with no page" };
     await t.conn.send("Target.closeTarget", { targetId: t.targetId });
-    await roomLeaseChange(t.tabId, () => null);
+    await roomLeaseChange(t.tabId, () => { roomClaimSet(t.tabId, null); return null; });
     t.conn.sessions.delete(t.targetId);
     t.conn.bySession.delete(t.S.id);
     return { ok: true, closed: t.tabId };
@@ -5567,21 +5665,22 @@ async function navigate(url, target, raise) {
   return out;
 }
 
-async function newTab(url, app, from) {
-  if (from != null) return moveToRoom(from, app);
-  return rt("newTab", { app: app || null, url: url == null ? "about:blank" : checkUrl("new_tab", url) });
+async function newTab(url, app, from, label) {
+  if (label != null && !ROOM_APP.exec(String(app))?.[1]) throw new Error("bad_args: new_tab label claims a room tab; it takes app:\"room:<name>\"");
+  if (from != null) return moveToRoom(from, app, label);
+  return rt("newTab", { app: app || null, url: url == null ? "about:blank" : checkUrl("new_tab", url), label });
 }
 
 // new_tab {from, app:"room:<name>"}: the browser tab's current URL, opened again
 // in the room. Only the URL moves: page state (a half-filled form) stays behind,
 // and the room's own sign-in decides what loads, so navigate's handoff applies.
-async function moveToRoom(from, app) {
+async function moveToRoom(from, app, label) {
   if (!ROOM_APP.exec(String(app))?.[1]) throw new Error("bad_args: new_tab `from` takes app:\"room:<name>\"");
   if (isRoomTab(from)) throw new Error("bad_args: new_tab `from` is a browser tab, not a room tab");
   const row = (await listTabs({ limit: 1e4 })).tabs.find((t) => t.tabId === from);
   if (!row) throw new Error(`stale_tab: ${from} is gone; re-run list_tabs`);
   const url = checkUrl("new_tab", row.url);
-  const tab = await rt("newTab", { app, url: "about:blank" });
+  const tab = await rt("newTab", { app, url: "about:blank", label });
   const nav = await navigate(url, { tabId: tab.tabId });
   return { ...nav, ...tab, from };
 }
@@ -10361,7 +10460,9 @@ async function roomFrameClick(target, selector, readback) {
   if (url.origin === frame.origin) return null;
   if (readback) return { ok: false, error: "click: opening a frame tab takes no readback; call click without readback" };
   const { targetId } = await t.conn.send("Target.createTarget", { url: frame.src, background: true });
-  return { ok: true, opened: { tabId: `room:${t.name}:${targetId}`, url: frame.src } };
+  const tabId = `room:${t.name}:${targetId}`;
+  await roomLeaseChange(tabId, () => { roomClaimSet(tabId, roomClaimNew(t.name, tabId, null)); return roomLeaseNew(tabId); });
+  return { ok: true, opened: { tabId, url: frame.src } };
 }
 
 // Background fields use the browser's trusted editing command; the explicit
@@ -11013,7 +11114,7 @@ Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
 Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
-Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another pid holds a room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another agent has a room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
 const TARGET = { type: "object", properties: { tabId: { type: "string" }, app: { type: "string" } } };
@@ -11034,6 +11135,7 @@ const TOOLS = [
     url: { type: "string", description: "http(s) or file URL; default about:blank." },
     app: { type: "string" },
     from: { type: "string" },
+    label: { type: "string", description: "Room: yours alone as room:<name>:<label>" },
   }),
   tool("activate_tab", "Bring the target tab and its window to the front; needs_focus without a grant.", { target: TARGET }),
   tool("close_tab", "Close the tab with this handle. Never closes a window's last tab and never changes focus.", { tabId: { type: "string" } }, ["tabId"]),
@@ -11155,7 +11257,7 @@ function awaitTimeout({ timeout, awaitPromise }) {
 
 export const HANDLERS = {
   list_tabs:     (a) => listTabs(a),
-  new_tab:       (a) => newTab(a.url, a.app, a.from),
+  new_tab:       (a) => newTab(a.url, a.app, a.from, a.label),
   activate_tab:  (a) => activateTab(a.target),
   close_tab:     (a) => closeTab(a),
   navigate:      (a) => navigate(a.url, a.target, a.raise),
@@ -11397,12 +11499,18 @@ async function handleCallCore(name, args = {}, signal) {
       focusOk = true;
       logRaise({ tool: name, tabId: (args.target && args.target.tabId) || null, app: args.app || (args.target && args.target.app) || null, by: g.by });
     }
+    if (name === "close_tab" && args.tabId == null && args.target?.tabId != null) args = { ...args, tabId: args.target.tabId };
+    // A label handle runs on its claimed tab's targetId handle, and results name it as the caller did.
+    const shown = name === "close_tab" ? args.tabId : args.target?.tabId;
+    const labeled = isRoomTab(shown) ? roomLabeled(shown) : null;
+    if (labeled) args = name === "close_tab" ? { ...args, tabId: labeled.tabId } : { ...args, target: { ...args.target, tabId: labeled.tabId } };
     note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name), signal, focusOk };
     const roomTab = ROOM_LEASE_TOOLS.has(name) ? args.target?.tabId ?? (name === "close_tab" ? args.tabId : null) : null;
     const leaseTab = isRoomTab(roomTab) ? roomTab : null;
     const lockKey = leaseTab ? tabKey({ tabId: leaseTab }) : tabLockKey(name, args);
-    const call = () => callNotes.run(note, () => leaseTab ? withRoomLease(leaseTab, note, () => handler(args)) : handler(args));
+    const call = () => callNotes.run(note, () => leaseTab ? withRoomLease(leaseTab, note, () => handler(args), labeled?.label) : handler(args));
     let result = await (lockKey ? withTabLock(lockKey, call) : call());
+    if (labeled && result && typeof result === "object") for (const k of ["tabId", "closed"]) if (result[k] === labeled.tabId) result = { ...result, [k]: shown };
     // A miss names the ref as the agent was shown it.
     if (result && result.__perch_ref_miss && note.refs && note.refs.toPage) {
       for (const [shown, p] of note.refs.toPage) if (p === String(result.ref)) result = { ...result, ref: shown };
