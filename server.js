@@ -11039,7 +11039,7 @@ Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
 Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
-Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another pid holds a room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (raise needs the user's grant; nothing ran).`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another pid holds a room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
 const TARGET = { type: "object", properties: { tabId: { type: "string" }, app: { type: "string" } } };
@@ -11056,14 +11056,14 @@ const TOOLS = [
     titleContains: { type: "string" },
     limit: { type: "number", description: "Default 50." },
   }),
-  tool("new_tab", "Create an unselected tab in a running browser's window (default: the browser in use). May focus the browser; defer while the user works. Returns {app,tabId}.", {
+  tool("new_tab", "Create an unselected tab in a running browser's window (default: the browser in use); needs_focus without a grant. Returns {app,tabId}.", {
     url: { type: "string", description: "http(s) or file URL; default about:blank." },
     app: { type: "string" },
     from: { type: "string" },
   }),
-  tool("activate_tab", "Bring the target tab and its window to the front.", { target: TARGET }),
+  tool("activate_tab", "Bring the target tab and its window to the front; needs_focus without a grant.", { target: TARGET }),
   tool("close_tab", "Close the tab with this handle. Never closes a window's last tab and never changes focus.", { tabId: { type: "string" } }, ["tabId"]),
-  tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading. Where the page can't start the load itself (not http(s), page JS unavailable), it needs `raise:true`, which may bring the browser forward.", { url: { type: "string" }, raise: { type: "boolean" }, target: TARGET }, ["url"]),
+  tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading. Where the page can't start the load itself (not http(s), page JS unavailable), it needs `raise:true` (needs_focus without a grant).", { url: { type: "string" }, raise: { type: "boolean" }, target: TARGET }, ["url"]),
   tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. Given both, `script_path` runs before `script`.", {
     script: { type: "string" },
     script_path: { type: "string", description: "Local .js file." },
