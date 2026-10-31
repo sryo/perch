@@ -239,6 +239,18 @@ test("a remembered tab never launches a browser that has quit", async () => {
   assert.equal(appleEvents(), 0, breakdown());
 });
 
+// list_tabs only reads (GOALS.md goal 1): a browser running in the background,
+// off screen (Arc), is listed without being activated, and a quit one (Chrome)
+// gets no event, which would launch it.
+test("list_tabs never activates a background browser or touches a quit one", async () => {
+  const a = arc([{ id: 5, active: 0, tabs: tabs(2, "a") }]), c = chrome([{ id: 1, active: 0, tabs: tabs(1, "c") }], { running: false });
+  install({ browsers: [a, c], cg: [{ owner: "Terminal" }] });
+  const rows = await listed(null);
+  assert.deepEqual([...new Set(rows.map((t) => t.app))], ["Arc"]);
+  assert.equal(world.log.filter((e) => e[0] === "activate").length, 0, "no browser activated");
+  assert.deepEqual(Object.keys(world.counts).filter((k) => k.includes("Google Chrome") && !/^(running|Application)\(/.test(k)), [], breakdown());
+});
+
 // new_tab reads the shown tab before and after creating and sends one selection
 // only when the browser moved it: at most 3 Apple Events over creation itself.
 test("new_tab costs a fixed number of Apple Events, one more when the browser selects the new tab", async () => {
