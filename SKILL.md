@@ -1,12 +1,12 @@
 ---
 name: perch
-description: Drive the user's own macOS browsers (Chrome family, Arc, Safari) via the perch MCP server. Use to list tabs, read or change a live page, fill forms, navigate, or screenshot.
+description: Drive the user's own macOS browsers (Chrome family, Arc, Safari) and rooms (signed-in Chromium in a VM on this Mac) via the perch MCP server. Use to list tabs, read or change a live page, fill forms, navigate, or screenshot.
 allowed-tools: mcp__perch__*
 ---
 
-# perch: macOS browser bridge
+# perch
 
-Targeting, element hints and error codes: the server instructions. `app` matches loosely (`"canary"`).
+Targeting and errors: server instructions. `app` matches `"canary"`.
 
 ## Tools
 
@@ -57,6 +57,28 @@ No `ready`: complete. Values are JSON. Keys: `name` (HTML name), `type`, `value`
 `fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input`, value verified) wherever page JS runs, minimized too, no tab switch, no focus. `click {trusted: true}` reaches an on-screen window's shown tab (else `tab_not_visible`) without activating it or moving the cursor. So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked); other tabs, or a menu the click leaves shut: a filter typed into its own empty box (`"typed"`). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored.
 
 `frames` rows carry no values; read a trusted click's `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's. `frames_unreadable`: retry.
+
+## Rooms
+
+A room is one Chromium on a persistent, signed-in profile in a VM on this Mac (`rooms` CLI). Use one when the site must stay signed in across runs, the work shouldn't touch the user's windows, or the Mac may be locked; else the user's browser.
+
+| Step | Call |
+|---|---|
+| Find | `list_tabs {app:"room"}` or `{app:"room:work"}`; ids are `room:<name>:<targetId>`. `list_tabs` without `app` lists rooms that are up after the browsers. |
+| Open | `new_tab {app:"room:work"}`, then `navigate`. |
+| Act | Any tool with that `target.tabId`. Untargeted calls never reach a room. |
+
+Every room tab answers like a shown one: no `tab_not_visible`, `activate_tab` or `raise`; `trusted` is CDP input, no cursor or focus. Not in rooms: `frames` rows and `fN` refs, the file chooser (`file_upload` sets the file through the page), the `late` check. Downloads are denied except in `click {download: true}`, which returns `download.file`, its path on this Mac.
+
+| Error | Next |
+|---|---|
+| `signed_out` / `challenge` (`handoff.status: "pending"`) | The user's; perch has notified them. Show `handoff.command` (`rooms view <room> --signin <url>`), wait, `navigate` again. Never type credentials. |
+| `no_browser: room 'x' is not up` | Run `rooms up x` in a shell, then retry. |
+| `no_browser: no room 'x'` | Setup is the user's: `rooms init x`, `rooms up x`, then sign in. |
+| `tab_held` | Another agent has the tab: retry after 5s idle, or `new_tab`. |
+| `stale_tab` | Closed or crashed: `list_tabs {app:"room:x"}`. |
+
+`rooms check x` lists which sites are signed out (exit 1 if any). Leave `rooms down`, `restore`, `teleport` and `flags` to the user.
 
 ## Permissions
 

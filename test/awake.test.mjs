@@ -77,3 +77,24 @@ test("with the hold off (PERCH_AWAKE=0) nothing is spawned", async () => {
   await call();
   assert.equal(spawned.length, 0);
 });
+
+// A room's Chromium runs in a VM, not on the display: a room call keeps the
+// system awake (a sleeping Mac pauses the VM) and leaves the display free to
+// sleep and lock.
+test("a room call holds system-only caffeinate, never the display", async () => {
+  await handleCall("no_such_tool", { target: { tabId: "room:main:T1" } });
+  assert.equal(spawned.length, 1);
+  assert.deepEqual(spawned[0].args, ["-i", "-w", String(process.pid)]);
+  await handleCall("no_such_tool", { target: { tabId: "room:main:T1" } });
+  assert.equal(spawned.length, 1, "repeated room calls refresh the one hold");
+  await call();
+  assert.equal(spawned.length, 2, "a browser call still holds the display");
+  assert.deepEqual(spawned[1].args, ["-d", "-i", "-w", String(process.pid)]);
+});
+
+test("new_tab and list_tabs aimed at a room hold system-only too", async () => {
+  await handleCall("no_such_tool", { app: "room:main" });
+  assert.deepEqual(spawned[0].args, ["-i", "-w", String(process.pid)]);
+  await handleCall("no_such_tool", { tabId: "room:main:T1" });
+  assert.equal(spawned.length, 1, "close_tab-style room handles also leave the display free");
+});

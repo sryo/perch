@@ -32,6 +32,7 @@ export async function freshServer(tag) {
   const refuse = (what) => async () => { throw new Error(`lock harness: ${what} reached the real system`); };
   for (const lane of Object.keys(srv.DAEMONS)) srv.DAEMONS[lane] = { run: refuse(`DAEMONS.${lane}`) };
   srv.deps.exec = refuse("deps.exec");
+  srv.roomsReset({ home: "/nonexistent/perch-test-rooms", fetch: refuse("rooms.fetch"), WebSocket: class { constructor() { throw new Error("lock harness: rooms.WebSocket reached the real system"); } } });
   return srv;
 }
 

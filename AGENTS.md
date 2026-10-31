@@ -29,7 +29,7 @@ perch exposes MCP tools for driving the user's own macOS browsers: tabs, navigat
 ├── bench/           # baseline.json (the number to beat), fixture.html (the benched page), compare/ (fixture + history); runs/ is gitignored
 ├── install.sh       # macOS installer: clone, npm install, register in claude, codex, copilot
 ├── GOALS.md         # goals, principles, admission test, non-goals. Read before adding a tool.
-├── SKILL.md         # usage reference for agents (capped at 6600 bytes)
+├── SKILL.md         # usage reference for agents (capped at 8400 bytes)
 └── AGENTS.md        # this file (CLAUDE.md points here)
 ```
 
@@ -43,7 +43,7 @@ MCP client <--stdio--> server.js <--osascript REPL--> jxaRuntime --Apple Events-
 `server.js` has four layers, top to bottom:
 
 1. **Transport.** `OsaDaemon` keeps one `osascript -l JavaScript` process per lane, running `DAEMON_LOOP`, which reads stdin lines itself (an interactive osascript over a pipe evaluates nothing until EOF on macOS 27.2). `jxa(script, {lane})` runs a script there, falling back to one-shot `execFile` only when the script never reached stdin.
-2. **JXA runtime.** `jxaRuntime()` is a real function whose source is sent once per daemon as the prelude. It defines `globalThis.__perch` with the per-call entry points. Node calls `rt(fn, args)`, which sends one short line, `__perch.fn(<json>)`. The runtime's side channel (`takeNote`) rides ahead of the result between `NOTE` markers and carries tab stamps, moved handles, Safari tab counts and the late-revert answer; `rt` strips it.
+2. **JXA runtime.** `jxaRuntime()` is a real function whose source is sent once per daemon as the prelude. It defines `globalThis.__perch` with the per-call entry points. Node calls `rt(fn, args)`, which sends one short line, `__perch.fn(<json>)`. A `room:` target goes to `roomRt` instead (CDP; rooms section of server.js). The runtime's side channel (`takeNote`) rides ahead of the result between `NOTE` markers and carries tab stamps, moved handles, Safari tab counts and the late-revert answer; `rt` strips it.
 3. **Page scripts.** `PAGE_PRELUDE` plus `PAGE_SCRIPTS[name]` are plain strings that run inside the tab. `pageScript(name, A)` ships their `lean` forms (comment lines and indentation dropped at load), prepends `const A = <json>`, and `buildEvalWrapper` wraps the result. Helpers only some scripts call are split into libs (`CLICK_LIB`, `SELECT_LIB`, `TYPEAHEAD_LIB`, `CENSUS_LIB`, ...) and ship only with those scripts.
 4. **Tools.** Thin Node handlers (`HANDLERS`) validate arguments, call `rt` or `evalJs`, and shape results. `formatResult` maps them to MCP content.
 
