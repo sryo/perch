@@ -5491,8 +5491,38 @@ async function navigate(url, target, raise) {
   return out;
 }
 
-async function newTab(url, app) {
+async function newTab(url, app, from) {
+  if (from != null) return moveToRoom(from, app);
   return rt("newTab", { app: app || null, url: url == null ? "about:blank" : checkUrl("new_tab", url) });
+}
+
+// new_tab {from, app:"room:<name>"}: the browser tab's current URL, opened again
+// in the room. Only the URL moves: page state (a half-filled form) stays behind,
+// and the room's own sign-in decides what loads, so navigate's handoff applies.
+async function moveToRoom(from, app) {
+  if (!ROOM_APP.exec(String(app))?.[1]) throw new Error("bad_args: new_tab `from` takes app:\"room:<name>\"");
+  if (isRoomTab(from)) throw new Error("bad_args: new_tab `from` is a browser tab, not a room tab");
+  const row = (await listTabs({ limit: 1e4 })).tabs.find((t) => t.tabId === from);
+  if (!row) throw new Error(`stale_tab: ${from} is gone; re-run list_tabs`);
+  const url = checkUrl("new_tab", row.url);
+  const tab = await rt("newTab", { app, url: "about:blank" });
+  const nav = await navigate(url, { tabId: tab.tabId });
+  return { ...nav, ...tab, from };
+}
+
+// A browser call that failed for want of the user's window names the rooms that
+// could carry on unattended, the ones registered for the URL first.
+const ROOM_HINTED = /^(window_offscreen|tab_not_visible|no_browser): /;
+export function roomHint(msg, args) {
+  if (!ROOM_HINTED.test(msg) || roomArgs(args)) return msg;
+  let reg;
+  try { reg = Object.values(roomRegistry()); } catch { return msg; }
+  let origin = null;
+  try { origin = new URL(args.url).origin; } catch {}
+  const fits = origin ? reg.filter((r) => (r.sites || []).some((s) => s.origin === origin)) : [];
+  const names = (fits.length ? fits : reg).slice(0, 3).map((r) => r.name);
+  if (!names.length) return msg;
+  return `${msg}; or continue in a room: new_tab {from, app:"room:${names[0]}"}${names.length > 1 ? ` (rooms: ${names.join(", ")})` : ""}`;
 }
 
 // Browser names are matched loosely (case-insensitive app name, key such as
@@ -10944,6 +10974,7 @@ const TOOLS = [
   tool("new_tab", "Create an unselected tab in a running browser's window (default: the browser in use). May focus the browser; defer while the user works. Returns {app,tabId}.", {
     url: { type: "string", description: "http(s) or file URL; default about:blank." },
     app: { type: "string" },
+    from: { type: "string" },
   }),
   tool("activate_tab", "Bring the target tab and its window to the front.", { target: TARGET }),
   tool("close_tab", "Close the tab with this handle. Never closes a window's last tab and never changes focus.", { tabId: { type: "string" } }, ["tabId"]),
@@ -11064,7 +11095,7 @@ function awaitTimeout({ timeout, awaitPromise }) {
 
 export const HANDLERS = {
   list_tabs:     (a) => listTabs(a),
-  new_tab:       (a) => newTab(a.url, a.app),
+  new_tab:       (a) => newTab(a.url, a.app, a.from),
   activate_tab:  (a) => activateTab(a.target),
   close_tab:     (a) => closeTab(a),
   navigate:      (a) => navigate(a.url, a.target, a.raise),
@@ -11288,7 +11319,7 @@ async function handleCallCore(name, args = {}) {
       return formatResult({ ok: false, error: `nothing ${name === "press" ? "pressed" : "clicked"}: ${LATE_HOLD_WHY}`, late: note.late.found });
     }
     if (e instanceof RefMiss) return withLate(formatResult({ __perch_ref_miss: true, ref: e.ref }), note && note.late && note.late.found);
-    return withLate({ content: [{ type: "text", text: `error: ${e.message}` }], isError: true }, note && note.late && note.late.found);
+    return withLate({ content: [{ type: "text", text: `error: ${roomHint(e.message, args)}` }], isError: true }, note && note.late && note.late.found);
   }
 }
 

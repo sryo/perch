@@ -5,7 +5,8 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { handleCall, rooms, roomsReset } from "../server.js";
+import { handleCall, rooms, roomsReset, roomHint, JXA_PRELUDE, DAEMONS } from "../server.js";
+import { makeWorld } from "./fakes/jxa-world.mjs";
 import { makeRooms } from "./fakes/cdp-room.mjs";
 
 let R;
@@ -420,4 +421,28 @@ test("a room download lands under the suggested name in the room's host folder, 
 
 test("download is refused off a room tab", async () => {
   assert.match(await fails("click", { selector: "#d", download: true, target: { tabId: "chrome:1:2" } }), /download` is for room tabs/);
+});
+
+test("new_tab {from} reopens a browser tab's URL in a room", async () => {
+  const world = makeWorld({ browsers: [{ name: "Google Chrome Canary", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: [{ url: "https://a.test/x", title: "X", id: "c1" }] }] }] });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  world.reset();
+  use({ rooms: { work: { sites: { "https://a.test/x": "<h1>X</h1>" } } } });
+  const from = (await call("list_tabs", { app: "canary" })).tabs[0].tabId;
+  const o = await call("new_tab", { from, app: "room:work" });
+  assert.equal(o.app, "room:work");
+  assert.match(o.tabId, /^room:work:/);
+  assert.equal(o.from, from);
+  assert.equal(o.url, "https://a.test/x");
+  assert.match(await fails("new_tab", { from, app: "canary" }), /takes app:"room:<name>"/);
+});
+
+test("a browser error that needs the user's window suggests a room, the URL's own first", () => {
+  use({ rooms: { work: { registeredSites: [] }, mail: { registeredSites: [{ origin: "https://a.test" }] } } });
+  assert.match(roomHint("window_offscreen: minimized", { url: "https://a.test/p" }), /new_tab \{from, app:"room:mail"\}/);
+  assert.match(roomHint("tab_not_visible: hidden", {}), /room:work.*\(rooms: work, mail\)/);
+  assert.equal(roomHint("stale_tab: gone", {}), "stale_tab: gone");
+  assert.equal(roomHint("window_offscreen: x", { target: tab() }), "window_offscreen: x");
 });

@@ -25,6 +25,7 @@ export const JUSTIFIED = {
   signed_out: "a room handoff error, tested in test/room.test.mjs",
   tab_held: "a room lease error, tested in test/room.test.mjs",
   "click.download": "room tabs only, which the JXA golden world has none of; tested in test/room.test.mjs",
+  "new_tab.from": "moves a browser tab into a room, which the JXA golden world has none of; tested in test/room.test.mjs",
 };
 
 const golden = JSON.parse(readFileSync(new URL("./golden.json", import.meta.url), "utf8"));

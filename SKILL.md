@@ -67,6 +67,7 @@ A room is one Chromium on a persistent, signed-in profile in a VM on this Mac (`
 | Find | `list_tabs {app:"room"}` or `{app:"room:work"}`; ids are `room:<name>:<targetId>`. `list_tabs` without `app` lists rooms that are up after the browsers. |
 | Open | `new_tab {app:"room:work"}`, then `navigate`. |
 | Act | Any tool with that `target.tabId`. Untargeted calls never reach a room. |
+| Move | `new_tab {from: <browser tabId>, app:"room:work"}`: same URL, page state stays behind; refill. Errors needing the user's window suggest it. |
 
 Every room tab answers like a shown one: no `tab_not_visible`, `activate_tab` or `raise`; `trusted` is CDP input, no cursor or focus. Not in rooms: `frames` rows and `fN` refs, the file chooser (`file_upload` sets the file through the page), the `late` check. Downloads are denied except in `click {download: true}`, which returns `download.file`, its path on this Mac.
 
