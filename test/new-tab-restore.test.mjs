@@ -25,7 +25,10 @@ const call = async (name, args) => {
   return { r, t, o: (() => { try { return JSON.parse(t); } catch { return t; } })() };
 };
 const shown = (app) => world.tabsOf(app, 0)[world.winSpec(app, 0).active]?.spec.id;
-const noActivate = () => assert.deepEqual(world.log.filter(([k]) => k === "activate"), []);
+// Live, a tab made through AppleScript brings a Chromium browser forward, which the
+// user's focus grant allows; perch activates nothing beyond that.
+const noActivate = () => assert.deepEqual(world.log.filter(([k]) => k === "activate").map(([, n]) => n),
+  world.log.filter(([k, n]) => k === "newTab" && /Chrome/.test(n)).map(([, n]) => n));
 
 const cases = [
   ["Chrome", chrome, "Google Chrome", "t1", "win.activeTabIndex="],

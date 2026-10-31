@@ -64,9 +64,10 @@ const REFUSED = [
 
 // Hashes of {text, log, counts, ms} from the same calls before the policy
 // existed: an accepted url behaves exactly as it did. new_tab's were re-recorded
-// when it began reading windows' minimized state in place of their count.
+// when it began reading windows' minimized state in place of their count, and
+// Chrome's again when the fake world began raising Chromium on tab creation, as live.
 const BEFORE = Object.fromEntries(Object.entries({
-  "new_tab chrome": { "https://n.test/": "2923adb0b49e", "HTTP://N.TEST/": "c0ba952a33e7", "about:blank": "4f8bc843b2be", "ABOUT:BLANK": "2a73fd9f71d0", "(none)": "4f8bc843b2be" },
+  "new_tab chrome": { "https://n.test/": "07caf878f14b", "HTTP://N.TEST/": "ab47014fc17a", "about:blank": "0f9e2d9471ab", "ABOUT:BLANK": "369770c64a95", "(none)": "0f9e2d9471ab" },
   "new_tab arc": { "https://n.test/": "32d7b5a7557a", "HTTP://N.TEST/": "21e8434d720f", "about:blank": "0354ec4e21ed", "ABOUT:BLANK": "042df259d90f", "(none)": "0354ec4e21ed" },
   "new_tab safari": { "https://n.test/": "a442fa9988eb", "HTTP://N.TEST/": "bbe3fbdb9b33", "about:blank": "ca0c6f0313ea", "ABOUT:BLANK": "b41edd7cb195", "(none)": "ca0c6f0313ea" },
   "navigate chrome front tab": { "https://n.test/": "d98ccce11e87", "HTTP://N.TEST/": "ea58d27e419a", "about:blank": "4cc30578d12a", "ABOUT:BLANK": "c76d86c8c4e5" },
@@ -78,7 +79,7 @@ const BEFORE = Object.fromEntries(Object.entries({
 // The same calls with a file: url before the policy existed. navigate from a
 // window behind another app still needs raise:true.
 const FILE_BEFORE = {
-  "new_tab chrome": ["3865c6741a91", "3f03ae3e47b7"],
+  "new_tab chrome": ["0c42ae4c69d7", "7f96a6586d08"],
   "new_tab arc": ["ae396e9161d7", "1642cc6fc3a2"],
   "new_tab safari": ["e7f6cd34f578", "09bb5cbf4c97"],
   "navigate chrome front tab": ["b097b76b04b6", "32002bab1052"],

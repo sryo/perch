@@ -11382,7 +11382,7 @@ function movesFocus(name, args) {
   if (name === "activate_tab" || args.raise === true) return true;
   return name === "new_tab" && !/^safari$/i.test(String(args.app || ""));
 }
-const needsFocus = (name) => new Error(`needs_focus: ${name} would bring the browser to the front, and the user has not allowed perch to take focus; nothing was sent. Try the call without raise (most run in the background), or move the flow into a room (new_tab {from: tabId, app:"room:<name>"}), or ask the user to allow it: they run \`perch focus allow 15m\` in a terminal`);
+const needsFocus = (name) => new Error(`needs_focus: ${name} would bring the browser to the front, and the user has not allowed perch to take focus; nothing was sent. ${name === "new_tab" ? "navigate an existing tab instead (it loads from the page, in the background), or open it in a room (new_tab {app:\"room:<name>\"})" : "Try the call without raise (most run in the background), or move the flow into a room (new_tab {from: tabId, app:\"room:<name>\"})"}, or ask the user to allow it: they run \`perch focus allow 15m\` in a terminal`);
 
 // opts.signal: the request's AbortSignal, which the MCP SDK fires on the client's cancel.
 export async function handleCall(name, args = {}, opts = {}) {
