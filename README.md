@@ -8,7 +8,7 @@ perch lets your AI agent use the browser you already have open on your Mac: Chro
 curl -fsSL https://raw.githubusercontent.com/sryo/perch/main/install.sh | bash
 ```
 
-The installer sets perch up in Claude Code, Codex and GitHub Copilot when it finds them; for anything else it prints config to paste. perch needs an agent running on your Mac, so cloud agents can't use it. Restart your client; `perch` should appear in its MCP listing.
+Restart your agent; `perch` should appear in its MCP listing.
 
 The first time, allow two things once: macOS asks whether the app running your agent may control your browser (Automation), and in the browser you turn on Allow JavaScript from Apple Events.
 
