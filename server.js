@@ -10257,6 +10257,23 @@ async function trustedClick({ ref, selector, label_pattern, x, y, raise, target,
   }, readback ? { lane: "slow" } : {});
 }
 
+// A cross-origin iframe's controls are outside the page's JS world. Open its
+// own URL in a background room tab when the caller clicks the iframe element.
+async function roomFrameClick(target, selector, readback) {
+  const t = await roomTarget(target, "click");
+  let frame;
+  try {
+    frame = await roomRead(t, `JSON.stringify((()=>{const e=document.querySelector(${JSON.stringify(selector)});return e&&e.tagName==='IFRAME'?{src:e.src,origin:location.origin}:null})())`);
+  } catch { return { ok: false, error: "click: could not verify whether the selector names an embedded frame; nothing was clicked" }; }
+  if (!frame) return null;
+  if (handoffFrame(frame.src)) return { ok: false, error: `iframe ${frame.src} is sign-in or challenge UI; hand it to the user` };
+  const url = new URL(frame.src);
+  if (url.origin === frame.origin) return null;
+  if (readback) return { ok: false, error: "click: opening a frame tab takes no readback; call click without readback" };
+  const { targetId } = await t.conn.send("Target.createTarget", { url: frame.src, background: true });
+  return { ok: true, opened: { tabId: `room:${t.name}:${targetId}`, url: frame.src } };
+}
+
 // Background fields use the browser's trusted editing command; the explicit
 // foreground route keeps the hardware-style keystrokes. Both verify the value.
 async function trustedFill({ ref, selector, label_pattern, text, trusted, raise, target }) {
@@ -10383,6 +10400,10 @@ async function click(args = {}) {
   if (trusted && ref != null && FRAME_REF.test(String(ref))) {
     if (readback) throw new Error("click: frame refs take no readback");
     return frameClick({ ref, raise, target });
+  }
+  if (selector && isRoomTab(target?.tabId) && !hover) {
+    const frame = await roomFrameClick(target, selector, readback);
+    if (frame) return frame;
   }
   if (trusted) return trustedClick({ ref, selector, label_pattern, x, y, raise, target, readback });
   if (!ref && !selector && !label_pattern) throw new Error("click requires `ref`, `selector`, or `label_pattern` (x/y is screen coords, trusted:true only)");

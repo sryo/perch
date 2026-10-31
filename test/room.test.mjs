@@ -373,3 +373,18 @@ test("a lease transfer releases a mouse button left down by the previous server"
   assert.equal(room.log.filter((x) => x.method === "Input.dispatchMouseEvent" && x.params.type === "mouseReleased").length, 1);
   assert.equal(JSON.parse(readFileSync(path, "utf8")).held, null);
 });
+
+test("clicking a cross-origin iframe opens its src in a room tab, but a challenge frame is handed off", async () => {
+  use({ rooms: { jobs: { tabs: [{ url: "https://a.test/", html: `
+    <iframe id=job src="https://jobs.lever.co/acme/apply"></iframe>
+    <iframe id=challenge src="https://www.google.com/recaptcha/api2/anchor"></iframe>` }] } } });
+  const opened = await call("click", { selector: "#job", target: tab() });
+  assert.equal(opened.ok, true);
+  assert.equal(opened.opened.url, "https://jobs.lever.co/acme/apply");
+  assert.match(opened.opened.tabId, /^room:jobs:/);
+  assert.equal(R.room("jobs").log.filter((x) => x.method === "Input.dispatchMouseEvent").length, 0);
+  const denied = await call("click", { selector: "#challenge", target: tab() });
+  assert.equal(denied.ok, false);
+  assert.match(denied.error, /hand it to the user/);
+  assert.equal(R.room("jobs").targets.size, 2);
+});
