@@ -3202,17 +3202,25 @@ function jxaRuntime(BROWSERS, HANG) {
     evalKicked(a) {
       const main = a.world === "main", what = main ? "world main" : "awaitPromise";
       const t = pageTarget(a.target, "eval_js", main), start = Date.now();
+      // a.deadline: a resumed job's end, set by the call that kicked it.
+      if (a.deadline != null) a.timeout = Math.max(1, a.deadline - start);
       const read = function (off) { return a.read.split(MW_OFF).join(String(off)); };
       const dropped = function (err) { try { pollExec(t, a.drop, POLL_EXEC_SECS); } catch (e) {} return err; };
       let ran = true, v = null;
-      try { v = pollValue(pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000)))); }
-      catch (e) { if (!isNoReply(e)) throw e; ran = false; }
+      // a.resume: wait {job} picks up a kick an earlier call sent.
+      if (!a.resume) {
+        try { v = pollValue(pollExec(t, a.kick, Math.max(0.1, Math.min(POLL_EXEC_SECS, a.timeout / 1000)))); }
+        catch (e) { if (!isNoReply(e)) throw e; ran = false; }
+      }
       // A result the kick answered in full needs no more page JS, and no tab read.
       if (v == null) {
         pinFront(t);
-        const r = poll(t, read(0), a.timeout, awaitEvery, false, null, start);
+        // a.budget: this call's share of the timeout, after which it answers "p" (pending).
+        const share = a.budget != null && a.budget < a.timeout;
+        const r = poll(t, read(0), share ? a.budget : a.timeout, awaitEvery, false, null, start);
+        if (!r && share) return "p" + (a.deadline != null ? a.deadline : start + a.timeout);
         if (!r) {
-          const err = ranOut("timeout: eval_js (" + what + ") timed out after " + a.timeout + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again" + (main ? "" : "; background tabs throttle timers, so avoid page sleeps or activate the tab"));
+          const err = ranOut("timeout: eval_js (" + what + ") timed out after " + (a.total || a.timeout) + "ms; the code " + (ran ? "ran" : "may have run") + " and may still be running, so check the page before running it again" + (main ? "" : "; background tabs throttle timers, so avoid page sleeps or activate the tab"));
           throw pollSilent || !main ? err : dropped(err);
         }
         v = r.value;
@@ -5402,20 +5410,41 @@ async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFA
   if ((main || awaitPromise) && isRoomTab(target && target.tabId)) return roomEval(script, target, { main, awaitPromise, timeout });
   if (!main && !awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
   const key = `__perch_${main ? "mw" : "async"}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  const lane = timeout > JXA_DEFAULT_TIMEOUT ? takeLongLane() : "slow";
+  return kicked({ main, key, timeout, target, kick: buildKick(script, key, { world: main ? "main" : undefined, awaitPromise }) });
+}
+
+// The longest one call may take, for a client that cuts calls short
+// (PERCH_CALL_MAX_MS): an await past it answers a job that wait {job} picks up,
+// each call within it. A 2s margin covers the call's own Apple Events.
+const callBudget = () => { const n = Number(process.env.PERCH_CALL_MAX_MS); return n > 0 ? Math.max(1000, n - 2000) : null; };
+const JOB_RE = /^(i|m):(__perch_(?:async|mw)_[a-z0-9]+):(\d+):(\d+)$/;
+
+// Runs (or with no `kick`, resumes) a kicked eval_js until its result, or until
+// the call budget is spent: then {ok:true, pending:true, job}. The page side keeps
+// the clock: `deadline` is when the job's own timeout ends, there.
+async function kicked({ main, key, deadline, timeout, target, kick }) {
+  // The page decides whether the budget cuts this call short; Node only bounds it.
+  const budget = callBudget(), most = budget != null ? Math.min(budget, timeout) : timeout;
+  const lane = most > JXA_DEFAULT_TIMEOUT ? takeLongLane() : "slow";
+  const w = main ? "main" : undefined;
   let raw;
   try {
-    const w = main ? "main" : undefined;
-    raw = await rt("evalKicked", { target, world: w, kick: buildKick(script, key, { world: w, awaitPromise }), read: buildRead(key, w), drop: main ? buildDrop(key) : undefined, timeout },
-      { raw: true, lane, timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + (main ? MW_READ_MS : 0) + JXA_OVERHEAD });
+    raw = await rt("evalKicked", { target, world: w, kick, resume: !kick, read: buildRead(key, w), drop: main ? buildDrop(key) : undefined, timeout, total: timeout, deadline, budget: budget != null ? budget : undefined },
+      { raw: true, lane, timeout: Math.max(most, JXA_DEFAULT_TIMEOUT) + (main ? MW_READ_MS : 0) + JXA_OVERHEAD });
   } finally { longBusy.delete(lane); }
+  if (raw[0] === "p") return { ok: true, pending: true, job: `${main ? "m" : "i"}:${key}:${raw.slice(1)}:${timeout}`, note: "still running; wait {job, target} picks it up" };
   if (raw[0] === "m") return mainResult(raw.slice(1));
   const r = parsePage(raw.slice(1));
   return !main && r && Object.hasOwn(r, "value") ? r.value : r;
 }
 
 async function wait(args = {}) {
-  const { selector, readyState = "complete", expression, timeout = 10000, target, quiet } = args;
+  const { selector, readyState = "complete", expression, timeout = 10000, target, quiet, job } = args;
+  if (job != null) {
+    const m = JOB_RE.exec(String(job));
+    if (!m) throw new Error("bad_args: wait `job` takes the job an eval_js answered with pending:true");
+    return kicked({ main: m[1] === "m", key: m[2], deadline: Number(m[3]), timeout: Number(m[4]), target });
+  }
   // Under 100 is most likely seconds given by mistake. Shorter waits than a
   // second are real (a brief check), so the floor is lower than eval_js's.
   if (typeof timeout !== "number" || !(timeout >= WAIT_MIN_MS)) throw new Error(`bad_args: wait timeout is in milliseconds (at least ${WAIT_MIN_MS}); got ${typeof timeout === "number" ? String(timeout) : JSON.stringify(timeout)}`);
@@ -11021,6 +11050,7 @@ const TOOLS = [
     readyState: { type: "string", enum: ["loading", "interactive", "complete"], description: "Default complete." },
     expression: { type: "string" },
     quiet: { type: "number", description: "ms with no DOM change or fetch/XHR finishing: {ok,waited,quietFor}." },
+    job: { type: "string", description: "eval_js's pending job." },
     timeout: { type: "number", description: "ms, default 10000." },
     target: TARGET,
   }),
@@ -11109,7 +11139,7 @@ const TOOLS = [
   }, ["text"]),
 ];
 
-export const SCHEMA_BUDGET = 9650;
+export const SCHEMA_BUDGET = 9750;
 
 function awaitTimeout({ timeout, awaitPromise }) {
   if (timeout == null) return JXA_DEFAULT_TIMEOUT;

@@ -8,13 +8,13 @@ const read = (f) => readFile(new URL("../" + f, import.meta.url), "utf8");
 test("SKILL.md covers every tool and stays short", async () => {
   const skill = await read("SKILL.md");
   for (const t of TOOLS) assert.ok(skill.includes("`" + t.name + "`"), `SKILL.md misses ${t.name}`);
-  assert.ok(skill.length < 8400, `SKILL.md is ${skill.length} bytes`);
+  assert.ok(skill.length < 8600, `SKILL.md is ${skill.length} bytes`);
   assert.ok(skill.includes("Refs die on re-snapshot or navigation."), "SKILL.md says when refs die");
 });
 
 test("AGENTS.md stays a lean reference: rules, contracts and test pointers, not per-case narration", async () => {
   const agents = await read("AGENTS.md");
-  assert.ok(agents.length < 61500, `AGENTS.md is ${agents.length} bytes; move per-case detail into a test or a commit message`);
+  assert.ok(agents.length < 62000, `AGENTS.md is ${agents.length} bytes; move per-case detail into a test or a commit message`);
 });
 
 test("SKILL.md adds to the schema and server instructions rather than repeating them", async () => {

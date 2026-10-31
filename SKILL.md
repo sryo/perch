@@ -49,7 +49,7 @@ No `ready`: complete. Values are JSON. Keys: `name` (HTML name), `type`, `value`
 
 - **Page globals may be invisible** (isolated world): read the DOM.
 - **Don't sleep in page code.** Background timers run ~1/s. Use `wait` (`quiet` to settle).
-- **Client timeouts.** Some cut calls at 30-60s; keep `timeout` under.
+- **Client timeouts.** Some cut calls at 30-60s; keep `timeout` under, or set `PERCH_CALL_MAX_MS` so a longer await answers `{pending, job}` and `wait {job, target}` picks it up.
 - **Dialogs.** `dialog_open` comes in ~3s; answer with `press {dialog}`, then re-read. Other prompts are the user's.
 
 ## Trusted input

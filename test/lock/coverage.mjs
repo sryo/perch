@@ -9,6 +9,10 @@ import { TOOLS } from "../../server.js";
 // Leftovers the fake world can't reach, or that are words in SKILL.md rather
 // than result keys, each with why.
 export const JUSTIFIED = {
+  // The call budget: the golden world sets no PERCH_CALL_MAX_MS; test/await-job.test.mjs covers it.
+  "wait.job": "resumes an eval_js job, which only a call budget makes (test/await-job.test.mjs)",
+  PERCH_CALL_MAX_MS: "an env var, not a result key (test/await-job.test.mjs)",
+  pending: "a call-budget eval_js result key (test/await-job.test.mjs)",
   // Words SKILL.md backticks that are values, examples or prose, not result keys.
   "given-name": "an autocomplete token example for label_pattern",
   tel: "an autocomplete token example",
