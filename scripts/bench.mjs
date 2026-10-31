@@ -13,7 +13,7 @@
 //   --navigate   also time navigate (reloads the fixture in the scratch tab)
 //   --house <out.json>  also write the run in fium's format (fium RULES.md K2), with
 //                the behaviour lock's Apple Events and result bytes per tool; judge it
-//                with ~/Documents/fium/fium price compare bench/house-baseline.json <out.json> (offline metrics) and
+//                with ~/Documents/fium/fium compare bench/house-baseline.json <out.json> (offline metrics) and
 //                bench/house-live-baseline.json <out.json> --noise bench/noise.json (live rows)
 //   --noise <file>  this run is an A/A against bench/house-live-baseline.json: write
 //                fium's spread for it as the noise file (needs --house)
@@ -72,7 +72,7 @@ export function houseRun({ results, samples, bytes = {}, lock }) {
   return { metrics, limits: { "schema chars": SCHEMA_BUDGET } };
 }
 
-// bench/noise.json from a live A/A's `fium price compare --json` rows: per noisy
+// bench/noise.json from a live A/A's `fium compare --json` rows: per noisy
 // metric, the farthest its range strayed from 1, rounded up to a percent and at
 // least fium's default 10%.
 export function noiseFrom(rows) {
@@ -281,7 +281,7 @@ async function main() {
     if (!HOUSE) throw new Error("--noise needs --house");
     const cli = process.env.FIUM || resolve(homedir(), "Documents/fium/fium");
     let json;
-    try { json = execFileSync(cli, ["price", "compare", resolve(ROOT, "bench/house-live-baseline.json"), resolve(ROOT, HOUSE), "--json"]).toString(); }
+    try { json = execFileSync(cli, ["compare", resolve(ROOT, "bench/house-live-baseline.json"), resolve(ROOT, HOUSE), "--json"]).toString(); }
     catch (e) { if (!e.stdout) throw e; json = e.stdout.toString(); }
     await writeFile(resolve(ROOT, NOISE), JSON.stringify(noiseFrom(JSON.parse(json)), null, 2) + "\n");
     console.log(`noise: ${NOISE}`);

@@ -1,4 +1,4 @@
-// scripts/bench.mjs --house: the run format `fium price compare` judges (fium
+// scripts/bench.mjs --house: the run format `fium compare` judges (fium
 // RULES.md K2). Live rows give a time metric (their samples) and a bytes metric;
 // tools/list gives schema chars, capped by SCHEMA_BUDGET as a limit; the
 // behaviour lock's fake world gives Apple Events and result bytes per tool.
@@ -52,7 +52,7 @@ test("a row whose bytes vary between identical runs is noisy, over every rep", (
   assert.ok(NOISY_BYTES.has("list_tabs") && NOISY_BYTES.has("accessibility_snapshot"));
 });
 
-// bench/noise.json from a live A/A's `fium price compare --json` rows: per noisy
+// bench/noise.json from a live A/A's `fium compare --json` rows: per noisy
 // metric, the farthest its range strayed from 1, rounded up to a percent, at
 // least fium's default 10%.
 test("noiseFrom keeps each noisy metric's A/A spread", () => {
