@@ -91,13 +91,17 @@ test("close_tab closes in the handle's window, not in another window of the same
 
 test("close_tab requires an explicit tabId and never falls back to the active tab", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(3) }])], cg: [{ owner: "Google Chrome" }] });
-  for (const args of [{}, { tabId: "" }, { tabId: 7 }, { target: { tabId: "chrome:t0" } }]) {
+  for (const args of [{}, { tabId: "" }, { tabId: 7 }, { target: {} }, { target: { app: "chrome" } }]) {
     const { r, t } = await call("close_tab", args);
     assert.equal(r.isError, true, JSON.stringify(args));
     assert.match(t, /close_tab requires `tabId`/);
   }
   assert.equal(world.counts["tab.close"], undefined);
   assert.equal(urls("Google Chrome").length, 3);
+  // An explicit tabId in target, as every other tool takes it, is as good.
+  const h = (await call("list_tabs", {})).o.tabs[0].tabId;
+  assert.equal((await call("close_tab", { target: { tabId: h } })).o.ok, true);
+  assert.equal(urls("Google Chrome").length, 2);
 });
 
 test("the runtime refuses a close with no target, so a default target can't leak in", () => {

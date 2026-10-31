@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, ERR } from "../server.js";
 
+const SKILL_MAX = 8800;
 const read = (f) => readFile(new URL("../" + f, import.meta.url), "utf8");
 
 test("SKILL.md covers every tool and stays short", async () => {
   const skill = await read("SKILL.md");
   for (const t of TOOLS) assert.ok(skill.includes("`" + t.name + "`"), `SKILL.md misses ${t.name}`);
-  assert.ok(skill.length < 8800, `SKILL.md is ${skill.length} bytes`);
+  assert.ok(skill.length < SKILL_MAX, `SKILL.md is ${skill.length} bytes`);
   assert.ok(skill.includes("Refs die on re-snapshot or navigation."), "SKILL.md says when refs die");
 });
 
@@ -72,7 +73,7 @@ const SELF_EXPLANATORY = ["message", "subtitle", "sound", "maxWidth", "mode"];
 test("every param, element hint, error code and permission toggle stays documented somewhere", async () => {
   const skill = await read("SKILL.md");
   const source = await read("server.js");
-  const room = `schema headroom ${SCHEMA_BUDGET - JSON.stringify(TOOLS).length}, SKILL.md headroom ${8400 - skill.length}`;
+  const room = `schema headroom ${SCHEMA_BUDGET - JSON.stringify(TOOLS).length}, SKILL.md headroom ${SKILL_MAX - skill.length}`;
   for (const t of TOOLS) {
     for (const [name, p] of Object.entries(t.inputSchema.properties)) {
       if (SELF_EXPLANATORY.includes(name)) continue;

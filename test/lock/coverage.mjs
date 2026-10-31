@@ -32,6 +32,9 @@ export const JUSTIFIED = {
   tab_held: "a room lease error, tested in test/room.test.mjs",
   "click.download": "room tabs only, which the JXA golden world has none of; tested in test/room.test.mjs",
   "new_tab.from": "moves a browser tab into a room, which the JXA golden world has none of; tested in test/room.test.mjs",
+  "new_tab.label": "claims a room tab, which the JXA golden world has none of; tested in test/room.test.mjs",
+  holder: "room list_tabs rows only; tested in test/room.test.mjs",
+  mine: "room list_tabs rows only; tested in test/room.test.mjs",
 };
 
 const golden = JSON.parse(readFileSync(new URL("./golden.json", import.meta.url), "utf8"));

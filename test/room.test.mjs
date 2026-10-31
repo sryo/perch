@@ -359,12 +359,12 @@ test("a lease transfer releases a key left down by the previous server", async (
   const dir = join(shared.home, "run", "leases");
   const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
   const lease = JSON.parse(readFileSync(path, "utf8"));
-  assert.equal(lease.held.type, "key");
+  assert.equal(lease.stuck.type, "key");
   writeFileSync(path, JSON.stringify({ ...lease, last: Date.now() - 6000 }));
   const got = await other.handleCall("eval_js", { script: "return 3", target: tab() });
   assert.equal(got.content[0].text, "3");
   assert.equal(room.log.filter((x) => x.method === "Input.dispatchKeyEvent" && x.params.type === "keyUp").length, 1);
-  assert.equal(JSON.parse(readFileSync(path, "utf8")).held, null);
+  assert.equal(JSON.parse(readFileSync(path, "utf8")).stuck, null);
 });
 
 test("a lease transfer releases a mouse button left down by the previous server", async () => {
@@ -385,12 +385,12 @@ test("a lease transfer releases a mouse button left down by the previous server"
   const dir = join(shared.home, "run", "leases");
   const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
   const lease = JSON.parse(readFileSync(path, "utf8"));
-  assert.equal(lease.held.type, "mouse");
+  assert.equal(lease.stuck.type, "mouse");
   writeFileSync(path, JSON.stringify({ ...lease, last: Date.now() - 6000 }));
   const got = await other.handleCall("eval_js", { script: "return 4", target: tab() });
   assert.equal(got.content[0].text, "4");
   assert.equal(room.log.filter((x) => x.method === "Input.dispatchMouseEvent" && x.params.type === "mouseReleased").length, 1);
-  assert.equal(JSON.parse(readFileSync(path, "utf8")).held, null);
+  assert.equal(JSON.parse(readFileSync(path, "utf8")).stuck, null);
 });
 
 test("clicking a cross-origin iframe opens its src in a room tab, but a challenge frame is handed off", async () => {
@@ -401,6 +401,7 @@ test("clicking a cross-origin iframe opens its src in a room tab, but a challeng
   assert.equal(opened.ok, true);
   assert.equal(opened.opened.url, "https://forms.example/acme/apply");
   assert.match(opened.opened.tabId, /^room:work:/);
+  assert.equal((await call("list_tabs", { app: "room" })).tabs.find((t) => t.tabId === opened.opened.tabId).mine, true);
   assert.equal(R.room("work").log.filter((x) => x.method === "Input.dispatchMouseEvent").length, 0);
   const denied = await call("click", { selector: "#challenge", target: tab() });
   assert.equal(denied.ok, false);
@@ -455,6 +456,9 @@ test("new_tab {from} reopens a browser tab's URL in a room", async () => {
   assert.equal(o.from, from);
   assert.equal(o.url, "https://a.test/x");
   assert.match(await fails("new_tab", { from, app: "canary" }), /takes app:"room:<name>"/);
+  const moved = await call("new_tab", { from, app: "room:work", label: "moved" });
+  assert.deepEqual([moved.tabId, moved.url], ["room:work:moved", "https://a.test/x"]);
+  assert.match(await fails("new_tab", { app: "canary", label: "x" }), /bad_args: new_tab label claims a room tab/);
 });
 
 test("a browser error that needs the user's window suggests a room, the URL's own first", () => {
@@ -510,7 +514,128 @@ test("a tab the user is driving in rooms view is held by the user, and perch say
   const dir = join(R.home, "run", "leases");
   mkdirSync(dir, { recursive: true });
   const t = tab();
-  writeFileSync(join(dir, createHash("sha256").update(t.tabId).digest("hex") + ".json"), JSON.stringify({ owner: "user", pid: process.pid, last: Date.now(), active: true, held: null, since: new Date().toISOString() }));
+  writeFileSync(join(dir, createHash("sha256").update(t.tabId).digest("hex") + ".json"), JSON.stringify({ owner: "user", pid: process.pid, last: Date.now(), active: true, stuck: null, since: new Date().toISOString() }));
   const denied = await handleCall("eval_js", { script: "return 1", target: t });
   assert.match(denied.content[0].text, /tab_held: room tab held by the user in rooms view/);
+});
+
+const twoServers = async (opts, tag) => {
+  const R = makeRooms(opts);
+  const other = await import(`../server.js?${tag}=${Date.now()}`);
+  roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  other.roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  return { R, other, leases: () => readdirSync(join(R.home, "run", "leases")).filter((x) => x.endsWith(".json")) };
+};
+
+test("a tab new_tab makes is leased before navigate, so another server's new_tab can't hand it out", async () => {
+  const { other } = await twoServers({}, "created-room-lease");
+  const mine = await call("new_tab", { app: "room:work" });
+  const theirs = JSON.parse((await other.handleCall("new_tab", { app: "room:work" })).content[0].text);
+  assert.notEqual(theirs.tabId, mine.tabId);
+  const denied = await other.handleCall("navigate", { url: "https://b.test/", target: { tabId: mine.tabId } });
+  assert.match(denied.content[0].text, /tab_held/);
+});
+
+test("close_tab deletes the tab's lease file", async () => {
+  const { leases } = await twoServers({}, "close-room-lease");
+  const o = await call("new_tab", { app: "room:work" });
+  await call("eval_js", { script: "return 1", target: { tabId: o.tabId } });
+  await call("eval_js", { script: "return 1", target: tab() });
+  assert.equal(leases().length, 2);
+  await call("close_tab", { tabId: o.tabId });
+  assert.equal(leases().length, 1);
+});
+
+test("a foreign snapshot, screenshot or get_text is tab_held and leaves the holder's refs alive", async () => {
+  const { other } = await twoServers({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<button onclick=\"this.textContent='done'\">Apply</button>" }] } } }, "read-room-lease");
+  const snap = (await handleCall("accessibility_snapshot", { target: tab() })).content[0].text;
+  const ref = /^(\S+) button "Apply"/m.exec(snap)[1];
+  for (const [name, args] of [["accessibility_snapshot", {}], ["screenshot", {}], ["get_text", {}]]) {
+    const r = await other.handleCall(name, { ...args, target: tab() });
+    assert.match(r.content[0].text, /tab_held/, name);
+  }
+  const o = await call("click", { ref, target: tab() });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(await call("eval_js", { script: "return document.querySelector('button').textContent", target: tab() }), "done");
+});
+
+// Claims: new_tab's tab stays its server's past the lease's idle window; a label makes it one
+// agent's (subagents share a server), and the label handle is the only way in.
+const claimDir = (R) => join(R.home, "run", "claims");
+const ageLeases = (R) => {
+  const dir = join(R.home, "run", "leases");
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) writeFileSync(join(dir, f), JSON.stringify({ ...JSON.parse(readFileSync(join(dir, f), "utf8")), last: Date.now() - 6000 }));
+};
+const text = async (srv, name, args) => (await srv.handleCall(name, args)).content[0].text;
+
+test("new_tab {label} claims a room tab under room:<name>:<label>, past the lease's idle window", async () => {
+  const { R, other } = await twoServers({}, "label-claim");
+  const o = await call("new_tab", { app: "room:work", label: "checkout" });
+  assert.deepEqual(o, { app: "room:work", tabId: "room:work:checkout" });
+  assert.equal(await call("eval_js", { script: "return 1", target: { tabId: o.tabId } }), 1);
+  ageLeases(R);
+  assert.match(await text(other, "eval_js", { script: "return 2", target: { tabId: o.tabId } }), /tab_held: room tab claimed as checkout by pid \d+/);
+  assert.match(await text(other, "eval_js", { script: "return 2", target: tab("T0002") }), /tab_held: room tab claimed as checkout/);
+  const row = (await call("list_tabs", { app: "room" })).tabs.find((t) => t.tabId === o.tabId);
+  assert.deepEqual([row.holder, row.mine], ["checkout", true]);
+  const theirs = JSON.parse(await text(other, "list_tabs", { app: "room" })).tabs.find((t) => t.tabId === o.tabId);
+  assert.deepEqual([theirs.holder, theirs.mine], ["checkout", undefined]);
+});
+
+test("a labeled tab refuses its raw targetId on its own server too, so two subagents stay apart", async () => {
+  use({ rooms: { work: { sites: { "https://b.test/x": "<p>B</p>" } } } });
+  const a = await call("new_tab", { app: "room:work", label: "a1" });
+  const b = await call("new_tab", { app: "room:work", label: "a2" });
+  assert.notEqual(a.tabId, b.tabId);
+  assert.match(await fails("eval_js", { script: "return 1", target: tab("T0002") }), /tab_held: room tab claimed as a1/);
+  assert.equal(await call("eval_js", { script: "return 2", target: { tabId: b.tabId } }), 2);
+  assert.equal((await call("navigate", { url: "https://b.test/x", target: { tabId: a.tabId } })).ok, true);
+  assert.deepEqual(await call("close_tab", { tabId: a.tabId }), { ok: true, closed: a.tabId });
+});
+
+test("new_tab with a label already claimed gives its server the same tab back, and another server tab_held", async () => {
+  const { other } = await twoServers({}, "label-again");
+  const o = await call("new_tab", { app: "room:work", label: "x" });
+  assert.deepEqual(await call("new_tab", { app: "room:work", label: "x" }), { ...o, reused: true });
+  assert.match(await text(other, "new_tab", { app: "room:work", label: "x" }), /tab_held: room tab claimed as x/);
+  assert.match(await fails("new_tab", { app: "room:work", label: "Bad Label" }), /bad_args: .*label/);
+});
+
+test("an unlabeled new_tab's tab stays its server's past the idle window", async () => {
+  const { R, other } = await twoServers({}, "plain-claim");
+  const o = await call("new_tab", { app: "room:work" });
+  ageLeases(R);
+  assert.match(await text(other, "eval_js", { script: "return 2", target: { tabId: o.tabId } }), /tab_held: room tab claimed by pid \d+/);
+  assert.equal(await call("eval_js", { script: "return 1", target: { tabId: o.tabId } }), 1);
+  const row = (await call("list_tabs", { app: "room" })).tabs.find((t) => t.tabId === o.tabId);
+  assert.deepEqual([row.holder, row.mine], [`pid ${process.pid}`, true]);
+});
+
+test("a claim lapses after its idle cap, and a dead server's claim and lease are reaped", async () => {
+  const { R, other, leases } = await twoServers({}, "claim-reap");
+  const o = await call("new_tab", { app: "room:work", label: "x" });
+  const file = join(claimDir(R), readdirSync(claimDir(R))[0]);
+  const claim = JSON.parse(readFileSync(file, "utf8"));
+  ageLeases(R);
+  writeFileSync(file, JSON.stringify({ ...claim, last: Date.now() - 16 * 60000 }));
+  assert.equal(await text(other, "eval_js", { script: "return 2", target: tab("T0002") }), "2");
+  await call("eval_js", { script: "return 1", target: tab() });
+  const exited = spawnSync(process.execPath, ["-e", ""]).pid;
+  writeFileSync(file, JSON.stringify({ ...claim, pid: exited, owner: "gone" }));
+  for (const f of leases()) writeFileSync(join(R.home, "run", "leases", f), JSON.stringify({ ...JSON.parse(readFileSync(join(R.home, "run", "leases", f), "utf8")), pid: exited, owner: "gone" }));
+  await call("list_tabs", { app: "room" });
+  assert.deepEqual([readdirSync(claimDir(R)).length, leases().length], [0, 0]);
+  assert.equal(JSON.parse(await text(other, "new_tab", { app: "room:work", label: "x" })).tabId, o.tabId);
+});
+
+test("a dead server's label is taken over with its tab, and close_tab {target} ends a claim", async () => {
+  const { R, other } = await twoServers({}, "label-takeover");
+  const o = await call("new_tab", { app: "room:work", label: "x" });
+  const file = join(claimDir(R), readdirSync(claimDir(R))[0]);
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), pid: spawnSync(process.execPath, ["-e", ""]).pid, owner: "gone" }));
+  ageLeases(R);
+  assert.deepEqual(JSON.parse(await text(other, "new_tab", { app: "room:work", label: "x" })), { ...o, reused: true });
+  assert.deepEqual(JSON.parse(await text(other, "close_tab", { target: { tabId: o.tabId } })), { ok: true, closed: o.tabId });
+  assert.equal(readdirSync(claimDir(R)).length, 0);
+  assert.match(await text(other, "eval_js", { script: "return 1", target: { tabId: o.tabId } }), /stale_tab: .*x/);
 });
