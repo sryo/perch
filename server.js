@@ -9717,32 +9717,6 @@ s.installed = false;
 return out;
 `,
 
-  // Completed requests from Resource Timing, which the browser buffers on its own:
-  // no patching, no start. The cursor lives on a global, so navigation resets both.
-  // The buffer starts at the spec's 250 and is raised to 1000 on the first read; a
-  // full buffer means the browser stopped recording.
-  network_read: String.raw`
-if (typeof performance.getEntriesByType !== "function") return { ok: false, error: "network: this browser has no Resource Timing" };
-const st = window.__perch_net || (window.__perch_net = { seen: 0, cap: 250 });
-const all = performance.getEntriesByType("resource");
-if (all.length < st.seen) st.seen = 0;
-const out = { ok: true, requests: [] };
-if (all.length >= st.cap) out.full = true;
-if (st.cap < 1000 && performance.setResourceTimingBufferSize) { performance.setResourceTimingBufferSize(1000); st.cap = 1000; }
-function size(e) {
-  const n = e.transferSize || 0;
-  if (!n && e.decodedBodySize > 0) return "cache";
-  return n < 1000 ? n + "B" : n < 1e6 ? (n / 1e3).toFixed(1) + "kB" : (n / 1e6).toFixed(1) + "MB";
-}
-for (const e of all.slice(st.seen, st.seen + 100)) {
-  const url = e.name.length > 200 ? e.name.slice(0, 200) + "..." : e.name;
-  out.requests.push((e.responseStatus || "-") + " " + e.initiatorType + " " + Math.round(e.duration) + "ms " + size(e) + " " + url);
-}
-st.seen += out.requests.length;
-if (all.length > st.seen) out.more = all.length - st.seen;
-return out;
-`,
-
   trusted_probe: TRUSTED_PROBE_HEAD + TRUSTED_PROBE_TAIL,
   // fill's probe; the _label forms resolve by label through TRUSTED_LABEL_LIB.
   trusted_fill_probe: TOK_LIB + TYPEAHEAD_LIB + TA_OWN_LIB + TRUSTED_PROBE_HEAD + TRUSTED_FILL_PROBE_TA + TRUSTED_PROBE_TAIL,
@@ -10265,8 +10239,8 @@ async function frameClick({ ref, raise, target }) {
 
 async function consoleCapture(args = {}) {
   const { mode = "read", target } = args;
-  if (!["start", "read", "stop", "network"].includes(mode)) throw new Error(`console_capture: unknown mode '${mode}' (expected start | read | stop | network)`);
-  const r = await runPage("console_capture", mode === "network" ? "network_read" : "console_" + mode, {}, target);
+  if (!["start", "read", "stop"].includes(mode)) throw new Error(`console_capture: unknown mode '${mode}' (expected start | read | stop)`);
+  const r = await runPage("console_capture", "console_" + mode, {}, target);
   if (!r || typeof r !== "object" || typeof r.id !== "string") return r;
   const { id, gen, prevGen, ...out } = r;
   if (mode === "start") consoleGens.set(id, gen);
@@ -11105,8 +11079,8 @@ const TOOLS = [
     frames: { type: "boolean", description: "Add iframe controls from Accessibility as `fN` rows (the tab its window shows); fN takes only click {trusted:true}." },
     target: TARGET,
   }),
-  tool("console_capture", "`start` records console.*, uncaught errors and rejections, `read` drains \"level: text\" lines, `stop` restores; navigation clears it. `network` drains finished requests as \"status type ms size url\" (Resource Timing, no start).", {
-    mode: { type: "string", enum: ["start", "read", "stop", "network"], description: "Default read." },
+  tool("console_capture", "`start` records console.*, uncaught errors and rejections, `read` drains \"level: text\" lines, `stop` restores; navigation clears it.", {
+    mode: { type: "string", enum: ["start", "read", "stop"], description: "Default read." },
     target: TARGET,
   }),
   tool("notify", "Show a macOS notification (appears as Script Editor).", {

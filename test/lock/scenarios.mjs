@@ -621,15 +621,13 @@ add("file_upload: input, label, drop zone, misses", async (h) => {
 });
 
 // console_capture
-add("console_capture: start, read, stop, network", async (h) => {
-  const w = onPage(h, `<p>x</p>`);
-  w.dom.performance.getEntriesByType = () => [{ name: "https://api.test/r1", initiatorType: "fetch", duration: 84, transferSize: 1200, responseStatus: 200 }];
+add("console_capture: start, read, stop", async (h) => {
+  onPage(h, `<p>x</p>`);
   await h.call("console_capture", { mode: "read" });
   await h.call("console_capture", { mode: "start" });
   await h.call("eval_js", { script: "console.log('hello', 1); console.error('bad'); return 1" });
   await h.call("console_capture");
   await h.call("console_capture", { mode: "stop" });
-  await h.call("console_capture", { mode: "network" });
   await h.call("console_capture", { mode: "net" });
 });
 

@@ -6644,7 +6644,7 @@
    "pageBytes": 147796
   }
  ],
- "console_capture: start, read, stop, network": [
+ "console_capture: start, read, stop": [
   {
    "call": [
     "console_capture",
@@ -6666,7 +6666,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10870
+   "pageBytes": 695
   },
   {
    "call": [
@@ -6689,7 +6689,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14380
+   "pageBytes": 4205
   },
   {
    "call": [
@@ -6733,7 +6733,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10870
+   "pageBytes": 695
   },
   {
    "call": [
@@ -6756,30 +6756,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 11017
-  },
-  {
-   "call": [
-    "console_capture",
-    {
-     "mode": "network"
-    }
-   ],
-   "content": [
-    {
-     "type": "text",
-     "text": "{\"ok\":true,\"requests\":[\"200 fetch 84ms 1.2kB https://api.test/r1\"]}"
-    }
-   ],
-   "isError": false,
-   "events": 1,
-   "ae": {
-    "Google Chrome": [
-     "tab.execute"
-    ]
-   },
-   "pageScripts": 1,
-   "pageBytes": 11624
+   "pageBytes": 842
   },
   {
    "call": [
@@ -6791,7 +6768,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: console_capture: unknown mode 'net' (expected start | read | stop | network)"
+     "text": "error: console_capture: unknown mode 'net' (expected start | read | stop)"
     }
    ],
    "isError": true,
@@ -7738,7 +7715,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: JavaScript-from-AppleEvents is off. Enable it: Chromium-family → View > Developer > Allow JavaScript from Apple Events. Safari → Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events."
+     "text": "error: JavaScript-from-AppleEvents is off. Enable it: Chromium-family \u2192 View > Developer > Allow JavaScript from Apple Events. Safari \u2192 Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events."
     }
    ],
    "isError": true,
