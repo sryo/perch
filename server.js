@@ -4623,8 +4623,10 @@ async function roomLeaseChange(tabId, update) {
   try {
     let state = null;
     try { state = JSON.parse(readFileSync(path, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; }
+    // undefined leaves the lease as it is and null removes it, as rooms' leases.mjs reads them.
     const next = update(state);
-    if (next) {
+    if (next === null) rmSync(path, { force: true });
+    else if (next !== undefined) {
       const tmp = path + "." + ROOM_OWNER + ".tmp";
       writeFileSync(tmp, JSON.stringify(next), { mode: 0o600 });
       renameSync(tmp, path);
@@ -4632,8 +4634,9 @@ async function roomLeaseChange(tabId, update) {
     return { old: state, next };
   } finally { rmSync(lock, { recursive: true, force: true }); }
 }
+const roomLeaseNew = () => ({ owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: false, held: null });
 async function roomHeld(tabId, held) {
-  await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, held } : null);
+  await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, held } : undefined);
 }
 async function withRoomLease(tabId, note, fn) {
   const { old } = await roomLeaseChange(tabId, (s) => {
@@ -4656,7 +4659,7 @@ async function withRoomLease(tabId, note, fn) {
     }
     return await fn();
   } finally {
-    await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, active: false, last: Date.now() } : null);
+    await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, active: false, last: Date.now() } : undefined);
   }
 }
 
@@ -5110,14 +5113,17 @@ const ROOM_FNS = {
       for (const p of await roomPages(conn)) {
         if (p.url !== "about:blank" || p.attached || p.openerId) continue;
         const tabId = `room:${name}:${p.targetId}`;
-        const { old } = await roomLeaseChange(tabId, (s) => s || { owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: false, held: null });
+        const { old } = await roomLeaseChange(tabId, (s) => s || roomLeaseNew());
         if (!old) return { app: `room:${name}`, tabId, reused: true };
       }
     }
     // Its own window: a room tab behind another in one window is hidden and gets no animation
     // frames (requestAnimationFrame never fires), so canvas apps like Figma stall until activated.
+    // Leased as made, or a blank one is the next caller's unused tab above.
     const { targetId } = await conn.send("Target.createTarget", { url: a.url, background: true, newWindow: true });
-    return { app: `room:${name}`, tabId: `room:${name}:${targetId}` };
+    const tabId = `room:${name}:${targetId}`;
+    await roomLeaseChange(tabId, () => roomLeaseNew());
+    return { app: `room:${name}`, tabId };
   },
   async activate(a) {
     const t = await roomTarget(a.target, "activate_tab");

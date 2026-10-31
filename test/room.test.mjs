@@ -514,3 +514,20 @@ test("a tab the user is driving in rooms view is held by the user, and perch say
   const denied = await handleCall("eval_js", { script: "return 1", target: t });
   assert.match(denied.content[0].text, /tab_held: room tab held by the user in rooms view/);
 });
+
+const twoServers = async (opts, tag) => {
+  const R = makeRooms(opts);
+  const other = await import(`../server.js?${tag}=${Date.now()}`);
+  roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  other.roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  return { R, other, leases: () => readdirSync(join(R.home, "run", "leases")).filter((x) => x.endsWith(".json")) };
+};
+
+test("a tab new_tab makes is leased before navigate, so another server's new_tab can't hand it out", async () => {
+  const { other } = await twoServers({}, "created-room-lease");
+  const mine = await call("new_tab", { app: "room:work" });
+  const theirs = JSON.parse((await other.handleCall("new_tab", { app: "room:work" })).content[0].text);
+  assert.notEqual(theirs.tabId, mine.tabId);
+  const denied = await other.handleCall("navigate", { url: "https://b.test/", target: { tabId: mine.tabId } });
+  assert.match(denied.content[0].text, /tab_held/);
+});
