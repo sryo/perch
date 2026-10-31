@@ -63,11 +63,12 @@ const REFUSED = [
 ];
 
 // Hashes of {text, log, counts, ms} from the same calls before the policy
-// existed: an accepted url behaves exactly as it did.
+// existed: an accepted url behaves exactly as it did. new_tab's were re-recorded
+// when it began reading windows' minimized state in place of their count.
 const BEFORE = Object.fromEntries(Object.entries({
-  "new_tab chrome": { "https://n.test/": "63597ee6e461", "HTTP://N.TEST/": "9b105f4f817e", "about:blank": "0bccf24daee8", "ABOUT:BLANK": "4dc47825f0cf", "(none)": "0bccf24daee8" },
-  "new_tab arc": { "https://n.test/": "120046390fac", "HTTP://N.TEST/": "34e40066d8b7", "about:blank": "57202842ec1b", "ABOUT:BLANK": "42c94d492e90", "(none)": "57202842ec1b" },
-  "new_tab safari": { "https://n.test/": "c6ea10cfe6e0", "HTTP://N.TEST/": "af75fbddd6dd", "about:blank": "ed52b752901f", "ABOUT:BLANK": "93198762b7ed", "(none)": "ed52b752901f" },
+  "new_tab chrome": { "https://n.test/": "2923adb0b49e", "HTTP://N.TEST/": "c0ba952a33e7", "about:blank": "4f8bc843b2be", "ABOUT:BLANK": "2a73fd9f71d0", "(none)": "4f8bc843b2be" },
+  "new_tab arc": { "https://n.test/": "32d7b5a7557a", "HTTP://N.TEST/": "21e8434d720f", "about:blank": "0354ec4e21ed", "ABOUT:BLANK": "042df259d90f", "(none)": "0354ec4e21ed" },
+  "new_tab safari": { "https://n.test/": "a442fa9988eb", "HTTP://N.TEST/": "bbe3fbdb9b33", "about:blank": "ca0c6f0313ea", "ABOUT:BLANK": "b41edd7cb195", "(none)": "ca0c6f0313ea" },
   "navigate chrome front tab": { "https://n.test/": "d98ccce11e87", "HTTP://N.TEST/": "ea58d27e419a", "about:blank": "4cc30578d12a", "ABOUT:BLANK": "c76d86c8c4e5" },
   "navigate chrome background tab": { "https://n.test/": "f72180f51ef8", "HTTP://N.TEST/": "4ca6f831dc8a", "about:blank": "434b3bda941f", "ABOUT:BLANK": "5d5727e7c0e1" },
   "navigate safari": { "https://n.test/": "6560667c3c98", "HTTP://N.TEST/": "6cbc69b72435", "about:blank": "feb480f7f3cc", "ABOUT:BLANK": "0afa9e7f5461" },
@@ -77,9 +78,9 @@ const BEFORE = Object.fromEntries(Object.entries({
 // The same calls with a file: url before the policy existed. navigate from a
 // window behind another app still needs raise:true.
 const FILE_BEFORE = {
-  "new_tab chrome": ["d7f298402483", "91a414df1711"],
-  "new_tab arc": ["03b859562784", "38820901fa67"],
-  "new_tab safari": ["3e8b546c42dd", "588b3fef6d00"],
+  "new_tab chrome": ["3865c6741a91", "3f03ae3e47b7"],
+  "new_tab arc": ["ae396e9161d7", "1642cc6fc3a2"],
+  "new_tab safari": ["e7f6cd34f578", "09bb5cbf4c97"],
   "navigate chrome front tab": ["b097b76b04b6", "32002bab1052"],
   "navigate chrome background tab": ["fa381ae0b04e", "20ac90683ce5"],
   "navigate safari": ["32f5fc58fc63", "070d89d84f8e"],
