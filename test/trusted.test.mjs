@@ -190,11 +190,20 @@ test("trusted input reaches a background browser without changing app focus or c
   const targetUp = world.posted.find((e) => e.kind === "mouse" && e.type === 2 && e.pt.x >= 0);
   assert.equal(targetDown.flags, 0x100000, "Command flag lets WindowServer route the background press");
   assert.equal(targetUp.flags, undefined, "release without Command so the page receives an ordinary click");
-  // 100ms between the off-screen pair and the press. At 10ms, live on Canary,
-  // 3 of 90 background clicks missed (ok:false, or refused as off the page) where
-  // 100ms landed 90 of 90.
+  // 10ms between the off-screen pair and the press: live on Canary 159, with the
+  // click check's 300ms retry, 780 of 780 background clicks landed at 10ms, 200 of
+  // them with the far pair (p50 about 200ms, 300ms at the old 100ms).
   const sky = world.posted.filter((e) => e.via === "skylight");
-  assert.deepEqual(sky.slice(1).map((e, i) => e.at - sky[i].at), [5, 1, 100, 1], "primer, off-screen pair, press: ms between posts");
+  assert.deepEqual(sky.slice(1).map((e, i) => e.at - sky[i].at), [5, 1, 10, 1], "primer, off-screen pair, press: ms between posts");
+  // The off-screen pair sits far outside every window. At (-1,-1), window-relative,
+  // it is the window's top-left resize corner: live, 20 background clicks dragged a
+  // Canary window from 200,200 900x700 to 0,38 1100x862.
+  const pair = sky.filter((e) => e.type !== 5 && e.pt.x < 0);
+  assert.equal(pair.length, 2);
+  for (const e of pair) {
+    assert.deepEqual(e.pt, { x: -300000, y: -300000 });
+    assert.deepEqual(e.windowPoint, { x: -300000, y: -300000 });
+  }
   assert.equal(world.log.filter((entry) => entry[0] === "SLPSPostEventRecordTo").length, 0, "never borrow the user's key focus");
   assert.equal(world.counts["activate(Google Chrome)"], undefined);
   assert.equal(world.counts["win.index="], undefined);

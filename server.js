@@ -1780,11 +1780,15 @@ function jxaRuntime(BROWSERS, HANG) {
     // This SPI expects the point relative to the target window. Passing the
     // screen point shifts background Chrome clicks by the window's origin.
     const r = I.cgBounds || I.geom;
-    const primer = pt.x === -1 && pt.y === -1;
-    $.CGEventSetWindowLocation(e, primer ? -1 : pt.x - r.x, primer ? -1 : pt.y - r.y);
+    const primer = pt === OFF_SCREEN;
+    $.CGEventSetWindowLocation(e, primer ? pt.x : pt.x - r.x, primer ? pt.y : pt.y - r.y);
     $.SLEventPostToPid(I.pid, e);
   }
 
+  // The off-screen pair's point, screen and window-relative alike. Far outside
+  // any window: at (-1,-1) the pair is on the window's top-left resize corner, and
+  // live it dragged a background Canary window to the screen's corner and grew it.
+  const OFF_SCREEN = { x: -300000, y: -300000 };
   function skyClick(I, pt) {
     const r = I.cgBounds || I.geom;
     if (!(pt.x >= r.x && pt.x < r.x + r.w && pt.y >= r.y && pt.y < r.y + r.h)) {
@@ -1794,12 +1798,12 @@ function jxaRuntime(BROWSERS, HANG) {
     skyMouse(I, pt, 5, 2, 0, group);
     // 0 to 15ms all clicked 70/70 live on Canary; 5ms keeps the primer ordered first.
     delay(0.005);
-    skyMouse(I, { x: -1, y: -1 }, 1, 1, 1, group);
+    skyMouse(I, OFF_SCREEN, 1, 1, 1, group);
     delay(0.001);
-    skyMouse(I, { x: -1, y: -1 }, 2, 2, 1, group);
-    // 100ms: at 10ms, 3 of 90 live background clicks on Canary missed or were
-    // refused, where 100ms landed 90 of 90.
-    delay(0.1);
+    skyMouse(I, OFF_SCREEN, 2, 2, 1, group);
+    // 10ms: live on Canary 159, with the click check retrying for 300ms, 780 of
+    // 780 background clicks landed at 10ms, 200 of them with this far pair.
+    delay(0.01);
     skyMouse(I, pt, 1, 3, 1, group);
     delay(0.001);
     skyMouse(I, pt, 2, 3, 1, group);
