@@ -1669,7 +1669,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // The default route addresses the exact pid/window through SkyLight. Chromium
   // needs the window/gesture fields and an off-screen primer pair; a bare
   // SLEventPostToPid (as in the old --delivery probe) is ignored by its renderer.
-  // Field 1 is kCGMouseEventClickState, 11 kCGMouseEventPressure (raw indices:
+  // Field 1 is kCGMouseEventClickState, 2 kCGMouseEventPressure (raw indices:
   // $.kCG* constants aren't reliably bridged).
   function mouse(I, pt, type, state, pressure) {
     const r = I.cgBounds || I.geom;
@@ -1678,7 +1678,7 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     const e = $.CGEventCreateMouseEvent($(), type, $.CGPointMake(pt.x, pt.y), 0);
     $.CGEventSetIntegerValueField(e, 1, state);
-    $.CGEventSetDoubleValueField(e, 11, pressure);
+    $.CGEventSetDoubleValueField(e, 2, pressure);
     $.CGEventPost(0, e); // kCGHIDEventTap
   }
 
@@ -1830,6 +1830,14 @@ function jxaRuntime(BROWSERS, HANG) {
     if (!T.background || T.t.P.front === T.t.app || procs().front !== T.t.app) return out;
     out.warning = out.warning ? out.warning + "; " + FRONTED : FRONTED;
     return out;
+  }
+
+  // What a.check read after a click. A trusted mousedown can reach the page after
+  // the 50ms already waited (1 raised click in 5 live), so with a.wait the page
+  // is asked again every 25ms, for 300ms, before a.check takes its answer.
+  function clickCheck(T, a) {
+    const r = a.wait ? poll(T.t, a.wait, 300, 25) : null;
+    return r ? r.value : readExec(T.t, a.check);
   }
 
   // A key pair addressed to the browser pid only: no window fields, no Command
@@ -2246,7 +2254,7 @@ function jxaRuntime(BROWSERS, HANG) {
       delay(0.05);
       // The click is posted, so a dropped reply says `tool` ran rather than inviting a
       // retry; the check only reads what the recorders saw, so it may be sent twice.
-      const check = afterStep(tool, function () { return readExec(T.t, a.check); });
+      const check = afterStep(tool, function () { return clickCheck(T, a); });
       const out = frontWarn(T, { ok: check.hit === true, el: A.el, point: A.pt, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" });
       return { out: threw(check) ? Object.assign(out, { ok: false, error: checkFault(tool, check) }) : Object.assign(out, check) };
     } finally {
@@ -3787,7 +3795,7 @@ function jxaRuntime(BROWSERS, HANG) {
           if (T.background) skyClick(T.I, { x: a.x, y: a.y });
           else leftClick(T.I, { x: a.x, y: a.y });
           delay(0.05);
-          const check = afterStep("click", function () { return readExec(T.t, a.check); });
+          const check = afterStep("click", function () { return clickCheck(T, a); });
           out = frontWarn(T, { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" });
           if (threw(check)) return Object.assign(out, { ok: false, error: checkFault("click", check) });
           if (check.hit === undefined) out.note = "the page changed after the click (it may have navigated), so whether it landed is unknown";
@@ -8870,8 +8878,10 @@ return A.reset || !moves.length ? null : { moves: moves };
 
   // hit: the mousedown landed on the element (a click by point: on the page, at
   // `el`); null: no mousedown reached the page; missing: no recorder, a new document.
+  // A.wait: null, recorder left armed, while no mousedown has arrived yet.
   trusted_check: TA_OWN_LIB + String.raw`
 const st = window.__perch_trusted || {};
+if (A.wait && st.down === null) return null;
 if (st.off) st.off();
 const out = { hit: st.down };
 if (st.at) out.el = st.at;
@@ -9446,6 +9456,7 @@ async function trustedClick({ ref, selector, label_pattern, x, y, raise, target,
     cal: probing ? pageFn("trusted_cal", {}) : null,
     calReset: probing ? pageFn("trusted_cal", { reset: true }) : null,
     check: pageFn("trusted_check", {}),
+    wait: pageFn("trusted_check", { wait: true }),
     arm: readback ? pageFn("readback_arm", { readback, probed: probing }) : null,
     ...readbackSteps(readback),
   }, readback ? { lane: "slow" } : {});

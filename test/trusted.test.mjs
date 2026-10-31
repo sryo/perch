@@ -926,3 +926,48 @@ test("a trusted click with readback whose arm gets no reply posts nothing, withi
   assert.ok(world.clock.t - t0 <= 5000 + 200, `took ${world.clock.t - t0}ms`);
   assert.deepEqual(downs(world), []);
 });
+
+// kCGMouseEventPressure is field 2 (11 is a scroll-wheel delta): a press carries 1,
+// its release 0.
+test("a raised trusted click sets the press's pressure on the pressure field", async () => {
+  const world = chromeFront();
+  await handleCall("click", { trusted: true, raise: true, x: 300, y: 200 });
+  const [down, up] = world.posted.filter((e) => e.via === "hid" && e.type !== 5);
+  assert.equal(down.fields[2], 1);
+  assert.equal(up.fields[2], 0);
+  assert.equal(down.fields[11], undefined, "no scroll delta on a click");
+});
+
+// A trusted mousedown can reach the page later than the 50ms the check first
+// waits (seen live as 1 miss in 5 on a raised click). The check keeps looking,
+// within 300ms, before it says no click arrived.
+test("a trusted click whose mousedown reaches the page late still lands", async () => {
+  const ts = tabs(2), dom = ts[0].dom;
+  const world = install({
+    browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 1, active: 0, x: 10, y: 20, w: 800, h: 600, tabs: ts }] }],
+    cg: [{ owner: "Google Chrome", pid: 4242, wid: 77, x: 10, y: 0, w: 800, h: 620, ax: PAGE_AX }],
+  });
+  let downAt = null;
+  world.state.onPost = (e) => { if (e.type === 1 && e.pt.x >= 0) downAt = world.clock.t; };
+  world.state.onDelay = () => {
+    if (downAt == null || world.clock.t < downAt + 150) return;
+    downAt = null;
+    const ev = new dom.MouseEvent("mousedown", { bubbles: true });
+    Object.defineProperty(ev, "isTrusted", { value: true });
+    dom.document.body.dispatchEvent(ev);
+  };
+  const r = await handleCall("click", { trusted: true, raise: true, x: 300, y: 200 });
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.ok, true, r.content[0].text);
+  assert.equal(o.hit, true);
+});
+
+test("a trusted click no mousedown reaches stops looking after 300ms", async () => {
+  const world = chromeFront();
+  const t0 = world.clock.t;
+  const r = await handleCall("click", { trusted: true, raise: true, x: 300, y: 200 });
+  const o = JSON.parse(r.content[0].text);
+  assert.equal(o.ok, false);
+  assert.match(o.error, /no click reached the page/);
+  assert.ok(world.clock.t - t0 < 1000, `waited ${world.clock.t - t0}ms`);
+});

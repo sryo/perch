@@ -188,6 +188,9 @@ async function runVersion(T, base, upload) {
       try {
         await rep(client, "activate_tab", { target: { tabId: W.shown } });
         for (const [name, tool, args] of focused(W).filter(([name]) => keep(name))) {
+          // Warm the path first, as the workload does: every version failed exactly
+          // 1 raised click in 5, which points at one fixed rep, likely the first.
+          await rep(client, tool, args);
           const reps = [];
           for (let i = 0; i < Math.min(REPS, 5); i++) reps.push(await rep(client, tool, args));
           results[name] = stats(reps);

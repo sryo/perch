@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { page } from "./helpers/page.mjs";
+import { page, deliverPress } from "./helpers/page.mjs";
 
 let world;
 const NOT_AE = /^(win\.tabs|tabs\.byId|win\.activeTab|windows\[\d+\]\(.*\)|Application\(.*\)|running\(.*\)|deepUnwrap|CGWindowList)$/;
@@ -26,6 +26,8 @@ function install() {
   world.run(JXA_PRELUDE);
   DAEMONS.fast = world.daemon;
   DAEMONS.slow = world.daemon;
+  // The click lands, so its check answers on the first read.
+  deliverPress(world, dom);
 }
 
 test("a trusted click on a hinted, shown Chrome tab reads its window once; a hidden one is refused as before", async () => {

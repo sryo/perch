@@ -9,7 +9,7 @@ import { tempDir } from "../scripts/temp.mjs";
 import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall, PAGE_PRELUDE, PAGE_SCRIPTS, pageScript, buildEvalWrapper } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { page } from "./helpers/page.mjs";
+import { page, deliverPress } from "./helpers/page.mjs";
 
 const chrome = (windows, extra = {}) => ({ name: "Google Chrome", kind: "chrome", windows, ...extra });
 const safari = (windows, extra = {}) => ({ name: "Safari", kind: "safari", windows, ...extra });
@@ -311,6 +311,8 @@ test("the trusted click's hit test adds Accessibility reads only, no Apple Event
   for (const [k, v] of Object.entries({ screenX: 0, screenY: 57, outerWidth: 654, innerWidth: 598, outerHeight: 600, innerHeight: 500 })) Object.defineProperty(dom, k, { value: v, configurable: true });
   const cg = [{ owner: "Google Chrome", pid: 40, wid: 400, x: 0, y: 57, w: 854, h: 600, ax: { web: [{ x: 56, y: 157, w: 598, h: 500 }] } }];
   install({ browsers: [chrome([{ id: 1, active: 0, x: 0, y: 57, w: 854, h: 600, tabs: [{ url: "https://c0.test/", id: "c0", dom }] }])], cg });
+  // Each click lands, so the check answers on its first read.
+  deliverPress(world, dom);
   const events = () => Object.entries(world.counts).filter(([k]) => !NOT_AE.test(k) && !/^AX/.test(k)).reduce((s, [, n]) => s + n, 0);
   const ax = () => world.counts.AX || 0;
   const cost = [];
