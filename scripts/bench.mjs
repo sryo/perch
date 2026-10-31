@@ -13,8 +13,10 @@
 //   --navigate   also time navigate (reloads the fixture in the scratch tab)
 //   --house <out.json>  also write the run in fium's format (fium RULES.md K2), with
 //                the behaviour lock's Apple Events and result bytes per tool; judge it
-//                with fium price compare bench/house-baseline.json <out.json> (offline metrics) and
+//                with ~/Documents/fium/fium price compare bench/house-baseline.json <out.json> (offline metrics) and
 //                bench/house-live-baseline.json <out.json> --noise bench/noise.json (live rows)
+//   --noise <file>  this run is an A/A against bench/house-live-baseline.json: write
+//                fium's spread for it as the noise file (needs --house)
 //   --offline    no browser: only the schema and lock metrics (needs --house)
 
 import { writeFile, readFile, mkdir } from "node:fs/promises";
@@ -24,7 +26,7 @@ import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { connect, text, ROOT } from "./mcp-client.mjs";
 import { recordLock, lockTotals } from "./versions-lib.mjs";
 import { SCHEMA_BUDGET } from "../server.js";
@@ -41,6 +43,7 @@ export function parseArgs(argv) {
     tab: opt("--tab"),
     navigate: argv.includes("--navigate"),
     house: opt("--house"),
+    noise: opt("--noise"),
     offline: argv.includes("--offline"),
   };
 }
@@ -48,12 +51,18 @@ export function parseArgs(argv) {
 // The run in house's format: each live row's timings and result bytes, the
 // tools/list size under its SCHEMA_BUDGET limit, and per tool the behaviour
 // lock's Apple Events (fake world) and result bytes.
-export function houseRun({ results, samples, lock }) {
+// Rows whose result bytes moved between identical live runs (ref ids, rendered
+// pixels, the user's open tabs): judged statistically, over every rep's bytes.
+export const NOISY_BYTES = new Set(["list_tabs", "accessibility_snapshot", "screenshot png", "screenshot jpeg"]);
+
+export function houseRun({ results, samples, bytes = {}, lock }) {
   const metrics = {};
   for (const [k, v] of Object.entries(results)) {
     if (k === "schema" || v.error) continue;
     metrics[`${k} ms`] = { dir: "lower", kind: "time", samples: samples[k] || [v.p50] };
-    metrics[`${k} bytes`] = { dir: "lower", kind: "bytes", samples: [v.bytes] };
+    metrics[`${k} bytes`] = NOISY_BYTES.has(k) && bytes[k]
+      ? { dir: "lower", kind: "bytes", noisy: true, samples: bytes[k] }
+      : { dir: "lower", kind: "bytes", samples: [v.bytes] };
   }
   if (results.schema) metrics["schema chars"] = { dir: "lower", kind: "bytes", samples: [results.schema.chars] };
   for (const [tool, t] of Object.entries(lock)) {
@@ -61,6 +70,15 @@ export function houseRun({ results, samples, lock }) {
     metrics[`lock result bytes ${tool}`] = { dir: "lower", kind: "bytes", samples: [t.bytes] };
   }
   return { metrics, limits: { "schema chars": SCHEMA_BUDGET } };
+}
+
+// bench/noise.json from a live A/A's `fium price compare --json` rows: per noisy
+// metric, the farthest its range strayed from 1, rounded up to a percent and at
+// least fium's default 10%.
+export function noiseFrom(rows) {
+  const rel = {};
+  for (const r of rows) if (r.range) rel[r.metric] = Math.max(0.1, Math.ceil(Math.max(1 - r.range[0], r.range[1] - 1) * 100 - 1e-9) / 100);
+  return { rel };
 }
 
 // The summary baseline's live rows in house's format: one sample (its p50) per
@@ -140,11 +158,26 @@ export function compareLines(baseline, report) {
   return lines;
 }
 
+// The bench never takes the user's focus (GOALS.md goal 1): every step runs
+// between two reads of the frontmost app's pid, and a change stops the run.
+export function frontGuard(frontPid) {
+  return {
+    async step(name, fn) {
+      const before = frontPid();
+      const out = await fn();
+      const after = frontPid();
+      if (after !== before) throw new Error(`the front app changed during ${name} (pid ${before} -> ${after}); stopping, nothing else runs`);
+      return out;
+    },
+  };
+}
+const frontPidNow = () => Number(execFileSync("osascript", ["-l", "JavaScript", "-e", "ObjC.import('AppKit'); $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier"]).toString().trim());
+
 const WARMUP = 3;
 const pct = (xs, p) => xs.slice().sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))];
 
 async function main() {
-  const { runs: RUNS, out: OUT, compare: COMPARE, app: APP, tab: TAB, navigate, house: HOUSE, offline: OFFLINE } = parseArgs(process.argv.slice(2));
+  const { runs: RUNS, out: OUT, compare: COMPARE, app: APP, tab: TAB, navigate, house: HOUSE, offline: OFFLINE, noise: NOISE } = parseArgs(process.argv.slice(2));
   if (OFFLINE) {
     if (!HOUSE) throw new Error("--offline writes only the house run; pass --house <out.json>");
     const client = await connect({ timeoutMs: 60000 });
@@ -156,13 +189,15 @@ async function main() {
   const fixture = { file: FIXTURE_FILE, sha256: fixtureHash(html) };
   const server = await serveFixture(html);
   const client = await connect({ timeoutMs: 60000 });
-  const results = {}, samples = {};
+  const results = {}, samples = {}, byteSamples = {};
   let benched = null;
   let scratch = null;
   let target = null;
 
-  async function time(name, fn) {
-    const ms = [];
+  const guard = frontGuard(frontPidNow);
+  async function time(name, fn) { return guard.step(name, () => timeRow(name, fn)); }
+  async function timeRow(name, fn) {
+    const ms = [], all = [];
     let bytes = 0;
     try {
       for (let i = 0; i < WARMUP + RUNS; i++) {
@@ -170,11 +205,12 @@ async function main() {
         const res = await fn();
         const dt = performance.now() - t0;
         if (res.isError) throw new Error(text(res));
-        if (i >= WARMUP) ms.push(dt);
         bytes = JSON.stringify(res.content).length;
+        if (i >= WARMUP) { ms.push(dt); all.push(bytes); }
       }
       results[name] = { p50: +pct(ms, 0.5).toFixed(1), p95: +pct(ms, 0.95).toFixed(1), min: +Math.min(...ms).toFixed(1), bytes };
       samples[name] = ms.map((x) => +x.toFixed(1));
+      byteSamples[name] = all;
     } catch (e) {
       results[name] = { error: e.message.slice(0, 200) };
     }
@@ -198,7 +234,7 @@ async function main() {
     benched = scratch.app;
     target = { tabId: scratch.tabId };
     console.log(`fixture ${server.url} (${fixture.sha256.slice(0, 12)}) in ${benched} ${scratch.tabId}${scratch.active ? "" : "; not shown, so screenshot rows will error"}`);
-    const loaded = JSON.parse(text(await go(server.url)));
+    const loaded = JSON.parse(text(await guard.step("navigate to the fixture", () => go(server.url))));
     if (!loaded.waited) console.log("warning: the fixture load wasn't confirmed; rows may measure a loading page");
 
     await time("list_tabs", () => client.call("list_tabs"));
@@ -238,18 +274,29 @@ async function main() {
     await mkdir(dirname(p), { recursive: true });
     await writeFile(p, JSON.stringify(report, null, 2) + "\n");
   }
-  if (HOUSE) await writeHouse(HOUSE, { results, samples });
+  if (HOUSE) await writeHouse(HOUSE, { results, samples, bytes: byteSamples });
+  // --noise <file>: this run is an A/A against bench/house-live-baseline.json (same
+  // code); fium's ranges for it become the noise later compares allow.
+  if (NOISE) {
+    if (!HOUSE) throw new Error("--noise needs --house");
+    const cli = process.env.FIUM || resolve(homedir(), "Documents/fium/fium");
+    let json;
+    try { json = execFileSync(cli, ["price", "compare", resolve(ROOT, "bench/house-live-baseline.json"), resolve(ROOT, HOUSE), "--json"]).toString(); }
+    catch (e) { if (!e.stdout) throw e; json = e.stdout.toString(); }
+    await writeFile(resolve(ROOT, NOISE), JSON.stringify(noiseFrom(JSON.parse(json)), null, 2) + "\n");
+    console.log(`noise: ${NOISE}`);
+  }
   // No baseline, or one that isn't bench JSON: just print this run.
   const baseline = await readFile(resolve(ROOT, COMPARE), "utf8").then((s) => JSON.parse(s)).catch(() => null);
   if (baseline?.results) console.log("\n" + compareLines(baseline, report).join("\n"));
 }
 
-async function writeHouse(out, { results, samples }) {
+async function writeHouse(out, { results, samples, bytes }) {
   const src = await readFile(resolve(ROOT, "server.js"), "utf8");
   const lock = lockTotals(recordLock(src, ROOT, resolve(tmpdir(), `perch-bench-lock-${process.pid}`)));
   const p = resolve(ROOT, out);
   await mkdir(dirname(p), { recursive: true });
-  await writeFile(p, JSON.stringify(houseRun({ results, samples, lock }), null, 2) + "\n");
+  await writeFile(p, JSON.stringify(houseRun({ results, samples, bytes, lock }), null, 2) + "\n");
   console.log(`house run: ${out}`);
 }
 
