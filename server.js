@@ -10191,6 +10191,7 @@ const MIME_BY_EXT = {
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   pages: "application/x-iwork-pages-sffpages",
   png:  "image/png",
+  mp4:  "video/mp4",
   jpg:  "image/jpeg",
   jpeg: "image/jpeg",
 };
