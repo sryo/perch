@@ -4606,9 +4606,10 @@ async function roomHeld(tabId, held) {
 async function withRoomLease(tabId, note, fn) {
   const { old } = await roomLeaseChange(tabId, (s) => {
     const other = s && s.owner !== ROOM_OWNER;
+    // An exited process holds nothing; the idle window only spans a live one's gap between calls.
     let live = false;
-    if (other && s.active && s.pid) { try { process.kill(s.pid, 0); live = true; } catch {} }
-    if (other && (live || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
+    if (other && s.pid) { try { process.kill(s.pid, 0); live = true; } catch (e) { live = e.code === "EPERM"; } }
+    if (other && live && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
     return { owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: true, held: s?.held ?? null };
   });
   note.lease = tabId;

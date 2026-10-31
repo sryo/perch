@@ -3,6 +3,7 @@
 // against the fake endpoint; the isolate preload makes any Apple Event a failure.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { handleCall, rooms, roomsReset, roomHint, JXA_PRELUDE, DAEMONS } from "../server.js";
@@ -321,6 +322,22 @@ test("two perch server copies gate one room tab until its five-second lease expi
   writeFileSync(path, JSON.stringify({ ...lease, last: Date.now() - 6000 }));
   const got = await other.handleCall("eval_js", { script: "return 2", target: tab() });
   assert.equal(got.content[0].text, "2");
+});
+
+test("a lease left by an exited process frees the tab at once", async () => {
+  const R = makeRooms();
+  const other = await import(`../server.js?exited-room-lease=${Date.now()}`);
+  roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  other.roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  await call("eval_js", { script: "return 1", target: tab() });
+  const dir = join(R.home, "run", "leases");
+  const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
+  const exited = spawnSync(process.execPath, ["-e", ""]).pid;
+  for (const active of [false, true]) {
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), owner: "gone", pid: exited, active, last: Date.now() }));
+    const got = await other.handleCall("eval_js", { script: "return 2", target: tab() });
+    assert.equal(got.content[0].text, "2", `active:${active}`);
+  }
 });
 
 test("a lease transfer releases a key left down by the previous server", async () => {
