@@ -246,3 +246,17 @@ test("Accessibility calls wait at most half a second on a hung app, not the 6s d
   await click({ selector: "#b" });
   assert.deepEqual(w.state.axTimeouts, [["AXSystemWide", 0.5]]);
 });
+
+test("a trusted click on a control an overlay covers is refused before anything is posted", async () => {
+  const w = world({ html: `<div id=ov>Cookie banner</div>` });
+  const ov = w.dom.document.getElementById("ov");
+  let hits = 0;
+  ov.addEventListener("mousedown", () => hits++);
+  w.dom.document.elementFromPoint = () => ov;
+  const o = await click({ selector: "#b" });
+  assert.equal(o.ok, false, JSON.stringify(o));
+  assert.equal(o.covered, true);
+  assert.match(o.error, /covered by .*nothing was clicked/);
+  assert.deepEqual(clicks(w), []);
+  assert.equal(hits, 0);
+});

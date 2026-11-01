@@ -2243,6 +2243,7 @@ function jxaRuntime(BROWSERS, HANG) {
 
     function aimed() {
       const off = offPage(T, probe, pt, area);
+      if (!off && probe.cover) return { out: { ok: false, covered: true, error: probe.cover + "; nothing was clicked" } };
       return off ? { out: off } : { pt: pt, el: probe.el, blank: probe.blank, tok: probe.tok, calibration: trace, aim: via };
     }
   }
@@ -8212,12 +8213,14 @@ function hitsOwn(el, hit, x, y) {
 }
 const atPt = document.elementFromPoint && document.elementFromPoint(cx, cy);
 if (inFrame(atPt)) return { ok: false, error: ident(el) + FRAMED };
-// select's own control or option under another element (a menu left open over
-// its popup, as in a modal where select sends other menus no Escape): the
-// click would land on that element, so nothing is posted.
-// The hit is taken deep, since the document retargets one inside a shadow tree
-// to its host; a host whose tree holds el, and el's own label, are el's too.
-if (A.select && atPt && !hitsOwn(el, atPt, cx, cy)) return { ok: false, covered: true, error: ident(el) + " is covered by " + ident(atPt) + "; nothing was clicked or picked" };
+// el under another element (an overlay, a cookie banner, a menu left open over
+// select's popup): the OS would deliver the press to that element, so nothing
+// is posted. The hit is taken deep, since the document retargets one inside a
+// shadow tree to its host; a host whose tree holds el, and el's own label, are el's too.
+// A click's cover is refused after Accessibility's hit test, which names a frame
+// (a closed shadow root's, which page JS sees only as its host) more usefully.
+const cover = atPt && !hitsOwn(el, atPt, cx, cy) ? ident(el) + " is covered by " + ident(atPt) : null;
+if (cover && (A.select || A.forFill)) return { ok: false, covered: true, error: cover + (A.select ? "; nothing was clicked or picked" : "; nothing was typed") };
 `;
 // A click that opens a new tab also records whether the page cancelled it.
 const TRUSTED_PROBE_TAIL = BLANK_LIB + String.raw`if (A.forFill && !A.background) { setNativeValue(el, ""); fire(el, ["input"]); }
@@ -8253,6 +8256,7 @@ return {
   iw: window.innerWidth,
   ih: window.innerHeight,
   tok: selTok,
+  cover: cover || undefined,
 };`;
 
 // fill's probe also records a typeahead (as TRUSTED_FILL_BG does) before the
