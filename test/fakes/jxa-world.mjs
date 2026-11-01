@@ -893,6 +893,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // Accessibility tree: a CG entry's `ax: { web: [{x,y,w,h}, ...] }` lists the
       // window's web areas (the page, and a side panel's). No `ax`: nothing matches.
       AXUIElementCreateApplication: (pid) => ({ role: "AXApplication", pid }),
+      AXUIElementCreateSystemWide: () => ({ role: "AXSystemWide" }),
+      // Records each timeout set: [element role, seconds].
+      AXUIElementSetMessagingTimeout: (el, s) => { (state.axTimeouts ||= []).push([el.role, s]); return 0; },
       // An entry's `axFrame` is its AX window's frame when it differs from CG's;
       // `axWid` is the CGWindowID its AX window reports (unreadable without one),
       // `axTitle` that window's AXTitle.

@@ -2345,6 +2345,13 @@ function jxaRuntime(BROWSERS, HANG) {
     ObjC.bindFunction("AXUIElementCopyAttributeValue", ["int", ["id", "id", "id *"]]);
     ObjC.bindFunction("AXUIElementPerformAction", ["int", ["id", "id"]]);
     ObjC.bindFunction("AXUIElementSetAttributeValue", ["int", ["id", "id", "id"]]);
+    // Set on the system-wide element, the timeout covers every AX call this process
+    // makes: a hung app answers in 0.5s, not the 6s default.
+    try {
+      ObjC.bindFunction("AXUIElementCreateSystemWide", ["id", []]);
+      ObjC.bindFunction("AXUIElementSetMessagingTimeout", ["int", ["id", "float"]]);
+      $.AXUIElementSetMessagingTimeout($.AXUIElementCreateSystemWide(), 0.5);
+    } catch (e) {}
     // Private but long-standing: an AX window's CGWindowID. Null when unavailable.
     let widOk = false;
     try { ObjC.bindFunction("_AXUIElementGetWindow", ["int", ["id", "int *"]]); widOk = true; } catch (e) {}

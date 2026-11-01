@@ -240,3 +240,9 @@ test("a point on the target window's own toolbar is still browser UI, not anothe
   assert.equal(o.ok, false, JSON.stringify(o));
   assert.match(o.error, OFF);
 });
+
+test("Accessibility calls wait at most half a second on a hung app, not the 6s default", async () => {
+  const w = world();
+  await click({ selector: "#b" });
+  assert.deepEqual(w.state.axTimeouts, [["AXSystemWide", 0.5]]);
+});
