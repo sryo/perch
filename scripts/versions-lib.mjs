@@ -83,13 +83,17 @@ export function lockDiff(before, after) {
 
 // Records the behaviour lock for `serverJs` (a server.js source) with `root`'s lock
 // harness and fake world, in scratch directory `dir`, and returns its lockSteps.
+// What recordLock copies from `root` beside the recorded server.js.
+export const LOCK_FILES = ["package.json", "scripts/temp.mjs", "test/lock.test.mjs"];
+export const LOCK_DIRS = ["test/lock", "test/fakes", "test/helpers", "test/fixtures"];
+
 export function recordLock(serverJs, root, dir) {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(dir, "test"), { recursive: true });
   mkdirSync(join(dir, "scripts"));
   writeFileSync(join(dir, "server.js"), serverJs);
-  for (const f of ["package.json", "scripts/temp.mjs", "test/lock.test.mjs"]) writeFileSync(join(dir, f), readFileSync(join(root, f)));
-  for (const d of ["test/lock", "test/fakes", "test/helpers", "test/fixtures"]) execFileSync("cp", ["-R", join(root, d), join(dir, d)]);
+  for (const f of LOCK_FILES) writeFileSync(join(dir, f), readFileSync(join(root, f)));
+  for (const d of LOCK_DIRS) execFileSync("cp", ["-R", join(root, d), join(dir, d)]);
   symlinkSync(join(root, "node_modules"), join(dir, "node_modules"));
   execFileSync("node", ["--import", "./test/helpers/isolate.mjs", "--test", "test/lock.test.mjs"], { cwd: dir, env: { ...process.env, PERCH_LOCK_WRITE: "1" }, stdio: "ignore" });
   const steps = lockSteps(JSON.parse(readFileSync(join(dir, "test/lock/golden.json"), "utf8")));

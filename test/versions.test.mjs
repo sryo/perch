@@ -56,3 +56,10 @@ test("compareRuns judges a screenshot by pixel area, not by its encoded bytes, w
   const base = { shot: { p50: 80, p90: 90, bytes: 135500, ok: 5, err: 0, image: { w: 900, h: 760 } } };
   assert.deepEqual(compareRuns(base, { shot: { p50: 80, p90: 90, bytes: 135628, ok: 5, err: 0, image: { w: 900, h: 760 } } }), []);
 });
+
+test("every file and folder recordLock copies from HEAD exists", async () => {
+  const { LOCK_FILES, LOCK_DIRS } = await import("../scripts/versions-lib.mjs");
+  const { existsSync } = await import("node:fs");
+  const missing = [...LOCK_FILES, ...LOCK_DIRS].filter((p) => !existsSync(new URL("../" + p, import.meta.url)));
+  assert.deepEqual(missing, []);
+});

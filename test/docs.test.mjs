@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, ERR } from "../server.js";
 
 const SKILL_MAX = 8800;
@@ -117,4 +118,14 @@ test("docs say eval_js's ref binds el", async () => {
   assert.ok(row && /`ref`/.test(row) && /`el`/.test(row), "SKILL.md's eval_js row misses ref binding el");
   const bullet = agents.split("\n").find((l) => l.startsWith("- **eval_js ref:**"));
   assert.ok(bullet && /__perch_ref_miss/.test(bullet) && /compile cache/.test(bullet), "AGENTS.md misses the eval_js ref bullet");
+});
+
+test("every repo path the docs name exists", async () => {
+  const missing = [];
+  for (const doc of ["AGENTS.md", "README.md", "SKILL.md"]) {
+    for (const [, p] of (await read(doc)).matchAll(/`((?:test|scripts|bench)\/[\w./-]+\.(?:mjs|js|json|html))`/g)) {
+      if (!p.startsWith("bench/runs/") && !existsSync(new URL("../" + p, import.meta.url))) missing.push(`${doc}: ${p}`);
+    }
+  }
+  assert.deepEqual(missing, []);
 });
