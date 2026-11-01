@@ -911,3 +911,40 @@ test("navigate tool on Chrome: loading settled on a moved url while the stamped 
   assert.ok(m, o.error);
   assert.ok(Number(m[1]) <= ms, "the reported wait is the time spent");
 });
+
+// A slow commit: the gate and the commit poll run every 20ms and 50ms for the
+// first second of the call, then double each round up to 400ms, so a 15s
+// timeout costs tens of reads, not hundreds, and a late commit is still seen
+// within one capped round.
+const pollReads = () => (world.counts["tab.loading"] || 0) + (world.counts["tab.execute"] || 0);
+test("navigate: a commit that never comes is polled with backoff, ending at the timeout", () => {
+  install(fixture());
+  world.state.commitMs = 1e9;
+  const t0 = world.clock.t;
+  const r = runtimeNavigate("http://127.0.0.1:8787/next.html");
+  const took = world.clock.t - t0;
+  assert.equal(r.waited, false);
+  assert.ok(took >= NAV_TIMEOUT && took <= NAV_TIMEOUT + 600, `took ${took}ms`);
+  const delays = world.state.delays;
+  assert.ok(Math.max(...delays) <= 0.4, `longest delay ${Math.max(...delays)}s`);
+  assert.ok(pollReads() <= 140, `${pollReads()} reads: ${JSON.stringify(world.counts)}`);
+});
+
+test("navigate: a commit after the fast second is seen within one capped round", () => {
+  install(fixture());
+  world.state.commitMs = 5000;
+  const t0 = world.clock.t;
+  const r = runtimeNavigate("http://127.0.0.1:8787/next.html");
+  const took = world.clock.t - t0;
+  assert.equal(r.waited, true);
+  assert.ok(took >= 5000 && took <= 5000 + 400 + 100, `took ${took}ms`);
+});
+
+test("navigate: within the first second the gate and the poll keep their fast rate", () => {
+  install(fixture());
+  world.state.commitMs = 600;
+  const r = runtimeNavigate("http://127.0.0.1:8787/next.html");
+  assert.equal(r.waited, true);
+  const early = world.state.delays.filter((s) => s !== 0.15);
+  assert.ok(early.every((s) => s <= 0.05), JSON.stringify(early));
+});

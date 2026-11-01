@@ -730,6 +730,10 @@ function jxaRuntime(BROWSERS, HANG) {
   };
   // How long navigate holds page JS while the tab reports loading.
   const NAV_GATE_MS = 2000;
+  // navigate's gate and commit poll keep their rate for NAV_FAST_MS of the call,
+  // where most loads land, then double each round up to NAV_POLL_MAX seconds: a
+  // slow load is seen at most that late, and a 15s timeout costs tens of reads.
+  const NAV_FAST_MS = 1000, NAV_POLL_MAX = 0.4;
   const ERR_SETTLE_MS = 500;
   // Provisional: how long a background Arc tab may read not loading after its url
   // is set before a load that never started counts as failed. Not yet measured live.
@@ -3483,16 +3487,24 @@ function jxaRuntime(BROWSERS, HANG) {
       const check = "(function(){try{return JSON.stringify({done:window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete',href:location.href,old:window.__perch_nav===" + JSON.stringify(token) +
         ",err:location.protocol==='chrome-error:'||/^safari-resource:/i.test(location.href)})}catch(e){return 'null'}})()";
       const start = Date.now();
+      // Sleeps `step` seconds, doubled each round once NAV_FAST_MS has passed, never past `until`.
+      const backoff = function (step) {
+        return function (until) {
+          if (Date.now() - start >= NAV_FAST_MS) step = Math.min(step * 2, NAV_POLL_MAX);
+          delay(Math.max(0, Math.min(step, (until - Date.now()) / 1000)));
+        };
+      };
       // Page JS sent before the new document commits may never be answered, and
       // Chromium's `loading` is already true when setting url returns, so hold off
       // while it is. Only for NAV_GATE_MS: subframe navigations can keep it true
       // after the document is complete, and a slow server's commit is covered by
       // the bounded execute.
       if (t.kind !== "safari") {
+        const nap = backoff(0.02);
         for (;;) {
           const busy = read(function () { return t.tab.loading(); });
           if (!busy || Date.now() - start >= NAV_GATE_MS || Date.now() >= deadline) break;
-          delay(0.02);
+          nap(Math.min(start + NAV_GATE_MS, deadline));
         }
       }
       let lastC = null;
@@ -3519,6 +3531,7 @@ function jxaRuntime(BROWSERS, HANG) {
       // retried, an interstitial): it counts once it has stood ERR_SETTLE_MS with
       // the tab not loading. `errAt`: when the current one was first seen.
       let errAt = null;
+      const nap = backoff(0.05);
       while (Date.now() < deadline) {
         let c = null;
         try { c = JSON.parse(String(run(check))); } catch (e) { if (isStale(e)) throw e; }
@@ -3537,7 +3550,7 @@ function jxaRuntime(BROWSERS, HANG) {
         if (t.kind !== "safari" && Date.now() - start > 300 && settled(read(function () { return t.tab.loading(); }))) {
           return decide(read(function () { return String(t.tab.url()); }), false);
         }
-        delay(0.05);
+        nap(deadline);
       }
       if (errAt != null) return failed();
       // At the deadline, only when the last check that answered still found the
