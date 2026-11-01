@@ -84,7 +84,7 @@ export function lockDiff(before, after) {
 // Records the behaviour lock for `serverJs` (a server.js source) with `root`'s lock
 // harness and fake world, in scratch directory `dir`, and returns its lockSteps.
 // What recordLock copies from `root` beside the recorded server.js.
-export const LOCK_FILES = ["package.json", "scripts/temp.mjs", "test/lock.test.mjs"];
+export const LOCK_FILES = ["package.json", "scripts/temp-dirs.mjs", "test/lock.test.mjs"];
 export const LOCK_DIRS = ["test/lock", "test/fakes", "test/helpers", "test/fixtures"];
 
 export function recordLock(serverJs, root, dir) {

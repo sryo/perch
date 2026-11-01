@@ -89,7 +89,7 @@ export function context(srv, { tmp } = {}) {
 
 // Runs one scenario on its own server instance; returns its recorded steps.
 export async function runScenario(name, fn, t) {
-  const { tempDir } = await import("../../scripts/temp.mjs");
+  const { tempDir } = await import("../../scripts/temp-dirs.mjs");
   const srv = await freshServer(name);
   const h = context(srv, { tmp: tempDir("perch-lock-", t) });
   await fn(h);

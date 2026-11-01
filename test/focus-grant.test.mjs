@@ -6,7 +6,7 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
-import { tempDir } from "../scripts/temp.mjs";
+import { tempDir } from "../scripts/temp-dirs.mjs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall, focusReset, focusGrant, grantFocus, revokeFocus } from "../server.js";

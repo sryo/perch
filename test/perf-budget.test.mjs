@@ -5,7 +5,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
-import { tempDir } from "../scripts/temp.mjs";
+import { tempDir } from "../scripts/temp-dirs.mjs";
 import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall, PAGE_PRELUDE, PAGE_SCRIPTS, pageScript, buildEvalWrapper } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { chmod, readFile, writeFile } from "node:fs/promises";
-import { tempDir } from "../scripts/temp.mjs";
+import { tempDir } from "../scripts/temp-dirs.mjs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OsaDaemon, jxa, ERR } from "../server.js";

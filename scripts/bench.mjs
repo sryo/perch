@@ -13,9 +13,9 @@
 //   --navigate   also time navigate (reloads the fixture in the scratch tab)
 //   --house <out.json>  also write the run in fium's format (fium RULES.md K2), with
 //                the behaviour lock's Apple Events and result bytes per tool; judge it
-//                with ~/Documents/fium/fium compare bench/house-baseline.json <out.json> (offline metrics) and
-//                bench/house-live-baseline.json <out.json> --noise bench/noise.json (live rows)
-//   --noise <file>  this run is an A/A against bench/house-live-baseline.json: write
+//                with ~/Documents/fium/fium compare bench/fium-baseline.json <out.json> (offline metrics) and
+//                bench/fium-live-baseline.json <out.json> --noise bench/noise.json (live rows)
+//   --noise <file>  this run is an A/A against bench/fium-live-baseline.json: write
 //                fium's spread for it as the noise file (needs --house)
 //   --offline    no browser: only the schema and lock metrics (needs --house)
 
@@ -48,7 +48,7 @@ export function parseArgs(argv) {
   };
 }
 
-// The run in house's format: each live row's timings and result bytes, the
+// The run in fium's format: each live row's timings and result bytes, the
 // tools/list size under its SCHEMA_BUDGET limit, and per tool the behaviour
 // lock's Apple Events (fake world) and result bytes.
 // Rows whose result bytes moved between identical live runs (ref ids, rendered
@@ -81,7 +81,7 @@ export function noiseFrom(rows) {
   return { rel };
 }
 
-// The summary baseline's live rows in house's format: one sample (its p50) per
+// The summary baseline's live rows in fium's format: one sample (its p50) per
 // time metric. Its schema size is left out: the offline baseline measures that.
 export function houseFromBaseline(old) {
   const { schema, ...rows } = old.results || {};
@@ -275,13 +275,13 @@ async function main() {
     await writeFile(p, JSON.stringify(report, null, 2) + "\n");
   }
   if (HOUSE) await writeHouse(HOUSE, { results, samples, bytes: byteSamples });
-  // --noise <file>: this run is an A/A against bench/house-live-baseline.json (same
+  // --noise <file>: this run is an A/A against bench/fium-live-baseline.json (same
   // code); fium's ranges for it become the noise later compares allow.
   if (NOISE) {
     if (!HOUSE) throw new Error("--noise needs --house");
     const cli = process.env.FIUM || resolve(homedir(), "Documents/fium/fium");
     let json;
-    try { json = execFileSync(cli, ["compare", resolve(ROOT, "bench/house-live-baseline.json"), resolve(ROOT, HOUSE), "--json"]).toString(); }
+    try { json = execFileSync(cli, ["compare", resolve(ROOT, "bench/fium-live-baseline.json"), resolve(ROOT, HOUSE), "--json"]).toString(); }
     catch (e) { if (!e.stdout) throw e; json = e.stdout.toString(); }
     await writeFile(resolve(ROOT, NOISE), JSON.stringify(noiseFrom(JSON.parse(json)), null, 2) + "\n");
     console.log(`noise: ${NOISE}`);

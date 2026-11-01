@@ -7,7 +7,7 @@
 // opened with room.dialog(targetId, ...) blocks Runtime.evaluate until handled.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tempDir } from "../../scripts/temp.mjs";
+import { tempDir } from "../../scripts/temp-dirs.mjs";
 import { page } from "../helpers/page.mjs";
 
 const TOKEN = "ab".repeat(24);

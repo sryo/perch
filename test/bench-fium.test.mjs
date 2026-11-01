@@ -31,7 +31,7 @@ test("an offline run has no live rows", () => {
 });
 
 // The old baseline kept p50s only, so its time metrics carry one sample each:
-// house judges those by any move until a live run records a real baseline.
+// fium judges those by any move until a live run records a real baseline.
 test("houseFromBaseline converts the summary baseline", () => {
   const run = houseFromBaseline({ results: { "get_text 2000": { p50: 16.9, p95: 17.9, min: 14.7, bytes: 674 }, schema: { tools: 17, chars: 8826 } } });
   assert.deepEqual(run.metrics["get_text 2000 ms"], { dir: "lower", kind: "time", samples: [16.9] });

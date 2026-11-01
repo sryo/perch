@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { chmod, readFile, symlink, writeFile } from "node:fs/promises";
-import { tempDir } from "../scripts/temp.mjs";
+import { tempDir } from "../scripts/temp-dirs.mjs";
 import { join } from "node:path";
 import { ROOT } from "../scripts/mcp-client.mjs";
 

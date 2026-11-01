@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { connect, text, sameTab } from "./mcp-client.mjs";
-import { tempDir } from "./temp.mjs";
+import { tempDir } from "./temp-dirs.mjs";
 import { SCHEMA_BUDGET } from "../server.js";
 
 const withTabCreation = process.argv.includes("--with-tab-creation");

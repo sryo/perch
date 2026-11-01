@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
-import { tempDir } from "../scripts/temp.mjs";
+import { tempDir } from "../scripts/temp-dirs.mjs";
 import { join } from "node:path";
 import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, buildEvalWrapper, composeEvalScript, shapeTabs, formatResult, JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";

@@ -2,7 +2,7 @@
 // so whatever the fallback leaves behind is visible.
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
-import { tempDir } from "../../scripts/temp.mjs";
+import { tempDir } from "../../scripts/temp-dirs.mjs";
 import { page } from "./page.mjs";
 
 export const SHOT_NO_IMAGE = "timeout: screenshot: the window capture gave no image within 3s; nothing was captured";

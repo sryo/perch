@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS, deps, codeOsaError } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { readFileSync, writeFileSync } from "node:fs";
-import { tempDir } from "../scripts/temp.mjs";
+import { tempDir } from "../scripts/temp-dirs.mjs";
 import { join } from "node:path";
 import { page, run, runBody } from "./helpers/page.mjs";
 import { throwAt, noRaw } from "./helpers/fault.mjs";

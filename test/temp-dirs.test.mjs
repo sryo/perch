@@ -1,4 +1,4 @@
-// Every temp dir a test or script makes comes from scripts/temp.mjs, which
+// Every temp dir a test or script makes comes from scripts/temp-dirs.mjs, which
 // removes it when the test ends or the process exits, however it exits.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -6,10 +6,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tempDir } from "../scripts/temp.mjs";
+import { tempDir } from "../scripts/temp-dirs.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const TEMP = join(ROOT, "scripts", "temp.mjs");
+const TEMP = join(ROOT, "scripts", "temp-dirs.mjs");
 const perchEntries = (dir) => readdirSync(dir).filter((n) => n.startsWith("perch"));
 const env = (tmp) => {
   const e = { ...process.env, TMPDIR: tmp + "/", PERCH_LIVE: "0" };
@@ -17,7 +17,7 @@ const env = (tmp) => {
   return e;
 };
 
-test("no test or script makes a temp dir except through scripts/temp.mjs", () => {
+test("no test or script makes a temp dir except through scripts/temp-dirs.mjs", () => {
   const offenders = [];
   for (const sub of ["test", "scripts", "bench"]) {
     const dir = join(ROOT, sub);
