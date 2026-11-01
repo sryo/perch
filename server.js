@@ -4058,11 +4058,19 @@ for (;;) {
   }
 }`;
 
+// A REPL idle this long is closed and respawned by the next call: a session left
+// open otherwise holds its lanes for good, and after 10 idle minutes one cold
+// start (about 65ms more than a warm call) is nothing beside the agent's turn.
+// The same span as awake.ms.
+export const LANE_IDLE_MS = 600000;
+
 export class OsaDaemon {
-  constructor({ spawn: spawnFn = spawn, prelude = "", handshakeTimeout = 10000 } = {}) {
+  constructor({ spawn: spawnFn = spawn, prelude = "", handshakeTimeout = 10000, idleMs = LANE_IDLE_MS } = {}) {
     this.spawnFn = spawnFn;
     this.prelude = prelude;
     this.handshakeTimeout = handshakeTimeout;
+    this.idleMs = idleMs;
+    this.idleTimer = null;
     // Set when a REPL never answered its handshake: later calls go one-shot
     // at once instead of each waiting the handshake out.
     this.disabled = null;
@@ -4100,6 +4108,8 @@ export class OsaDaemon {
     if (!this.disabled) this._drain(true);
   }
   kill() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
     const p = this.proc;
     this.proc = null;
     this.ready = null;
@@ -4119,8 +4129,17 @@ export class OsaDaemon {
     // Handshake instead of a fixed settle: the prelude (or a no-op) must round-trip first.
     return new Promise((resolve, reject) => this._send({ script: this.prelude + ";1", timeout: this.handshakeTimeout, resolve, reject, handshake: true }));
   }
+  // Unref'd, so it never keeps node alive.
+  _idle() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+    if (!this.proc || !(this.idleMs > 0)) return;
+    this.idleTimer = setTimeout(() => { if (!this.current && this.queue.length === 0) this.kill(); }, this.idleMs);
+    if (this.idleTimer.unref) this.idleTimer.unref();
+  }
   async _drain(warm = false) {
-    if (this.current || (this.queue.length === 0 && !warm)) return;
+    if (this.current) return;
+    if (this.queue.length === 0 && !warm) return this._idle();
     if (!this.proc) this.ready = this._spawn();
     const ready = this.ready;
     try { await ready; }
@@ -4135,7 +4154,8 @@ export class OsaDaemon {
       while (this.queue.length) this.queue.shift().reject(err);
       return;
     }
-    if (this.current || this.queue.length === 0) return;
+    if (this.current) return;
+    if (this.queue.length === 0) return this._idle();
     this._send(this.queue.shift());
   }
   _send(c) {
@@ -4152,6 +4172,8 @@ export class OsaDaemon {
       }, c.timeout),
     };
     this.current = job;
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
     const line =
       `(function(){var __r;try{__r=eval(decodeURIComponent("${encodeURIComponent(c.script)}"))}` +
       `catch(e){console.log("<<P:${id}:E:"+encodeURIComponent(((e&&e.message)?e.message:String(e))+(e&&typeof e.errorNumber==="number"?" ("+e.errorNumber+")":""))+">>");return}` +

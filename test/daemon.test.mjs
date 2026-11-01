@@ -215,6 +215,68 @@ test("warm on a deaf REPL disables it; a call queued behind the handshake falls 
   d.kill();
 });
 
+// ---- idle lanes ----
+// Every server keeps its lanes' REPLs warm, and a session left open keeps them
+// for good. A REPL idle for idleMs (LANE_IDLE_MS) is closed; the next call spawns
+// it again, paying one cold start.
+
+const tick = async (t, ms) => { t.mock.timers.tick(ms); await new Promise((r) => setImmediate(r)); };
+
+test("a REPL idle for idleMs is closed, and the next call respawns it", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { d, f } = daemonWith({}, { idleMs: 600000 });
+  assert.equal(await d.run("1", 1000), "1");
+  await tick(t, 599999);
+  assert.equal(f.spawned[0].killed, false);
+  await tick(t, 1);
+  assert.equal(f.spawned[0].killed, true);
+  assert.equal(d.proc, null);
+  assert.equal(await d.run("2", 1000), "2");
+  assert.equal(f.spawned.length, 2);
+  d.kill();
+});
+
+test("each call restarts the idle clock", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { d, f } = daemonWith({}, { idleMs: 600000 });
+  await d.run("1", 1000);
+  await tick(t, 540000);
+  await d.run("1", 1000);
+  await tick(t, 540000);
+  assert.equal(f.spawned[0].killed, false);
+  await tick(t, 60000);
+  assert.equal(f.spawned[0].killed, true);
+});
+
+test("a warmed REPL that is never used is closed too", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { d, f } = daemonWith({}, { idleMs: 600000 });
+  d.warm();
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  await tick(t, 600000);
+  assert.equal(f.spawned[0].killed, true);
+});
+
+test("a call still running is never closed as idle", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { d, f } = daemonWith({ mode: "silent" }, { idleMs: 600000 });
+  const p = d.run("1", 3600000);
+  p.catch(() => {});
+  await new Promise((r) => setImmediate(r));
+  await tick(t, 1200000);
+  assert.equal(f.spawned[0].killed, false);
+  d.kill();
+});
+
+test("the idle timer never keeps the process alive", async () => {
+  const { d } = daemonWith({}, { idleMs: 600000 });
+  await d.run("1", 1000);
+  assert.equal(d.idleTimer.hasRef(), false);
+  d.kill();
+  assert.equal(d.idleTimer, null);
+});
+
 // The entry block, run for real with a fake `osascript` on PATH that records each spawn.
 async function startServer(t, env = {}) {
   const dir = tempDir("perch-warm-", t);
