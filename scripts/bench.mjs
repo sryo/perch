@@ -3,13 +3,13 @@
 // served from an in-process http server on 127.0.0.1, so byte counts compare
 // like-for-like across runs. The rows run on an existing scratch tab, which is
 // navigated to the fixture and back; the bench never opens, closes or activates a tab.
-//   node scripts/bench.mjs [--app canary] [--tab <tabId>] [--runs 20] [--out bench/runs/bench.json] [--compare bench/baseline.json]
+//   node scripts/bench.mjs [--app canary] [--tab <tabId>] [--runs 20] [--out ~/.fium/runs/perch/bench.json] [--compare bench/baseline.json]
 // --app benches that browser; npm run bench passes --app canary; npm run bench -- --app arc overrides it.
 // The scratch tab is an about:blank tab of that browser, the one its window shows
 // if any (screenshot rows need a shown tab), or --tab: any http(s)/about:blank tab.
-// Runs land in bench/runs/ (gitignored) and compare against bench/baseline.json;
+// Runs land in ~/.fium/runs/perch/ and compare against bench/baseline.json;
 // byte counts are compared only when both runs used the same fixture (its sha256).
-// Replacing the baseline is a deliberate copy: cp bench/runs/bench.json bench/baseline.json
+// Replacing the baseline is a deliberate copy: cp ~/.fium/runs/perch/bench.json bench/baseline.json
 //   --navigate   also time navigate (reloads the fixture in the scratch tab)
 //   --house <out.json>  also write the run in fium's format (fium RULES.md K2), with
 //                the behaviour lock's Apple Events and result bytes per tool; judge it
@@ -24,10 +24,10 @@ import { realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir, homedir } from "node:os";
-import { connect, text, ROOT } from "./mcp-client.mjs";
+import { connect, text, ROOT, runsDir } from "./mcp-client.mjs";
 import { recordLock, lockTotals } from "./versions-lib.mjs";
 import { SCHEMA_BUDGET } from "../server.js";
 
@@ -37,7 +37,7 @@ export function parseArgs(argv) {
   const opt = (k, d) => { const i = argv.lastIndexOf(k); return i >= 0 ? argv[i + 1] : d; };
   return {
     runs: Number(opt("--runs", 20)),
-    out: opt("--out", "bench/runs/bench.json"),
+    out: opt("--out") ?? join(runsDir(), "bench.json"),
     compare: opt("--compare", "bench/baseline.json"),
     app: opt("--app"),
     tab: opt("--tab"),

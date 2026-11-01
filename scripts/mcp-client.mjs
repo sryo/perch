@@ -1,11 +1,19 @@
 // Minimal MCP stdio client for smoke/bench: spawns server.js and speaks
 // newline-delimited JSON-RPC. Node stdlib only.
 
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { homedir } from "node:os";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+// fium keeps bench runs outside the repo (fium RULES.md K2), named after the
+// main checkout so a worktree's runs land with its repo's.
+export function runsDir() {
+  const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: ROOT, encoding: "utf8" }).trim();
+  return join(process.env.FIUM_HOME || join(homedir(), ".fium"), "runs", basename(dirname(common)));
+}
 
 export async function connect({ timeoutMs = 20000, env = process.env } = {}) {
   const child = spawn("node", [join(ROOT, "server.js")], { stdio: ["pipe", "pipe", "inherit"], env });

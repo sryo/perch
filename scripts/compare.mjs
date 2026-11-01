@@ -3,8 +3,8 @@
 // (O1..O8, mirrored on the extension side) through perch's MCP stdio interface
 // against bench/compare/fixture.html served at FIXTURE_URL, and writes
 // {tool, app, date, node, macos, ops:{O1:{calls, chars, ms, ok_rate, notes}}}.
-//   node scripts/compare.mjs --app <browser> [--reps 10] [--out bench/runs/compare.json] [--activate] [--house <out.json>]
-// Runs land in bench/runs/ (gitignored); bench/compare/README.md keeps the history.
+//   node scripts/compare.mjs --app <browser> [--reps 10] [--out ~/.fium/runs/perch/compare.json] [--activate] [--house <out.json>]
+// Runs land in ~/.fium/runs/perch/; bench/compare/README.md keeps the history.
 // --house also writes the run in fium's format (fium RULES.md K2): calls_per_task <op>
 // and readback_hits, judged with fium compare bench/compare/fium-baseline.json <out.json>.
 // Opens one scratch tab (new_tab may focus the browser) and closes it at the end.
@@ -14,9 +14,9 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { writeFile, mkdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { connect, ROOT } from "./mcp-client.mjs";
+import { connect, ROOT, runsDir } from "./mcp-client.mjs";
 
 export const FIXTURE_URL = "http://127.0.0.1:8787/fixture.html";
 export const FIXTURE_TITLE = "perch compare fixture";
@@ -238,10 +238,10 @@ export function houseRun(suite, { commit, dirty }) {
 export function parseArgs(argv) {
   const opt = (k, d) => { const i = argv.lastIndexOf(k); return i >= 0 ? argv[i + 1] : d; };
   const app = opt("--app");
-  if (!app) throw new Error("usage: compare.mjs --app <browser> [--reps 10] [--out bench/runs/compare.json] [--activate] [--house <out.json>]; --app is required");
+  if (!app) throw new Error("usage: compare.mjs --app <browser> [--reps 10] [--out ~/.fium/runs/perch/compare.json] [--activate] [--house <out.json>]; --app is required");
   const reps = Number(opt("--reps", 10));
   if (!Number.isInteger(reps) || reps < 1) throw new Error("--reps must be a positive integer");
-  return { app, reps, out: opt("--out", "bench/runs/compare.json"), activate: argv.includes("--activate"), house: opt("--house") };
+  return { app, reps, out: opt("--out") ?? join(runsDir(), "compare.json"), activate: argv.includes("--activate"), house: opt("--house") };
 }
 
 // ---- CLI ----

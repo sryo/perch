@@ -6,6 +6,8 @@ import {
   median, p90, summarize, OPS, OP_IDS, EXPECTED_STATUS, FIXTURE_URL,
   measure, runSuite, shapeReport, parseArgs, statusMatches, houseRun,
 } from "../scripts/compare.mjs";
+import { join } from "node:path";
+import { expectedRunsDir } from "./helpers/runs-dir.mjs";
 
 const txt = (s) => ({ content: [{ type: "text", text: s }] });
 const err = (s) => ({ content: [{ type: "text", text: s }], isError: true });
@@ -228,7 +230,7 @@ test("shapeReport produces the shared comparison schema", async () => {
 });
 
 test("parseArgs reads --app, --reps, --out with defaults", () => {
-  assert.deepEqual(parseArgs(["--app", "canary"]), { app: "canary", reps: 10, out: "bench/runs/compare.json", activate: false, house: undefined });
+  assert.deepEqual(parseArgs(["--app", "canary"]), { app: "canary", reps: 10, out: join(expectedRunsDir(), "compare.json"), activate: false, house: undefined });
   assert.deepEqual(parseArgs(["--app", "arc", "--reps", "3", "--out", "x.json", "--activate", "--house", "h.json"]), { app: "arc", reps: 3, out: "x.json", activate: true, house: "h.json" });
   assert.throws(() => parseArgs([]), /--app/);
   assert.throws(() => parseArgs(["--app", "arc", "--reps", "0"]), /--reps/);

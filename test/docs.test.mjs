@@ -124,8 +124,16 @@ test("every repo path the docs name exists", async () => {
   const missing = [];
   for (const doc of ["AGENTS.md", "README.md", "SKILL.md"]) {
     for (const [, p] of (await read(doc)).matchAll(/`((?:test|scripts|bench)\/[\w./-]+\.(?:mjs|js|json|html))`/g)) {
-      if (!p.startsWith("bench/runs/") && !existsSync(new URL("../" + p, import.meta.url))) missing.push(`${doc}: ${p}`);
+      if (!existsSync(new URL("../" + p, import.meta.url))) missing.push(`${doc}: ${p}`);
     }
   }
   assert.deepEqual(missing, []);
+});
+
+test("docs send bench runs to fium's runs folder, not bench/runs/", async () => {
+  const stale = [];
+  for (const doc of ["AGENTS.md", "README.md", "SKILL.md", "bench/compare/README.md"]) {
+    if ((await read(doc)).includes("bench/runs")) stale.push(doc);
+  }
+  assert.deepEqual(stale, []);
 });
