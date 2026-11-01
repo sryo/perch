@@ -1,0 +1,1 @@
+{"id": "select-own-options", "kind": "doc", "expect": "no option of this control matched", "added": "2026-11-01T10:42:06+00:00", "file": "server.js", "signature": "no matching option after open", "evidence": "37 select errors in 4 sessions, weeks 35-40; none after ec71831 (2026-09-27)"}
