@@ -43,8 +43,8 @@ When two goals conflict, the higher one wins.
 | Goal | Metric | Where |
 |---|---|---|
 | 1 | foreground app, key process, cursor unchanged; focus only under the user's grant | `scripts/trusted-live.mjs --background`, `npm run smoke`, `test/focus-grant.test.mjs` |
-| 2 | readback hits, navigate success rate | `bench/compare/README.md` |
-| 3 | calls per task that succeeds | `bench/compare/README.md` |
+| 2 | `readback_hits`, navigate success rate | `scripts/compare.mjs --house` (fium compare), `bench/compare/README.md` |
+| 3 | `calls_per_task <op>` (calls per task that succeeds) | `scripts/compare.mjs --house` (fium compare), `bench/compare/README.md` |
 | 4 | `tools/list` chars under `SCHEMA_BUDGET`; payload sizes | `test/schema.test.mjs`, `bench/baseline.json` |
 | 5 | p50/p95 per tool; Apple Events per call | `bench/baseline.json`, `test/perf-budget.test.mjs` |
 | 6 | no browser names in descriptions | `test/runtime.test.mjs` |

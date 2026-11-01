@@ -3,8 +3,10 @@
 // (O1..O8, mirrored on the extension side) through perch's MCP stdio interface
 // against bench/compare/fixture.html served at FIXTURE_URL, and writes
 // {tool, app, date, node, macos, ops:{O1:{calls, chars, ms, ok_rate, notes}}}.
-//   node scripts/compare.mjs --app <browser> [--reps 10] [--out bench/runs/compare.json] [--activate]
+//   node scripts/compare.mjs --app <browser> [--reps 10] [--out bench/runs/compare.json] [--activate] [--house <out.json>]
 // Runs land in bench/runs/ (gitignored); bench/compare/README.md keeps the history.
+// --house also writes the run in fium's format (fium RULES.md K2): calls_per_task <op>
+// and readback_hits, judged with fium compare bench/compare/fium-baseline.json <out.json>.
 // Opens one scratch tab (new_tab may focus the browser) and closes it at the end.
 // --activate selects that tab first (takes focus); without it, perch refuses
 // screenshots of the unselected tab, and Arc/Safari refuse its page JS too.
@@ -219,13 +221,27 @@ export function shapeReport(suite, { app, date, node, macos }) {
   return { tool: "perch", app: app ?? suite.app, date, node, macos, ops };
 }
 
+// calls_per_task <op>: the calls of each ok rep (goal 3: calls per task that succeeds);
+// an op with no ok rep is left out, which fium calls missing. readback_hits: the share
+// of click {readback} reps that read back the submitted status (goal 2).
+export function houseRun(suite, { commit, dirty }) {
+  const metrics = {};
+  for (const { name, reps } of Object.values(suite.ops)) {
+    const good = reps.filter((r) => r.ok);
+    if (good.length) metrics[`calls_per_task ${name}`] = { dir: "lower", kind: "count", samples: good.map((r) => r.calls) };
+  }
+  const rb = suite.ops.O7b?.reps || [];
+  if (rb.length) metrics.readback_hits = { dir: "higher", kind: "quality", samples: [Math.round((rb.filter((r) => r.ok).length / rb.length) * 1000) / 1000] };
+  return { metrics, limits: {}, commit, dirty };
+}
+
 export function parseArgs(argv) {
   const opt = (k, d) => { const i = argv.lastIndexOf(k); return i >= 0 ? argv[i + 1] : d; };
   const app = opt("--app");
-  if (!app) throw new Error("usage: compare.mjs --app <browser> [--reps 10] [--out bench/runs/compare.json] [--activate]; --app is required");
+  if (!app) throw new Error("usage: compare.mjs --app <browser> [--reps 10] [--out bench/runs/compare.json] [--activate] [--house <out.json>]; --app is required");
   const reps = Number(opt("--reps", 10));
   if (!Number.isInteger(reps) || reps < 1) throw new Error("--reps must be a positive integer");
-  return { app, reps, out: opt("--out", "bench/runs/compare.json"), activate: argv.includes("--activate") };
+  return { app, reps, out: opt("--out", "bench/runs/compare.json"), activate: argv.includes("--activate"), house: opt("--house") };
 }
 
 // ---- CLI ----
@@ -267,6 +283,13 @@ async function main() {
   await mkdir(dirname(p), { recursive: true });
   await writeFile(p, JSON.stringify(report, null, 2) + "\n");
   console.log(`wrote ${p}`);
+  if (args.house) {
+    const git = (...a) => execFileSync("git", a, { cwd: ROOT }).toString().trim();
+    const h = resolve(ROOT, args.house);
+    await mkdir(dirname(h), { recursive: true });
+    await writeFile(h, JSON.stringify(houseRun(suite, { commit: git("rev-parse", "HEAD"), dirty: git("status", "--porcelain") !== "" }), null, 2) + "\n");
+    console.log(`house run: ${h}`);
+  }
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

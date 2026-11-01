@@ -10,6 +10,16 @@ node scripts/compare.mjs --app canary --reps 10 --activate
 Runs land in `bench/runs/compare.json`, which is gitignored. Add a row to the history
 below when a run is worth keeping.
 
+With `--house bench/runs/compare-house.json` the run is also written in fium's format:
+`calls_per_task <op>` (the calls of each rep that succeeded) and `readback_hits` (the
+share of click-readback reps that read back the submitted status). fium judges it:
+
+```
+~/Documents/fium/fium compare bench/compare/fium-baseline.json bench/runs/compare-house.json
+```
+
+The first such run becomes `bench/compare/fium-baseline.json`, in its own commit.
+
 ## How to read the numbers
 
 Tool calls matter most. Each call costs the model a turn, about 6 seconds, which dwarfs
