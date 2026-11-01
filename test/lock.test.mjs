@@ -57,3 +57,16 @@ test("lock: every tool parameter and SKILL.md result key is exercised, or justif
   assert.deepEqual(unjustified, [], "add a scenario for these (node test/lock/coverage.mjs lists them)");
   assert.deepEqual(stale, [], "these are covered now; drop them from JUSTIFIED in test/lock/coverage.mjs");
 });
+
+// The rooms words SKILL.md leaves to the user must still be rooms commands. rooms dropped its
+// teleport alias for signin --from; this reads rooms' own help when its checkout sits beside perch.
+test("every rooms command SKILL.md names is one rooms still has", async (t) => {
+  const cli = new URL("../../rooms/rooms.mjs", import.meta.url).pathname;
+  if (!existsSync(cli)) return t.skip("no rooms checkout beside perch");
+  const { execFileSync } = await import("node:child_process");
+  let help;
+  try { help = execFileSync(process.execPath, [cli, "help"], { encoding: "utf8" }); } catch (e) { help = e.stdout; }
+  const { JUSTIFIED } = await import("./lock/coverage.mjs");
+  const gone = Object.keys(JUSTIFIED).filter((w) => JUSTIFIED[w] === "a rooms CLI command" && !new RegExp(`\\b${w}\\b`).test(help));
+  assert.deepEqual(gone, []);
+});
