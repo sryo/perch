@@ -79,7 +79,7 @@ Room tabs answer like shown ones: no `tab_not_visible`, `activate_tab` or `raise
 | `tab_held` | Another agent has the tab: retry after 5s idle (unless claimed), or `new_tab`. |
 | `stale_tab` | Closed or crashed: `list_tabs {app:"room:x"}`. |
 
-When done, close the tabs you opened, `from` too; never the user's. `rooms check x` lists signed-out sites (exit 1 if any). Leave `rooms down`, `restore`, `teleport` and `flags` to the user.
+When done, close the tabs you opened, `from` too; never the user's. `rooms check x` lists signed-out sites (exit 1 if any). Leave `rooms down`, `restore`, `signin` and `flags` to the user.
 
 ## Permissions
 

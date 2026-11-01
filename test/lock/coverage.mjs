@@ -26,7 +26,7 @@ export const JUSTIFIED = {
   up: "a rooms CLI command",
   down: "a rooms CLI command",
   restore: "a rooms CLI command",
-  teleport: "a rooms CLI command",
+  signin: "a rooms CLI command",
   flags: "a rooms CLI command",
   signed_out: "a room handoff error, tested in test/room.test.mjs",
   tab_held: "a room lease error, tested in test/room.test.mjs",
