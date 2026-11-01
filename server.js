@@ -11496,13 +11496,33 @@ function movesFocus(name, args) {
 }
 const needsFocus = (name) => new Error(`needs_focus: ${name} would bring the browser to the front, and the user has not allowed perch to take focus; nothing was sent. ${name === "new_tab" ? "navigate an existing tab instead (it loads from the page, in the background), or open it in a room (new_tab {app:\"room:<name>\"})" : "Try the call without raise (most run in the background), or move the flow into a room (new_tab {from: tabId, app:\"room:<name>\"})"}, or ask the user to allow it: they run \`perch focus allow 15m\` in a terminal`);
 
+// A client keeps one server for its whole session, so after a pull it runs old
+// code. server.js's mtime and size at start are its identity; a stat (a few µs)
+// at most every `every` ms tells a change, which the next result carries once.
+const SELF = fileURLToPath(import.meta.url);
+export function selfIdent() {
+  try { const s = statSync(SELF); return s.mtimeMs + ":" + s.size; } catch { return null; }
+}
+export const selfCheck = { id: selfIdent(), at: Date.now(), every: 5000, told: false, ident: selfIdent, now: Date.now };
+const OUTDATED = JSON.stringify({ outdated: "server.js changed since this server started; restart the perch MCP server" });
+function withOutdated(out) {
+  const c = selfCheck;
+  if (c.told || c.now() - c.at < c.every) return out;
+  c.at = c.now();
+  const id = c.ident();
+  if (id == null || id === c.id) return out;
+  c.told = true;
+  out.content.push({ type: "text", text: OUTDATED });
+  return out;
+}
+
 // opts.signal: the request's AbortSignal, which the MCP SDK fires on the client's cancel.
 export async function handleCall(name, args = {}, opts = {}) {
   const kind = roomArgs(args) ? "system" : "display";
   holdAwake(kind);
   try {
     const out = await handleCallCore(name, args, opts.signal);
-    return kind === "system" ? out : withScreenWhy(out);
+    return withOutdated(kind === "system" ? out : await withScreenWhy(out));
   }
   finally { holdAwake(kind); }
 }
