@@ -104,7 +104,7 @@ Another tool may run its own copy of the user's browser (headless, own profile).
 
 ### Rooms
 
-`room:<name>:<targetId>` tabs go over the room's CDP endpoint (`ROOM_FNS`), not Apple Events. Servers share one by its lease file in `$ROOMS_HOME/run/leases`, in the format and lock of `rooms`' `leases.mjs` (change both). `ROOM_LEASE_TOOLS` take it; it holds while its pid lives and is mid-call or under `ROOM_LEASE_IDLE_MS` idle (owner `user`: the rooms viewer). A claim in `run/claims` keeps a `new_tab` tab its server's, or with `label` only its label handle's, until `close_tab`, its pid's exit or `ROOM_CLAIM_IDLE_MS`; `roomReap` clears dead ones. Pinned by `test/room.test.mjs`.
+`room:<name>:<targetId>` tabs go over the room's CDP endpoint (`ROOM_FNS`), not Apple Events. Servers share one by its lease file in `$ROOMS_HOME/run/leases`, in the format and lock of `rooms`' `leases.mjs` (change both). `ROOM_LEASE_TOOLS` take it; it holds while its pid lives (not reused since `last`) and is mid-call or under `ROOM_LEASE_IDLE_MS` idle (owner `user`: the rooms viewer). A claim in `run/claims` keeps a `new_tab` tab its server's, or with `label` only its label handle's, until `close_tab`, its pid's exit or `ROOM_CLAIM_IDLE_MS`; `roomReap` clears dead ones. Pinned by `test/room.test.mjs`.
 
 ## Rules the code can't show
 

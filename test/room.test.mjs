@@ -341,6 +341,22 @@ test("a lease left by an exited process frees the tab at once", async () => {
   }
 });
 
+test("a lease whose pid went to a process started after its last call frees the tab", async () => {
+  const R = makeRooms();
+  const other = await import(`../server.js?reused-room-lease=${Date.now()}`);
+  roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  other.roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  await call("eval_js", { script: "return 1", target: tab() });
+  const dir = join(R.home, "run", "leases");
+  const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
+  const before = Date.now() - process.uptime() * 1000 - 3600000;
+  writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), owner: "gone", pid: process.pid, active: true, last: before }));
+  const rows = await other.handleCall("list_tabs", { app: "room:work" });
+  assert.doesNotMatch(rows.content[0].text, /"holder"/);
+  const got = await other.handleCall("eval_js", { script: "return 2", target: tab() });
+  assert.equal(got.content[0].text, "2");
+});
+
 test("a lease transfer releases a key left down by the previous server", async () => {
   const shared = makeRooms({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<input id=n>" }] } } });
   const other = await import(`../server.js?room-key-recovery=${Date.now()}`);

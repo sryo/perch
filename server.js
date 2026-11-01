@@ -2,7 +2,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
 import { readFileSync, readdirSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync, appendFileSync, openSync, readSync, writeSync, closeSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
@@ -4614,6 +4614,14 @@ const pidAlive = (pid) => {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
 };
+// When pid's process started, in ms (ps gives whole seconds), or null when ps can't say.
+const pidStart = (pid) => {
+  const t = Date.parse(spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 }).stdout?.trim() ?? "");
+  return Number.isNaN(t) ? null : t;
+};
+// The OS hands a dead holder's pid to new processes, and one that started after the lease's
+// last call can't be its holder (rooms' leases.mjs reads them the same way).
+const roomLeaseLive = (s) => !!s && pidAlive(s.pid) && !(s.active && (pidStart(s.pid) ?? -Infinity) > s.last + 1000);
 const readJson = (path) => {
   try { return JSON.parse(readFileSync(path, "utf8")); } catch (e) { if (e.code === "ENOENT") return null; throw e; }
 };
@@ -4687,7 +4695,7 @@ async function roomReap(name, pages) {
   for (const c of roomClaims()) {
     if (stale(c)) await roomLeaseChange(c.tabId, () => { if (stale(readJson(roomClaimFile(c.tabId)))) roomClaimSet(c.tabId, null); return undefined; });
   }
-  const dead = (s) => !!s && !s.stuck && (!pidAlive(s.pid) || gone(s.tabId));
+  const dead = (s) => !!s && !s.stuck && (!roomLeaseLive(s) || gone(s.tabId));
   for (const f of jsonFiles(join(rooms.home, "run", "leases"))) {
     let s = null;
     try { s = readJson(f); } catch {}
@@ -4698,7 +4706,7 @@ async function withRoomLease(tabId, note, fn, label = null) {
   const { old } = await roomLeaseChange(tabId, (s) => {
     const other = s && s.owner !== ROOM_OWNER;
     // An exited process holds nothing; the idle window only spans a live one's gap between calls.
-    const live = other && pidAlive(s.pid);
+    const live = other && roomLeaseLive(s);
     // "user" is rooms' viewer: a person is watching or driving the tab until they close it.
     if (live && s.owner === "user" && s.active) throw new Error("tab_held: room tab held by the user in rooms view; retry after they close it (rooms logs <room> --follow --until handoff.ended)");
     const c = roomClaim(tabId);
@@ -5086,7 +5094,7 @@ function roomRow(n, p) {
     if (c.label) row.tabId = `room:${n}:${c.label}`;
     row.holder = c.label || `pid ${c.pid}`;
     if (c.owner === ROOM_OWNER) row.mine = true;
-  } else if (s && pidAlive(s.pid) && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) {
+  } else if (roomLeaseLive(s) && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) {
     row.holder = s.owner === "user" ? "user" : `pid ${s.pid}`;
     if (s.owner === ROOM_OWNER) row.mine = true;
   }
