@@ -4629,7 +4629,9 @@ const pidStart = (pid) => {
 };
 // The OS hands a dead holder's pid to new processes, and one that started after the lease's
 // last call can't be its holder (rooms' leases.mjs reads them the same way).
-const roomLeaseLive = (s) => !!s && pidAlive(s.pid) && !(s.active && (pidStart(s.pid) ?? -Infinity) > s.last + 1000);
+const roomLeaseLive = (s, start = pidStart) => !!s && pidAlive(s.pid) && !(s.active && (start(s.pid) ?? -Infinity) > s.last + 1000);
+// A live lease holds its tab mid-call and for five seconds after; rooms/test/fixtures/leases.json has the cases.
+export const roomLeaseHeld = (s, start = pidStart) => roomLeaseLive(s, start) && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS);
 const readJson = (path) => {
   try { return JSON.parse(readFileSync(path, "utf8")); } catch (e) { if (e.code === "ENOENT") return null; throw e; }
 };
@@ -4714,12 +4716,12 @@ async function withRoomLease(tabId, note, fn, label = null) {
   const { old } = await roomLeaseChange(tabId, (s) => {
     const other = s && s.owner !== ROOM_OWNER;
     // An exited process holds nothing; the idle window only spans a live one's gap between calls.
-    const live = other && roomLeaseLive(s);
+    const held = other && roomLeaseHeld(s);
     // "user" is rooms' viewer: a person is watching or driving the tab until they close it.
-    if (live && s.owner === "user" && s.active) throw new Error("tab_held: room tab held by the user in rooms view; retry after they close it (rooms logs <room> --follow --until handoff.ended)");
+    if (held && s.owner === "user" && s.active) throw new Error("tab_held: room tab held by the user in rooms view; retry after they close it (rooms logs <room> --follow --until handoff.ended)");
     const c = roomClaim(tabId);
     if (c && (c.owner !== ROOM_OWNER || (c.label ?? null) !== label)) throw new Error(roomClaimHeld(c));
-    if (live && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
+    if (held) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
     if (c) roomClaimSet(tabId, { ...c, last: Date.now() });
     return { ...roomLeaseNew(tabId), active: true, stuck: s?.stuck ?? null };
   });
@@ -5102,7 +5104,7 @@ function roomRow(n, p) {
     if (c.label) row.tabId = `room:${n}:${c.label}`;
     row.holder = c.label || `pid ${c.pid}`;
     if (c.owner === ROOM_OWNER) row.mine = true;
-  } else if (roomLeaseLive(s) && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS)) {
+  } else if (roomLeaseHeld(s)) {
     row.holder = s.owner === "user" ? "user" : `pid ${s.pid}`;
     if (s.owner === ROOM_OWNER) row.mine = true;
   }

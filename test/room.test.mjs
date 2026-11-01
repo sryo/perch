@@ -4,9 +4,9 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { handleCall, rooms, roomsReset, roomHint, JXA_PRELUDE, DAEMONS } from "../server.js";
+import { handleCall, rooms, roomsReset, roomHint, roomLeaseHeld, JXA_PRELUDE, DAEMONS } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { makeRooms } from "./fakes/cdp-room.mjs";
 
@@ -355,6 +355,20 @@ test("a lease whose pid went to a process started after its last call frees the 
   assert.doesNotMatch(rows.content[0].text, /"holder"/);
   const got = await other.handleCall("eval_js", { script: "return 2", target: tab() });
   assert.equal(got.content[0].text, "2");
+});
+
+// rooms reads the same leases (rooms/leases.mjs leaseHolder) and keeps the rule as a table of
+// cases both run; this reads it when rooms' checkout sits beside perch.
+test("every lease case in rooms' fixture holds its tab here as it does in rooms", (t) => {
+  const path = new URL("../../rooms/test/fixtures/leases.json", import.meta.url);
+  if (!existsSync(path)) return t.skip("no rooms checkout beside perch");
+  const { cases } = JSON.parse(readFileSync(path, "utf8"));
+  const now = Date.now(), dead = spawnSync(process.execPath, ["-e", ""]).pid;
+  for (const c of cases) {
+    const s = { ...c.lease, pid: { alive: process.pid, dead }[c.lease.pid] ?? c.lease.pid };
+    if ("last" in s) s.last += now;
+    assert.equal(roomLeaseHeld(s, () => c.start == null ? null : now + c.start), c.held, c.name);
+  }
 });
 
 test("a lease transfer releases a key left down by the previous server", async () => {
