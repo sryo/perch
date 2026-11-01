@@ -72,15 +72,6 @@ export function houseRun({ results, samples, bytes = {}, lock }) {
   return { metrics, limits: { "schema chars": SCHEMA_BUDGET } };
 }
 
-// bench/noise.json from a live A/A's `fium compare --json` rows: per noisy
-// metric, the farthest its range strayed from 1, rounded up to a percent and at
-// least fium's default 10%.
-export function noiseFrom(rows) {
-  const rel = {};
-  for (const r of rows) if (r.range) rel[r.metric] = Math.max(0.1, Math.ceil(Math.max(1 - r.range[0], r.range[1] - 1) * 100 - 1e-9) / 100);
-  return { rel };
-}
-
 // The summary baseline's live rows in fium's format: one sample (its p50) per
 // time metric. Its schema size is left out: the offline baseline measures that.
 export function houseFromBaseline(old) {
@@ -276,14 +267,11 @@ async function main() {
   }
   if (HOUSE) await writeHouse(HOUSE, { results, samples, bytes: byteSamples });
   // --noise <file>: this run is an A/A against bench/fium-live-baseline.json (same
-  // code); fium's ranges for it become the noise later compares allow.
+  // code); `fium noise` turns its spread into the noise later compares allow.
   if (NOISE) {
     if (!HOUSE) throw new Error("--noise needs --house");
     const cli = process.env.FIUM || resolve(homedir(), "Documents/fium/fium");
-    let json;
-    try { json = execFileSync(cli, ["compare", resolve(ROOT, "bench/fium-live-baseline.json"), resolve(ROOT, HOUSE), "--json"]).toString(); }
-    catch (e) { if (!e.stdout) throw e; json = e.stdout.toString(); }
-    await writeFile(resolve(ROOT, NOISE), JSON.stringify(noiseFrom(JSON.parse(json)), null, 2) + "\n");
+    await writeFile(resolve(ROOT, NOISE), execFileSync(cli, ["noise", resolve(ROOT, "bench/fium-live-baseline.json"), resolve(ROOT, HOUSE)]));
     console.log(`noise: ${NOISE}`);
   }
   // No baseline, or one that isn't bench JSON: just print this run.

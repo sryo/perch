@@ -4,7 +4,7 @@
 // behaviour lock's fake world gives Apple Events and result bytes per tool.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { houseRun, houseFromBaseline, noiseFrom, NOISY_BYTES } from "../scripts/bench.mjs";
+import { houseRun, houseFromBaseline, NOISY_BYTES } from "../scripts/bench.mjs";
 import { SCHEMA_BUDGET } from "../server.js";
 
 test("houseRun turns rows, schema and lock totals into metrics and limits", () => {
@@ -50,17 +50,6 @@ test("a row whose bytes vary between identical runs is noisy, over every rep", (
   assert.deepEqual(run.metrics["screenshot png bytes"], { dir: "lower", kind: "bytes", noisy: true, samples: [116633, 116685] });
   assert.deepEqual(run.metrics["get_text 2000 bytes"], { dir: "lower", kind: "bytes", samples: [674] });
   assert.ok(NOISY_BYTES.has("list_tabs") && NOISY_BYTES.has("accessibility_snapshot"));
-});
-
-// bench/noise.json from a live A/A's `fium compare --json` rows: per noisy
-// metric, the farthest its range strayed from 1, rounded up to a percent, at
-// least fium's default 10%.
-test("noiseFrom keeps each noisy metric's A/A spread", () => {
-  assert.deepEqual(noiseFrom([
-    { metric: "screenshot png ms", range: [0.9035, 1.0819], verdict: "same" },
-    { metric: "x ms", range: [0.8, 1.01], verdict: "inconclusive" },
-    { metric: "get_text 2000 bytes", verdict: "same" },
-  ]), { rel: { "screenshot png ms": 0.1, "x ms": 0.2 } });
 });
 
 // The bench must never take the user's focus (GOALS.md goal 1): it reads the
