@@ -12,7 +12,7 @@ import { page } from "../helpers/page.mjs";
 
 const TOKEN = "ab".repeat(24);
 
-export function makeRooms({ rooms = { work: {} }, down = [] } = {}) {
+export function makeRooms({ rooms = { work: {} }, down = [], hangUpgrade = false } = {}) {
   const home = tempDir("perch-rooms-");
   const reg = { version: 1, rooms: {} };
   const byPort = new Map();
@@ -38,7 +38,7 @@ export function makeRooms({ rooms = { work: {} }, down = [] } = {}) {
       this.room = byPort.get(Number(u.port));
       this.room.sockets.push(this);
       this.room.connects++;
-      setTimeout(() => (this.room.down ? this.onerror?.({ message: "refused" }) : this.onopen?.()), 0);
+      if (!hangUpgrade) setTimeout(() => (this.room.down ? this.onerror?.({ message: "refused" }) : this.onopen?.()), 0);
     }
     send(raw) { this.room.handle(this, JSON.parse(raw)); }
     close() { this.closed = true; setTimeout(() => this.onclose?.(), 0); }

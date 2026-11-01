@@ -4679,7 +4679,7 @@ function writeJson(path, v) {
 const roomLeaseChange = (tabId, update) => roomFileChange(roomLeaseFile(tabId), update);
 async function roomFileChange(path, update) {
   const lock = path + ".lock";
-  mkdirSync(join(rooms.home, "run", "leases"), { recursive: true, mode: 0o700 });
+  mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
   let held = false;
   for (let n = 0; n < 50; n++) {
     try { mkdirSync(lock, { mode: 0o700 }); held = true; break; }
@@ -4710,7 +4710,8 @@ async function roomStuck(tabId, stuck) {
 // until close_tab, its server's exit or ROOM_CLAIM_IDLE_MS without a call. A labeled tab
 // answers only to room:<name>:<label>, so subagents of one server stay apart. Claims
 // change only under their tab's lease lock.
-const roomClaimLive = (c) => !!c && pidAlive(c.pid) && Date.now() - c.last <= ROOM_CLAIM_IDLE_MS;
+const roomClaimLive = (c) => !!c && Date.now() - c.last <= ROOM_CLAIM_IDLE_MS && pidAlive(c.pid) &&
+  (c.pid === process.pid && c.owner === ROOM_OWNER || !((pidStart(c.pid) ?? -Infinity) > c.last + 1000));
 function roomClaim(tabId) {
   const c = readJson(roomClaimFile(tabId));
   if (c && !roomClaimLive(c)) { rmSync(roomClaimFile(tabId), { force: true }); return null; }
@@ -4719,6 +4720,33 @@ function roomClaim(tabId) {
 const roomClaimSet = (tabId, c) => c ? writeJson(roomClaimFile(tabId), c) : rmSync(roomClaimFile(tabId), { force: true });
 const roomClaimNew = (room, tabId, label) => ({ room, tabId, label, owner: ROOM_OWNER, pid: process.pid, last: Date.now() });
 const roomClaimHeld = (c) => `tab_held: room tab claimed ${c.label ? `as ${c.label} ` : ""}by pid ${c.pid}; open your own with new_tab {app:"room:${c.room}", label}`;
+// Reserve a room label before reading claims or creating a target. The holder refreshes
+// `last` every ROOM_LABEL_BEAT_MS, so a reservation nobody refreshed for ROOM_LEASE_IDLE_MS
+// (a crashed holder, a reused pid, a release that found the lock busy) is anyone's.
+// Nothing slow runs under the file lock, and a failed release never masks fn's result.
+const ROOM_LABEL_BEAT_MS = 1000, ROOM_LABEL_WAIT_MS = 30000;
+const roomLabelLive = (s) => !!s && Date.now() - s.last <= ROOM_LEASE_IDLE_MS && pidAlive(s.pid);
+async function withRoomLabel(name, label, fn) {
+  const path = roomFile("labels", `room:${name}:${label}`);
+  const token = randomBytes(12).toString("hex");
+  const mine = (s) => s?.token === token;
+  const until = Date.now() + ROOM_LABEL_WAIT_MS;
+  for (;;) {
+    try {
+      const { next } = await roomFileChange(path, (s) => roomLabelLive(s) ? undefined : { owner: ROOM_OWNER, pid: process.pid, last: Date.now(), token });
+      if (mine(next)) break;
+    } catch (e) { if (!/^tab_held/.test(e.message)) throw e; }
+    if (Date.now() > until) throw new Error(`tab_held: room label ${label} is busy; retry`);
+    await sleep(20);
+  }
+  const beat = setInterval(() => roomFileChange(path, (s) => mine(s) ? { ...s, last: Date.now() } : undefined).catch(() => {}), ROOM_LABEL_BEAT_MS);
+  beat.unref?.();
+  try { return await fn(); }
+  finally {
+    clearInterval(beat);
+    await roomFileChange(path, (s) => mine(s) ? null : undefined).catch(() => {});
+  }
+}
 const jsonFiles = (dir) => { try { return readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => join(dir, f)); } catch { return []; } };
 function roomClaims() {
   return jsonFiles(join(rooms.home, "run", "claims")).map((f) => { try { return readJson(f); } catch { return null; } }).filter(Boolean);
@@ -4781,7 +4809,7 @@ const roomCall = (fn, args) => isRoomTab(args && args.target && args.target.tabI
   (fn === "newTab" && ROOM_APP.test(String(args && args.app))) ||
   (args && args.target && args.target.tabId == null && ROOM_APP.test(String(args.target.app)));
 // A page call's cap: the runtime's POLL_EXEC_SECS, and STEP_EXEC_SECS for a step.
-const ROOM_EXEC_SECS = 2, ROOM_STEP_SECS = 5, ROOM_SEND_MS = 30000;
+const ROOM_EXEC_SECS = 2, ROOM_STEP_SECS = 5, ROOM_SEND_MS = 30000, ROOM_UPGRADE_MS = 3000;
 const ROOM_MAY_HAVE_RUN = "; it may have run, and the page may be navigating; retry after checking the page";
 
 function roomRegistry() {
@@ -4818,7 +4846,21 @@ async function roomConnect(name) {
   } catch { throw down(); }
   if (typeof url !== "string") throw down();
   const sock = new rooms.WebSocket(url);
-  await new Promise((res, rej) => { sock.onopen = () => res(); sock.onerror = () => rej(down()); });
+  await new Promise((res, rej) => {
+    let settled = false;
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      sock.onopen = sock.onerror = sock.onclose = null;
+      try { sock.close(); } catch {}
+      rej(down());
+    };
+    const timer = setTimeout(fail, ROOM_UPGRADE_MS);
+    sock.onopen = () => { if (!settled) { settled = true; clearTimeout(timer); res(); } };
+    sock.onerror = fail;
+    sock.onclose = fail;
+  });
   const conn = { name, sock, id: 0, pending: new Map(), sessions: new Map(), bySession: new Map(), closed: false };
   conn.send = (method, params = {}, sessionId, ms = ROOM_SEND_MS) => {
     if (conn.closed) return Promise.reject(down());
@@ -5239,6 +5281,7 @@ const ROOM_FNS = {
     if (!name) throw new Error("bad_args: new_tab in a room takes app:\"room:<name>\"");
     const label = a.label ?? null;
     if (label != null && !ROOM_LABEL.test(String(label))) throw new Error("bad_args: new_tab label is lowercase letters, digits and dashes, starting with a letter (31 at most)");
+    const run = async () => {
     const conn = await roomConn(name);
     const pages = await roomPages(conn);
     const out = (tabId, reused) => ({ app: `room:${name}`, tabId: label ? `room:${name}:${label}` : tabId, ...(reused ? { reused } : {}) });
@@ -5276,6 +5319,8 @@ const ROOM_FNS = {
     const tabId = `room:${name}:${targetId}`;
     await roomLeaseChange(tabId, () => { claim(tabId); return roomLeaseNew(tabId); });
     return out(tabId);
+    };
+    return label ? withRoomLabel(name, label, run) : run();
   },
   async activate(a) {
     const t = await roomTarget(a.target, "activate_tab");

@@ -59,6 +59,14 @@ test("an unknown room or a room that is down is no_browser", async () => {
   assert.match(await fails("eval_js", { script: "return 1", target: tab("T0001", "nope") }), /^error: no_browser: no room 'nope'/);
 });
 
+test("a stalled room WebSocket upgrade has a deadline and closes its socket", async () => {
+  use({ hangUpgrade: true });
+  const start = Date.now();
+  assert.match(await fails("list_tabs", { app: "room:work" }), /no_browser: room 'work' is not up/);
+  assert.ok(Date.now() - start < 4500);
+  assert.equal(R.room("work").sockets[0].closed, true);
+});
+
 test("eval_js runs in the room's page, in an isolated world, over one connection", async () => {
   use({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<h1>Hi</h1>" }] } } });
   assert.equal(await call("eval_js", { script: "return document.querySelector('h1').textContent", target: tab() }), "Hi");
@@ -629,6 +637,78 @@ test("new_tab with a label already claimed gives its server the same tab back, a
   assert.deepEqual(await call("new_tab", { app: "room:work", label: "x" }), { ...o, reused: true });
   assert.match(await text(other, "new_tab", { app: "room:work", label: "x" }), /tab_held: room tab claimed as x/);
   assert.match(await fails("new_tab", { app: "room:work", label: "Bad Label" }), /bad_args: .*label/);
+});
+
+test("concurrent new_tab calls with one label create only one room target", async () => {
+  const { R, other } = await twoServers({}, "same-label-race");
+  const results = await Promise.all([
+    handleCall("new_tab", { app: "room:work", label: "shared" }),
+    other.handleCall("new_tab", { app: "room:work", label: "shared" }),
+  ]);
+  const values = results.map((r) => r.content[0].text);
+  assert.equal(R.room("work").targets.size, 2, values.join("\n"));
+  assert.equal(values.filter((x) => x.includes('"tabId":"room:work:shared"')).length, 1);
+  assert.match(values.find((x) => x.includes("tab_held")), /tab_held: room tab claimed as shared/);
+});
+
+test("a label reservation whose release finds its lock held still returns the tab, and goes stale", async () => {
+  const { R, other } = await twoServers({}, "label-release-busy");
+  const { createHash } = await import("node:crypto");
+  const { rmSync } = await import("node:fs");
+  const file = join(R.home, "run", "labels", createHash("sha256").update("room:work:shared").digest("hex") + ".json");
+  const room = R.room("work"), handle = room.handle.bind(room);
+  // A waiter holding the reservation's file lock (a slow ps under it, or another server) as the call ends.
+  room.handle = (ws, msg) => { if (msg.method === "Target.createTarget") mkdirSync(file + ".lock"); return handle(ws, msg); };
+  const o = await call("new_tab", { app: "room:work", label: "shared" });
+  assert.deepEqual(o, { app: "room:work", tabId: "room:work:shared" });
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).pid, process.pid);
+  rmSync(file + ".lock", { recursive: true });
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), last: Date.now() - 6000 }));
+  const start = Date.now();
+  assert.match(await text(other, "new_tab", { app: "room:work", label: "shared" }), /tab_held: room tab claimed as shared/);
+  assert.ok(Date.now() - start < 2000, "a reservation nobody refreshes is reclaimed");
+  assert.equal(room.targets.size, 2);
+});
+
+test("a label reservation stays its holder's through a call longer than the stale window", async () => {
+  const { R, other } = await twoServers({}, "label-heartbeat");
+  const { createHash } = await import("node:crypto");
+  const file = join(R.home, "run", "labels", createHash("sha256").update("room:work:shared").digest("hex") + ".json");
+  const room = R.room("work"), handle = room.handle.bind(room);
+  let held = 0, release;
+  const go = new Promise((r) => { release = r; });
+  room.handle = (ws, msg) => {
+    if (msg.method !== "Target.createTarget" || held++) return handle(ws, msg);
+    go.then(() => handle(ws, msg));
+  };
+  const until = async (f) => { while (!f()) await new Promise((r) => setTimeout(r, 10)); };
+  const mine = handleCall("new_tab", { app: "room:work", label: "shared" });
+  await until(() => held);
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), last: Date.now() - 6000 }));
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.ok(Date.now() - JSON.parse(readFileSync(file, "utf8")).last < 1500, "the holder refreshes its reservation");
+  const theirs = other.handleCall("new_tab", { app: "room:work", label: "shared" });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(held, 1, "the waiter made no target");
+  release();
+  const [a, b] = (await Promise.all([mine, theirs])).map((r) => r.content[0].text);
+  assert.deepEqual(JSON.parse(a), { app: "room:work", tabId: "room:work:shared" });
+  assert.match(b, /tab_held: room tab claimed as shared/);
+  assert.equal(existsSync(file), false);
+});
+
+test("a claim whose pid started after its last call is stale", async () => {
+  const { R, other } = await twoServers({}, "reused-claim-pid");
+  await call("new_tab", { app: "room:work", label: "shared" });
+  const file = join(claimDir(R), readdirSync(claimDir(R))[0]);
+  const claim = JSON.parse(readFileSync(file, "utf8"));
+  const last = Date.now() - process.uptime() * 1000 - 5000;
+  assert.ok(Date.now() - last < 15 * 60000, "test process must be younger than claim TTL");
+  writeFileSync(file, JSON.stringify({ ...claim, owner: "gone", pid: process.pid, last }));
+  ageLeases(R);
+  const got = JSON.parse(await text(other, "new_tab", { app: "room:work", label: "shared" }));
+  assert.deepEqual(got, { app: "room:work", tabId: "room:work:shared", reused: true });
+  assert.equal(R.room("work").targets.size, 2);
 });
 
 test("an unlabeled new_tab's tab stays its server's past the idle window", async () => {
