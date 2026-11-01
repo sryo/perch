@@ -8385,7 +8385,11 @@ function describe(el, r, name) {
     for (const opt of el.options) { if (o.length >= 30) break; const t = clip(opt.text, 60); if (t && t !== "--") o.push(t); }
     if (o.length) kv("options", o);
     if (!nothingChosen(el)) kv("value", clip(el.options[el.selectedIndex].text, 200));
-  } else if (r === "textbox" && el.value) kv("value", clip(el.value, 200));
+  } else if (r === "textbox" && el.value) {
+    // A password never reaches the agent's context: only its length does.
+    if (tag === "INPUT" && (el.type || "").toLowerCase() === "password") line += " chars=" + el.value.length;
+    else kv("value", clip(el.value, 200));
+  }
   else if (r === "combobox" && tag === "INPUT") { const v = el.value ? clip(el.value, 200) : shownValue(el); if (v) kv("value", v); }
   else if (customBox(el) && !nothingChosen(el)) { const v = clip(textOf(pickBox(el)), 200); if (v !== name) kv("value", v); }
   if (r === "link") {

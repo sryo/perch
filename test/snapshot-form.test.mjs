@@ -287,3 +287,10 @@ test("snapshot: autofill catchers get no row and stay out of the census", () => 
   assert.deepEqual(lines, [`1 textbox "First name" name="firstname"`, `2 textbox "Address" name="address" value="Córdoba, Argentina"`, `3 radio "YES" name="q"`]);
   assert.deepEqual(head.form, { fields: 2, requiredEmpty: 0 });
 });
+
+test("snapshot: a password field's value never appears, only how many characters it holds", () => {
+  const html = `<form><label for=u>User</label><input id=u name=u value="alice"><label for=p>Password</label><input id=p type=password name=p value="CANARY-s3cret"><label for=e>Empty</label><input id=e type=password name=e></form>`;
+  assert.doesNotMatch(run(page(html), "snapshot", { max: 50 }), /CANARY/);
+  const { lines } = snap(page(html));
+  assert.deepEqual(lines, [`1 textbox "User" name="u" value="alice"`, `2 textbox "Password" name="p" type="password" chars=13`, `3 textbox "Empty" name="e" type="password"`]);
+});
