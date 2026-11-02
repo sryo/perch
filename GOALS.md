@@ -40,16 +40,18 @@ When two goals conflict, the higher one wins.
    branch on browser; real gaps surface as neutral error codes.
 
 ## How we know
-| Goal | Metric | Where |
-|---|---|---|
-| 1 | foreground app, key process, cursor unchanged; focus only under the user's grant | `scripts/trusted-live.mjs --background`, `npm run smoke`, `test/focus-grant.test.mjs` |
-| 2 | `readback_hits`, navigate success rate | `scripts/compare.mjs --house` (fium compare), `bench/compare/README.md` |
-| 3 | `calls_per_task <op>` (calls per task that succeeds) | `scripts/compare.mjs --house` (fium compare), `bench/compare/README.md` |
-| 4 | `tools/list` chars under `SCHEMA_BUDGET`; payload sizes | `test/schema.test.mjs`, `bench/baseline.json` |
-| 5 | p50/p95 per tool; Apple Events per call | `bench/baseline.json`, `test/perf-budget.test.mjs` |
-| 6 | no browser names in descriptions | `test/runtime.test.mjs` |
+| Goal | Metric | Where | Run |
+|---|---|---|---|
+| 1 | foreground app, key process, cursor unchanged; focus only under the user's grant | `scripts/trusted-live.mjs --background`, `npm run smoke`, `test/focus-grant.test.mjs` | by hand: `node scripts/trusted-live.mjs --yes --background` and `npm run smoke` post real input to the user's browser |
+| 1 | focus only under the user's grant, and the rest of the suite | `test/focus-grant.test.mjs`, `npm test` | `npm test` |
+| 2 | `readback_hits`, navigate success rate | `scripts/compare.mjs --fium` (fium compare), `bench/compare/README.md` | `node scripts/compare.mjs --app room:main --fium ~/.fium/runs/perch/done-compare.json >&2 && echo ~/.fium/runs/perch/done-compare.json` |
+| 3 | `calls_per_task <op>` (calls per task that succeeds) | `scripts/compare.mjs --fium` (fium compare), `bench/compare/README.md` | `node scripts/compare.mjs --app room:main --fium ~/.fium/runs/perch/done-compare.json >&2 && echo ~/.fium/runs/perch/done-compare.json` |
+| 4 | `tools/list` chars under `SCHEMA_BUDGET`; payload sizes | `schema chars`: `test/schema.test.mjs`, `bench/baseline.json` | `node scripts/bench.mjs --offline --fium ~/.fium/runs/perch/done-fium.json && echo ~/.fium/runs/perch/done-fium.json` |
+| 5 | p50/p95 per tool; Apple Events per call | `bench/baseline.json`, `test/perf-budget.test.mjs` | costly: `node scripts/bench.mjs --app canary --fium ~/.fium/runs/perch/done-live.json && echo ~/.fium/runs/perch/done-live.json` |
+| 5 | Apple Events per call (`lock events <tool>`) | `test/perf-budget.test.mjs`, behaviour lock | `node scripts/bench.mjs --offline --fium ~/.fium/runs/perch/done-fium.json && echo ~/.fium/runs/perch/done-fium.json` |
+| 6 | no browser names in descriptions | `test/runtime.test.mjs` | `npm test` |
 
-Caps: `q3 k2 n2 b1 t1` (how firm each kind of number is: 3 never grows, 2 needs the owner's price, 1 may grow 10%, 0 only reported; fium RULES.md K6)
+Caps: `q3 k2 n2 b1 t1` (how firm each kind of number is: 3 hard, must end the same or better; 2 semi-hard, past its margin you choose; 1 semi-hard with a 10% margin; 0 soft, no limit; fium RULES.md K6)
 
 ## Principles
 How the goals show up in every tool.
