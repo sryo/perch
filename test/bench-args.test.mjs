@@ -8,7 +8,7 @@ import { expectedRunsDir } from "./helpers/runs-dir.mjs";
 
 test("bench defaults", () => {
   assert.deepEqual(parseArgs([]), {
-    runs: 20, out: join(expectedRunsDir(), "bench.json"), compare: "bench/baseline.json", app: undefined, tab: undefined, navigate: false, house: undefined, noise: undefined, offline: false,
+    runs: 20, out: join(expectedRunsDir(), "bench.json"), compare: "bench/baseline.json", app: undefined, tab: undefined, navigate: false, fium: undefined, noise: undefined, offline: false,
   });
 });
 

@@ -14,12 +14,12 @@ fixture is served on the Mac's address on the VM bridge.
 Runs land in `~/.fium/runs/perch/compare.json`. Add a row to the history below when a
 run is worth keeping.
 
-With `--house ~/.fium/runs/perch/compare-house.json` the run is also written in fium's format:
+With `--fium ~/.fium/runs/perch/compare-fium.json` the run is also written in fium's format:
 `calls_per_task <op>` (the calls of each rep that succeeded) and `readback_hits` (the
 share of click-readback reps that read back the submitted status). fium judges it:
 
 ```
-~/Documents/fium/fium compare bench/compare/fium-baseline.json ~/.fium/runs/perch/compare-house.json
+~/Documents/fium/fium compare bench/compare/fium-baseline.json ~/.fium/runs/perch/compare-fium.json
 ```
 
 The first such run becomes `bench/compare/fium-baseline.json`, in its own commit.

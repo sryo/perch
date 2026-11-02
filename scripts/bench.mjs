@@ -11,13 +11,13 @@
 // byte counts are compared only when both runs used the same fixture (its sha256).
 // Replacing the baseline is a deliberate copy: cp ~/.fium/runs/perch/bench.json bench/baseline.json
 //   --navigate   also time navigate (reloads the fixture in the scratch tab)
-//   --house <out.json>  also write the run in fium's format (fium RULES.md K2), with
+//   --fium <out.json>  also write the run in fium's format (fium RULES.md K2), with
 //                the behaviour lock's Apple Events and result bytes per tool; judge it
 //                with ~/Documents/fium/fium compare bench/fium-baseline.json <out.json> (offline metrics) and
 //                bench/fium-live-baseline.json <out.json> --noise bench/noise.json (live rows)
 //   --noise <file>  this run is an A/A against bench/fium-live-baseline.json: write
-//                fium's spread for it as the noise file (needs --house)
-//   --offline    no browser: only the schema and lock metrics (needs --house)
+//                fium's spread for it as the noise file (needs --fium)
+//   --offline    no browser: only the schema and lock metrics (needs --fium)
 
 import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { realpathSync } from "node:fs";
@@ -42,7 +42,7 @@ export function parseArgs(argv) {
     app: opt("--app"),
     tab: opt("--tab"),
     navigate: argv.includes("--navigate"),
-    house: opt("--house"),
+    fium: opt("--fium"),
     noise: opt("--noise"),
     offline: argv.includes("--offline"),
   };
@@ -55,7 +55,7 @@ export function parseArgs(argv) {
 // pixels, the user's open tabs): judged statistically, over every rep's bytes.
 export const NOISY_BYTES = new Set(["list_tabs", "accessibility_snapshot", "screenshot png", "screenshot jpeg"]);
 
-export function houseRun({ results, samples, bytes = {}, lock }) {
+export function fiumRun({ results, samples, bytes = {}, lock }) {
   const metrics = {};
   for (const [k, v] of Object.entries(results)) {
     if (k === "schema" || v.error) continue;
@@ -74,9 +74,9 @@ export function houseRun({ results, samples, bytes = {}, lock }) {
 
 // The summary baseline's live rows in fium's format: one sample (its p50) per
 // time metric. Its schema size is left out: the offline baseline measures that.
-export function houseFromBaseline(old) {
+export function fiumFromBaseline(old) {
   const { schema, ...rows } = old.results || {};
-  return houseRun({ results: rows, samples: {}, lock: {} });
+  return fiumRun({ results: rows, samples: {}, lock: {} });
 }
 
 export const FIXTURE_FILE = "bench/fixture.html";
@@ -168,13 +168,13 @@ const WARMUP = 3;
 const pct = (xs, p) => xs.slice().sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))];
 
 async function main() {
-  const { runs: RUNS, out: OUT, compare: COMPARE, app: APP, tab: TAB, navigate, house: HOUSE, offline: OFFLINE, noise: NOISE } = parseArgs(process.argv.slice(2));
+  const { runs: RUNS, out: OUT, compare: COMPARE, app: APP, tab: TAB, navigate, fium: FIUM, offline: OFFLINE, noise: NOISE } = parseArgs(process.argv.slice(2));
   if (OFFLINE) {
-    if (!HOUSE) throw new Error("--offline writes only the house run; pass --house <out.json>");
+    if (!FIUM) throw new Error("--offline writes only the fium run; pass --fium <out.json>");
     const client = await connect({ timeoutMs: 60000 });
     let chars;
     try { chars = JSON.stringify((await client.rpc("tools/list", {})).result.tools).length; } finally { client.close(); }
-    return writeHouse(HOUSE, { results: { schema: { chars } }, samples: {} });
+    return writeFium(FIUM, { results: { schema: { chars } }, samples: {} });
   }
   const html = await readFile(resolve(ROOT, FIXTURE_FILE));
   const fixture = { file: FIXTURE_FILE, sha256: fixtureHash(html) };
@@ -265,13 +265,13 @@ async function main() {
     await mkdir(dirname(p), { recursive: true });
     await writeFile(p, JSON.stringify(report, null, 2) + "\n");
   }
-  if (HOUSE) await writeHouse(HOUSE, { results, samples, bytes: byteSamples });
+  if (FIUM) await writeFium(FIUM, { results, samples, bytes: byteSamples });
   // --noise <file>: this run is an A/A against bench/fium-live-baseline.json (same
   // code); `fium noise` turns its spread into the noise later compares allow.
   if (NOISE) {
-    if (!HOUSE) throw new Error("--noise needs --house");
+    if (!FIUM) throw new Error("--noise needs --fium");
     const cli = process.env.FIUM || resolve(homedir(), "Documents/fium/fium");
-    await writeFile(resolve(ROOT, NOISE), execFileSync(cli, ["noise", resolve(ROOT, "bench/fium-live-baseline.json"), resolve(ROOT, HOUSE)]));
+    await writeFile(resolve(ROOT, NOISE), execFileSync(cli, ["noise", resolve(ROOT, "bench/fium-live-baseline.json"), resolve(ROOT, FIUM)]));
     console.log(`noise: ${NOISE}`);
   }
   // No baseline, or one that isn't bench JSON: just print this run.
@@ -279,13 +279,13 @@ async function main() {
   if (baseline?.results) console.log("\n" + compareLines(baseline, report).join("\n"));
 }
 
-async function writeHouse(out, { results, samples, bytes }) {
+async function writeFium(out, { results, samples, bytes }) {
   const src = await readFile(resolve(ROOT, "server.js"), "utf8");
   const lock = lockTotals(recordLock(src, ROOT, resolve(tmpdir(), `perch-bench-lock-${process.pid}`)));
   const p = resolve(ROOT, out);
   await mkdir(dirname(p), { recursive: true });
-  await writeFile(p, JSON.stringify(houseRun({ results, samples, bytes, lock }), null, 2) + "\n");
-  console.log(`house run: ${out}`);
+  await writeFile(p, JSON.stringify(fiumRun({ results, samples, bytes, lock }), null, 2) + "\n");
+  console.log(`fium run: ${out}`);
 }
 
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {

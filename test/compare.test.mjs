@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   median, p90, summarize, OPS, OP_IDS, EXPECTED_STATUS, FIXTURE_URL,
-  measure, runSuite, shapeReport, parseArgs, statusMatches, houseRun, fixtureHost,
+  measure, runSuite, shapeReport, parseArgs, statusMatches, fiumRun, fixtureHost,
 } from "../scripts/compare.mjs";
 import { join } from "node:path";
 import { expectedRunsDir } from "./helpers/runs-dir.mjs";
@@ -247,8 +247,8 @@ test("the served fixture is on loopback for a browser and on the VM bridge for a
 });
 
 test("parseArgs reads --app, --reps, --out with defaults", () => {
-  assert.deepEqual(parseArgs(["--app", "canary"]), { app: "canary", reps: 10, out: join(expectedRunsDir(), "compare.json"), activate: false, house: undefined, fixture: undefined });
-  assert.deepEqual(parseArgs(["--app", "arc", "--reps", "3", "--out", "x.json", "--activate", "--house", "h.json"]), { app: "arc", reps: 3, out: "x.json", activate: true, house: "h.json", fixture: undefined });
+  assert.deepEqual(parseArgs(["--app", "canary"]), { app: "canary", reps: 10, out: join(expectedRunsDir(), "compare.json"), activate: false, fium: undefined, fixture: undefined });
+  assert.deepEqual(parseArgs(["--app", "arc", "--reps", "3", "--out", "x.json", "--activate", "--fium", "h.json"]), { app: "arc", reps: 3, out: "x.json", activate: true, fium: "h.json", fixture: undefined });
   assert.equal(parseArgs(["--app", "room:main", "--fixture", "http://192.168.64.1:8787/fixture.html"]).fixture, "http://192.168.64.1:8787/fixture.html");
   assert.throws(() => parseArgs([]), /--app/);
   assert.throws(() => parseArgs(["--app", "arc", "--reps", "0"]), /--reps/);
@@ -256,16 +256,16 @@ test("parseArgs reads --app, --reps, --out with defaults", () => {
 
 test("parseArgs lets a repeated flag's last value win, as bench.mjs does", () => {
   const args = parseArgs(["--app", "canary", "--reps", "5", "--out", "a.json", "--app", "arc", "--reps", "2", "--out", "b.json"]);
-  assert.deepEqual(args, { app: "arc", reps: 2, out: "b.json", activate: false, house: undefined, fixture: undefined });
+  assert.deepEqual(args, { app: "arc", reps: 2, out: "b.json", activate: false, fium: undefined, fixture: undefined });
   assert.throws(() => parseArgs(["--app", "arc", "--reps", "3", "--reps", "0"]), /--reps/);
 });
 
-// --house: the run in fium's format (fium RULES.md K2), so `fium compare` gates
+// --fium: the run in fium's format (fium RULES.md K2), so `fium compare` gates
 // goal 3 (calls per task that succeeds) and goal 2 (readback hits).
-test("houseRun gives each task's calls over its ok reps, and the readback hit rate", async () => {
+test("fiumRun gives each task's calls over its ok reps, and the readback hit rate", async () => {
   const { call } = fakePerch();
   const out = await runSuite(call, { app: "canary", reps: 3, now, close: () => {} });
-  const run = houseRun(out, { commit: "abc123", dirty: false });
+  const run = fiumRun(out, { commit: "abc123", dirty: false });
   assert.deepEqual(run.metrics["calls_per_task fill_form"], { dir: "lower", kind: "count", samples: [5, 5, 5] });
   assert.deepEqual(run.metrics["calls_per_task click_readback"], { dir: "lower", kind: "count", samples: [1, 1, 1] });
   assert.deepEqual(run.metrics.readback_hits, { dir: "higher", kind: "quality", samples: [1] });
@@ -276,7 +276,7 @@ test("houseRun gives each task's calls over its ok reps, and the readback hit ra
 test("a task with no ok rep has no calls_per_task, so fium calls it missing; a wrong readback is a miss", async () => {
   const { call } = fakePerch({ statusText: "Not submitted", fail: { eval_js: "error: timeout" } });
   const out = await runSuite(call, { app: "canary", reps: 2, now, close: () => {} });
-  const run = houseRun(out, { commit: "abc123", dirty: true });
+  const run = fiumRun(out, { commit: "abc123", dirty: true });
   assert.equal(run.metrics["calls_per_task eval"], undefined);
   assert.equal(run.metrics["calls_per_task click_readback"], undefined);
   assert.deepEqual(run.metrics.readback_hits.samples, [0]);

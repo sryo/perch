@@ -1,14 +1,14 @@
-// scripts/bench.mjs --house: the run format `fium compare` judges (fium
+// scripts/bench.mjs --fium: the run format `fium compare` judges (fium
 // RULES.md K2). Live rows give a time metric (their samples) and a bytes metric;
 // tools/list gives schema chars, capped by SCHEMA_BUDGET as a limit; the
 // behaviour lock's fake world gives Apple Events and result bytes per tool.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { houseRun, houseFromBaseline, NOISY_BYTES } from "../scripts/bench.mjs";
+import { fiumRun, fiumFromBaseline, NOISY_BYTES } from "../scripts/bench.mjs";
 import { SCHEMA_BUDGET } from "../server.js";
 
-test("houseRun turns rows, schema and lock totals into metrics and limits", () => {
-  const run = houseRun({
+test("fiumRun turns rows, schema and lock totals into metrics and limits", () => {
+  const run = fiumRun({
     results: { "list_tabs": { p50: 66, bytes: 293 }, "screenshot png": { error: "tab not shown" }, schema: { tools: 17, chars: 9600 } },
     samples: { "list_tabs": [65, 66, 67] },
     lock: { click: { ev: 40, bytes: 900, err: 1, n: 12 } },
@@ -26,14 +26,14 @@ test("houseRun turns rows, schema and lock totals into metrics and limits", () =
 });
 
 test("an offline run has no live rows", () => {
-  const run = houseRun({ results: { schema: { tools: 17, chars: 9600 } }, samples: {}, lock: {} });
+  const run = fiumRun({ results: { schema: { tools: 17, chars: 9600 } }, samples: {}, lock: {} });
   assert.deepEqual(Object.keys(run.metrics), ["schema chars"]);
 });
 
 // The old baseline kept p50s only, so its time metrics carry one sample each:
 // fium judges those by any move until a live run records a real baseline.
-test("houseFromBaseline converts the summary baseline", () => {
-  const run = houseFromBaseline({ results: { "get_text 2000": { p50: 16.9, p95: 17.9, min: 14.7, bytes: 674 }, schema: { tools: 17, chars: 8826 } } });
+test("fiumFromBaseline converts the summary baseline", () => {
+  const run = fiumFromBaseline({ results: { "get_text 2000": { p50: 16.9, p95: 17.9, min: 14.7, bytes: 674 }, schema: { tools: 17, chars: 8826 } } });
   assert.deepEqual(run.metrics["get_text 2000 ms"], { dir: "lower", kind: "time", samples: [16.9] });
   assert.deepEqual(run.metrics["get_text 2000 bytes"], { dir: "lower", kind: "bytes", samples: [674] });
   assert.equal(run.metrics["schema chars"], undefined, "the offline baseline measures the schema");
@@ -43,7 +43,7 @@ test("houseFromBaseline converts the summary baseline", () => {
 // rendered pixels, the user's open tabs), so they are judged like timings, over
 // every rep's bytes.
 test("a row whose bytes vary between identical runs is noisy, over every rep", () => {
-  const run = houseRun({
+  const run = fiumRun({
     results: { "screenshot png": { p50: 62, bytes: 116685 }, "get_text 2000": { p50: 16, bytes: 674 } },
     samples: { "screenshot png": [62, 63] }, bytes: { "screenshot png": [116633, 116685], "get_text 2000": [674, 674] }, lock: {},
   });
