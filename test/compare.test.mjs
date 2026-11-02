@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   median, p90, summarize, OPS, OP_IDS, EXPECTED_STATUS, FIXTURE_URL,
-  measure, runSuite, shapeReport, parseArgs, statusMatches, houseRun,
+  measure, runSuite, shapeReport, parseArgs, statusMatches, houseRun, fixtureHost,
 } from "../scripts/compare.mjs";
 import { join } from "node:path";
 import { expectedRunsDir } from "./helpers/runs-dir.mjs";
@@ -239,9 +239,16 @@ test("a fixture on another host is opened, navigated to and listed by that host"
   assert.equal(p.calls.find((c) => c.name === "navigate").args.url, fixture);
 });
 
+test("the served fixture is on loopback for a browser and on the VM bridge for a room", () => {
+  const ifaces = { lo0: [{ family: "IPv4", address: "127.0.0.1" }], en0: [{ family: "IPv4", address: "10.0.0.5" }], bridge100: [{ family: "IPv6", address: "fe80::1" }, { family: "IPv4", address: "192.168.64.1" }] };
+  assert.equal(fixtureHost("canary", ifaces), "127.0.0.1");
+  assert.equal(fixtureHost("room:main", ifaces), "192.168.64.1");
+  assert.throws(() => fixtureHost("room:main", { en0: ifaces.en0 }), /bridge/);
+});
+
 test("parseArgs reads --app, --reps, --out with defaults", () => {
-  assert.deepEqual(parseArgs(["--app", "canary"]), { app: "canary", reps: 10, out: join(expectedRunsDir(), "compare.json"), activate: false, house: undefined, fixture: FIXTURE_URL });
-  assert.deepEqual(parseArgs(["--app", "arc", "--reps", "3", "--out", "x.json", "--activate", "--house", "h.json"]), { app: "arc", reps: 3, out: "x.json", activate: true, house: "h.json", fixture: FIXTURE_URL });
+  assert.deepEqual(parseArgs(["--app", "canary"]), { app: "canary", reps: 10, out: join(expectedRunsDir(), "compare.json"), activate: false, house: undefined, fixture: undefined });
+  assert.deepEqual(parseArgs(["--app", "arc", "--reps", "3", "--out", "x.json", "--activate", "--house", "h.json"]), { app: "arc", reps: 3, out: "x.json", activate: true, house: "h.json", fixture: undefined });
   assert.equal(parseArgs(["--app", "room:main", "--fixture", "http://192.168.64.1:8787/fixture.html"]).fixture, "http://192.168.64.1:8787/fixture.html");
   assert.throws(() => parseArgs([]), /--app/);
   assert.throws(() => parseArgs(["--app", "arc", "--reps", "0"]), /--reps/);
@@ -249,7 +256,7 @@ test("parseArgs reads --app, --reps, --out with defaults", () => {
 
 test("parseArgs lets a repeated flag's last value win, as bench.mjs does", () => {
   const args = parseArgs(["--app", "canary", "--reps", "5", "--out", "a.json", "--app", "arc", "--reps", "2", "--out", "b.json"]);
-  assert.deepEqual(args, { app: "arc", reps: 2, out: "b.json", activate: false, house: undefined, fixture: FIXTURE_URL });
+  assert.deepEqual(args, { app: "arc", reps: 2, out: "b.json", activate: false, house: undefined, fixture: undefined });
   assert.throws(() => parseArgs(["--app", "arc", "--reps", "3", "--reps", "0"]), /--reps/);
 });
 

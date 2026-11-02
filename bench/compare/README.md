@@ -1,19 +1,15 @@
 # perch vs Claude in Chrome
 
 The same 8-op suite (O1 to O8, plus the one-call variants O6b and O7b) runs against
-`fixture.html`, served on `127.0.0.1:8787`, in Chrome Canary.
+`fixture.html` in Chrome Canary.
 
 ```
 node scripts/compare.mjs --app canary --reps 10 --activate
 ```
 
-To run it without taking focus, use a room. A room's browser runs in a VM, so serve the
-fixture on the Mac's bridge address and point the suite at it:
-
-```
-python3 -m http.server 8787 --bind 192.168.64.1 --directory bench/compare
-node scripts/compare.mjs --app room:main --reps 10 --fixture http://192.168.64.1:8787/fixture.html
-```
+compare.mjs serves the fixture itself (`--fixture <url>` uses another). To run without
+taking focus, use a room: `--app room:main`. The room's browser runs in a VM, so the
+fixture is served on the Mac's address on the VM bridge.
 
 Runs land in `~/.fium/runs/perch/compare.json`. Add a row to the history below when a
 run is worth keeping.

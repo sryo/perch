@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // perch side of the perch vs Claude-in-Chrome comparison. Runs a fixed op suite
 // (O1..O8, mirrored on the extension side) through perch's MCP stdio interface
-// against bench/compare/fixture.html served at FIXTURE_URL, and writes
+// against bench/compare/fixture.html, which it serves itself unless --fixture
+// names a URL, and writes
 // {tool, app, date, node, macos, ops:{O1:{calls, chars, ms, ok_rate, notes}}}.
 //   node scripts/compare.mjs --app <browser> [--reps 10] [--out ~/.fium/runs/perch/compare.json] [--activate] [--house <out.json>] [--fixture <url>]
 // Runs land in ~/.fium/runs/perch/; bench/compare/README.md keeps the history.
@@ -11,15 +12,16 @@
 // --activate selects that tab first (takes focus); without it, perch refuses
 // screenshots of the unselected tab, and Arc/Safari refuse its page JS too.
 // A room (--app room:<name>) runs in its own VM, where the Mac's 127.0.0.1 is not
-// the Mac: serve the fixture on the host's bridge address and pass --fixture
-// http://192.168.64.1:8787/fixture.html. A room never takes focus.
+// the Mac, so its fixture is served on the VM bridge's address. A room never takes focus.
 
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect, ROOT, runsDir } from "./mcp-client.mjs";
+import { serveFixture } from "./bench.mjs";
 
 export const FIXTURE_URL = "http://127.0.0.1:8787/fixture.html";
 export const FIXTURE_TITLE = "perch compare fixture";
@@ -244,7 +246,18 @@ export function parseArgs(argv) {
   if (!app) throw new Error("usage: compare.mjs --app <browser> [--reps 10] [--out ~/.fium/runs/perch/compare.json] [--activate] [--house <out.json>] [--fixture <url>]; --app is required");
   const reps = Number(opt("--reps", 10));
   if (!Number.isInteger(reps) || reps < 1) throw new Error("--reps must be a positive integer");
-  return { app, reps, out: opt("--out") ?? join(runsDir(), "compare.json"), activate: argv.includes("--activate"), house: opt("--house"), fixture: opt("--fixture", FIXTURE_URL) };
+  return { app, reps, out: opt("--out") ?? join(runsDir(), "compare.json"), activate: argv.includes("--activate"), house: opt("--house"), fixture: opt("--fixture") };
+}
+
+// Where the served fixture listens: loopback, or for a room the Mac's address on
+// the bridge its VM sits behind (bridge100 while a container runs).
+export function fixtureHost(app, ifaces = networkInterfaces()) {
+  if (!app.startsWith("room")) return "127.0.0.1";
+  for (const [name, addrs] of Object.entries(ifaces)) {
+    const v4 = name.startsWith("bridge") && addrs.find((a) => a.family === "IPv4" || a.family === 4);
+    if (v4) return v4.address;
+  }
+  throw new Error("no bridge interface for the room's VM to reach the Mac on; is the room up? Or pass --fixture <url>");
 }
 
 // ---- CLI ----
@@ -262,11 +275,12 @@ export function closeWith(call) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const served = args.fixture ? null : await serveFixture(readFileSync(join(ROOT, "bench/compare/fixture.html")), fixtureHost(args.app));
   const client = await connect({ timeoutMs: 60000 });
   let suite;
   try {
     suite = await runSuite(client.call, {
-      app: args.app, reps: args.reps, fixture: args.fixture, activate: args.activate, close: closeWith(client.call),
+      app: args.app, reps: args.reps, fixture: args.fixture ?? served.url, activate: args.activate, close: closeWith(client.call),
       log: (op, reps) => {
         const ok = reps.filter((r) => r.ok).length;
         console.log(`${op.id} ${op.name.padEnd(13)} ok ${ok}/${reps.length}  median ${summarize(reps.map((r) => r.ms)).median}ms  calls ${reps[0]?.calls}`);
@@ -274,6 +288,7 @@ async function main() {
     });
   } finally {
     client.close();
+    await served?.close();
   }
   const rev = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT }).toString().trim();
   const report = { rev, ...shapeReport(suite, {

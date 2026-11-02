@@ -82,9 +82,9 @@ export function houseFromBaseline(old) {
 export const FIXTURE_FILE = "bench/fixture.html";
 export const fixtureHash = (buf) => createHash("sha256").update(buf).digest("hex");
 
-// Serves `html` at /fixture.html on an ephemeral 127.0.0.1 port. Chrome raises
+// Serves `html` at /fixture.html on an ephemeral port of `host` (127.0.0.1 by default). Chrome raises
 // itself for a navigation it has to start (file:// is one), so the page is http.
-export function serveFixture(html) {
+export function serveFixture(html, host = "127.0.0.1") {
   const server = createServer((req, res) => {
     const hit = req.method === "GET" && new URL(req.url, "http://x").pathname === "/fixture.html";
     res.writeHead(hit ? 200 : 404, {
@@ -96,10 +96,10 @@ export function serveFixture(html) {
   });
   return new Promise((ok, fail) => {
     server.once("error", fail);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, host, () => {
       const { port } = server.address();
       ok({
-        url: `http://127.0.0.1:${port}/fixture.html`,
+        url: `http://${host}:${port}/fixture.html`,
         close: () => new Promise((done) => { server.closeAllConnections(); server.close(() => done()); }),
       });
     });
