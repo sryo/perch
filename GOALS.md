@@ -51,7 +51,7 @@ When two goals conflict, the higher one wins.
 | 5 | Apple Events per call (`lock events <tool>`) | `test/perf-budget.test.mjs`, behaviour lock | `node scripts/bench.mjs --offline --fium ~/.fium/runs/perch/done-fium.json && echo ~/.fium/runs/perch/done-fium.json` |
 | 6 | no browser names in descriptions | `test/runtime.test.mjs` | `npm test` |
 
-Caps: `q3 k2 n2 b1 t1` (how firm each kind of number is: 3 hard, must end the same or better; 2 semi-hard, past its margin you choose; 1 semi-hard with a 10% margin; 0 soft, no limit; fium RULES.md K6)
+Caps: `all=ask quality=hard bytes=ask+10% time=ask+10%`
 
 ## Principles
 How the goals show up in every tool.
