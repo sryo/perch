@@ -27,9 +27,8 @@ import { execFileSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir, homedir } from "node:os";
-import { connect, text, ROOT, runsDir } from "./mcp-client.mjs";
+import { connect, text, ROOT, runsDir, SCHEMA_BUDGET } from "./mcp-client.mjs";
 import { recordLock, lockTotals } from "./versions-lib.mjs";
-import { SCHEMA_BUDGET } from "../server.js";
 
 // The last occurrence of a flag wins, so `npm run bench -- --app arc` overrides
 // the --app canary that the npm script passes first.
@@ -49,7 +48,7 @@ export function parseArgs(argv) {
 }
 
 // The run in fium's format: each live row's timings and result bytes, the
-// tools/list size under its SCHEMA_BUDGET limit, and per tool the behaviour
+// tools/list size under the baseline's limit, and per tool the behaviour
 // lock's Apple Events (fake world) and result bytes.
 // Rows whose result bytes moved between identical live runs (ref ids, rendered
 // pixels, the user's open tabs): judged statistically, over every rep's bytes.

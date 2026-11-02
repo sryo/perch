@@ -1,11 +1,13 @@
 // scripts/bench.mjs --fium: the run format `fium compare` judges (fium
 // RULES.md K2). Live rows give a time metric (their samples) and a bytes metric;
-// tools/list gives schema chars, capped by SCHEMA_BUDGET as a limit; the
+// tools/list gives schema chars, capped by the baseline's limit; the
 // behaviour lock's fake world gives Apple Events and result bytes per tool.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fiumRun, fiumFromBaseline, NOISY_BYTES } from "../scripts/bench.mjs";
-import { SCHEMA_BUDGET } from "../server.js";
+import { readFileSync } from "node:fs";
+import { SCHEMA_BUDGET, ROOT } from "../scripts/mcp-client.mjs";
+import * as server from "../server.js";
 
 test("fiumRun turns rows, schema and lock totals into metrics and limits", () => {
   const run = fiumRun({
@@ -23,6 +25,15 @@ test("fiumRun turns rows, schema and lock totals into metrics and limits", () =>
     },
     limits: { "schema chars": SCHEMA_BUDGET },
   });
+});
+
+// An unattended loop optimizes server.js and may not touch bench/*.json (bench/judge),
+// so the schema limit lives in the baseline: a server.js change can't move its own limit.
+test("the schema limit comes from the fium baseline, not from server.js", () => {
+  const base = JSON.parse(readFileSync(`${ROOT}/bench/fium-baseline.json`, "utf8"));
+  assert.equal(SCHEMA_BUDGET, base.limits["schema chars"]);
+  assert.equal(server.SCHEMA_BUDGET, undefined, "server.js must not define the limit it is judged by");
+  assert.doesNotMatch(readFileSync(`${ROOT}/server.js`, "utf8"), /SCHEMA_BUDGET/);
 });
 
 test("an offline run has no live rows", () => {

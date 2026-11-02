@@ -44,9 +44,9 @@ When two goals conflict, the higher one wins.
 |---|---|---|---|
 | 1 | foreground app, key process, cursor unchanged; focus only under the user's grant | `scripts/trusted-live.mjs --background`, `npm run smoke`, `test/focus-grant.test.mjs` | by hand: `node scripts/trusted-live.mjs --yes --background` and `npm run smoke` post real input to the user's browser |
 | 1 | focus only under the user's grant, and the rest of the suite | `test/focus-grant.test.mjs`, `npm test` | `npm test` |
-| 2 | `readback_hits`, navigate success rate | `scripts/compare.mjs --fium` (fium compare), `bench/compare/README.md` | `node scripts/compare.mjs --app room:main --fium ~/.fium/runs/perch/done-compare.json >&2 && echo ~/.fium/runs/perch/done-compare.json` |
-| 3 | `calls_per_task <op>` (calls per task that succeeds) | `scripts/compare.mjs --fium` (fium compare), `bench/compare/README.md` | `node scripts/compare.mjs --app room:main --fium ~/.fium/runs/perch/done-compare.json >&2 && echo ~/.fium/runs/perch/done-compare.json` |
-| 4 | `tools/list` chars under `SCHEMA_BUDGET`; payload sizes | `schema chars`: `test/schema.test.mjs`, `bench/baseline.json` | `node scripts/bench.mjs --offline --fium ~/.fium/runs/perch/done-fium.json && echo ~/.fium/runs/perch/done-fium.json` |
+| 2 | `readback_hits`, navigate success rate | `scripts/compare.mjs --fium` (fium compare), `bench/compare/README.md` | costly: `node scripts/compare.mjs --app room:main --fium ~/.fium/runs/perch/done-compare.json >&2 && echo ~/.fium/runs/perch/done-compare.json` |
+| 3 | `calls_per_task <op>` (calls per task that succeeds) | `scripts/compare.mjs --fium` (fium compare), `bench/compare/README.md` | costly: `node scripts/compare.mjs --app room:main --fium ~/.fium/runs/perch/done-compare.json >&2 && echo ~/.fium/runs/perch/done-compare.json` |
+| 4 | `tools/list` chars under the `schema chars` limit in `bench/fium-baseline.json`; payload sizes | `schema chars`: `test/schema.test.mjs`, `bench/baseline.json` | `node scripts/bench.mjs --offline --fium ~/.fium/runs/perch/done-fium.json && echo ~/.fium/runs/perch/done-fium.json` |
 | 5 | p50/p95 per tool; Apple Events per call | `bench/baseline.json`, `test/perf-budget.test.mjs` | costly: `node scripts/bench.mjs --app canary --fium ~/.fium/runs/perch/done-live.json && echo ~/.fium/runs/perch/done-live.json` |
 | 5 | Apple Events per call (`lock events <tool>`) | `test/perf-budget.test.mjs`, behaviour lock | `node scripts/bench.mjs --offline --fium ~/.fium/runs/perch/done-fium.json && echo ~/.fium/runs/perch/done-fium.json` |
 | 6 | no browser names in descriptions | `test/runtime.test.mjs` | `npm test` |
@@ -69,7 +69,7 @@ How the goals show up in every tool.
 ## A new tool or param earns its slot if
 - a consumer workflow needs it today, not a CDP feature by analogy;
 - it removes agent turns or makes a result verifiable;
-- it fits `SCHEMA_BUDGET`, or something else leaves to make room;
+- it fits the schema limit, or something else leaves to make room;
 - it keeps goal 1 by default.
 
 ## Non-goals

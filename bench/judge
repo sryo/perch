@@ -1,0 +1,12 @@
+# What judges an attempt (fium loop.md): an attempt may add files here but never change one.
+test/*
+scripts/*
+bench/*.json
+bench/*.html
+# behaviour lock and dom-cost goldens (also under test/, named so they stay judged)
+test/lock/golden.json
+test/fixtures/large-dom.golden.json
+# perch's tests also read rooms' leases fixture and contract test (../../rooms, outside this repo):
+# test/room.test.mjs and test/lock.test.mjs; a perch commit can't change them
+package.json
+package-lock.json

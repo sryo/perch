@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { tempDir } from "../scripts/temp-dirs.mjs";
 import { join } from "node:path";
-import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, buildEvalWrapper, composeEvalScript, shapeTabs, formatResult, JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
+import { TOOLS, INSTRUCTIONS, buildEvalWrapper, composeEvalScript, shapeTabs, formatResult, JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
+import { SCHEMA_BUDGET } from "../scripts/mcp-client.mjs";
 
 test("tool schemas stay within the token budget", () => {
   const size = JSON.stringify(TOOLS).length;

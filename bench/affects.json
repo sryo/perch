@@ -1,0 +1,10 @@
+{
+  "rules": [
+    {"files": ["SKILL.md", "README.md", "GOALS.md", "AGENTS.md", "CLAUDE.md", "LICENSE", "install.sh", "bench/compare/README.md", "bench/judge", "bench/inert"], "tasks": "none"},
+    {"files": ["scripts/compare.mjs", "bench/compare/*"], "tasks": ["compare"]},
+    {"files": ["scripts/bench.mjs", "scripts/versions-lib.mjs", "bench/*"], "tasks": ["offline", "live"]},
+    {"files": ["test/*", "scripts/temp-dirs.mjs"], "tasks": ["test"]},
+    {"files": ["scripts/smoke.mjs", "scripts/*-live.mjs", "scripts/versions.mjs", "scripts/skylight-probe.js"], "tasks": "none"},
+    {"files": ["server.js", "scripts/mcp-client.mjs", "package.json", "package-lock.json"], "tasks": "*"}
+  ]
+}

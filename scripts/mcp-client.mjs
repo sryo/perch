@@ -2,11 +2,16 @@
 // newline-delimited JSON-RPC. Node stdlib only.
 
 import { spawn, execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+// The tools/list size limit lives in the fium baseline, a judge file, so a
+// change to server.js can't move the limit it is judged by.
+export const SCHEMA_BUDGET = JSON.parse(readFileSync(join(ROOT, "bench", "fium-baseline.json"), "utf8")).limits["schema chars"];
 
 // fium keeps bench runs outside the repo (fium RULES.md K2), named after the
 // main checkout so a worktree's runs land with its repo's.

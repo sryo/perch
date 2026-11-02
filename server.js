@@ -11348,8 +11348,6 @@ const TOOLS = [
   }, ["text"]),
 ];
 
-export const SCHEMA_BUDGET = 9750;
-
 function awaitTimeout({ timeout, awaitPromise }) {
   if (timeout == null) return JXA_DEFAULT_TIMEOUT;
   if (!awaitPromise) throw new Error("bad_args: eval_js `timeout` bounds awaitPromise; pass awaitPromise:true or drop it");

@@ -1,0 +1,18 @@
+{
+  "rel": {
+    "list_tabs ms": 0.53,
+    "list_tabs bytes": 0.1,
+    "list_tabs limit:1 ms": 0.74,
+    "eval_js explicit target ms": 0.1,
+    "eval_js awaitPromise ms": 0.1,
+    "wait readyState ms": 0.14,
+    "accessibility_snapshot ms": 0.1,
+    "accessibility_snapshot bytes": 0.1,
+    "get_text 2000 ms": 0.1,
+    "screenshot png ms": 0.14,
+    "screenshot png bytes": 0.1,
+    "screenshot jpeg ms": 0.11,
+    "screenshot jpeg bytes": 0.1
+  },
+  "abs": {}
+}

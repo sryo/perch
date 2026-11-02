@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { TOOLS, INSTRUCTIONS, SCHEMA_BUDGET, ERR } from "../server.js";
+import { TOOLS, INSTRUCTIONS, ERR } from "../server.js";
+import { SCHEMA_BUDGET } from "../scripts/mcp-client.mjs";
 
 const SKILL_MAX = 8800;
 const read = (f) => readFile(new URL("../" + f, import.meta.url), "utf8");
