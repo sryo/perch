@@ -281,6 +281,16 @@ add("accessibility_snapshot: max, role, query", async (h) => {
   await h.call("accessibility_snapshot", { query: "help|terms" });
   await h.call("accessibility_snapshot", { query: "(" });
 });
+add("accessibility_snapshot: diff after a fill and a removed row", async (h) => {
+  onPage(h, FORM);
+  const snap = await h.call("accessibility_snapshot");
+  const email = snap.split("\n").find((l) => l.includes('"Email"')).split(" ")[0];
+  await h.call("accessibility_snapshot", { diff: true });
+  await h.call("fill", { ref: email, text: "a@b.co" });
+  await h.call("eval_js", { script: "document.querySelector('a').remove(); return 1" });
+  await h.call("accessibility_snapshot", { diff: true });
+  await h.call("accessibility_snapshot", { diff: true, frames: true });
+});
 for (const kind of ["arc", "safari"]) {
   add(`accessibility_snapshot: ${kind}`, async (h) => { onPage(h, FORM, { kind }); await h.call("accessibility_snapshot", { max: 3 }); });
 }

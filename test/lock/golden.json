@@ -238,7 +238,7 @@
    "events": 6,
    "ae": {
     "Google Chrome": [
-     "windows.length(Google Chrome)",
+     "windows.minimized()(Google Chrome)",
      "win.activeTabIndex()",
      "tabs.id()",
      "win.activeTabIndex()",
@@ -268,7 +268,7 @@
    "events": 5,
    "ae": {
     "Arc": [
-     "windows.length(Arc)",
+     "windows.minimized()(Arc)",
      "tab.id",
      "tabs.id()",
      "tabs.id()",
@@ -297,7 +297,7 @@
    "events": 5,
    "ae": {
     "Safari": [
-     "windows.length(Safari)",
+     "windows.miniaturized()(Safari)",
      "win.currentTab.index()",
      "win.currentTab.index()",
      "tabs.url()",
@@ -326,7 +326,7 @@
    "events": 5,
    "ae": {
     "Safari": [
-     "windows.length(Safari)",
+     "windows.miniaturized()(Safari)",
      "win.currentTab.index()",
      "win.currentTab.index()",
      "tabs.url()",
@@ -351,7 +351,7 @@
    "events": 5,
    "ae": {
     "Google Chrome": [
-     "windows.length(Google Chrome)",
+     "windows.minimized()(Google Chrome)",
      "win.activeTabIndex()",
      "tabs.id()",
      "win.activeTabIndex()",
@@ -401,7 +401,7 @@
    "events": 6,
    "ae": {
     "Google Chrome": [
-     "windows.length(Google Chrome)",
+     "windows.minimized()(Google Chrome)",
      "win.activeTabIndex()",
      "tabs.id()",
      "win.activeTabIndex()",
@@ -431,7 +431,7 @@
    "events": 6,
    "ae": {
     "Google Chrome": [
-     "windows.length(Google Chrome)",
+     "windows.minimized()(Google Chrome)",
      "win.activeTabIndex()",
      "tabs.id()",
      "win.activeTabIndex()",
@@ -461,7 +461,7 @@
    "events": 8,
    "ae": {
     "Arc": [
-     "windows.length(Arc)",
+     "windows.minimized()(Arc)",
      "tab.id",
      "tabs.id()",
      "tabs.id()",
@@ -493,7 +493,7 @@
    "events": 6,
    "ae": {
     "Safari": [
-     "windows.length(Safari)",
+     "windows.miniaturized()(Safari)",
      "win.currentTab.index()",
      "win.currentTab.index()",
      "win.currentTab=",
@@ -887,7 +887,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 11583
+   "pageBytes": 2930
   }
  ],
  "close_tab: bad_args without tabId": [
@@ -1933,7 +1933,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35143
+   "pageBytes": 33654
   },
   {
    "call": [
@@ -2046,7 +2046,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 11004
+   "pageBytes": 829
   },
   {
    "call": [
@@ -2069,7 +2069,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 11007
+   "pageBytes": 832
   }
  ],
  "wait: selector found and timeout": [
@@ -2094,7 +2094,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 11020
+   "pageBytes": 845
   },
   {
    "call": [
@@ -2124,7 +2124,7 @@
     ]
    },
    "pageScripts": 6,
-   "pageBytes": 66138
+   "pageBytes": 5088
   },
   {
    "call": [
@@ -2148,7 +2148,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 11023
+   "pageBytes": 848
   }
  ],
  "wait: expression value, bad expression, timeout": [
@@ -2288,7 +2288,7 @@
     ]
    },
    "pageScripts": 11,
-   "pageBytes": 135011
+   "pageBytes": 23086
   },
   {
    "call": [
@@ -2355,7 +2355,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 11020
+   "pageBytes": 845
   }
  ],
  "wait: safari selector": [
@@ -2380,7 +2380,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 11020
+   "pageBytes": 845
   }
  ],
  "get_text: body, selector, html, paging": [
@@ -2403,7 +2403,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10930
+   "pageBytes": 2312
   },
   {
    "call": [
@@ -2426,7 +2426,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10946
+   "pageBytes": 2328
   },
   {
    "call": [
@@ -2450,7 +2450,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10945
+   "pageBytes": 2327
   },
   {
    "call": [
@@ -2473,7 +2473,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10927
+   "pageBytes": 2309
   },
   {
    "call": [
@@ -2497,7 +2497,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10928
+   "pageBytes": 2310
   },
   {
    "call": [
@@ -2520,7 +2520,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10949
+   "pageBytes": 2331
   }
  ],
  "get_text: by ref": [
@@ -2543,7 +2543,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35143
+   "pageBytes": 33654
   },
   {
    "call": [
@@ -2566,7 +2566,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10957
+   "pageBytes": 2339
   }
  ],
  "get_text: arc": [
@@ -2591,7 +2591,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10930
+   "pageBytes": 2312
   }
  ],
  "get_text: safari": [
@@ -2614,7 +2614,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10930
+   "pageBytes": 2312
   }
  ],
  "accessibility_snapshot: full page with form header": [
@@ -2637,7 +2637,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35143
+   "pageBytes": 33654
   }
  ],
  "targeted calls on a page tool by tool": [
@@ -2666,7 +2666,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35143
+   "pageBytes": 33654
   },
   {
    "call": [
@@ -2693,7 +2693,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29874
+   "pageBytes": 29416
   },
   {
    "call": [
@@ -2725,7 +2725,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 88382
+   "pageBytes": 68686
   },
   {
    "call": [
@@ -2752,7 +2752,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38016
+   "pageBytes": 37060
   },
   {
    "call": [
@@ -2779,7 +2779,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 27207
+   "pageBytes": 15588
   },
   {
    "call": [
@@ -2806,7 +2806,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 17550
+   "pageBytes": 15892
   },
   {
    "call": [
@@ -2832,7 +2832,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14380
+   "pageBytes": 4205
   },
   {
    "call": [
@@ -2857,7 +2857,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10870
+   "pageBytes": 695
   },
   {
    "call": [
@@ -2883,7 +2883,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15761
+   "pageBytes": 14545
   },
   {
    "call": [
@@ -2949,7 +2949,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35143
+   "pageBytes": 33654
   }
  ],
  "accessibility_snapshot: max, role, query": [
@@ -2974,7 +2974,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35141
+   "pageBytes": 33652
   },
   {
    "call": [
@@ -2997,7 +2997,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35141
+   "pageBytes": 33652
   },
   {
    "call": [
@@ -3020,7 +3020,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35147
+   "pageBytes": 33658
   },
   {
    "call": [
@@ -3046,7 +3046,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35161
+   "pageBytes": 33672
   },
   {
    "call": [
@@ -3069,7 +3069,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35151
+   "pageBytes": 33662
   },
   {
    "call": [
@@ -3082,6 +3082,142 @@
     {
      "type": "text",
      "text": "error: accessibility_snapshot: invalid query: Invalid regular expression: /(/i: Unterminated group"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
+ "accessibility_snapshot: diff after a fill and a removed row": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":8,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3}}\n1 heading \"Apply\" level=1\n2 textbox \"Email\" name=\"email\" type=\"email\" required\n3 combobox \"Country\" name=\"c\" options=[\"Choose\",\"Argentina\",\"Brazil\"] required\n4 checkbox \"Terms\" name=\"t\" required\n5 button \"Send\"\n6 dialog \"Cookies\"\n7 button \"Accept\"\n8 link \"Help\" href=\"/help\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 33654
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "diff": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":8,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":3},\"unchanged\":8}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 33673
+  },
+  {
+   "call": [
+    "fill",
+    {
+     "ref": "2",
+     "text": "a@b.co"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"textbox \\\"Email\\\"\",\"len\":6}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 29419
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "document.querySelector('a').remove(); return 1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "1"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 5154
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "diff": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":7,\"dialogs\":[\"Cookies\"],\"form\":{\"fields\":2,\"requiredEmpty\":2},\"unchanged\":6,\"gone\":[\"8\"]}\n2 textbox \"Email\" name=\"email\" type=\"email\" value=\"a@b.co\" required"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 33673
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {
+     "diff": true,
+     "frames": true
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: bad_args: accessibility_snapshot takes diff or frames, not both"
     }
    ],
    "isError": true,
@@ -3115,7 +3251,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35141
+   "pageBytes": 33652
   }
  ],
  "accessibility_snapshot: safari": [
@@ -3140,7 +3276,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35141
+   "pageBytes": 33652
   }
  ],
  "accessibility_snapshot: same-origin and cross-origin iframes": [
@@ -3163,7 +3299,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35143
+   "pageBytes": 33654
   }
  ],
  "accessibility_snapshot: frames from Accessibility": [
@@ -3190,7 +3326,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35157
+   "pageBytes": 33668
   },
   {
    "call": [
@@ -3221,7 +3357,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10612
+   "pageBytes": 437
   },
   {
    "call": [
@@ -3333,7 +3469,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35157
+   "pageBytes": 33668
   }
  ],
  "accessibility_snapshot: hidden with reveal, unpicked, pressed, expanded": [
@@ -3356,7 +3492,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35143
+   "pageBytes": 33654
   }
  ],
  "accessibility_snapshot: frames unreadable without Accessibility": [
@@ -3382,7 +3518,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35157
+   "pageBytes": 33668
   }
  ],
  "click: selector, label, ref, hover, coordinates": [
@@ -3407,7 +3543,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15745
+   "pageBytes": 14529
   },
   {
    "call": [
@@ -3430,7 +3566,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15757
+   "pageBytes": 14541
   },
   {
    "call": [
@@ -3453,7 +3589,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15747
+   "pageBytes": 14531
   },
   {
    "call": [
@@ -3476,7 +3612,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15750
+   "pageBytes": 14534
   },
   {
    "call": [
@@ -3518,7 +3654,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35145
+   "pageBytes": 33656
   },
   {
    "call": [
@@ -3541,7 +3677,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15761
+   "pageBytes": 14545
   },
   {
    "call": [
@@ -3565,7 +3701,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 13761
+   "pageBytes": 12545
   },
   {
    "call": [
@@ -3650,7 +3786,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15755
+   "pageBytes": 14539
   },
   {
    "call": [
@@ -3673,7 +3809,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15748
+   "pageBytes": 14532
   },
   {
    "call": [
@@ -3696,7 +3832,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15747
+   "pageBytes": 14531
   }
  ],
  "click: arc": [
@@ -3723,7 +3859,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15745
+   "pageBytes": 14529
   }
  ],
  "click: safari": [
@@ -3748,7 +3884,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15745
+   "pageBytes": 14529
   }
  ],
  "click: readback changed, unchanged, invalid": [
@@ -3776,7 +3912,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 49207
+   "pageBytes": 44739
   },
   {
    "call": [
@@ -3812,7 +3948,7 @@
     ]
    },
    "pageScripts": 12,
-   "pageBytes": 285047
+   "pageBytes": 248059
   },
   {
    "call": [
@@ -3838,7 +3974,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 49207
+   "pageBytes": 44739
   },
   {
    "call": [
@@ -3874,7 +4010,7 @@
     ]
    },
    "pageScripts": 12,
-   "pageBytes": 285059
+   "pageBytes": 248071
   }
  ],
  "click: readback on a busy page is settled:false": [
@@ -3942,7 +4078,7 @@
     ]
    },
    "pageScripts": 42,
-   "pageBytes": 992496
+   "pageBytes": 857948
   }
  ],
  "click: _blank link opens a tab": [
@@ -3972,7 +4108,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 16572
+   "pageBytes": 15356
   }
  ],
  "click: _blank link with no tab is unconfirmed": [
@@ -4005,7 +4141,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 16572
+   "pageBytes": 15356
   }
  ],
  "click: trusted background": [
@@ -4034,7 +4170,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 30621
+   "pageBytes": 26920
   },
   {
    "call": [
@@ -4061,7 +4197,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 30622
+   "pageBytes": 26921
   }
  ],
  "click: trusted raised": [
@@ -4105,7 +4241,7 @@
     ]
    },
    "pageScripts": 13,
-   "pageBytes": 148256
+   "pageBytes": 32630
   }
  ],
  "click: trusted needs the shown tab": [
@@ -4187,7 +4323,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12582
+   "pageBytes": 10811
   },
   {
    "call": [
@@ -4211,7 +4347,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12578
+   "pageBytes": 10807
   },
   {
    "call": [
@@ -4234,7 +4370,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12577
+   "pageBytes": 10806
   },
   {
    "call": [
@@ -4257,7 +4393,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12576
+   "pageBytes": 10805
   },
   {
    "call": [
@@ -4281,7 +4417,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12587
+   "pageBytes": 10816
   },
   {
    "call": [
@@ -4349,7 +4485,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12582
+   "pageBytes": 10811
   },
   {
    "call": [
@@ -4395,7 +4531,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12584
+   "pageBytes": 10813
   }
  ],
  "press: trusted": [
@@ -4426,7 +4562,7 @@
     ]
    },
    "pageScripts": 3,
-   "pageBytes": 33675
+   "pageBytes": 18477
   },
   {
    "call": [
@@ -4475,7 +4611,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 10612
+   "pageBytes": 437
   }
  ],
  "press: arc": [
@@ -4503,7 +4639,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12590
+   "pageBytes": 10819
   }
  ],
  "press: safari": [
@@ -4529,7 +4665,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12590
+   "pageBytes": 10819
   }
  ],
  "fill: plain by label, selector, ref; clear; text_path": [
@@ -4555,7 +4691,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29871
+   "pageBytes": 29413
   },
   {
    "call": [
@@ -4579,7 +4715,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 44477
+   "pageBytes": 34171
   },
   {
    "call": [
@@ -4602,7 +4738,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 49741
+   "pageBytes": 38404
   },
   {
    "call": [
@@ -4626,7 +4762,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29876
+   "pageBytes": 29418
   },
   {
    "call": [
@@ -4650,7 +4786,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 44465
+   "pageBytes": 34159
   },
   {
    "call": [
@@ -4674,7 +4810,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 44472
+   "pageBytes": 34166
   },
   {
    "call": [
@@ -4698,7 +4834,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29890
+   "pageBytes": 29432
   },
   {
    "call": [
@@ -4722,7 +4858,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 44468
+   "pageBytes": 34162
   },
   {
    "call": [
@@ -4786,7 +4922,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29878
+   "pageBytes": 29420
   },
   {
    "call": [
@@ -4810,7 +4946,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 44458
+   "pageBytes": 34152
   }
  ],
  "fill: checkbox, radio, ambiguous": [
@@ -4837,7 +4973,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73785
+   "pageBytes": 63937
   },
   {
    "call": [
@@ -4870,7 +5006,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73827
+   "pageBytes": 63979
   },
   {
    "call": [
@@ -4894,7 +5030,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29868
+   "pageBytes": 29410
   }
  ],
  "fill: fields with form census, only_empty, preference list": [
@@ -4936,7 +5072,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73878
+   "pageBytes": 64030
   },
   {
    "call": [
@@ -4974,7 +5110,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73870
+   "pageBytes": 64022
   },
   {
    "call": [
@@ -5031,7 +5167,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 73783
+   "pageBytes": 63935
   },
   {
    "call": [
@@ -5160,7 +5296,7 @@
     ]
    },
    "pageScripts": 5,
-   "pageBytes": 231225
+   "pageBytes": 228357
   }
  ],
  "fill: late revert reported by the next call and held click": [
@@ -5186,7 +5322,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29870
+   "pageBytes": 29412
   },
   {
    "call": [
@@ -5209,7 +5345,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 30355
+   "pageBytes": 19291
   },
   {
    "call": [
@@ -5232,7 +5368,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 15746
+   "pageBytes": 14530
   }
  ],
  "fill: typeahead pick and miss": [
@@ -5262,7 +5398,7 @@
     ]
    },
    "pageScripts": 4,
-   "pageBytes": 146861
+   "pageBytes": 143535
   },
   {
    "call": [
@@ -5297,7 +5433,7 @@
     ]
    },
    "pageScripts": 11,
-   "pageBytes": 424393
+   "pageBytes": 414375
   },
   {
    "call": [
@@ -5390,7 +5526,7 @@
     ]
    },
    "pageScripts": 69,
-   "pageBytes": 2712423
+   "pageBytes": 2646957
   }
  ],
  "fill: trusted background and raised": [
@@ -5417,7 +5553,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 32863
+   "pageBytes": 32405
   },
   {
    "call": [
@@ -5460,7 +5596,7 @@
     ]
    },
    "pageScripts": 13,
-   "pageBytes": 152000
+   "pageBytes": 36363
   },
   {
    "call": [
@@ -5490,7 +5626,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 76323
+   "pageBytes": 74980
   }
  ],
  "fill: arc": [
@@ -5518,7 +5654,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29870
+   "pageBytes": 29412
   }
  ],
  "fill: safari": [
@@ -5544,7 +5680,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29870
+   "pageBytes": 29412
   }
  ],
  "select: native exact, word, ambiguous, miss, disabled": [
@@ -5571,7 +5707,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38010
+   "pageBytes": 37054
   },
   {
    "call": [
@@ -5596,7 +5732,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 52644
+   "pageBytes": 41840
   },
   {
    "call": [
@@ -5621,7 +5757,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 52602
+   "pageBytes": 41798
   },
   {
    "call": [
@@ -5646,7 +5782,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 52599
+   "pageBytes": 41795
   },
   {
    "call": [
@@ -5671,7 +5807,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38004
+   "pageBytes": 37048
   },
   {
    "call": [
@@ -5696,7 +5832,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38003
+   "pageBytes": 37047
   },
   {
    "call": [
@@ -5721,7 +5857,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 37999
+   "pageBytes": 37043
   },
   {
    "call": [
@@ -5746,7 +5882,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38000
+   "pageBytes": 37044
   },
   {
    "call": [
@@ -5771,7 +5907,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38003
+   "pageBytes": 37047
   },
   {
    "call": [
@@ -5819,7 +5955,7 @@
     ]
    },
    "pageScripts": 3,
-   "pageBytes": 111948
+   "pageBytes": 109080
   },
   {
    "call": [
@@ -5854,7 +5990,7 @@
     ]
    },
    "pageScripts": 11,
-   "pageBytes": 391864
+   "pageBytes": 381348
   }
  ],
  "select: trusted": [
@@ -5882,7 +6018,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38015
+   "pageBytes": 37059
   }
  ],
  "select: arc": [
@@ -5910,7 +6046,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38000
+   "pageBytes": 37044
   }
  ],
  "select: safari": [
@@ -5939,7 +6075,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 38000
+   "pageBytes": 37044
   }
  ],
  "file_upload: input, label, drop zone, misses": [
@@ -5965,7 +6101,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 17539
+   "pageBytes": 15881
   },
   {
    "call": [
@@ -5989,7 +6125,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 17548
+   "pageBytes": 15890
   },
   {
    "call": [
@@ -6012,7 +6148,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 17523
+   "pageBytes": 15865
   },
   {
    "call": [
@@ -6037,7 +6173,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 32094
+   "pageBytes": 27411
   },
   {
    "call": [
@@ -6100,7 +6236,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 17542
+   "pageBytes": 15884
   },
   {
    "call": [
@@ -6144,7 +6280,7 @@
     ]
    },
    "pageScripts": 13,
-   "pageBytes": 147796
+   "pageBytes": 25494
   }
  ],
  "console_capture: start, read, stop": [
@@ -6496,7 +6632,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 25092
+   "pageBytes": 13146
   },
   {
    "call": [
@@ -6517,7 +6653,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35143
+   "pageBytes": 33654
   },
   {
    "call": [
@@ -6548,7 +6684,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 25103
+   "pageBytes": 13157
   },
   {
    "call": [
@@ -6573,7 +6709,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 13783
+   "pageBytes": 12012
   }
  ],
  "screenshot: element past the viewport edge is clipped": [
@@ -6606,7 +6742,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 25092
+   "pageBytes": 13146
   }
  ],
  "screenshot: no Screen Recording grant": [
@@ -7218,7 +7354,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: JavaScript-from-AppleEvents is off. Enable it: Chromium-family \u2192 View > Developer > Allow JavaScript from Apple Events. Safari \u2192 Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events."
+     "text": "error: JavaScript-from-AppleEvents is off. Enable it: Chromium-family → View > Developer > Allow JavaScript from Apple Events. Safari → Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events."
     }
    ],
    "isError": true,
@@ -7296,7 +7432,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 30264
+   "pageBytes": 29806
   }
  ],
  "errors: window_ambiguous with a second instance": [

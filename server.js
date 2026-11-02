@@ -8423,6 +8423,14 @@ return s.slice(A.offset, A.offset + A.maxChars) + "\n[truncated: chars " + A.off
   // Line format: "# {header json}", then "<ref> <role> <json name> key=<json>... flags".
   snapshot: INVALID_LIB + STEP_LIB + TA_BOX_LIB + CENSUS_LIB + EMBED_LIB + String.raw`
 const refs = {};
+// A diff: A.since is the rid of the asking server's last snapshot of this tab.
+// While that map is still the page's latest, under the same filters, an element
+// it named and this snapshot shows again keeps its ref, and only new or changed
+// rows print. Anything else is a full snapshot.
+const fkey = JSON.stringify([A.max, A.role, A.query]);
+const prev = window.__perch_rows;
+const carry = A.since && window.__perch_refsId === A.since && prev && prev.rid === A.since && prev.f === fkey && window.__perch_refs ? new Map() : null;
+if (carry) { const o = window.__perch_refs; for (const k in o) carry.set(o[k], k); }
 window.__perch_refs = refs;
 // el.labels searches the whole tree for label[for] on every read. The snapshot
 // changes nothing, so a field with an id takes its labels from one scan per
@@ -8525,7 +8533,8 @@ function rank(el, r) {
 // Rows are taken by rank, then document order, until max, and print in
 // document order. Without a query, once max rows are taken and one more shows,
 // the rest are counted unchecked, so omitted is at most that many rows.
-let n = n0, matched = 0, omitted = 0;
+let n = n0, matched = 0, omitted = 0, issued = 0;
+function newRef(el) { issued++; return carry && carry.has(el) ? carry.get(el) : String(++n); }
 const tiers = [[], [], []], kept = [], cut = new Set(), shown = new Set();
 let seq = 0;
 function walk(root) {
@@ -8551,7 +8560,7 @@ for (const c of tiers[0].concat(tiers[1], tiers[2])) {
 }
 kept.sort(function (a, b) { return a.i - b.i; });
 for (const c of kept) {
-  const ref = String(++n);
+  const ref = newRef(c.el);
   refs[ref] = c.el;
   lines.push(ref + " " + (c.line || describe(c.el, c.r, accName(c.el)) + frameTag(c.el)));
 }
@@ -8608,13 +8617,13 @@ function hiddenRows(cands) {
     const line = describe(el, r, name) + (seen ? "" : " hidden") + frameTag(el);
     if (re && !re.test(line)) continue;
     matched++;
-    if (n - n0 >= A.max) { omitted++; continue; }
+    if (issued >= A.max) { omitted++; continue; }
     shown++;
-    const ref = String(++n);
+    const ref = newRef(el);
     refs[ref] = el;
     const b = seen ? null : revealer(el, secs);
     let bref = b && listed.get(b), bline = null;
-    if (b && !bref && n - n0 < A.max) { bref = String(++n); refs[bref] = b; listed.set(b, bref); bline = bref + " " + describe(b, role(b), accName(b)) + frameTag(b); }
+    if (b && !bref && issued < A.max) { bref = newRef(b); refs[bref] = b; listed.set(b, bref); bline = bref + " " + describe(b, role(b), accName(b)) + frameTag(b); }
     lines.push(ref + " " + line + (bref ? " reveal=" + q(bref) : ""));
     if (bline) lines.push(bline);
   }
@@ -8641,7 +8650,7 @@ window.__perch_refN = n;
 const head = { rid: rid, url: location.href };
 if (document.title) head.title = document.title;
 if (document.readyState !== "complete") head.ready = document.readyState;
-head.count = n - n0;
+head.count = issued;
 // For the frame walk's page-area match; Node drops them from the header.
 if (A.frames) {
   head.iw = innerWidth; head.ih = innerHeight;
@@ -8669,7 +8678,17 @@ if (embedded.length) head.iframes = embedded.map(function (e) {
   if (e.p) o.in = e.in;
   return o;
 });
-return "# " + JSON.stringify(head) + (lines.length ? "\n" + lines.join("\n") : "");
+const rows = Object.create(null);
+for (const l of lines) { const i = l.indexOf(" "); rows[l.slice(0, i)] = l.slice(i + 1); }
+window.__perch_rows = { rid: rid, f: fkey, lines: rows };
+let out = lines;
+if (carry) {
+  out = lines.filter(function (l) { const i = l.indexOf(" "); return prev.lines[l.slice(0, i)] !== l.slice(i + 1); });
+  head.unchanged = lines.length - out.length;
+  const gone = Object.keys(prev.lines).filter(function (r) { return !(r in rows); });
+  if (gone.length) head.gone = gone;
+}
+return "# " + JSON.stringify(head) + (out.length ? "\n" + out.join("\n") : "");
 `,
 
   fill: FILL_LIB + "return fillOne(A);",
@@ -10234,16 +10253,23 @@ export function takeRefsId(page) {
   return m ? { rid: m[1], page: "# {" + page.slice(m[0].length) } : { rid: null, page };
 }
 const REVEAL = / reveal="(\d+)"/;
-function issueRefs(keys, rid, page) {
+// A diff (`prev`, the map it was taken against, and a page that answered with
+// `unchanged`) keeps prev's refs under the numbers this server showed for them: page
+// refs prev named map back to those, and the rows it didn't print stay valid.
+function issueRefs(keys, rid, page, prev) {
   const nl = page.indexOf("\n");
   const lines = nl < 0 ? [] : page.slice(nl + 1).split("\n");
   const shown = lines.map((l) => l.slice(0, l.indexOf(" ")));
+  const h = prev ? JSON.parse(page.slice(2, nl < 0 ? page.length : nl)) : null;
+  const back = new Map();
+  if (h && h.unchanged != null) for (const a of prev.refs) back.set(prev.toPage ? prev.toPage.get(a) || a : a, a);
+  else prev = null;
   let toPage = null;
-  if (shown.some((r) => issuedRefs.has(r))) {
-    const taken = new Set(shown), as = new Map();
+  if (back.size || shown.some((r) => issuedRefs.has(r))) {
+    const taken = new Set(shown.concat([...back.values()])), as = new Map(back);
     let next = 1;
     for (const r of shown) {
-      if (!issuedRefs.has(r)) continue;
+      if (as.has(r) || !issuedRefs.has(r)) continue;
       while (taken.has(String(next)) || issuedRefs.has(String(next))) next++;
       as.set(r, String(next++));
     }
@@ -10253,14 +10279,18 @@ function issueRefs(keys, rid, page) {
       lines[i] = out(r) + lines[i].slice(r.length).replace(REVEAL, (m, b) => ` reveal="${out(b)}"`);
       shown[i] = out(r);
     }
-    const h = JSON.parse(page.slice(2, nl));
-    if (as.has(h.focus)) h.focus = as.get(h.focus);
-    page = ["# " + JSON.stringify(h)].concat(lines).join("\n");
-    toPage = new Map([...as].map(([p, a]) => [a, p]));
+    const head = h || JSON.parse(page.slice(2, nl));
+    if (as.has(head.focus)) head.focus = as.get(head.focus);
+    if (head.gone) head.gone = head.gone.map(out);
+    page = ["# " + JSON.stringify(head)].concat(lines).join("\n");
+    toPage = new Map([...as].filter(([p, a]) => p !== a).map(([p, a]) => [a, p]));
+    if (!toPage.size) toPage = null;
   }
   for (const r of shown) { issuedRefs.delete(r); issuedRefs.add(r); }
   for (const r of issuedRefs) { if (issuedRefs.size <= ISSUED_MAX) break; issuedRefs.delete(r); }
-  const st = { rid, refs: new Set(shown), toPage };
+  const gone = new Set(prev && h.gone || []);
+  const kept = prev ? [...prev.refs].filter((a) => !gone.has(a)) : [];
+  const st = { rid, refs: new Set(kept.concat(shown)), toPage };
   for (const k of keys) {
     refMaps.delete(k);
     refMaps.set(k, st);
@@ -10269,11 +10299,11 @@ function issueRefs(keys, rid, page) {
   return page;
 }
 // A snapshot page's reply as the agent sees it, its refs remembered for target.
-export function keepSnapshot(target, raw) {
+export function keepSnapshot(target, raw, prev) {
   const { rid, page } = takeRefsId(raw);
   if (!rid) return page;
   const c = callNotes.getStore();
-  return issueRefs([tabKey(target)].concat(c && c.moved ? [tabKey({ tabId: c.moved })] : []), rid, page);
+  return issueRefs([tabKey(target)].concat(c && c.moved ? [tabKey({ tabId: c.moved })] : []), rid, page, prev);
 }
 class RefMiss extends Error {
   constructor(ref) { super(`ref ${ref} is stale or unknown`); this.ref = String(ref); }
@@ -10383,12 +10413,15 @@ function codeFrameError(msg) {
 }
 
 async function accessibilitySnapshot(args = {}) {
-  const { role = null, query = null, target, frames = false } = args;
+  const { role = null, query = null, target, frames = false, diff = false } = args;
   const max = args.max == null ? 500 : Math.max(0, Number(args.max) || 0);
   if (query != null) validateLabelPattern("accessibility_snapshot", query, "query");
+  if (diff && frames === true) throw new Error("bad_args: accessibility_snapshot takes diff or frames, not both");
   if (target && target.tabId != null) frameRefs.delete(String(target.tabId));
-  const keep = (raw) => keepSnapshot(target, raw);
-  if (frames !== true) return keep(await runPage("accessibility_snapshot", "snapshot", { max, role, query }, target));
+  // Only a diff's A carries a rid, so a plain snapshot keeps its byte-identical source.
+  const prev = diff ? refMaps.get(tabKey(target)) : null;
+  const keep = (raw) => keepSnapshot(target, raw, prev);
+  if (frames !== true) return keep(await runPage("accessibility_snapshot", "snapshot", prev ? { max, role, query, since: prev.rid } : { max, role, query }, target));
   const r = await rt("snapshotFrames", { target, js: buildEvalWrapper(pageScript("snapshot", { max, role, query, frames: true })) });
   if (r.tabId) frameRefs.delete(r.tabId);
   const page = keep(parsePage(r.page));
@@ -11279,11 +11312,12 @@ const TOOLS = [
     offset: { type: "number" },
     target: TARGET,
   }),
-  tool("accessibility_snapshot", "Page outline: a `# {url,title?,ready?,count,focus,dialogs,form}` header, then one line per visible interactive element: `ref role \"name\" key=json… flags`. `omitted`: rows cut; narrow by role/query, not missing.", {
-    max: { type: "number", description: "Row cap, default 500 (dialogs, focus, fields first); 0 = header only." },
+  tool("accessibility_snapshot", "Outline: a `# {url,title?,ready?,count,focus,dialogs,form}` header, then a line per visible control: `ref role \"name\" key=json… flags`. `omitted`: rows cut; narrow by role/query, not missing.", {
+    max: { type: "number", description: "Default 500, fields first; 0 = header only." },
     role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles (textbox, button…)." },
     query: { type: "string", description: "Keep lines matching this regex." },
-    frames: { type: "boolean", description: "Add iframe controls from Accessibility as `fN` rows (the tab its window shows); fN takes only click {trusted:true}." },
+    frames: { type: "boolean", description: "Cross-origin iframe controls as `fN` rows (click {trusted:true})." },
+    diff: { type: "boolean", description: "Changes since your last snapshot only (`unchanged`, `gone` refs)." },
     target: TARGET,
   }),
   tool("console_capture", "`start` records console.*, uncaught errors and rejections, `read` drains \"level: text\" lines, `stop` restores; navigation clears it.", {
