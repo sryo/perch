@@ -7618,6 +7618,8 @@ function fillOne(a, only, onLand) {
     return flat(textOf(root), 1) === flat(text, 1) || (typed && textOf(root) === prior && 2);
   }
   function tryFill(el, host) {
+    // A blank file input reads as a textbox, and setting its value throws, which would sink the whole batch.
+    if (el.tagName === "INPUT" && (el.type || "").toLowerCase() === "file") return { ok: false, el: ident(el), error: ident(el) + " is a file input; use file_upload" };
     if (a.trusted) { const tok = rbTok(); window.__perch_ta = { key: taKey, tok: tok, el: el, held: true }; return { pending: true, tok: tok }; }
     if (isField(el) && text !== "" && isTypeahead(el)) return startTypeahead(el);
     if (isField(el)) {

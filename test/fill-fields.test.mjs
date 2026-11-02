@@ -2238,3 +2238,18 @@ test("fill {fields}: batches differing only in their patterns send the same libr
   assert.equal(sent.length, 2);
   assert.equal(sent[1], sent[0].replaceAll("zqemail", "zqphone"));
 });
+
+test("fill_fields: a file input in the batch fails alone and the other fields land", () => {
+  // A blank file input reads as a textbox, so a batch built from a snapshot can hold one; a browser throws on its value.
+  const w = page(`<form><label>Autofill from resume <input type=file name=auto></label><label>Name <input name=name></label></form>`);
+  const snap = run(w, "snapshot", { max: 50 });
+  const ref = (name) => snap.split("\n").find((l) => l.includes(name)).split(" ")[0];
+  const rid = w.__perch_refsId;
+  // A browser throws InvalidStateError on a file input's value; happy-dom doesn't, so the page is made to.
+  Object.defineProperty(w.document.querySelector("[name=auto]"), "value", { get: () => "", set: () => { throw new w.DOMException("x", "InvalidStateError"); }, configurable: true });
+  const o = run(w, "fill_fields", { fields: [{ ref: ref("Autofill"), rid, text: "x" }, { ref: ref('"Name"'), rid, text: "Ada" }] });
+  assert.equal(o.results[0].ok, false, JSON.stringify(o));
+  assert.match(o.results[0].error, /file input; use file_upload/);
+  assert.equal(o.results[1].ok, true, JSON.stringify(o));
+  assert.equal(val(w, "[name=name]").value, "Ada");
+});
