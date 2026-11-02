@@ -122,7 +122,7 @@ test("runSuite creates one scratch tab, targets it everywhere, and closes it", a
   assert.deepEqual(calls[0].args, { app: "canary", url: FIXTURE_URL });
   assert.equal(calls.filter((c) => c.name === "new_tab").length, 1);
   for (const c of calls.slice(1)) {
-    if (c.name === "list_tabs") assert.deepEqual(c.args, { app: "canary", urlContains: "127.0.0.1" });
+    if (c.name === "list_tabs") assert.deepEqual(c.args, { app: "canary", urlContains: "127.0.0.1:8787" });
     else assert.deepEqual(c.args.target, { tabId: "canary:7" }, `${c.name} untargeted`);
   }
   assert.deepEqual(closed, [{ app: "Google Chrome Canary", tabId: "canary:7" }]);
@@ -229,16 +229,27 @@ test("shapeReport produces the shared comparison schema", async () => {
   assert.deepEqual(r.ops.O8.image, { b64: 400, w: 1600, h: 1200 });
 });
 
+test("a fixture on another host is opened, navigated to and listed by that host", async () => {
+  const fixture = "http://192.168.64.1:8787/fixture.html";
+  const p = fakePerch({ fail: { list_tabs: () => txt(JSON.stringify({ tabs: [{ tabId: "canary:7", url: fixture }] })) } });
+  const suite = await runSuite(p.call, { app: "canary", reps: 1, fixture, now });
+  assert.equal(suite.ops.O1.reps[0].ok, true);
+  assert.deepEqual(p.calls.find((c) => c.name === "list_tabs").args, { app: "canary", urlContains: "192.168.64.1:8787" });
+  assert.equal(p.calls.find((c) => c.name === "new_tab").args.url, fixture);
+  assert.equal(p.calls.find((c) => c.name === "navigate").args.url, fixture);
+});
+
 test("parseArgs reads --app, --reps, --out with defaults", () => {
-  assert.deepEqual(parseArgs(["--app", "canary"]), { app: "canary", reps: 10, out: join(expectedRunsDir(), "compare.json"), activate: false, house: undefined });
-  assert.deepEqual(parseArgs(["--app", "arc", "--reps", "3", "--out", "x.json", "--activate", "--house", "h.json"]), { app: "arc", reps: 3, out: "x.json", activate: true, house: "h.json" });
+  assert.deepEqual(parseArgs(["--app", "canary"]), { app: "canary", reps: 10, out: join(expectedRunsDir(), "compare.json"), activate: false, house: undefined, fixture: FIXTURE_URL });
+  assert.deepEqual(parseArgs(["--app", "arc", "--reps", "3", "--out", "x.json", "--activate", "--house", "h.json"]), { app: "arc", reps: 3, out: "x.json", activate: true, house: "h.json", fixture: FIXTURE_URL });
+  assert.equal(parseArgs(["--app", "room:main", "--fixture", "http://192.168.64.1:8787/fixture.html"]).fixture, "http://192.168.64.1:8787/fixture.html");
   assert.throws(() => parseArgs([]), /--app/);
   assert.throws(() => parseArgs(["--app", "arc", "--reps", "0"]), /--reps/);
 });
 
 test("parseArgs lets a repeated flag's last value win, as bench.mjs does", () => {
   const args = parseArgs(["--app", "canary", "--reps", "5", "--out", "a.json", "--app", "arc", "--reps", "2", "--out", "b.json"]);
-  assert.deepEqual(args, { app: "arc", reps: 2, out: "b.json", activate: false, house: undefined });
+  assert.deepEqual(args, { app: "arc", reps: 2, out: "b.json", activate: false, house: undefined, fixture: FIXTURE_URL });
   assert.throws(() => parseArgs(["--app", "arc", "--reps", "3", "--reps", "0"]), /--reps/);
 });
 

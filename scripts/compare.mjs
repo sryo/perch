@@ -3,13 +3,16 @@
 // (O1..O8, mirrored on the extension side) through perch's MCP stdio interface
 // against bench/compare/fixture.html served at FIXTURE_URL, and writes
 // {tool, app, date, node, macos, ops:{O1:{calls, chars, ms, ok_rate, notes}}}.
-//   node scripts/compare.mjs --app <browser> [--reps 10] [--out ~/.fium/runs/perch/compare.json] [--activate] [--house <out.json>]
+//   node scripts/compare.mjs --app <browser> [--reps 10] [--out ~/.fium/runs/perch/compare.json] [--activate] [--house <out.json>] [--fixture <url>]
 // Runs land in ~/.fium/runs/perch/; bench/compare/README.md keeps the history.
 // --house also writes the run in fium's format (fium RULES.md K2): calls_per_task <op>
 // and readback_hits, judged with fium compare bench/compare/fium-baseline.json <out.json>.
 // Opens one scratch tab (new_tab may focus the browser) and closes it at the end.
 // --activate selects that tab first (takes focus); without it, perch refuses
 // screenshots of the unselected tab, and Arc/Safari refuse its page JS too.
+// A room (--app room:<name>) runs in its own VM, where the Mac's 127.0.0.1 is not
+// the Mac: serve the fixture on the host's bridge address and pass --fixture
+// http://192.168.64.1:8787/fixture.html. A room never takes focus.
 
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
@@ -127,7 +130,7 @@ async function fillFields(c, ctx) {
 
 export const OPS = [
   { id: "O1", name: "list_tabs", run: async (c, ctx) => {
-    const o = json(textOf(await c("list_tabs", { app: ctx.app, urlContains: "127.0.0.1" })));
+    const o = json(textOf(await c("list_tabs", { app: ctx.app, urlContains: new URL(ctx.fixture).host })));
     const hit = o?.tabs?.some((t) => String(t.url).startsWith(ctx.fixture));
     return hit ? { ok: true } : { ok: false, note: `fixture tab not listed (${o?.tabs?.length ?? "?"} rows)` };
   } },
@@ -238,23 +241,23 @@ export function houseRun(suite, { commit, dirty }) {
 export function parseArgs(argv) {
   const opt = (k, d) => { const i = argv.lastIndexOf(k); return i >= 0 ? argv[i + 1] : d; };
   const app = opt("--app");
-  if (!app) throw new Error("usage: compare.mjs --app <browser> [--reps 10] [--out ~/.fium/runs/perch/compare.json] [--activate] [--house <out.json>]; --app is required");
+  if (!app) throw new Error("usage: compare.mjs --app <browser> [--reps 10] [--out ~/.fium/runs/perch/compare.json] [--activate] [--house <out.json>] [--fixture <url>]; --app is required");
   const reps = Number(opt("--reps", 10));
   if (!Number.isInteger(reps) || reps < 1) throw new Error("--reps must be a positive integer");
-  return { app, reps, out: opt("--out") ?? join(runsDir(), "compare.json"), activate: argv.includes("--activate"), house: opt("--house") };
+  return { app, reps, out: opt("--out") ?? join(runsDir(), "compare.json"), activate: argv.includes("--activate"), house: opt("--house"), fixture: opt("--fixture", FIXTURE_URL) };
 }
 
 // ---- CLI ----
 
-// perch has no close-tab tool; close the scratch tab by handle through AppleScript
-// (same approach as scripts/smoke.mjs).
-function closeTab(t) {
-  const [key, raw] = [t.tabId.slice(0, t.tabId.indexOf(":")), t.tabId.slice(t.tabId.indexOf(":") + 1)];
-  const js = key === "safari"
-    ? `const w=Application(${JSON.stringify(t.app)}).windows.byId(${JSON.stringify(Number(raw.split(".")[0]))}); w.tabs[${Number(raw.split(".")[1])}].close()`
-    : `const a=Application(${JSON.stringify(t.app)}); for (let i=0;i<a.windows.length;i++){ const w=a.windows[i]; if (w.tabs.id().map(String).indexOf(${JSON.stringify(raw)})>=0){ w.tabs.byId(${JSON.stringify(raw)}).close(); break; } }`;
-  try { execFileSync("osascript", ["-l", "JavaScript", "-e", js]); return true; }
-  catch { console.error(`could not close scratch tab ${t.tabId}; close it by hand`); return false; }
+// Closes the scratch tab through perch's close_tab, so a room tab goes over its
+// DevTools endpoint like every other call.
+export function closeWith(call) {
+  return async (t) => {
+    const res = await call("close_tab", { tabId: t.tabId });
+    if (!res?.isError && json(textOf(res))?.ok !== false) return true;
+    console.error(`could not close scratch tab ${t.tabId} (${textOf(res).slice(0, 160)}); close it by hand`);
+    return false;
+  };
 }
 
 async function main() {
@@ -263,7 +266,7 @@ async function main() {
   let suite;
   try {
     suite = await runSuite(client.call, {
-      app: args.app, reps: args.reps, activate: args.activate, close: closeTab,
+      app: args.app, reps: args.reps, fixture: args.fixture, activate: args.activate, close: closeWith(client.call),
       log: (op, reps) => {
         const ok = reps.filter((r) => r.ok).length;
         console.log(`${op.id} ${op.name.padEnd(13)} ok ${ok}/${reps.length}  median ${summarize(reps.map((r) => r.ms)).median}ms  calls ${reps[0]?.calls}`);

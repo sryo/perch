@@ -7,6 +7,14 @@ The same 8-op suite (O1 to O8, plus the one-call variants O6b and O7b) runs agai
 node scripts/compare.mjs --app canary --reps 10 --activate
 ```
 
+To run it without taking focus, use a room. A room's browser runs in a VM, so serve the
+fixture on the Mac's bridge address and point the suite at it:
+
+```
+python3 -m http.server 8787 --bind 192.168.64.1 --directory bench/compare
+node scripts/compare.mjs --app room:main --reps 10 --fixture http://192.168.64.1:8787/fixture.html
+```
+
 Runs land in `~/.fium/runs/perch/compare.json`. Add a row to the history below when a
 run is worth keeping.
 
