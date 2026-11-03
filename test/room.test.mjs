@@ -349,86 +349,18 @@ test("a lease left by an exited process frees the tab at once", async () => {
   }
 });
 
-test("a lease whose pid went to a process started after its last call frees the tab", async () => {
-  const R = makeRooms();
-  const other = await import(`../server.js?reused-room-lease=${Date.now()}`);
-  roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
-  other.roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
-  await call("eval_js", { script: "return 1", target: tab() });
-  const dir = join(R.home, "run", "leases");
-  const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
-  const before = Date.now() - process.uptime() * 1000 - 3600000;
-  writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), owner: "gone", pid: process.pid, active: true, last: before }));
-  const rows = await other.handleCall("list_tabs", { app: "room:work" });
-  assert.doesNotMatch(rows.content[0].text, /"holder"/);
-  const got = await other.handleCall("eval_js", { script: "return 2", target: tab() });
-  assert.equal(got.content[0].text, "2");
-});
-
-// rooms reads the same leases (rooms/leases.mjs leaseHolder) and keeps the rule as a table of
-// cases both run; this reads it when rooms' checkout sits beside perch.
-test("every lease case in rooms' fixture holds its tab here as it does in rooms", (t) => {
-  const path = new URL("../../rooms/test/fixtures/leases.json", import.meta.url);
-  if (!existsSync(path)) return t.skip("no rooms checkout beside perch");
-  const { cases } = JSON.parse(readFileSync(path, "utf8"));
+// A lease holds its tab while its process lives and it is mid-call or within five seconds of one.
+test("whether a lease holds its tab", () => {
   const now = Date.now(), dead = spawnSync(process.execPath, ["-e", ""]).pid;
-  for (const c of cases) {
-    const s = { ...c.lease, pid: { alive: process.pid, dead }[c.lease.pid] ?? c.lease.pid };
-    if ("last" in s) s.last += now;
-    assert.equal(roomLeaseHeld(s, () => c.start == null ? null : now + c.start), c.held, c.name);
-  }
-});
-
-test("a lease transfer releases a key left down by the previous server", async () => {
-  const shared = makeRooms({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<input id=n>" }] } } });
-  const other = await import(`../server.js?room-key-recovery=${Date.now()}`);
-  roomsReset({ home: shared.home, fetch: shared.fetch, WebSocket: shared.WebSocket });
-  other.roomsReset({ home: shared.home, fetch: shared.fetch, WebSocket: shared.WebSocket });
-  const room = shared.room("work"), original = room.handle.bind(room);
-  let failed = false;
-  room.handle = (ws, msg) => {
-    if (!failed && msg.method === "Input.dispatchKeyEvent" && msg.params.type === "keyUp") {
-      failed = true;
-      room.reply(ws, { id: msg.id, error: { code: -32000, message: "key-up reply failed" } });
-    } else original(ws, msg);
-  };
-  const first = await handleCall("press", { key: "Enter", selector: "#n", trusted: true, target: tab() });
-  assert.equal(first.isError, true);
-  const dir = join(shared.home, "run", "leases");
-  const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
-  const lease = JSON.parse(readFileSync(path, "utf8"));
-  assert.equal(lease.stuck.type, "key");
-  writeFileSync(path, JSON.stringify({ ...lease, last: Date.now() - 6000 }));
-  const got = await other.handleCall("eval_js", { script: "return 3", target: tab() });
-  assert.equal(got.content[0].text, "3");
-  assert.equal(room.log.filter((x) => x.method === "Input.dispatchKeyEvent" && x.params.type === "keyUp").length, 1);
-  assert.equal(JSON.parse(readFileSync(path, "utf8")).stuck, null);
-});
-
-test("a lease transfer releases a mouse button left down by the previous server", async () => {
-  const shared = makeRooms({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<button id=b data-rect='0,0,80,30'>Go</button>" }] } } });
-  const other = await import(`../server.js?room-mouse-recovery=${Date.now()}`);
-  roomsReset({ home: shared.home, fetch: shared.fetch, WebSocket: shared.WebSocket });
-  other.roomsReset({ home: shared.home, fetch: shared.fetch, WebSocket: shared.WebSocket });
-  const room = shared.room("work"), original = room.handle.bind(room);
-  let failed = false;
-  room.handle = (ws, msg) => {
-    if (!failed && msg.method === "Input.dispatchMouseEvent" && msg.params.type === "mouseReleased") {
-      failed = true;
-      room.reply(ws, { id: msg.id, error: { code: -32000, message: "mouse-up reply failed" } });
-    } else original(ws, msg);
-  };
-  const first = await handleCall("click", { selector: "#b", trusted: true, target: tab() });
-  assert.equal(first.isError, true);
-  const dir = join(shared.home, "run", "leases");
-  const path = join(dir, readdirSync(dir).find((x) => x.endsWith(".json")));
-  const lease = JSON.parse(readFileSync(path, "utf8"));
-  assert.equal(lease.stuck.type, "mouse");
-  writeFileSync(path, JSON.stringify({ ...lease, last: Date.now() - 6000 }));
-  const got = await other.handleCall("eval_js", { script: "return 4", target: tab() });
-  assert.equal(got.content[0].text, "4");
-  assert.equal(room.log.filter((x) => x.method === "Input.dispatchMouseEvent" && x.params.type === "mouseReleased").length, 1);
-  assert.equal(JSON.parse(readFileSync(path, "utf8")).stuck, null);
+  for (const [name, lease, held] of [
+    ["active mid-call", { pid: process.pid, last: now - 60000, active: true }, true],
+    ["inactive past five seconds", { pid: process.pid, last: now - 8000, active: false }, false],
+    ["inactive within five seconds", { pid: process.pid, last: now - 2000, active: false }, true],
+    ["dead pid", { pid: dead, last: now, active: true }, false],
+    ["missing last and active", { pid: process.pid }, false],
+    ["missing pid", { last: now, active: true }, false],
+    ["pid not a number", { pid: "1234", last: now, active: true }, false],
+  ]) assert.equal(roomLeaseHeld({ owner: "x", tabId: "room:work:T1", ...lease }), held, name);
 });
 
 test("clicking a cross-origin iframe opens its src in a room tab, but a challenge frame is handed off", async () => {
@@ -544,17 +476,20 @@ test("the room sign-in path pattern is the one rooms checks sites with", async (
   assert.equal(ROOM_LOGIN_PATH.flags, "i");
 });
 
+// rooms writes control/<name>/viewing/<targetId>.json while the user has the tab in its viewer
+// (rooms/test/contract.test.mjs); a dead viewer's mark holds nothing.
 test("a tab the user is driving in rooms view is held by the user, and perch says so", async () => {
   const R = makeRooms();
   roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
-  const { createHash } = await import("node:crypto");
   const { mkdirSync } = await import("node:fs");
-  const dir = join(R.home, "run", "leases");
+  const t = tab(), dir = join(R.home, "control", "work", "viewing"), mark = join(dir, t.tabId.split(":")[2] + ".json");
   mkdirSync(dir, { recursive: true });
-  const t = tab();
-  writeFileSync(join(dir, createHash("sha256").update(t.tabId).digest("hex") + ".json"), JSON.stringify({ owner: "user", pid: process.pid, last: Date.now(), active: true, stuck: null, since: new Date().toISOString() }));
+  writeFileSync(mark, JSON.stringify({ pid: process.pid, since: new Date().toISOString() }));
   const denied = await handleCall("eval_js", { script: "return 1", target: t });
   assert.match(denied.content[0].text, /tab_held: room tab held by the user in rooms view/);
+  assert.match((await handleCall("list_tabs", { app: "room:work" })).content[0].text, /"holder":"user"/);
+  writeFileSync(mark, JSON.stringify({ pid: spawnSync(process.execPath, ["-e", ""]).pid, since: new Date().toISOString() }));
+  assert.equal((await handleCall("eval_js", { script: "return 1", target: t })).content[0].text, "1");
 });
 
 const twoServers = async (opts, tag) => {
@@ -695,20 +630,6 @@ test("a label reservation stays its holder's through a call longer than the stal
   assert.deepEqual(JSON.parse(a), { app: "room:work", tabId: "room:work:shared" });
   assert.match(b, /tab_held: room tab claimed as shared/);
   assert.equal(existsSync(file), false);
-});
-
-test("a claim whose pid started after its last call is stale", async () => {
-  const { R, other } = await twoServers({}, "reused-claim-pid");
-  await call("new_tab", { app: "room:work", label: "shared" });
-  const file = join(claimDir(R), readdirSync(claimDir(R))[0]);
-  const claim = JSON.parse(readFileSync(file, "utf8"));
-  const last = Date.now() - process.uptime() * 1000 - 5000;
-  assert.ok(Date.now() - last < 15 * 60000, "test process must be younger than claim TTL");
-  writeFileSync(file, JSON.stringify({ ...claim, owner: "gone", pid: process.pid, last }));
-  ageLeases(R);
-  const got = JSON.parse(await text(other, "new_tab", { app: "room:work", label: "shared" }));
-  assert.deepEqual(got, { app: "room:work", tabId: "room:work:shared", reused: true });
-  assert.equal(R.room("work").targets.size, 2);
 });
 
 test("an unlabeled new_tab's tab stays its server's past the idle window", async () => {

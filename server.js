@@ -2,7 +2,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { execFile, spawn, spawnSync } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
 import { readFileSync, readdirSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
@@ -4651,16 +4651,16 @@ const pidAlive = (pid) => {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
 };
-// When pid's process started, in ms (ps gives whole seconds), or null when ps can't say.
-const pidStart = (pid) => {
-  const t = Date.parse(spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2000 }).stdout?.trim() ?? "");
-  return Number.isNaN(t) ? null : t;
-};
-// The OS hands a dead holder's pid to new processes, and one that started after the lease's
-// last call can't be its holder (rooms' leases.mjs reads them the same way).
-const roomLeaseLive = (s, start = pidStart) => !!s && pidAlive(s.pid) && !(s.active && (start(s.pid) ?? -Infinity) > s.last + 1000);
-// A live lease holds its tab mid-call and for five seconds after; rooms/test/fixtures/leases.json has the cases.
-export const roomLeaseHeld = (s, start = pidStart) => roomLeaseLive(s, start) && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS);
+const roomLeaseLive = (s) => !!s && pidAlive(s.pid);
+// A live lease holds its tab mid-call and for five seconds after; test/fixtures/leases.json has the cases.
+export const roomLeaseHeld = (s) => roomLeaseLive(s) && (s.active || Date.now() - s.last < ROOM_LEASE_IDLE_MS);
+// rooms marks a tab the user is watching or driving in its viewer with
+// control/<name>/viewing/<targetId>.json, {pid, since}, while that pid lives.
+function roomViewing(tabId) {
+  const m = ROOM_HANDLE.exec(String(tabId));
+  if (!m || !/^[\w-]+$/.test(m[2])) return false;
+  try { return pidAlive(readJson(join(rooms.home, "control", m[1], "viewing", m[2] + ".json"))?.pid); } catch { return false; }
+}
 const readJson = (path) => {
   try { return JSON.parse(readFileSync(path, "utf8")); } catch (e) { if (e.code === "ENOENT") return null; throw e; }
 };
@@ -4693,19 +4693,14 @@ async function roomFileChange(path, update) {
     return { old: state, next };
   } finally { rmSync(lock, { recursive: true, force: true }); }
 }
-const roomLeaseNew = (tabId) => ({ owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: false, stuck: null, tabId });
-// stuck: a mouse button or key this lease's holder pressed and has not yet released.
-async function roomStuck(tabId, stuck) {
-  await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, stuck } : undefined);
-}
+const roomLeaseNew = (tabId) => ({ owner: ROOM_OWNER, pid: process.pid, last: Date.now(), active: false, tabId });
 
 // A claim (run/claims, beside the lease, which rooms' viewer overwrites) keeps a tab
 // new_tab made its server's, or with a label one agent's, past the lease's idle window:
 // until close_tab, its server's exit or ROOM_CLAIM_IDLE_MS without a call. A labeled tab
 // answers only to room:<name>:<label>, so subagents of one server stay apart. Claims
 // change only under their tab's lease lock.
-const roomClaimLive = (c) => !!c && Date.now() - c.last <= ROOM_CLAIM_IDLE_MS && pidAlive(c.pid) &&
-  (c.pid === process.pid && c.owner === ROOM_OWNER || !((pidStart(c.pid) ?? -Infinity) > c.last + 1000));
+const roomClaimLive = (c) => !!c && Date.now() - c.last <= ROOM_CLAIM_IDLE_MS && pidAlive(c.pid);
 function roomClaim(tabId) {
   const c = readJson(roomClaimFile(tabId));
   if (c && !roomClaimLive(c)) { rmSync(roomClaimFile(tabId), { force: true }); return null; }
@@ -4754,7 +4749,6 @@ function roomLabeled(handle) {
   return { tabId: c.tabId, label: m[2] };
 }
 // Clears what dead servers left, and claims and leases of tabs the room no longer has.
-// A lease with input stuck down stays, so its next holder releases it.
 async function roomReap(name, pages) {
   const ids = new Set(pages.map((p) => `room:${name}:${p.targetId}`));
   const gone = (tabId) => typeof tabId === "string" && tabId.startsWith(`room:${name}:`) && !ids.has(tabId);
@@ -4762,7 +4756,7 @@ async function roomReap(name, pages) {
   for (const c of roomClaims()) {
     if (stale(c)) await roomLeaseChange(c.tabId, () => { if (stale(readJson(roomClaimFile(c.tabId)))) roomClaimSet(c.tabId, null); return undefined; });
   }
-  const dead = (s) => !!s && !s.stuck && (!roomLeaseLive(s) || gone(s.tabId));
+  const dead = (s) => !!s && (!roomLeaseLive(s) || gone(s.tabId));
   for (const f of jsonFiles(join(rooms.home, "run", "leases"))) {
     let s = null;
     try { s = readJson(f); } catch {}
@@ -4770,26 +4764,18 @@ async function roomReap(name, pages) {
   }
 }
 async function withRoomLease(tabId, note, fn, label = null) {
-  const { old } = await roomLeaseChange(tabId, (s) => {
-    const other = s && s.owner !== ROOM_OWNER;
+  // A person is watching or driving the tab in rooms' viewer until they close it.
+  if (roomViewing(tabId)) throw new Error("tab_held: room tab held by the user in rooms view; retry after they close it (rooms logs <room> --follow --until handoff.ended)");
+  await roomLeaseChange(tabId, (s) => {
     // An exited process holds nothing; the idle window only spans a live one's gap between calls.
-    const held = other && roomLeaseHeld(s);
-    // "user" is rooms' viewer: a person is watching or driving the tab until they close it.
-    if (held && s.owner === "user" && s.active) throw new Error("tab_held: room tab held by the user in rooms view; retry after they close it (rooms logs <room> --follow --until handoff.ended)");
+    const held = s && s.owner !== ROOM_OWNER && roomLeaseHeld(s);
     const c = roomClaim(tabId);
     if (c && (c.owner !== ROOM_OWNER || (c.label ?? null) !== label)) throw new Error(roomClaimHeld(c));
     if (held) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
     if (c) roomClaimSet(tabId, { ...c, last: Date.now() });
-    return { ...roomLeaseNew(tabId), active: true, stuck: s?.stuck ?? null };
+    return { ...roomLeaseNew(tabId), active: true };
   });
-  note.lease = tabId;
   try {
-    if (old?.stuck) {
-      const t = await roomTarget({ tabId }, "lease recovery");
-      if (old.stuck.type === "key") await t.conn.send("Input.dispatchKeyEvent", { type: "keyUp", ...old.stuck.event }, t.S.id);
-      if (old.stuck.type === "mouse") await t.conn.send("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", buttons: 0, clickCount: 1, ...old.stuck.point }, t.S.id);
-      await roomStuck(tabId, null);
-    }
     return await fn();
   } finally {
     await roomLeaseChange(tabId, (s) => s?.owner === ROOM_OWNER ? { ...s, active: false, last: Date.now() } : undefined);
@@ -5042,13 +5028,10 @@ const ROOM_DOWN = "JSON.stringify(window.__perch_trusted?{down:window.__perch_tr
 async function roomMouseClick(t, x, y) {
   const at = { x, y, button: "left", clickCount: 1 };
   await t.conn.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, t.S.id);
-  const lease = callNotes.getStore()?.lease;
-  if (lease) await roomStuck(lease, { type: "mouse", point: { x, y } });
   await t.conn.send("Input.dispatchMouseEvent", { type: "mousePressed", buttons: 1, ...at }, t.S.id);
   let down = null;
   try { down = roomValue(await roomExec(t, ROOM_DOWN)); } catch {}
   await t.conn.send("Input.dispatchMouseEvent", { type: "mouseReleased", buttons: 0, ...at }, t.S.id);
-  if (lease) await roomStuck(lease, null);
   return down;
 }
 // A check that read another document (hit undefined) after a press the page
@@ -5064,11 +5047,8 @@ async function roomKey(t, chord) {
   const ctrl = k.ctrlKey || k.metaKey, chorded = ctrl || k.altKey;
   const text = chorded ? undefined : k.key === "Enter" ? "\r" : k.key.length === 1 ? k.key : undefined;
   const ev = { key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, modifiers: (k.altKey ? 1 : 0) | (ctrl ? 2 : 0) | (k.shiftKey ? 8 : 0) };
-  const lease = callNotes.getStore()?.lease;
-  if (lease) await roomStuck(lease, { type: "key", event: ev });
   await t.conn.send("Input.dispatchKeyEvent", { type: text ? "keyDown" : "rawKeyDown", ...ev, ...(text && { text, unmodifiedText: text }) }, t.S.id);
   await t.conn.send("Input.dispatchKeyEvent", { type: "keyUp", ...ev }, t.S.id);
-  if (lease) await roomStuck(lease, null);
 }
 
 async function roomClickBlank(t, href, tok, go) {
@@ -5166,17 +5146,18 @@ async function roomListTabs(only, quiet) {
   return { rows, failed };
 }
 
-// holder: who has the tab (a claim's label or pid, a lease's pid, or "user" at rooms' viewer); mine: this server.
+// holder: who has the tab ("user" at rooms' viewer, a claim's label or pid, or a lease's pid); mine: this server.
 function roomRow(n, p) {
   const tabId = `room:${n}:${p.targetId}`, row = { app: `room:${n}`, tabId, url: p.url || "", title: p.title || "" };
   let c = null, s = null;
   try { c = readJson(roomClaimFile(tabId)); s = readJson(roomLeaseFile(tabId)); } catch {}
-  if (roomClaimLive(c)) {
-    if (c.label) row.tabId = `room:${n}:${c.label}`;
+  if (roomClaimLive(c) && c.label) row.tabId = `room:${n}:${c.label}`;
+  if (roomViewing(tabId)) row.holder = "user";
+  else if (roomClaimLive(c)) {
     row.holder = c.label || `pid ${c.pid}`;
     if (c.owner === ROOM_OWNER) row.mine = true;
   } else if (roomLeaseHeld(s)) {
-    row.holder = s.owner === "user" ? "user" : `pid ${s.pid}`;
+    row.holder = `pid ${s.pid}`;
     if (s.owner === ROOM_OWNER) row.mine = true;
   }
   return row;
