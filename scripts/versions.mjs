@@ -25,7 +25,6 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { serveFixture } from "./bench.mjs";
 import { runsDir } from "./mcp-client.mjs";
-import { focusGrant } from "../server.js";
 import { stats, compareRuns, lockTotals, lockDiff, recordLock } from "./versions-lib.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -158,7 +157,7 @@ async function parallel(client, W, reps) {
 
 async function runVersion(T, base, upload) {
   const { connect } = await import(join(T.dir, "scripts", "mcp-client.mjs"));
-  const client = await connect({ timeoutMs: 120000 });
+  const client = await connect({ timeoutMs: 120000, allowFocus: FOCUS });
   const results = {};
   try {
     const rows = JSON.parse((await client.rpc("tools/call", { name: "list_tabs", arguments: { app: KEY, urlContains: base.url } })).result.content[0].text).tabs;
@@ -185,10 +184,8 @@ async function runVersion(T, base, upload) {
       if (shot) results[name].image = shot.image;
     }
     if (keep("parallel 4x500ms await")) results["parallel 4x500ms await"] = stats(await parallel(client, W, Math.min(REPS, 5)));
-    // The focus phase takes focus, so it runs only under the user's focus grant
-    // (`perch focus allow 15m`); without one it is skipped and the report says so.
-    if (FOCUS && !focusGrant()) FOCUS_LOG.push({ sha: T.sha, skipped: "no focus grant: run perch focus allow 15m first" });
-    else if (FOCUS && focused(W).some(([name]) => keep(name))) {
+    // --focus is the user's consent: the client answers perch's focus ask with yes.
+    if (FOCUS && focused(W).some(([name]) => keep(name))) {
       const pid = frontPid(), t0 = Date.now();
       try {
         await rep(client, "activate_tab", { target: { tabId: W.shown } });

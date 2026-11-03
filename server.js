@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
-import { readFileSync, readdirSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync, appendFileSync, openSync, readSync, writeSync, closeSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
@@ -413,11 +413,7 @@ function jxaRuntime(BROWSERS, HANG) {
 
   // windows[w] is a by-position specifier and raising reorders the list, so pin the
   // window (and tab) by id first; afterwards it is the app's front window.
-  // Set per call by Node's focus gate (handleCallCore): focus() runs only for a call
-  // the user's grant let through.
-  let focusOk = false;
   function focus(t) {
-    if (!focusOk) throw new Error("needs_focus: this call has no focus grant; nothing was raised");
     try {
       t.win = app(t.app).windows.byId(t.win.id());
       t.tab = t.tabId != null ? t.win.tabs.byId(t.tabId) : t.win.tabs[t.idx];
@@ -3127,14 +3123,12 @@ function jxaRuntime(BROWSERS, HANG) {
   }
 
   globalThis.__perch = {
-    focusOk(v) { focusOk = !!v; },
     // Run by the daemons' handshake, so no call pays the AppKit import; one-shot
     // runs keep it lazy.
     warm() { try { appKit(); } catch (e) {} },
     shotHelper: shotHelper,
     helperServe: helperServe,
-    // Also ends the last call's focus grant: every call starts with one.
-    takeNote() { const n = note; note = null; focusOk = false; return n; },
+    takeNote() { const n = note; note = null; return n; },
     lateArm(t) { late = t; lateHeld = null; },
     dialogs(a) {
       const found = provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
@@ -4312,7 +4306,7 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   // A call that throws after its late check answered carries the answer ahead
   // of its message (LATE_ERR), for Node to take off before anything reads it.
   const body = lt ? `var r;try{r=${script}}catch(e){var n0=__perch.takeNote();if(n0&&n0.l)try{e.message="${LATE_ERR}"+JSON.stringify(n0.l)+"${LATE_ERR}"+e.message}catch(x){}throw e}` : `var r=${script};`;
-  script = `(function(){__perch.takeNote();__perch.lateArm(${JSON.stringify(lt)});${c0 && c0.focusOk ? "__perch.focusOk(1);" : ""}${body}var n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
+  script = `(function(){__perch.takeNote();__perch.lateArm(${JSON.stringify(lt)});${body}var n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
   let out;
   try {
     out = DIALOG_BLIND.has(fn) && !(args && args.clip)
@@ -11578,27 +11572,10 @@ export function releaseAwake() {
 const roomArgs = (args) => !!args && (isRoomTab(args.target && args.target.tabId) || isRoomTab(args.tabId) || ROOM_APP.test(String(args.app)));
 // ---- focus grant ----
 // perch moves the user's focus (raise:true, activate_tab, a new_tab that would raise
-// its window) only under a grant the user gave (GOALS.md goal 1): one file every
-// perch process reads, with an expiry, and a log line per raise under it. Room tabs
-// move no Mac focus. PERCH_STATE moves the directory (the test suite's own).
-const focusCfg = { dir: process.env.PERCH_STATE || join(homedir(), "Library/Application Support/perch") };
-export function focusReset({ dir } = {}) { if (dir !== undefined) focusCfg.dir = dir; }
-const grantFile = () => join(focusCfg.dir, "focus-grant.json");
-export function focusGrant(now = Date.now()) {
-  try { const g = JSON.parse(readFileSync(grantFile(), "utf8")); return g && g.until > now ? g : null; } catch { return null; }
-}
-export function grantFocus(minutes, by) {
-  const g = { at: Date.now(), until: Date.now() + minutes * 60000, minutes, by };
-  mkdirSync(focusCfg.dir, { recursive: true });
-  const tmp = `${grantFile()}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(g) + "\n");
-  renameSync(tmp, grantFile());
-  return g;
-}
-export function revokeFocus() { rmSync(grantFile(), { force: true }); }
-function logRaise(rec) {
-  try { mkdirSync(focusCfg.dir, { recursive: true }); appendFileSync(join(focusCfg.dir, "focus-log.jsonl"), JSON.stringify({ at: new Date().toISOString(), ...rec }) + "\n"); } catch {}
-}
+// its window) only once the user allowed it (GOALS.md goal 1): the first such call
+// asks them through the client, and a yes lasts as long as this server, which is the
+// client's session. Room tabs move no Mac focus.
+export const focus = { granted: false, askMs: 60000 };
 
 // Whether a call would move the user's focus: raise:true, activate_tab, or a
 // new_tab outside Safari. Live (Canary), a tab made through AppleScript brings a
@@ -11610,7 +11587,7 @@ function movesFocus(name, args) {
   if (name === "activate_tab" || args.raise === true) return true;
   return name === "new_tab" && !/^safari$/i.test(String(args.app || ""));
 }
-const needsFocus = (name) => new Error(`needs_focus: ${name} would bring the browser to the front, and the user has not allowed perch to take focus; nothing was sent. ${name === "new_tab" ? "navigate an existing tab instead (it loads from the page, in the background), or open it in a room (new_tab {app:\"room:<name>\"})" : "Try the call without raise (most run in the background), or move the flow into a room (new_tab {from: tabId, app:\"room:<name>\"})"}, or ask the user to allow it: they run \`perch focus allow 15m\` in a terminal`);
+const needsFocus = (name) => new Error(`needs_focus: ${name} would bring the browser to the front, and the user has not allowed perch to take focus; nothing was sent. ${name === "new_tab" ? "navigate an existing tab instead (it loads from the page, in the background), or open it in a room (new_tab {app:\"room:<name>\"})" : "Try the call without raise (most run in the background), or move the flow into a room (new_tab {from: tabId, app:\"room:<name>\"})"}, or, in a client that can ask the user (MCP elicitation), they allow it when perch asks`);
 
 // A client keeps one server for its whole session, so after a pull it runs old
 // code. server.js's mtime and size at start are its identity; a stat (a few µs)
@@ -11653,19 +11630,13 @@ async function handleCallCore(name, args = {}, signal) {
     args = normPatterns(args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
-    let focusOk = false;
-    if (movesFocus(name, args)) {
-      const g = focusGrant() || await askFocus(name, args, signal);
-      if (!g) throw needsFocus(name);
-      focusOk = true;
-      logRaise({ tool: name, tabId: (args.target && args.target.tabId) || null, app: args.app || (args.target && args.target.app) || null, by: g.by });
-    }
+    if (movesFocus(name, args) && !focus.granted && !(focus.granted = await askFocus(name, args, signal))) throw needsFocus(name);
     if (name === "close_tab" && args.tabId == null && args.target?.tabId != null) args = { ...args, tabId: args.target.tabId };
     // A label handle runs on its claimed tab's targetId handle, and results name it as the caller did.
     const shown = name === "close_tab" ? args.tabId : args.target?.tabId;
     const labeled = isRoomTab(shown) ? roomLabeled(shown) : null;
     if (labeled) args = name === "close_tab" ? { ...args, tabId: labeled.tabId } : { ...args, target: { ...args.target, tabId: labeled.tabId } };
-    note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name), signal, focusOk };
+    note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name), signal };
     const roomTab = ROOM_LEASE_TOOLS.has(name) ? args.target?.tabId ?? (name === "close_tab" ? args.tabId : null) : null;
     const leaseTab = isRoomTab(roomTab) ? roomTab : null;
     const lockKey = leaseTab ? tabKey({ tabId: leaseTab }) : tabLockKey(name, args);
@@ -11715,24 +11686,22 @@ const SKILL_URI = "perch://skill", SKILL_FILE = fileURLToPath(new URL("./SKILL.m
 
 // The connected MCP server, for asking the user through the client (elicitation).
 let mcpServer = null;
-// How long the user has to answer, after which the answer is no; within the call
-// budget, when one caps a call (PERCH_CALL_MAX_MS).
-export const focusAsk = { ms: 60000 };
-const FOCUS_SPANS = { "15 min": 15, "60 min": 60 };
+// How long the user has to answer (focus.askMs), after which the answer is no; within
+// the call budget, when one caps a call (PERCH_CALL_MAX_MS).
+const FOCUS_ALLOW = "Allow for this session";
 async function askFocus(name, args, signal) {
   const s = mcpServer, caps = s && s.getClientCapabilities();
-  if (!caps || !caps.elicitation) return null;
-  const budget = callBudget(), ms = budget ? Math.min(focusAsk.ms, Math.max(1000, budget - 3000)) : focusAsk.ms;
+  if (!caps || !caps.elicitation) return false;
+  const budget = callBudget(), ms = budget ? Math.min(focus.askMs, Math.max(1000, budget - 3000)) : focus.askMs;
   const where = (args.target && args.target.tabId) || args.app || "the front browser";
   let r;
   try {
     r = await s.elicitInput({
-      message: `perch wants to bring ${where} to the front for ${name}, which takes your focus. Allow it for a while?`,
-      requestedSchema: { type: "object", properties: { allow: { type: "string", title: "Let perch take focus", enum: [...Object.keys(FOCUS_SPANS), "Deny"] } }, required: ["allow"] },
+      message: `perch wants to bring ${where} to the front for ${name}, which takes your focus. Allow it for this session?`,
+      requestedSchema: { type: "object", properties: { allow: { type: "string", title: "Let perch take focus", enum: [FOCUS_ALLOW, "Deny"] } }, required: ["allow"] },
     }, { timeout: ms, signal });
-  } catch { return null; }
-  const minutes = r && r.action === "accept" && r.content ? FOCUS_SPANS[r.content.allow] : null;
-  return minutes ? grantFocus(minutes, "the user, asked by perch") : null;
+  } catch { return false; }
+  return !!r && r.action === "accept" && !!r.content && r.content.allow === FOCUS_ALLOW;
 }
 
 export function createServer() {
@@ -11748,33 +11717,6 @@ export function createServer() {
 }
 
 // Start only when run as the entry point (realpath: npm's bin is a symlink), so tests can import.
-// `perch focus allow <n>m | revoke | status`: the user's own focus grant. allow
-// needs a typed yes on the terminal (/dev/tty), which an agent's shell doesn't have.
-function focusCli(argv) {
-  const [cmd, span] = argv;
-  if (cmd === "status") {
-    const g = focusGrant();
-    console.log(g ? `perch may take focus: allowed until ${new Date(g.until).toLocaleTimeString()} (${g.by})` : "no focus grant: perch never takes focus");
-    return 0;
-  }
-  if (cmd === "revoke") { revokeFocus(); console.log("focus grant revoked"); return 0; }
-  const m = cmd === "allow" && /^(\d+)m?$/.exec(span || "15m");
-  if (!m || !(Number(m[1]) > 0)) { console.error("usage: perch focus allow <minutes>m | revoke | status"); return 2; }
-  let fd;
-  try { fd = openSync("/dev/tty", "r+"); } catch { console.error("perch focus allow needs a terminal: run it yourself in one, so an agent can't grant itself focus"); return 1; }
-  writeSync(fd, `Let perch bring browsers to the front for ${m[1]} min? Type yes: `);
-  const buf = Buffer.alloc(64), n = readSync(fd, buf, 0, 64, null);
-  closeSync(fd);
-  if (buf.toString("utf8", 0, n).trim().toLowerCase() !== "yes") { console.error("not allowed"); return 1; }
-  const g = grantFocus(Number(m[1]), "perch focus allow");
-  console.log(`perch may take focus until ${new Date(g.until).toLocaleTimeString()}; perch focus revoke ends it`);
-  return 0;
-}
-
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv[2] === "focus") {
-  process.exit(focusCli(process.argv.slice(3)));
-}
-
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const server = createServer();
   // The daemons' pipes keep node alive, so a closed client would leave this

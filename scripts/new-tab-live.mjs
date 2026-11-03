@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Live check that new_tab takes no focus: one new_tab {about:blank} into Canary with
 // another app in front, under frontGuard. new_tab on Chromium needs the user's focus
-// grant (it raised the window live), so without one this checks it is refused. It
+// grant (it raised the window live), which this client can't be asked for, so this
+// checks it is refused. It
 // records the front app's pid and every Canary window's minimized state before and
 // after, so a raise or a restored window fails it, then closes only the tab it made. It never opens a window, minimizes or
 // restores one, or activates an app; the user's windows are read, not changed.

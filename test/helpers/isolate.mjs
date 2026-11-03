@@ -6,14 +6,10 @@
 // Set before any later server.js instance loads (the lock harness loads one per
 // scenario): each reads ROOMS_HOME at load.
 process.env.ROOMS_HOME = "/nonexistent/perch-test-rooms";
+const { DAEMONS, deps, roomsReset, focus } = await import("../../server.js");
 // The suite runs under a focus grant, so tests of raise:true and activate_tab keep
-// their meaning; test/focus-grant.test.mjs clears it. Its own state dir, so no raise
-// log reaches the user's.
-const { tempDir } = await import("../../scripts/temp-dirs.mjs");
-const { writeFileSync } = await import("node:fs");
-process.env.PERCH_STATE = tempDir("pst-");
-writeFileSync(process.env.PERCH_STATE + "/focus-grant.json", JSON.stringify({ at: 0, until: 8.64e15, minutes: 0, by: "test suite" }));
-const { DAEMONS, deps, roomsReset } = await import("../../server.js");
+// their meaning; test/focus-grant.test.mjs clears it.
+focus.granted = true;
 
 const refuse = (what) => { throw new Error(`test isolation: ${what} reached the real system; install a fake world or stub deps.exec first`); };
 for (const lane of Object.keys(DAEMONS)) DAEMONS[lane] = { run: async () => refuse(`DAEMONS.${lane}`) };

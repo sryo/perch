@@ -131,7 +131,7 @@ function postJxa(method, pid, wid, p) {
     send(5); delay(0.05); send(1); delay(0.02); send(2); 'ok'`;
 }
 const before = frontApp();
-const client = await connect({ timeoutMs: 60000 });
+const client = await connect({ timeoutMs: 60000, allowFocus: true });
 let failures = 0;
 const report = (ok, label, detail) => { if (!ok) failures++; console.log(`${ok ? "PASS" : "FAIL"} ${label} — ${detail}`); };
 

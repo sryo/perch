@@ -20,7 +20,9 @@ export function runsDir() {
   return join(process.env.FIUM_HOME || join(homedir(), ".fium"), "runs", basename(dirname(common)));
 }
 
-export async function connect({ timeoutMs = 20000, env = process.env } = {}) {
+// allowFocus: the script's own consent flag stands for the user here, so the client
+// can be asked (elicitation) and answers perch's focus ask with yes.
+export async function connect({ timeoutMs = 20000, env = process.env, allowFocus = false } = {}) {
   const child = spawn("node", [join(ROOT, "server.js")], { stdio: ["pipe", "pipe", "inherit"], env });
   let buffer = "";
   const pending = new Map();
@@ -33,6 +35,7 @@ export async function connect({ timeoutMs = 20000, env = process.env } = {}) {
       if (!line) continue;
       let msg;
       try { msg = JSON.parse(line); } catch { continue; }
+      if (msg.method === "elicitation/create") { send({ id: msg.id, result: { action: "accept", content: { allow: "Allow for this session" } } }); continue; }
       const waiter = pending.get(msg.id);
       if (waiter) { pending.delete(msg.id); waiter(msg); }
     }
@@ -56,7 +59,7 @@ export async function connect({ timeoutMs = 20000, env = process.env } = {}) {
 
   const init = await rpc("initialize", {
     protocolVersion: "2024-11-05",
-    capabilities: {},
+    capabilities: allowFocus ? { elicitation: {} } : {},
     clientInfo: { name: "perch-script", version: "0" },
   });
   send({ method: "notifications/initialized" });

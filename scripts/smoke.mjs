@@ -15,7 +15,7 @@ import { tempDir } from "./temp-dirs.mjs";
 
 const withTabCreation = process.argv.includes("--with-tab-creation");
 const appArg = process.argv.includes("--app") ? process.argv[process.argv.indexOf("--app") + 1] : null;
-const client = await connect();
+const client = await connect({ allowFocus: withTabCreation });
 const call = client.call;
 const json = async (name, args) => JSON.parse(text(await call(name, args)));
 

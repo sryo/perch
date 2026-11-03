@@ -24,8 +24,8 @@ When two goals conflict, the higher one wins.
 
 1. **Never take the user's foreground.** No app activation, tab selection,
    keyboard redirection or cursor move unless the user allowed it: a call that
-   needs focus (`activate_tab`, `raise:true`) runs only under the user's own,
-   timed focus grant, and otherwise answers `needs_focus`. The background path or
+   needs focus (`activate_tab`, `raise:true`) runs only once the user allowed it
+   when perch asked, for that session, and otherwise answers `needs_focus`. The background path or
    a room comes first. A refused action is better than a stolen one.
 2. **Correct outcomes, verified.** Report what actually happened on the page
    (readback, value checks, `trusted`/`hit`). `{ok:false}` beats a false `ok`.
