@@ -11265,20 +11265,20 @@ const tool = (name, description, properties = {}, required) =>
   ({ name, description, inputSchema: { type: "object", properties, ...(required ? { required } : {}) } });
 
 const TOOLS = [
-  tool("list_tabs", "Open tabs as {tabs:[{app,tabId,url,title,active?}], total}. `active`: the tab its window shows; `total` counts matches before `limit`. Filter rather than dumping.", {
+  tool("list_tabs", "Open tabs as {tabs:[{app,tabId,url,title,active?}], total}. `active`: its window's shown tab; `total` counts matches before `limit`. Filter, don't dump.", {
     app: { type: "string" },
     urlContains: { type: "string" },
     titleContains: { type: "string" },
     limit: { type: "number", description: "Default 50." },
   }),
-  tool("new_tab", "Create an unselected tab in a running browser's window (default: the browser in use); needs_focus without a grant. Returns {app,tabId}.", {
+  tool("new_tab", "Open an unselected tab in a running browser (default: the one in use); needs_focus without a grant. Returns {app,tabId}.", {
     url: { type: "string", description: "http(s) or file URL; default about:blank." },
     app: { type: "string" },
     from: { type: "string" },
     label: { type: "string", description: "Room: yours alone as room:<name>:<label>" },
   }),
   tool("activate_tab", "Bring the target tab and its window to the front; needs_focus without a grant.", { target: TARGET }),
-  tool("close_tab", "Close the tab with this handle. Never closes a window's last tab and never changes focus.", { tabId: { type: "string" } }, ["tabId"]),
+  tool("close_tab", "Close the tab with this handle; never a window's last tab, never changes focus.", { tabId: { type: "string" } }, ["tabId"]),
   tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading. Where the page can't start the load itself (not http(s), page JS unavailable), it needs `raise:true` (needs_focus without a grant).", { url: { type: "string" }, raise: { type: "boolean" }, target: TARGET }, ["url"]),
   tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. Given both, `script_path` runs before `script`.", {
     script: { type: "string" },
@@ -11289,7 +11289,7 @@ const TOOLS = [
     world: { type: "string", enum: ["main"], description: "Run in the page's own JS world (its globals); no ref." },
     target: TARGET,
   }),
-  tool("wait", "Wait until `selector` exists and `readyState` is reached, or until `expression` is truthy (returned as `value`), or `quiet`.", {
+  tool("wait", "Wait for `selector` (and `readyState`), a truthy `expression` (returned as `value`), or `quiet`.", {
     selector: SEL,
     readyState: { type: "string", enum: ["loading", "interactive", "complete"], description: "Default complete." },
     expression: { type: "string" },
@@ -11298,7 +11298,7 @@ const TOOLS = [
     timeout: { type: "number", description: "ms, default 10000." },
     target: TARGET,
   }),
-  tool("screenshot", "Capture the target window without raising it; the tab must be the one its window shows. Returns the image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w. ref/selector (needs Accessibility): scroll it into view, crop to it (meta.clip).", {
+  tool("screenshot", "Capture the target window unraised; only its shown tab renders. Returns the image and {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w. ref/selector (needs Accessibility): scroll it into view, crop to it (meta.clip).", {
     ref: REF,
     selector: SEL,
     raise: { type: "boolean" },
@@ -11314,10 +11314,10 @@ const TOOLS = [
     offset: { type: "number" },
     target: TARGET,
   }),
-  tool("accessibility_snapshot", "Outline: a `# {url,title?,ready?,count,focus,dialogs,form}` header, then a line per visible control: `ref role \"name\" key=json… flags`. `omitted`: rows cut; narrow by role/query, not missing.", {
+  tool("accessibility_snapshot", "A `# {url,title?,ready?,count,focus,dialogs,form}` header, then per visible control: `ref role \"name\" key=json… flags`. `omitted`: rows cut; narrow by role/query, not missing.", {
     max: { type: "number", description: "Default 500, fields first; 0 = header only." },
-    role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles (textbox, button…)." },
-    query: { type: "string", description: "Keep lines matching this regex." },
+    role: { oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }], description: "Only these roles (button…)." },
+    query: { type: "string", description: "Lines matching this regex." },
     frames: { type: "boolean", description: "Cross-origin iframe controls as `fN` rows (click {trusted:true})." },
     diff: { type: "boolean", description: "Changes since your last snapshot only (`unchanged`, `gone` refs)." },
     target: TARGET,
@@ -11332,7 +11332,7 @@ const TOOLS = [
     subtitle: { type: "string" },
     sound: { type: "string", description: "Default Glass." },
   }, ["message"]),
-  tool("file_upload", "Put a local file on an <input type=file> without the bytes entering context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. `raise:true`: via the native chooser, foreground (chooser:true). {ok:false}: hand off, don't retry.", {
+  tool("file_upload", "Set a local file on an <input type=file>; its bytes never enter context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. `raise:true`: via the native chooser, foreground (chooser:true). {ok:false}: hand off, don't retry.", {
     path: { type: "string" },
     ref: REF,
     selector: SEL,
@@ -11374,7 +11374,7 @@ const TOOLS = [
     raise: { type: "boolean" },
     target: TARGET,
   }),
-  tool("select", "Choose an option in a native <select> or custom combobox (react-select, Downshift, cmdk), from that control's own list only, and read back what's shown. Exact text or value, then whole word, then word prefix. A miss returns the control's options as `candidates`; `text:\"\"` just lists them. `trusted`: a control that won't open gets a real click (shown tab) or trusted typing in its own box (other tabs); check `trusted`.", {
+  tool("select", "Pick an option of a native <select> or custom combobox (react-select, Downshift, cmdk) from its own list only; reads back what's shown. Exact text or value, then whole word, then word prefix. A miss returns the control's options as `candidates`; `text:\"\"` just lists them. `trusted`: a control that won't open gets a real click (shown tab) or trusted typing in its own box (other tabs); check `trusted`.", {
     text: { type: "string" },
     ref: REF,
     selector: SEL,
@@ -11383,6 +11383,8 @@ const TOOLS = [
     target: TARGET,
   }, ["text"]),
 ];
+// Only tools that can never act: wait runs a caller `expression`, screenshot can scroll or raise.
+for (const t of TOOLS) if (["list_tabs", "get_text", "accessibility_snapshot"].includes(t.name)) t.annotations = { readOnlyHint: true };
 
 function awaitTimeout({ timeout, awaitPromise }) {
   if (timeout == null) return JXA_DEFAULT_TIMEOUT;

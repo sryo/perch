@@ -43,6 +43,15 @@ test("tool surface is the agreed 17", () => {
   ]);
 });
 
+// Clients auto-approve or parallelize readOnlyHint tools. Only tools that can
+// never act are marked: wait runs a caller `expression`, screenshot can scroll
+// or raise.
+test("only tools that never act carry readOnlyHint", () => {
+  const ro = TOOLS.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name);
+  assert.deepEqual(ro, ["list_tabs", "get_text", "accessibility_snapshot"]);
+  for (const t of TOOLS) if (t.annotations) assert.deepEqual(t.annotations, { readOnlyHint: true }, t.name);
+});
+
 test("composeEvalScript: file then script, either alone, neither errors", async (t) => {
   const dir = tempDir("perch-", t);
   const f = join(dir, "lib.js");
