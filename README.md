@@ -1,4 +1,4 @@
-<img src="logo.svg" alt="perch logo" width="128">
+<img src="logo.svg" alt="perch" width="128">
 
 # perch
 
