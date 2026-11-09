@@ -96,11 +96,13 @@ PROJECTS = {
                       rows=["fi@nib", "gma", "-cdp"], size=52, seed=7, tumble=22, er_k=0.5, extra="nib", er=21),
     "trabAGItos": dict(tilt=-20, ground="#74ACDF", ink="#FFFFFF",
                        rows=["trab", "AGI", "tos@sun"], size=52, gap=0.08, seed=9, extra="sun", er=20),
+    "loft": dict(tilt=10, ground="#F2B705", ink="#1B2466",
+                 rows=["lo", "ft@screen"], size=72, seed=13, extra="screen", er=24),
 }
 
 def tokens(row):
     """'pe@bird' -> ['p', 'e', '@bird']"""
-    return re.findall(r"@(?:bird|pin|key|nib|sun)|.", row)
+    return re.findall(r"@(?:bird|pin|key|nib|sun|screen)|.", row)
 
 
 def pile(p):
@@ -143,7 +145,7 @@ def pile(p):
     return out, pts, bottom - (len(rows) - 1) * step
 
 
-NAT_R = {"bird": 27, "pin": 25, "key": 28, "nib": 24, "sun": 26}
+NAT_R = {"bird": 27, "pin": 25, "key": 28, "nib": 24, "sun": 26, "screen": 26}
 
 # One outline per project, same stroke weight as the letters' visual weight.
 OUTLINE = {
@@ -152,6 +154,7 @@ OUTLINE = {
     "key":   "M-22 0 L-22 22 L22 22 L22 0 L0 -20 Z",                      # house: rooms
     "nib":   "M0 -24 L16 2 L8 22 L-8 22 L-16 2 Z M0 -24 L0 4",
     "sun":   "M0 -12 A12 12 0 1 0 0.01 -12 Z",
+    "screen": "M-24 -16 L24 -16 L24 12 L-24 12 Z M0 12 L0 21 M-10 21 L10 21",  # monitor: loft
 }
 
 
@@ -252,8 +255,8 @@ def small(name, p):
 
 # Lockup: the tool's tile, and to its right a column with the tiles of what it
 # runs on. perch has all of them.
-BESIDE = {"perch": ["avis", "rooms", "figma-cdp", "trabAGItos"], "avis": ["perch"], "rooms": ["perch"],
-         "figma-cdp": ["perch", "rooms"], "trabAGItos": ["perch"]}
+BESIDE = {"perch": ["avis", "rooms", "figma-cdp", "trabAGItos", "loft"], "avis": ["perch"], "rooms": ["perch"],
+          "figma-cdp": ["perch", "rooms"], "trabAGItos": ["perch"], "loft": ["perch", "rooms"]}
 
 
 def inner(svg):
@@ -262,8 +265,9 @@ def inner(svg):
 
 def lockup(name, marks, smalls):
     big = inner(marks[name])
-    m, gap, left = 44, 8.0, 212
     row = BESIDE[name]
+    gap, left = 8.0, 212
+    m = min(44, (200 - gap * (len(row) - 1)) / len(row))
     y0 = 100 - (len(row) * m + (len(row) - 1) * gap) / 2
     minis = "".join(
         f'<svg x="{left}" y="{y0 + i * (m + gap):.1f}" width="{m}" height="{m}" viewBox="0 0 200 200">{inner(smalls[n])}</svg>'
