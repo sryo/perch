@@ -138,3 +138,10 @@ test("docs send bench runs to fium's runs folder, not bench/runs/", async () => 
   }
   assert.deepEqual(stale, []);
 });
+
+test("the loft is offered where rooms are, and AGENTS.md keeps its ownership rule", async () => {
+  const agents = await read("AGENTS.md"), skill = await read("SKILL.md"), readme = await read("README.md");
+  assert.ok(agents.includes("perch makes and closes only its own loft windows"), "AGENTS.md lost the loft ownership rule");
+  assert.ok(skill.includes("offer a room or `loft`"), "SKILL.md no longer offers the loft beside rooms");
+  assert.ok(readme.includes("github.com/sryo/loft"), "README.md no longer names loft");
+});
