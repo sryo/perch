@@ -138,7 +138,7 @@ test("the refusal says why: the browser is hidden, a window is on another Space,
   assert.match(r.content[0].text, /^error: window_offscreen: .*another Space/);
   install({ minimized: [], state: { spaces: { current: [1], all: [1, 2], windows: { 2: [{ wid: 300, pid: 999 }] } } } });
   r = await handleCall("screenshot", {});
-  assert.match(r.content[0].text, /^error: window_offscreen: the browser window isn't on screen \(minimized or on another Space\)$/);
+  assert.match(r.content[0].text, /^error: window_offscreen: the browser window isn't on screen \(minimized or on another Space\); or open it on the loft: new_tab \{url, loft:true\}$/);
 });
 
 // Live, with the screen locked: Accessibility listed the windows redacted (no

@@ -295,7 +295,17 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     // an Apple Event; `geom` counts them apart so other budgets stay as they are.
     win.position = () => { geom.position = (geom.position || 0) + 1; ae(b.name, "win.position()"); throw new Error("Can't convert types."); };
     win.size = () => { geom.size = (geom.size || 0) + 1; ae(b.name, "win.size()"); throw new Error("Can't convert types."); };
-    win.bounds = () => { geom.bounds = (geom.bounds || 0) + 1; ae(b.name, "win.bounds()"); if (b.kind === "arc") throw new Error("no bounds"); return { x: spec.x ?? 0, y: spec.y ?? 0, width: spec.w ?? 800, height: spec.h ?? 600 }; };
+    // Setting bounds moves the window (b.boundsStuck: the browser ignores it); logged as ["bounds", app, id, rect].
+    Object.defineProperty(win, "bounds", {
+      get: () => () => { geom.bounds = (geom.bounds || 0) + 1; ae(b.name, "win.bounds()"); if (b.kind === "arc") throw new Error("no bounds"); return { x: spec.x ?? 0, y: spec.y ?? 0, width: spec.w ?? 800, height: spec.h ?? 600 }; },
+      set: (v) => {
+        bump("win.bounds=", b.name);
+        if (b.kind === "arc") throw new Error("no bounds");
+        log.push(["bounds", b.name, spec.id, { ...v }]);
+        if (!b.boundsStuck) Object.assign(spec, { x: v.x, y: v.y, w: v.width, h: v.height });
+      },
+    });
+    win.close = () => { bump("win.close", b.name); const all = winsByApp[b.name], i = all.indexOf(w); if (i < 0) throw gone(); all.splice(i, 1); log.push(["closeWindow", b.name, spec.id]); };
     Object.defineProperty(win, "activeTabIndex", {
       get: () => () => { bump("win.activeTabIndex()", b.name); if (b.kind !== "chrome") throw new Error("Can't convert types"); return spec.active + 1; },
       set: (v) => { bump("win.activeTabIndex=", b.name); spec.active = v - 1; },
@@ -359,9 +369,25 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         return r;
       },
       Tab: (props) => props,
-      Window: () => ({ make: () => wins.push(makeWindow({ id: 999, active: 0, tabs: [] }, b)) }),
-      Document: () => ({ make: () => wins.push(makeWindow({ id: 999, active: 0, tabs: [] }, b)) }),
+      Window: (props = {}) => ({ make: () => makeWin("window", props) }),
+      Document: (props = {}) => ({ make: () => makeWin("document", props) }),
     };
+    // `make new window` (Chromium; Safari only with b.windowMake) or Safari's `make
+    // new document`, in front of the app's other windows. A window made with
+    // `bounds` sits there unless b.makeBounds is false; otherwise at 0,0, 800x600.
+    // Its tab is the browser's new-tab page, a document's its url. Logged as
+    // ["makeWindow", app, via, props]; b.raiseOnMake brings the app's windows forward.
+    function makeWin(via, props) {
+      bump(`make ${via}`, b.name);
+      if (via === "window" ? b.kind === "safari" && !b.windowMake : b.kind !== "safari") throw new Error("Can't make class " + via + ".");
+      const id = 900 + (state.made = (state.made || 0) + 1), r = via === "window" && props.bounds && b.makeBounds !== false ? props.bounds : { x: 0, y: 0, width: 800, height: 600 };
+      const url = via === "document" ? props.url || "about:blank" : b.kind === "chrome" ? "chrome://newtab/" : "about:blank";
+      const spec = { id, active: 0, tabs: [{ url, id: "w" + id }], x: r.x, y: r.y, w: r.width, h: r.height };
+      wins.unshift(makeWindow(spec, b));
+      log.push(["makeWindow", b.name, via, JSON.parse(JSON.stringify(props))]);
+      if (b.raiseOnMake) raiseApp(b.name);
+      return specifier(() => { const x = wins.find((y) => y.spec === spec); return x && x.win; });
+    }
     a.windows = new Proxy([], {
       get(_, k) {
         if (k === "length") { bump(`windows.length(${b.name})`, b.name); return wins.length; }
@@ -836,6 +862,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       IORegistryGetRootEntry: () => 16395,
       IORegistryEntryCreateCFProperty: () => { state.screenReads = (state.screenReads || 0) + 1; return [{ kCGSSessionOnConsoleKey: true, ...(state.locked ? { CGSSessionScreenIsLocked: true } : {}) }]; },
       CGMainDisplayID: () => 1,
+      // state.displays: [{id, x, y, w, h, vendor, product}]; a display not listed has a zero rect.
+      CGDisplayBounds: (id) => { const d = (state.displays || []).find((x) => x.id === id); return d ? { origin: { x: d.x, y: d.y }, size: { width: d.w, height: d.h } } : { origin: { x: 0, y: 0 }, size: { width: 0, height: 0 } }; },
+      CGDisplayVendorNumber: (id) => ((state.displays || []).find((x) => x.id === id) || {}).vendor ?? 0,
+      CGDisplayModelNumber: (id) => ((state.displays || []).find((x) => x.id === id) || {}).product ?? 0,
       CGDisplayIsAsleep: () => { state.screenReads = (state.screenReads || 0) + 1; return state.displayAsleep ? 1 : 0; },
       SLSMainConnectionID: () => 99,
       SLSHWCaptureWindowList: (_cid, bytes, count, options) => {

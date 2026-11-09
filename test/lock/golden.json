@@ -1455,7 +1455,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: tab_not_visible: navigate can't run page JS in a tab its window doesn't show; loading it from outside the page would bring the browser to the front: pass raise:true to allow that, or activate_tab first"
+     "text": "error: tab_not_visible: navigate can't run page JS in a tab its window doesn't show; loading it from outside the page would bring the browser to the front: pass raise:true to allow that, or activate_tab first; or open it on the loft: new_tab {url, loft:true}"
     }
    ],
    "isError": true,
@@ -4259,7 +4259,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: tab_not_visible: a background trusted click needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true"
+     "text": "error: tab_not_visible: a background trusted click needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true; or open it on the loft: new_tab {url, loft:true}"
     }
    ],
    "isError": true,
@@ -6778,7 +6778,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)"
+     "text": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space); or open it on the loft: new_tab {url, loft:true}"
     }
    ],
    "isError": true,
@@ -7096,7 +7096,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: tab_not_visible: eval_js needs the tab its window shows; activate_tab (takes focus) or retry later"
+     "text": "error: tab_not_visible: eval_js needs the tab its window shows; activate_tab (takes focus) or retry later; or open it on the loft: new_tab {url, loft:true}"
     }
    ],
    "isError": true,

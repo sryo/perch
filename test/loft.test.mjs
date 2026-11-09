@@ -1,0 +1,258 @@
+// new_tab {loft:true}: a window of perch's own on loft's hidden display
+// (github.com/sryo/loft), read from $LOFT_HOME/holder.json and checked against
+// the display itself. It is placed in the make where the browser takes bounds,
+// never activated, kept out of untargeted calls, and closed by close_tab with
+// its last tab. Tool errors that need the user's window name the loft.
+import { test, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, roomHint, INSTRUCTIONS } from "../server.js";
+import { makeWorld } from "./fakes/jxa-world.mjs";
+import { tempDir } from "../scripts/temp-dirs.mjs";
+
+const RECT = { x: 4000, y: 0, w: 1440, h: 900 };
+const LOFT_DISPLAY = { id: 77, ...RECT, vendor: 0x6c66, product: 0x7466 };
+const DOWN = "error: no_browser: the loft is down; run loft up (github.com/sryo/loft), then retry";
+const chrome = (windows, extra = {}) => ({ name: "Google Chrome", kind: "chrome", windows, ...extra });
+const safari = (windows, extra = {}) => ({ name: "Safari", kind: "safari", windows, ...extra });
+const arc = (windows, extra = {}) => ({ name: "Arc", kind: "arc", windows, ...extra });
+const userWin = (p = "u") => ({ id: 1, active: 0, tabs: [{ url: `https://${p}.test/`, title: p, id: p }] });
+
+let world, home;
+function holder(h) {
+  writeFileSync(join(home, "holder.json"), JSON.stringify({ pid: process.pid, cmd: "osascript -l JavaScript holder.js", displayId: 77, ...RECT, started: "2026-11-09T10:00:00Z", ...h }));
+}
+function install(spec, { displays = [LOFT_DISPLAY] } = {}) {
+  world = makeWorld(spec);
+  world.state.displays = displays;
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = world.daemon;
+  DAEMONS.slow = world.daemon;
+  world.reset();
+}
+const call = async (name, args) => {
+  const r = await handleCall(name, args);
+  const t = r.content.find((c) => c.type === "text")?.text;
+  return { r, t, o: (() => { try { return JSON.parse(t); } catch { return t; } })() };
+};
+const made = () => world.log.filter(([k]) => k === "makeWindow");
+const activations = () => Object.keys(world.counts).filter((k) => /^activate\(/.test(k));
+
+beforeEach((t) => {
+  home = tempDir("perch-loft-", t);
+  process.env.LOFT_HOME = home;
+  focus.granted = true;
+  loft.wins.clear();
+});
+
+test("R1 a down loft is no_browser naming loft up, before any Apple Event", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] });
+  let { t } = await call("new_tab", { url: "https://a.test/", loft: true });
+  assert.equal(t, DOWN, "no holder.json");
+  holder({ pid: 99999999 });
+  ({ t } = await call("new_tab", { url: "https://a.test/", loft: true }));
+  assert.equal(t, DOWN, "the holder's pid is gone");
+  assert.deepEqual(world.aeLog, []);
+  // A down loft needs no focus: the call is refused before the grant is asked for.
+  focus.granted = false;
+  ({ t } = await call("new_tab", { url: "https://a.test/", loft: true }));
+  assert.equal(t, DOWN);
+});
+
+test("R1 a holder whose display is gone or isn't loft's makes no window", async () => {
+  for (const displays of [[], [{ ...LOFT_DISPLAY, vendor: 0x610 }]]) {
+    install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] }, { displays });
+    holder();
+    const { t } = await call("new_tab", { url: "https://a.test/", loft: true });
+    assert.match(t, /^error: no_browser: the loft is down \(its display is gone\); run loft up \(github\.com\/sryo\/loft\), then retry$/);
+    assert.deepEqual(made(), []);
+  }
+});
+
+test("R1 Chrome: a new window made with the loft's live bounds, its tab at the url, nothing activated", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  // holder.json's bounds are frozen at `loft up`; the display's own are read live.
+  holder({ x: 10, y: 10, w: 100, h: 100 });
+  const { r, o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.deepEqual(made().map(([, , via, p]) => [via, p]), [["window", { bounds: { x: 4000, y: 0, width: 1440, height: 900 } }]]);
+  assert.equal(world.counts["win.bounds="], undefined, "placed in the make, never moved after");
+  const w = world.winSpec("Google Chrome", 0);
+  assert.deepEqual([w.x, w.y, w.w, w.h], [4000, 0, 1440, 900]);
+  assert.equal(world.tabsOf("Google Chrome", 0)[w.active].page.url, "https://job.test/");
+  assert.deepEqual(o, { app: "Google Chrome", tabId: "chrome:w901" });
+  assert.deepEqual(activations(), []);
+  assert.equal(world.counts["win.index="], undefined, "no window raised");
+  assert.deepEqual(world.tabsOf("Google Chrome", 1).map((t) => t.spec.id), ["u"], "the user's window is untouched");
+});
+
+test("R1 a browser that ignores bounds in the make has its window moved onto the loft at once", async () => {
+  install({ browsers: [chrome([userWin()], { makeBounds: false })], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  const { r, o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.deepEqual(world.log.filter(([k]) => k === "bounds").map(([, , id, b]) => [id, b]), [[901, { x: 4000, y: 0, width: 1440, height: 900 }]]);
+});
+
+test("R1 a window that won't sit on the loft is closed again, and the call fails", async () => {
+  install({ browsers: [chrome([userWin()], { makeBounds: false, boundsStuck: true })], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  const { t } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.match(t, /^error: no_browser: Google Chrome would not place its window on the loft; nothing was left open/);
+  assert.deepEqual(world.log.filter(([k]) => k === "closeWindow").map(([, , id]) => id), [901]);
+  assert.equal(loft.wins.size, 0);
+});
+
+test("R1 Safari: a document window moved onto the loft, and no focus grant needed", async () => {
+  focus.granted = false;
+  install({ browsers: [safari([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Safari" }] });
+  holder();
+  const { r, o } = await call("new_tab", { app: "Safari", url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.deepEqual(made().map(([, , via, p]) => [via, p]), [["document", { url: "https://job.test/" }]]);
+  const w = world.winSpec("Safari", 0);
+  assert.deepEqual([w.x, w.y, w.w, w.h], [4000, 0, 1440, 900]);
+  assert.match(o.tabId, /^safari:901\.0\./);
+  assert.deepEqual(activations(), []);
+});
+
+test("R1 Safari takes bounds in the window make where it allows one", async () => {
+  install({ browsers: [safari([userWin()], { windowMake: true })], cg: [{ owner: "Terminal" }, { owner: "Safari" }] });
+  holder();
+  const { r, o } = await call("new_tab", { app: "Safari", url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.deepEqual(made().map(([, , via]) => via), ["window"]);
+  assert.equal(world.counts["win.bounds="], undefined);
+  assert.equal(world.tabsOf("Safari", 0)[0].page.url, "https://job.test/");
+});
+
+test("R1 outside Safari, loft:true is gated like new_tab: needs_focus without a grant, nothing made", async () => {
+  focus.granted = false;
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] });
+  holder();
+  const { t } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.match(t, /^error: needs_focus: new_tab /);
+  assert.doesNotMatch(t, /loft:true/, "never suggests the call that was just refused");
+  assert.deepEqual(world.aeLog, []);
+});
+
+test("R1 the browser in front gets the user's window back in front of the loft window", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }, { owner: "Terminal" }] });
+  holder();
+  const { r } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined);
+  assert.equal(world.winSpec("Google Chrome", 0).id, 1, "the user's window is the app's front window again");
+  assert.deepEqual(activations(), []);
+});
+
+test("R1 a raise perch couldn't prevent is reported", async () => {
+  install({ browsers: [chrome([userWin()], { raiseOnMake: true })], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  const { o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(o.warning, "creating the window brought the browser to the front");
+});
+
+test("R1 Arc can't place a window, so it is refused with nothing made", async () => {
+  install({ browsers: [arc([userWin()])], cg: [{ owner: "Arc" }] });
+  holder();
+  const { t } = await call("new_tab", { app: "Arc", url: "https://job.test/", loft: true });
+  assert.match(t, /^error: no_browser: Arc can't place a window, so it can't open one on the loft; use another browser/);
+  assert.deepEqual(made(), []);
+});
+
+test("R1 loft:true takes no from, label or room", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] });
+  holder();
+  for (const extra of [{ from: "chrome:u" }, { label: "x" }, { app: "room:main" }]) {
+    const { t } = await call("new_tab", { url: "https://a.test/", loft: true, ...extra });
+    assert.match(t, /^error: bad_args: new_tab loft:true opens a browser window; it takes no from, label or room/, JSON.stringify(extra));
+  }
+  assert.deepEqual(world.aeLog, []);
+});
+
+// The loft window is the browser's front window and sits highest in CG's order,
+// but the user can't see it: "the topmost window" is theirs.
+for (const [label, make, app] of [["Chrome", chrome, "Google Chrome"], ["Safari", safari, "Safari"]]) {
+  test(`R2 untargeted calls skip perch's loft window (${label})`, async () => {
+    install({ browsers: [make([userWin()])], cg: [{ owner: "Terminal" }, { owner: app, wid: 1 }] });
+    holder();
+    const { r, o } = await call("new_tab", { app, url: "https://job.test/", loft: true });
+    assert.equal(r.isError, undefined, JSON.stringify(o));
+    assert.equal(world.winSpec(app, 0).id, 901, "the loft window is the browser's front window");
+    // CG lists it above the user's app, which is in front.
+    world.cg.unshift({ owner: app, wid: 9, ...RECT });
+    world.state.displays = [];
+    const e = await call("eval_js", { script: "return location.href" });
+    assert.equal(e.t, "https://u.test/");
+    const w = await call("wait", { expression: "location.href === 'https://u.test/'", timeout: 200 });
+    assert.equal(w.r.isError, undefined, w.t);
+    const n = await call("new_tab", { url: "https://other.test/" });
+    assert.equal(n.r.isError, undefined, n.t);
+    const at = (id) => [0, 1].find((i) => world.winSpec(app, i).id === id);
+    assert.equal(world.tabsOf(app, at(901)).length, 1, "nothing added to the loft window");
+    assert.deepEqual(world.tabsOf(app, at(1)).map((t) => t.page.url), ["https://u.test/", "https://other.test/"]);
+    // Targeted, the loft tab is reachable as any other.
+    const j = await call("eval_js", { script: "return location.href", target: { tabId: o.tabId } });
+    assert.equal(j.t, "https://job.test/");
+  });
+}
+
+test("R2 a browser whose only window is perch's loft window has no default tab", async () => {
+  install({ browsers: [chrome([])], cg: [{ owner: "Google Chrome", wid: 9, ...RECT }] });
+  holder();
+  const { r } = await call("new_tab", { app: "Google Chrome", url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined);
+  const e = await call("eval_js", { script: "return location.href" });
+  assert.match(e.t, /^error: no_browser: /);
+});
+
+test("R3 close_tab on the last tab of perch's loft window closes that window", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  const { o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  const c = await call("close_tab", { tabId: o.tabId });
+  assert.deepEqual(c.o, { ok: true, closed: o.tabId, window: true });
+  assert.deepEqual(world.log.filter(([k]) => k === "closeWindow").map(([, , id]) => id), [901]);
+  assert.equal(loft.wins.size, 0, "perch forgets the window");
+  // The user's last tab is still refused.
+  const u = await call("close_tab", { tabId: "chrome:u" });
+  assert.deepEqual(u.o, { ok: false, error: "last tab in its window; closing it would close the window" });
+});
+
+test("R3 Safari: close_tab closes perch's loft window with its last tab", async () => {
+  install({ browsers: [safari([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Safari" }] });
+  holder();
+  const { o } = await call("new_tab", { app: "Safari", url: "https://job.test/", loft: true });
+  const c = await call("close_tab", { tabId: o.tabId });
+  assert.equal(c.o.window, true, c.t);
+  assert.deepEqual(world.log.filter(([k]) => k === "closeWindow").map(([, , id]) => id), [901]);
+});
+
+test("R3 a loft window with more tabs loses only the tab", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  const { o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  world.openTab("Google Chrome", 0, "https://pop.test/");
+  const c = await call("close_tab", { tabId: o.tabId });
+  assert.deepEqual(c.o, { ok: true, closed: o.tabId });
+  assert.deepEqual(world.log.filter(([k]) => k === "closeWindow"), []);
+  assert.equal(loft.wins.size, 1);
+});
+
+test("R4 errors that need the user's window name the loft beside rooms, live or not", async () => {
+  const hint = "or open it on the loft: new_tab {url, loft:true}";
+  assert.ok(roomHint("tab_not_visible: hidden", {}).includes(hint));
+  assert.ok(roomHint("window_offscreen: minimized", {}).includes(hint));
+  assert.equal(roomHint("stale_tab: gone", {}), "stale_tab: gone");
+  // Nothing on the loft has the keyboard.
+  assert.ok(!roomHint("tab_not_visible: a background trusted press needs the keyboard in the target's page", {}).includes("loft"));
+  assert.equal(roomHint("tab_not_visible: x", { target: { tabId: "room:main:T1" } }), "tab_not_visible: x");
+  focus.granted = false;
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] });
+  const a = await call("activate_tab", { target: { tabId: "chrome:u" } });
+  assert.match(a.t, /^error: needs_focus: .*new_tab \{url, loft:true\}/);
+  const n = await call("new_tab", { url: "https://a.test/" });
+  assert.match(n.t, /^error: needs_focus: .*new_tab \{url, loft:true\}/);
+  assert.match(INSTRUCTIONS, /tab_not_visible \([^)]*loft:true/);
+});

@@ -152,7 +152,7 @@ test("navigate to a file: url from a window behind another app still needs raise
   const { seen, hash } = await observe("chromeAway", "navigate", { url: "file:///tmp/p.html" });
   assert.match(seen.text, /^error: tab_not_visible: .*raise:true/);
   assert.equal(seen.counts["tab.url="], undefined);
-  assert.equal(hash, "4d2e7b8c898f", JSON.stringify(seen));
+  assert.equal(hash, "1067d75af0d5", JSON.stringify(seen));
 });
 
 test("the runtime refuses a raw call with a url it must not load, before any Apple Event", () => {
@@ -179,8 +179,8 @@ test("new_tab and navigate refuse without reaching the runtime at all", async ()
 // until someone checks it sits behind the bad_url guard.
 test("the runtime's url sinks are the reviewed ones", async () => {
   const lines = (await readFile(new URL("../server.js", import.meta.url), "utf8")).split("\n");
-  const SINK = /Tab\(\{\s*url:|\.url\s*=\s*a\.url|location\.(?:assign|replace)\(/g;
-  const FN = /^\s{4}(\w+)\([^)]*\)\s*\{|^(?:export\s+)?(?:async\s+)?function\s+(\w+)/;
+  const SINK = /(?:Tab|Document)\(\{\s*url:|\.url\s*=\s*a\.url|location\.(?:assign|replace)\(/g;
+  const FN = /^\s{4}(\w+)\([^)]*\)\s*\{|^(?:\s\s)?(?:export\s+)?(?:async\s+)?function\s+(\w+)/;
   const found = {};
   let fn = null;
   for (const l of lines) {
@@ -188,5 +188,5 @@ test("the runtime's url sinks are the reviewed ones", async () => {
     if (m) fn = m[1] || m[2];
     for (const _ of l.matchAll(SINK)) found[fn] = (found[fn] || 0) + 1;
   }
-  assert.deepEqual(found, { navigate: 3, newTab: 6 });
+  assert.deepEqual(found, { navigate: 3, newTab: 6, loftWindow: 2 });
 });

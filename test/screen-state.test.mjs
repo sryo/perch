@@ -28,31 +28,33 @@ const offscreen = (state) => install({
 }, state);
 const shot = async () => (await handleCall("screenshot", {})).content[0].text;
 const BASE = "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)";
+// The why goes ahead of the hint that names somewhere else to run.
+const HINT = "; or open it on the loft: new_tab {url, loft:true}";
 
 test("a screenshot that fails says the screen is locked, from the IO registry's console-session key", async () => {
   const world = offscreen({ locked: true });
-  assert.equal(await shot(), BASE + "; the screen is locked");
+  assert.equal(await shot(), BASE + "; the screen is locked" + HINT);
   assert.equal(world.state.screenReads, 2, "one read of the IO registry, one of the display");
 });
 
 test("a screenshot that fails says the display is asleep, from CGDisplayIsAsleep", async () => {
   offscreen({ displayAsleep: true });
-  assert.equal(await shot(), BASE + "; the display is asleep");
+  assert.equal(await shot(), BASE + "; the display is asleep" + HINT);
 });
 
 test("locked and asleep are both said", async () => {
   offscreen({ displayAsleep: true, locked: true });
-  assert.equal(await shot(), BASE + "; the screen is locked and the display is asleep");
+  assert.equal(await shot(), BASE + "; the screen is locked and the display is asleep" + HINT);
 });
 
 test("neither locked nor asleep: the error is unchanged", async () => {
   offscreen();
-  assert.equal(await shot(), BASE);
+  assert.equal(await shot(), BASE + HINT);
 });
 
 test("an IO registry that can't be read leaves the error as it was", async () => {
   offscreen({ locked: true, unbound: ["IORegistryGetRootEntry"] });
-  assert.equal(await shot(), BASE);
+  assert.equal(await shot(), BASE + HINT);
 });
 
 test("a call that succeeds never reads the screen state", async () => {

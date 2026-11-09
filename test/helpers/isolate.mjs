@@ -6,6 +6,8 @@
 // Set before any later server.js instance loads (the lock harness loads one per
 // scenario): each reads ROOMS_HOME at load.
 process.env.ROOMS_HOME = "/nonexistent/perch-test-rooms";
+// No loft: holder.json is read per call, so a test that wants one points LOFT_HOME at a temp dir.
+process.env.LOFT_HOME = "/nonexistent/perch-test-loft";
 const { DAEMONS, deps, roomsReset, focus } = await import("../../server.js");
 // The suite runs under a focus grant, so tests of raise:true and activate_tab keep
 // their meaning; test/focus-grant.test.mjs clears it.

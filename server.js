@@ -90,6 +90,22 @@ function jxaRuntime(BROWSERS, HANG) {
     try { return app(name).running(); } catch (e) { return false; }
   }
 
+  // The windows perch made on the loft (new_tab {loft:true}), as Node knows them:
+  // {wins: {app: [window id]}, rect}, armed on every call once there was one. The
+  // user never sees them, so no untargeted call picks one as "the topmost window".
+  let loftOwn = null;
+  const ownedIds = (name) => (loftOwn && loftOwn.wins[name] && loftOwn.wins[name].length ? loftOwn.wins[name] : null);
+  const centerIn = (r, b) => !!r && b.x + b.w / 2 >= r.x && b.x + b.w / 2 < r.x + r.w && b.y + b.h / 2 >= r.y && b.y + b.h / 2 < r.y + r.h;
+  // The position of the app's front window that isn't perch's on the loft: 0 at
+  // no cost while it has none there, -1 when every window is perch's.
+  function userWin(name) {
+    const own = ownedIds(name);
+    if (!own) return 0;
+    let ids; try { ids = app(name).windows.id().map(String); } catch (e) { return 0; }
+    for (let i = 0; i < ids.length; i++) if (own.indexOf(ids[i]) < 0) return i;
+    return -1;
+  }
+
   // Each Apple Event to a browser costs about one display frame (~16ms live),
   // while CGWindowList and running() cost well under that, so the hot paths
   // below count events. errAENoSuchObject (or a bad index) means the specifier
@@ -148,6 +164,7 @@ function jxaRuntime(BROWSERS, HANG) {
     // `dupe[owner]`: windows of two regular instances, which geometry can't separate.
     const out = { front: null, frontPid: null, frontWid: null, z: [], pid: {}, wins: {}, byPid: {}, dupe: {} };
     let list = [];
+    const loftOnly = [];
     try { list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || []; } catch (e) {}
     for (const w of list) {
       const b = w.kCGWindowBounds || {};
@@ -156,12 +173,18 @@ function jxaRuntime(BROWSERS, HANG) {
       if (b.Width < 100 || b.Height < 100) continue;
       const owner = w.kCGWindowOwnerName;
       if (KIND[owner] && !isUserPid(w.kCGWindowOwnerPID)) continue;
-      if (out.front === null) { out.front = owner; out.frontPid = w.kCGWindowOwnerPID; out.frontWid = w.kCGWindowNumber; }
+      // perch's loft window sets neither the front app nor the browsers' order;
+      // a browser showing only those goes last.
+      const parked = !!(KIND[owner] && ownedIds(owner) && centerIn(loftOwn.rect, { x: b.X, y: b.Y, w: b.Width, h: b.Height }));
+      if (out.front === null && !parked) { out.front = owner; out.frontPid = w.kCGWindowOwnerPID; out.frontWid = w.kCGWindowNumber; }
       if (!KIND[owner]) continue;
       if (out.wins[owner] && out.pid[owner] !== w.kCGWindowOwnerPID) out.dupe[owner] = true;
-      if (!out.wins[owner]) { out.z.push(owner); out.pid[owner] = w.kCGWindowOwnerPID; out.wins[owner] = []; }
+      if (!out.wins[owner]) { out.pid[owner] = w.kCGWindowOwnerPID; out.wins[owner] = []; }
+      if (parked) { if (loftOnly.indexOf(owner) < 0) loftOnly.push(owner); }
+      else if (out.z.indexOf(owner) < 0) out.z.push(owner);
       out.wins[owner].push({ wid: w.kCGWindowNumber, name: w.kCGWindowName || "", x: b.X, y: b.Y, w: b.Width, h: b.Height });
     }
+    loftOnly.forEach(function (n) { if (out.z.indexOf(n) < 0) out.z.push(n); });
     return out;
   }
 
@@ -332,17 +355,20 @@ function jxaRuntime(BROWSERS, HANG) {
     const note = function (e, name) { if (!blocked && e && (UNLISTED.indexOf(e.errorNumber) >= 0 || QUIT.indexOf(e.errorNumber) >= 0)) { blocked = e; blockedApp = name; } };
     // The front window's shown tab in one event; a window showing no tab (or no
     // window) falls through to the walk.
-    if (want.windowId == null && want.tabIndex == null && (KIND[names[0]] === "chrome" || KIND[names[0]] === "arc")) {
+    const w0 = want.windowId == null && want.tabIndex == null && (KIND[names[0]] === "chrome" || KIND[names[0]] === "arc") ? userWin(names[0]) : -1;
+    if (w0 >= 0) {
       try {
-        const win = app(names[0]).windows[0], id = win.activeTab.id();
-        if (id != null) return { tab: win.tabs.byId(id), idx: null, tabId: id, kind: KIND[names[0]], app: names[0], win, w: 0, P, shown: true };
+        const win = app(names[0]).windows[w0], id = win.activeTab.id();
+        if (id != null) return { tab: win.tabs.byId(id), idx: null, tabId: id, kind: KIND[names[0]], app: names[0], win, w: w0, P, shown: true };
       } catch (e) { note(e, names[0]); }
     }
     for (const name of names) {
-      const a = app(name), kind = KIND[name];
-      let n;
+      const a = app(name), kind = KIND[name], own = want.windowId == null ? ownedIds(name) : null;
+      let n, wids = null;
       try { n = a.windows.length; } catch (e) { note(e, name); continue; }
+      if (own) { try { wids = a.windows.id().map(String); } catch (e) {} }
       for (let w = 0; w < n; w++) {
+        if (wids && own.indexOf(wids[w]) >= 0) continue;
         const win = a.windows[w];
         if (want.windowId != null) {
           let id; try { id = win.id(); } catch (e) { id = w; }
@@ -455,7 +481,7 @@ function jxaRuntime(BROWSERS, HANG) {
     want = want || {};
     if (once && want.tabId == null && want.windowId == null && want.tabIndex == null && want.app == null) {
       const P = procs(), top = P.z[0];
-      if (KIND[top] === "chrome") {
+      if (KIND[top] === "chrome" && !ownedIds(top)) {
         const win = app(top).windows[0];
         return { tab: win.activeTab, idx: null, tabId: null, kind: "chrome", app: top, win, w: 0, P, shown: true, front: want };
       }
@@ -689,7 +715,7 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     if (want.app != null) return null;
     const top = procs().z[0], kind = KIND[top];
-    if (!top || (kind !== "chrome" && kind !== "safari")) return null;
+    if (!top || (kind !== "chrome" && kind !== "safari") || ownedIds(top)) return null;
     const win = app(top).windows[0];
     const send = kind === "chrome"
       ? function (s) { return win.activeTab.execute({ javascript: s }); }
@@ -3122,6 +3148,61 @@ function jxaRuntime(BROWSERS, HANG) {
     if (s.rows.length) s.err = null;
   }
 
+  // new_tab {loft:true}: a new window of the browser on loft's display, made
+  // with the display's live bounds where the browser takes them in the make (so
+  // it never shows on the user's screens), else moved there at once. A window
+  // that won't sit there is closed again. Nothing is activated; a browser that
+  // was in front gets the user's own window back in front of the new one.
+  // Chromium brings itself forward making it (as for a tab), which is why
+  // new_tab {loft} outside Safari runs only under the user's focus grant.
+  const LOFT_GONE = "no_browser: the loft is down (its display is gone); run loft up (github.com/sryo/loft), then retry";
+  function loftRect(L) {
+    let b = null, v = 0, m = 0;
+    try { b = $.CGDisplayBounds(L.displayId); v = Number($.CGDisplayVendorNumber(L.displayId)); m = Number($.CGDisplayModelNumber(L.displayId)); } catch (e) {}
+    if (!b || !(b.size.width > 0 && b.size.height > 0) || v !== 0x6c66 || m !== 0x7466) throw new Error(LOFT_GONE);
+    return { x: b.origin.x, y: b.origin.y, w: b.size.width, h: b.size.height };
+  }
+  function loftWindow(a, name, kind, ap, P) {
+    if (kind === "arc") throw new Error("no_browser: " + name + " can't place a window, so it can't open one on the loft; use another browser");
+    const R = loftRect(a.loft), B = { x: R.x, y: R.y, width: R.w, height: R.h };
+    const own = ownedIds(name) || [];
+    let before = [];
+    try { before = ap.windows.id(); } catch (e) {}
+    const userFront = before.filter(function (id) { return own.indexOf(String(id)) < 0; })[0];
+    let via = null;
+    try { ap.Window({ bounds: B }).make(); via = "window"; } catch (e) {}
+    if (!via && kind === "safari") { try { ap.Document({ url: a.url }).make(); via = "document"; } catch (e) {} }
+    if (!via) throw new Error("no_browser: " + name + " could not make a window");
+    let raw = null;
+    try { raw = ap.windows.id().filter(function (id) { return before.indexOf(id) < 0; })[0]; } catch (e) {}
+    if (raw == null) throw new Error("no_browser: " + name + " made no window perch could find; retry");
+    const win = ap.windows.byId(raw), wid = String(raw);
+    const placed = function () {
+      try { const b = win.bounds(); return centerIn(R, { x: b.x, y: b.y, w: b.width, h: b.height }); } catch (e) { return false; }
+    };
+    if (!placed()) {
+      try { win.bounds = B; } catch (e) {}
+      if (!placed()) {
+        try { win.close(); } catch (e) {}
+        throw new Error("no_browser: " + name + " would not place its window on the loft; nothing was left open");
+      }
+    }
+    if (via === "window") win.tabs[0].url = a.url;
+    let tabId = null;
+    if (kind === "safari") {
+      const urls = win.tabs.url();
+      urls[0] = urls[0] || a.url;
+      tabId = safariHandle(wid, 0, urls[0]);
+      counted(tabId, urls, 0);
+    } else {
+      tabId = handle(name, win.tabs.id()[0]);
+    }
+    const out = { app: name, tabId, loftWin: { id: wid, rect: R } };
+    if (P.front === name && userFront != null) { try { ap.windows.byId(userFront).index = 1; } catch (e) {} }
+    else if (P.front !== name && procs().front === name) out.warning = "creating the window brought the browser to the front";
+    return out;
+  }
+
   globalThis.__perch = {
     // Run by the daemons' handshake, so no call pays the AppKit import; one-shot
     // runs keep it lazy.
@@ -3130,6 +3211,7 @@ function jxaRuntime(BROWSERS, HANG) {
     helperServe: helperServe,
     takeNote() { const n = note; note = null; return n; },
     lateArm(t) { late = t; lateHeld = null; },
+    loftArm(x) { loftOwn = x; },
     dialogs(a) {
       const found = provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
       const s = found.length ? null : leavePrompt(a.target);
@@ -3565,13 +3647,20 @@ function jxaRuntime(BROWSERS, HANG) {
       const kind = KIND[name];
       const ap = app(name);
       if (!ap.running()) throw new Error("no_browser: " + name + " must already be running (new_tab never launches it)");
+      if (a.loft) return loftWindow(a, name, kind, ap, P);
       // The first window that isn't minimized: a tab made in a minimized one restores
       // it and brings the browser forward (live, Canary). The one bulk read also
       // counts the windows; when it can't be read, every window counts as on screen.
-      let mins = null;
+      // perch's own loft windows are skipped too.
+      let mins = null, wids = null;
+      const own = ownedIds(name);
       try { mins = kind === "safari" ? ap.windows.miniaturized() : ap.windows.minimized(); } catch (e) {}
-      if (!(mins ? mins.length : ap.windows.length)) throw new Error("no_browser: " + name + " needs an existing window (new_tab never makes one)");
-      const at = mins ? mins.indexOf(false) : 0;
+      if (own) { try { wids = ap.windows.id().map(String); } catch (e) {} }
+      const count = mins ? mins.length : ap.windows.length;
+      if (!count) throw new Error("no_browser: " + name + " needs an existing window (new_tab never makes one)");
+      let at = -1;
+      for (let i = 0; i < count && at < 0; i++) if (!(mins && mins[i]) && !(wids && own.indexOf(wids[i]) >= 0)) at = i;
+      if (at < 0 && wids && (!mins || mins.indexOf(false) >= 0)) throw new Error("no_browser: " + name + "'s only windows are perch's own on the loft, and new_tab never makes one in the user's place; use new_tab {url, loft:true}");
       if (at < 0) throw new Error("no_browser: every " + name + " window is minimized, and new_tab never restores one; ask the user to restore one");
       let win, newId = null, shown = null;
       if (kind === "chrome" || kind === "arc") {
@@ -3678,7 +3767,15 @@ function jxaRuntime(BROWSERS, HANG) {
       const t = resolve(a.target, true);
       let n = 2;
       try { n = t.kind === "arc" ? t.win.activeSpace.tabs.id().length : t.win.tabs.length; } catch (e) {}
-      if (n <= 1) return { ok: false, error: "last tab in its window; closing it would close the window" };
+      if (n <= 1) {
+        // A window perch made on the loft is its own to close with its last tab.
+        let wid = null;
+        if (ownedIds(t.app)) { try { wid = String(t.win.id()); } catch (e) {} }
+        if (wid == null || ownedIds(t.app).indexOf(wid) < 0) return { ok: false, error: "last tab in its window; closing it would close the window" };
+        t.win.close();
+        if (t.tabId != null) delete hints[handle(t.app, t.tabId)];
+        return { ok: true, closed: a.target.tabId, loftClosed: { app: t.app, id: wid } };
+      }
       t.tab.close();
       if (t.tabId != null) delete hints[handle(t.app, t.tabId)];
       return { ok: true, closed: a.target.tabId };
@@ -4306,7 +4403,10 @@ async function rt(fn, args, { raw = false, lane, timeout } = {}) {
   // A call that throws after its late check answered carries the answer ahead
   // of its message (LATE_ERR), for Node to take off before anything reads it.
   const body = lt ? `var r;try{r=${script}}catch(e){var n0=__perch.takeNote();if(n0&&n0.l)try{e.message="${LATE_ERR}"+JSON.stringify(n0.l)+"${LATE_ERR}"+e.message}catch(x){}throw e}` : `var r=${script};`;
-  script = `(function(){__perch.takeNote();__perch.lateArm(${JSON.stringify(lt)});${body}var n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
+  // Once perch has made a loft window, every call carries the list (loftArm), so
+  // each lane knows them; before that the script is byte-identical.
+  const la = loft.ever ? `__perch.loftArm(${JSON.stringify(loftArg())});` : "";
+  script = `(function(){__perch.takeNote();__perch.lateArm(${JSON.stringify(lt)});${la}${body}var n=__perch.takeNote();return n?"${NOTE}"+JSON.stringify(n)+"${NOTE}"+(r==null?"":typeof r==="string"?r:JSON.stringify(r)):r})()`;
   let out;
   try {
     out = DIALOG_BLIND.has(fn) && !(args && args.clip)
@@ -5738,7 +5838,46 @@ async function navigate(url, target, raise) {
   return out;
 }
 
-async function newTab(url, app, from, label) {
+// ---- loft ----
+// loft (github.com/sryo/loft) adds a display the user never sees; a window there
+// stays visible, painting and uncovered. Its holder process records the display
+// in $LOFT_HOME/holder.json while it lives; perch reads that, checks the pid here
+// and the display itself in the runtime, and never runs `loft`. perch makes and
+// closes only its own windows there: `wins` (app -> window ids) is what it made
+// in this server's life.
+export const loft = { wins: new Map(), rect: null, ever: false };
+const LOFT_DOWN = "no_browser: the loft is down; run loft up (github.com/sryo/loft), then retry";
+const LOFT_HINT = "or open it on the loft: new_tab {url, loft:true}";
+const loftHome = () => process.env.LOFT_HOME || join(homedir(), "Library", "Application Support", "loft");
+export function loftHolder() {
+  let h;
+  try { h = JSON.parse(readFileSync(join(loftHome(), "holder.json"), "utf8")); } catch { return null; }
+  if (!h || !Number.isInteger(h.pid) || h.pid <= 0 || !Number.isInteger(h.displayId)) return null;
+  try { process.kill(h.pid, 0); } catch (e) { if (e.code !== "EPERM") return null; }
+  return h;
+}
+function loftArg() {
+  const wins = {};
+  for (const [app, ids] of loft.wins) wins[app] = [...ids];
+  return { wins, rect: loft.rect };
+}
+async function loftTab(url, app, from, label) {
+  if (from != null || label != null || ROOM_APP.test(String(app))) throw new Error("bad_args: new_tab loft:true opens a browser window; it takes no from, label or room app");
+  const h = loftHolder();
+  if (!h) throw new Error(LOFT_DOWN);
+  const r = await rt("newTab", { app: app || null, url: url == null ? "about:blank" : checkUrl("new_tab", url), loft: { displayId: h.displayId } });
+  const { loftWin, ...out } = r;
+  if (loftWin) {
+    if (!loft.wins.has(out.app)) loft.wins.set(out.app, new Set());
+    loft.wins.get(out.app).add(loftWin.id);
+    loft.rect = loftWin.rect;
+    loft.ever = true;
+  }
+  return out;
+}
+
+async function newTab(url, app, from, label, onLoft) {
+  if (onLoft === true) return loftTab(url, app, from, label);
   if (label != null && !ROOM_APP.exec(String(app))?.[1]) throw new Error("bad_args: new_tab label claims a room tab; it takes app:\"room:<name>\"");
   if (from != null) return moveToRoom(from, app, label);
   return rt("newTab", { app: app || null, url: url == null ? "about:blank" : checkUrl("new_tab", url), label });
@@ -5763,6 +5902,8 @@ async function moveToRoom(from, app, label) {
 const ROOM_HINTED = /^(window_offscreen|tab_not_visible|no_browser): /;
 export function roomHint(msg, args) {
   if (!ROOM_HINTED.test(msg) || roomArgs(args)) return msg;
+  // A loft window is never the key window, so it can't help a trusted press.
+  if (!/^no_browser|needs the keyboard/.test(msg)) msg = `${msg}; ${LOFT_HINT}`;
   let reg;
   try { reg = Object.values(roomRegistry()); } catch { return msg; }
   let origin = null;
@@ -5793,7 +5934,11 @@ async function activateTab(target) {
 
 async function closeTab({ tabId } = {}) {
   if (typeof tabId !== "string" || !tabId) throw new Error("close_tab requires `tabId`");
-  return rt("closeTab", { target: { tabId } });
+  const r = await rt("closeTab", { target: { tabId } });
+  if (!r || !r.loftClosed) return r;
+  const { loftClosed, ...out } = r, ids = loft.wins.get(loftClosed.app);
+  if (ids) { ids.delete(loftClosed.id); if (!ids.size) loft.wins.delete(loftClosed.app); }
+  return { ...out, window: true };
 }
 
 // Pixel size from the PNG IHDR or the JPEG SOFn header, so no `sips -g` spawn.
@@ -11227,9 +11372,9 @@ async function select(args = {}, prefs = null) {
 export const INSTRUCTIONS = `perch drives macOS browsers and rooms (list_tabs {app:"room"}) with one API.
 Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With no target, tools use the active tab of the topmost browser window.
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
-{ok:false, error} is a normal outcome (no match, value didn't land): read it rather than retrying blindly.
+{ok:false, error} is a normal outcome (no match, value didn't land): read it, don't retry blindly.
 Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
-Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another agent has a room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, new_tab {loft:true}, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another agent's room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
 const TARGET = { type: "object", properties: { tabId: { type: "string" }, app: { type: "string" } } };
@@ -11249,6 +11394,7 @@ const TOOLS = [
   tool("new_tab", "Open an unselected tab in a running browser (default: the one in use); needs_focus without a grant. Returns {app,tabId}.", {
     url: { type: "string", description: "http(s) or file URL; default about:blank." },
     app: { type: "string" },
+    loft: { type: "boolean", description: "Own window on the unseen loft display" },
     from: { type: "string" },
     label: { type: "string", description: "Room: yours alone as room:<name>:<label>" },
   }),
@@ -11373,7 +11519,7 @@ function awaitTimeout({ timeout, awaitPromise }) {
 
 export const HANDLERS = {
   list_tabs:     (a) => listTabs(a),
-  new_tab:       (a) => newTab(a.url, a.app, a.from, a.label),
+  new_tab:       (a) => newTab(a.url, a.app, a.from, a.label, a.loft),
   activate_tab:  (a) => activateTab(a.target),
   close_tab:     (a) => closeTab(a),
   navigate:      (a) => navigate(a.url, a.target, a.raise),
@@ -11506,7 +11652,9 @@ async function withScreenWhy(out) {
   if (!failed && !json) return out;
   const why = await screenWhy();
   if (!why) return out;
-  first.text = failed ? first.text + "; " + why : first.text.replace(/^(\{"ok":false,"error":"[^"]*)"/, "$1; " + why + '"');
+  // The why belongs to the error, ahead of the hints that say where else to go.
+  const at = first.text.indexOf("; " + LOFT_HINT);
+  first.text = failed ? (at < 0 ? first.text + "; " + why : first.text.slice(0, at) + "; " + why + first.text.slice(at)) : first.text.replace(/^(\{"ok":false,"error":"[^"]*)"/, "$1; " + why + '"');
   return out;
 }
 
@@ -11565,10 +11713,12 @@ export const focus = { granted: false, askMs: 60000 };
 // there moves the Mac's focus.
 function movesFocus(name, args) {
   if (roomArgs(args)) return false;
+  // A down loft is refused before anything is sent, so there is nothing to ask for.
+  if (name === "new_tab" && args.loft === true && !loftHolder()) return false;
   if (name === "activate_tab" || args.raise === true) return true;
   return name === "new_tab" && !/^safari$/i.test(String(args.app || ""));
 }
-const needsFocus = (name) => new Error(`needs_focus: ${name} would bring the browser to the front, and the user has not allowed perch to take focus; nothing was sent. ${name === "new_tab" ? "navigate an existing tab instead (it loads from the page, in the background), or open it in a room (new_tab {app:\"room:<name>\"})" : "Try the call without raise (most run in the background), or move the flow into a room (new_tab {from: tabId, app:\"room:<name>\"})"}, or, in a client that can ask the user (MCP elicitation), they allow it when perch asks`);
+const needsFocus = (name, args = {}) => new Error(`needs_focus: ${name} would bring the browser to the front, and the user has not allowed perch to take focus; nothing was sent. ${name === "new_tab" ? "navigate an existing tab instead (it loads from the page, in the background), or open it in a room (new_tab {app:\"room:<name>\"})" : "Try the call without raise (most run in the background), or move the flow into a room (new_tab {from: tabId, app:\"room:<name>\"})"}${args.loft === true ? "" : `, ${LOFT_HINT}`}, or, in a client that can ask the user (MCP elicitation), they allow it when perch asks`);
 
 // A client keeps one server for its whole session, so after a pull it runs old
 // code. server.js's mtime and size at start are its identity; a stat (a few µs)
@@ -11611,7 +11761,7 @@ async function handleCallCore(name, args = {}, signal) {
     args = normPatterns(args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
-    if (movesFocus(name, args) && !focus.granted && !(focus.granted = await askFocus(name, args, signal))) throw needsFocus(name);
+    if (movesFocus(name, args) && !focus.granted && !(focus.granted = await askFocus(name, args, signal))) throw needsFocus(name, args);
     if (name === "close_tab" && args.tabId == null && args.target?.tabId != null) args = { ...args, tabId: args.target.tabId };
     // A label handle runs on its claimed tab's targetId handle, and results name it as the caller did.
     const shown = name === "close_tab" ? args.tabId : args.target?.tabId;
