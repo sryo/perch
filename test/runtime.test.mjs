@@ -332,7 +332,7 @@ test("Safari navigate makes the tab current before stamping the old document", a
   const old = world.page("Safari", 0, 1);
   const { o } = await call("navigate", { url: "https://next.test/", target: { tabIndex: 1 } });
   assert.equal(o.ok, true);
-  assert.equal(typeof old.__perch_nav, "string", "stamp never reached the old document");
+  assert.equal(typeof old.__perch_nav, "object", "stamp never reached the old document");
 });
 
 test("navigate: a #hash change on a normalized URL is same-document (no load wait)", async () => {

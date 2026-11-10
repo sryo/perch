@@ -3498,18 +3498,20 @@ function jxaRuntime(BROWSERS, HANG) {
         return "var h=null;try{h=new URL(" + q + ",location.href).href}catch(e){}" +
           "if(location.href===h&&h!==" + pre + (wasLoading || preUrl == null ? "" : "||location.href!==" + pre) + ")return 'stamped!';";
       };
+      // Answers are kept by token in window.__perch_nav, and one starting "stamped"
+      // marks the document this call is leaving: another server navigating the same
+      // document adds its own and never replaces this call's.
       // The stamp call keeps its answer on the page, so a retry that reaches the same
       // document repeats that answer instead of starting a second load.
       const stamp = function (retry) {
-        return "(function(){var o=window.__perch_navr;if(o&&o[0]===" + tok + ")return o[1];" + (retry ? arrived() : "") +
+        return "(function(){var k=" + tok + ",o=window.__perch_nav=window.__perch_nav||{};if(o[k])return o[k];" + (retry ? arrived() : "") +
           "var r=(function(){var s='stamped';try{var u=new URL(" + q + ",location.href);" +
           "if(u.hash&&u.href.split('#')[0]===location.href.split('#')[0])s='same'}catch(e){}" +
-          "if(s==='stamped')window.__perch_nav=" + tok + ";" +
           // A Navigation API listener added after the page's own sees whether the
           // page cancelled the load.
           (fromPage ? "var c=false,n=window.navigation,f=function(e){c=e.defaultPrevented};try{n.addEventListener('navigate',f)}catch(e){}" +
             "try{location.assign(" + q + ")}catch(e){return s}finally{try{n.removeEventListener('navigate',f)}catch(e){}}return c?s:s+'!'" : "return s") +
-          "})();window.__perch_navr=[" + tok + ",r];return r})()";
+          "})();return o[k]=r})()";
       };
       let lastErr = null;
       const tryRun = function (js, secs) {
@@ -3522,7 +3524,7 @@ function jxaRuntime(BROWSERS, HANG) {
       // A tab already loading before the stamp shows both for its earlier load.
       let viaPage = /!$/.test(r || "");
       if (canEval && fromPage && r == null && t.kind !== "safari" && !wasLoading) {
-        try { viaPage = tabRead(function () { return t.tab.loading(); }) || (preUrl != null && String(tabRead(function () { return t.tab.url(); })) !== preUrl && String(run("String(window.__perch_nav===" + tok + ")")) === "false"); } catch (e) { if (isStale(e)) throw e; }
+        try { viaPage = tabRead(function () { return t.tab.loading(); }) || (preUrl != null && String(tabRead(function () { return t.tab.url(); })) !== preUrl && String(run("String(/^st/.test((window.__perch_nav||{})[" + tok + "]))")) === "false"); } catch (e) { if (isStale(e)) throw e; }
       }
       // Still unproven: the page was busy, slow, or its reply was lost. Ask again with
       // more time before anything loads the url from outside the page.
@@ -3624,7 +3626,7 @@ function jxaRuntime(BROWSERS, HANG) {
       if (!canEval && !checkable) return result(false);
       // A failed load commits the browser's error page: chrome-error://chromewebdata/,
       // or a safari-resource: document.
-      const check = "(function(){try{return JSON.stringify({done:window.__perch_nav!==" + JSON.stringify(token) + "&&document.readyState==='complete',href:location.href,old:window.__perch_nav===" + JSON.stringify(token) +
+      const check = "(function(){try{var o=/^st/.test((window.__perch_nav||{})[" + tok + "]);return JSON.stringify({done:!o&&document.readyState==='complete',href:location.href,old:o" +
         ",err:location.protocol==='chrome-error:'||/^safari-resource:/i.test(location.href)})}catch(e){return 'null'}})()";
       const start = Date.now();
       // Sleeps `step` seconds, doubled each round once NAV_FAST_MS has passed, never past `until`.
