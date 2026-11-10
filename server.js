@@ -5950,11 +5950,27 @@ export const loft = { wins: new Map(), rects: [], ever: false, owned: new Map(),
   safari: {
     launch: async () => {
       await exec("open", ["-g", "-a", "Safari"]);
-      for (let i = 0; i < 40; i++) { try { await exec("pgrep", ["-x", "Safari"]); await new Promise((r) => setTimeout(r, 1500)); return; } catch {} await new Promise((r) => setTimeout(r, 250)); }
-      throw new Error("Safari did not start");
+      let up = false;
+      for (let i = 0; i < 40 && !up; i++) { try { await exec("pgrep", ["-x", "Safari"]); up = true; } catch { await new Promise((r) => setTimeout(r, 250)); } }
+      if (!up) throw new Error("Safari did not start");
+      // Launched, Safari opens a start page on the user's display (where a tiler
+      // makes room for it); perch started it, so it closes what the launch opened
+      // that shows nothing else. Restored windows with real tabs stay.
+      const list = 'const a = Application("Safari"); JSON.stringify(a.windows().filter((w) => w.visible()).map((w) => ({ id: w.id(), urls: w.tabs.url() })))';
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 250));
+        let wins = [];
+        try { wins = JSON.parse((await exec("osascript", ["-l", "JavaScript", "-e", list])).stdout); } catch { continue; }
+        const ids = launchLeftovers(wins);
+        if (!wins.length) continue;
+        if (ids.length) await exec("osascript", ["-l", "JavaScript", "-e", `const a = Application("Safari"); ${JSON.stringify(ids)}.forEach((id) => { try { a.windows.byId(id).close(); } catch (e) {} })`]).catch(() => {});
+        break;
+      }
     },
   },
 };
+// The windows a Safari launch opened that show only a start page.
+export const launchLeftovers = (wins) => wins.filter((w) => w.urls.length === 1 && /^(favorites:\/\/|topsites:\/\/|about:blank|)$/.test(w.urls[0] ?? "")).map((w) => w.id);
 const LOFT_DOWN = "no_browser: the loft is down; run loft up (github.com/sryo/loft), then retry";
 // loft's ids are rooms' names: a letter first, so a WxH size is never one.
 const LOFT_ID = /^[a-z][a-z0-9-]{0,30}$/, LOFT_SIZE = /^\d{3,4}x\d{3,4}$/;

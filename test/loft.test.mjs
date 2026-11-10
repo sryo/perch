@@ -7,7 +7,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, rooms, roomHint, INSTRUCTIONS } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, rooms, roomHint, INSTRUCTIONS, launchLeftovers } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { tempDir } from "../scripts/temp-dirs.mjs";
 
@@ -433,4 +433,17 @@ test("S4 loft ids follow rooms' pattern, so a size is never an id", async () => 
   install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] });
   const { t } = await call("new_tab", { url: "https://a.test/", loft: "9a" });
   assert.match(t, /^error: bad_args: new_tab loft takes true, a loft id or WxH/);
+});
+
+test("F3 after starting Safari itself, perch closes only the start-page windows that launch opened", () => {
+  const wins = [
+    { id: 1, urls: ["favorites://"] },
+    { id: 2, urls: ["topsites://"] },
+    { id: 3, urls: [""] },
+    { id: 4, urls: ["https://restored.test/"] },
+    { id: 5, urls: ["favorites://", "https://kept.test/"] },
+    { id: 6, urls: ["about:blank"] },
+  ];
+  assert.deepEqual(launchLeftovers(wins), [1, 2, 3, 6]);
+  assert.deepEqual(launchLeftovers([]), []);
 });
