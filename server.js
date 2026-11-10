@@ -11435,7 +11435,7 @@ Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it, don't retry blindly.
 Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
-Need a window of a set size, or one painting unseen? new_tab {url, loft:"1280x800"}: perch makes that loft and removes it with its last window.
+Where: the user's logins, localhost, a set size or unseen painting: new_tab {url, loft:"1280x800"} (perch makes that loft, removes it with its last window); a login of its own, a phone or a locked Mac: a room.
 Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, new_tab {loft:true}, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another agent's room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.

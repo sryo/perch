@@ -58,9 +58,19 @@ No `ready`: complete. Values are JSON. Keys: `name` (HTML name), `type`, `value`
 
 `frames` rows carry no values; read a trusted click's `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's. `frames_unreadable`: retry.
 
+## Where to work
+
+| Need | Place |
+|---|---|
+| The user is watching, or must act | Their tab |
+| Their logins, localhost, a set size, or unseen painting | Loft: `new_tab {url, loft:"1280x800"}` (`true`: theirs) |
+| A login of its own, a phone, or a locked Mac | Room (below) |
+
+The loft is your own window in their profile: not their windows. Locked Mac on the loft: untested; use a room.
+
 ## Rooms
 
-A room is a signed-in Chromium in a VM on this Mac. Use one when a site must stay signed in, work mustn't touch the user's windows, or the Mac may be locked.
+A room is a signed-in Chromium in a VM on this Mac; it can't reach this Mac's localhost.
 
 | Step | Call |
 |---|---|

@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { TOOLS, INSTRUCTIONS, ERR } from "../server.js";
 import { SCHEMA_BUDGET } from "../scripts/mcp-client.mjs";
 
-const SKILL_MAX = 8800;
+const SKILL_MAX = 9200;
 const read = (f) => readFile(new URL("../" + f, import.meta.url), "utf8");
 
 test("SKILL.md covers every tool and stays short", async () => {
