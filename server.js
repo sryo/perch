@@ -4161,6 +4161,7 @@ function jxaRuntime(BROWSERS, HANG) {
         return r ? r.value : readExec(T.t, a.final);
       });
       if (threw(check)) return { ok: false, el: arm.el, key: a.key, delivery: "skylight", error: checkFault("press", check) };
+      if (!recOwn(check, arm.rec)) return { ok: false, el: arm.el, key: a.key, delivery: "skylight", error: TRUSTED_TAKEN };
       const out = Object.assign({ ok: check.hit === true, el: arm.el, key: a.key }, check, { delivery: "skylight" });
       if (check.hit === null) out.error = "no key reached the page; the browser's focus may be in its toolbar (a trusted click on the page brings it back)";
       return out;
@@ -5640,7 +5641,7 @@ const ROOM_FNS = {
     await roomKey(t, a.key);
     const check = await roomAfterStep("press", async () => {
       const r = await roomPoll(t, a.check, 1000, 25);
-      return r ? r.value : roomRead(t, a.final);
+      return noRec(r ? r.value : await roomRead(t, a.final));
     });
     if (roomThrew(check)) return { ok: false, el: arm.el, key: a.key, delivery: "cdp", error: roomCheckFault("press", check) };
     const out = Object.assign({ ok: check.hit === true, el: arm.el, key: a.key }, check, { delivery: "cdp" });
@@ -10411,28 +10412,34 @@ if (A.key === "Tab" && el) {
   const all = tabbables(), i = all.indexOf(el);
   if (i >= 0 && i === (A.shift ? 0 : all.length - 1)) return { ok: false, error: ident(el) + " is the page's " + (A.shift ? "first" : "last") + " focusable element; a real Tab would move focus into the browser's toolbar" };
 }
+// As a trusted click's recorder: one per document, replaced by each arm under a
+// fresh owner token (rec), which the check answers. The wanted key replaces
+// another recorded first, so another call's key doesn't stand in for this one's.
 const prev = window.__perch_key;
 if (prev) prev.off();
-const st = window.__perch_key = { want: A.key, down: null, up: null };
+window.__perch_tok_n = (window.__perch_tok_n | 0) + 1;
+const st = window.__perch_key = { want: A.key, tok: window.__perch_tok_n + "." + Math.random().toString(36).slice(2, 10), down: null, up: null };
 const rec = function (e) {
-  const k = e.type === "keydown" ? "down" : "up";
-  if (!st[k]) st[k] = { key: e.key, trusted: e.isTrusted };
+  const k = e.type === "keydown" ? "down" : "up", o = st[k];
+  if (!o || (e.isTrusted && e.key === st.want && !(o.trusted === true && o.key === st.want))) st[k] = { key: e.key, trusted: e.isTrusted };
 };
 window.addEventListener("keydown", rec, true);
 window.addEventListener("keyup", rec, true);
 st.off = function () { window.removeEventListener("keydown", rec, true); window.removeEventListener("keyup", rec, true); };
-return { ok: true, el: el ? ident(el) : null };
+return { ok: true, el: el ? ident(el) : null, rec: st.tok };
 `,
 
   // hit: a trusted keydown with the expected key; false: untrusted or another key;
   // null: no keydown reached the page. null (keep polling) until the keyup, unless A.final.
+  // rec: the recorder's owner token. Only a recorder that saw its key is disarmed:
+  // one still waiting may be another call's, and the next arm disarms it.
   trusted_key_check: String.raw`
 const st = window.__perch_key;
 if (!A.final && !(st && st.down && st.up)) return null;
-if (st) { st.off(); delete window.__perch_key; }
-const d = st && st.down;
+const d = st && st.down, hit = d ? d.trusted === true && d.key === st.want : null;
+if (hit) st.off();
 const a = document.activeElement;
-return { hit: d ? d.trusted === true && d.key === st.want : null, focus: a ? ident(a) : null };
+return { hit: hit, focus: a ? ident(a) : null, rec: st ? st.tok : undefined };
 `,
 
   // What a frame click needs from the page: its URL and viewport.

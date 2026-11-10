@@ -3,9 +3,11 @@
 // the runtime runs against the fake JXA world, where posted events are recorded.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, TOOLS, TRUSTED_TAKEN, pageScript } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
-import { page, run } from "./helpers/page.mjs";
+import { page, run as runPage } from "./helpers/page.mjs";
+// The recorder's owner token (rec) is pinned by the two-server tests at the end.
+const run = (w, name, A) => { const o = runPage(w, name, A); if (o && typeof o === "object") delete o.rec; return o; };
 
 const trustedKey = (w, type, key, trusted = true) => {
   const e = new w.KeyboardEvent(type, { key, bubbles: true });
@@ -24,8 +26,7 @@ test("trusted_key_arm focuses the element; trusted_key_check waits for keyup, th
   assert.equal(run(w, "trusted_key_check", {}), null, "keydown without keyup: keep polling");
   trustedKey(w, "keyup", "Enter");
   assert.deepEqual(run(w, "trusted_key_check", {}), { hit: true, focus: 'textbox "Second"' });
-  trustedKey(w, "keydown", "Enter");
-  assert.equal(w.__perch_key, undefined, "listeners and state removed after the check");
+  assert.equal(typeof w.__perch_key.tok, "string", "the recorder stays, disarmed, for a displaced call's check to name");
 });
 
 test("trusted_key_check: untrusted or other keys miss; no keydown at all is null", () => {
@@ -324,7 +325,7 @@ test("trusted press posts no key when its arm step throws", async () => {
 
 test("trusted press whose check throws after the key is ok:false and unverified", async () => {
   const { world, dom } = background();
-  throwAt(dom, "const d = st && st.down;");
+  throwAt(dom, "const d = st && st.down,");
   const r = await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target });
   assert.equal(r.isError, undefined, r.content[0].text);
   const o = JSON.parse(r.content[0].text);
@@ -360,4 +361,30 @@ test("trusted press on a page that stops answering before the key posts nothing,
   assert.match(r.content[0].text, /^error: timeout: page JS got no reply within .*navigating; retry/);
   assert.ok(world.clock.t - t0 <= 2000 + 4000 + 200, `took ${world.clock.t - t0}ms`);
   assert.equal(keys(world).length, 0);
+});
+
+// ---- two perch servers ----
+// The key recorder (window.__perch_key) is one per document and a key event
+// names no caller: an arm replaces it under a fresh owner token, which the check
+// answers for its caller to compare.
+test("trusted press: a check that finds another call's recorder is not verified, and that call still reads its own key", async () => {
+  const { world, dom } = background();
+  const deliver = world.state.onPost;
+  let b = null;
+  world.state.onPost = (e) => {
+    if (!b) b = runPage(dom, "trusted_key_arm", { selector: "#b", key: "Escape" });
+    deliver(e);
+  };
+  const o = JSON.parse((await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target })).content[0].text);
+  assert.equal(b.ok, true, JSON.stringify(b));
+  assert.deepEqual(o, { ok: false, el: 'textbox "City"', key: "Enter", delivery: "skylight", error: TRUSTED_TAKEN });
+  // A's Enter reached B's recorder first; B's own Escape is the one it reads.
+  trustedKey(dom, "keydown", "Escape");
+  trustedKey(dom, "keyup", "Escape");
+  assert.deepEqual(runPage(dom, "trusted_key_check", {}), { hit: true, focus: 'button "Go"', rec: b.rec });
+});
+
+test("trusted press: arm and check are byte-identical across calls, with no token in A", () => {
+  assert.equal(pageScript("trusted_key_check", {}), pageScript("trusted_key_check", {}));
+  assert.equal(pageScript("trusted_key_arm", { selector: "#i", key: "Enter" }), pageScript("trusted_key_arm", { selector: "#i", key: "Enter" }));
 });
