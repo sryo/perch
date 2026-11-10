@@ -5,7 +5,7 @@
 // its last tab. Tool errors that need the user's window name the loft.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, rooms, roomHint, INSTRUCTIONS } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
@@ -46,6 +46,8 @@ beforeEach((t) => {
   rooms.home = join(home, "rooms");
   focus.granted = true;
   loft.wins.clear();
+  loft.owned.clear();
+  loft.winLoft.clear();
 });
 
 test("R1 a down loft is no_browser naming loft up, before any Apple Event", async () => {
@@ -301,7 +303,7 @@ test("M1 a bad loft id is bad_args", async () => {
   install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] });
   for (const loftArg of ["../x", "A", "", 3]) {
     const { t } = await call("new_tab", { url: "https://a.test/", loft: loftArg });
-    assert.match(t, /^error: bad_args: new_tab loft takes true or a loft id/, JSON.stringify(loftArg));
+    assert.match(t, /^error: bad_args: new_tab loft takes true, a loft id or WxH/, JSON.stringify(loftArg));
   }
   const { t } = await call("new_tab", { url: "https://a.test/", loft: "default" });
   assert.equal(t, DOWN, "\"default\" is the default loft");
@@ -323,5 +325,67 @@ test("M2 untargeted calls skip perch's windows on every loft", async () => {
 });
 
 test("M3 the tool schema and instructions say when an agent makes a loft", () => {
-  assert.match(INSTRUCTIONS, /set size[^\n]*loft up WxH --new --json[^\n]*loft:"<id>"[^\n]*loft down <id>/);
+  assert.match(INSTRUCTIONS, /set size[^\n]*new_tab \{url, loft:"1280x800"\}: perch makes that loft and removes it/);
+});
+
+// new_tab {loft:"WxH"}: perch makes a loft that size itself (loft up WxH --new
+// --owner <perch's pid>), reuses it for the same size, and removes it when its
+// last window closes. The owner pid takes it down with perch however perch ends.
+const FAKE_LOFT = join(import.meta.dirname, "fakes", "fake-loft.mjs");
+const SIZED = { id: 81, x: -1280, y: 0, w: 1280, h: 800, vendor: 0x6c66, product: 0x7466 };
+function sized() {
+  const log = join(home, "loft.log");
+  writeFileSync(log, "");
+  process.env.LOFT_BIN = FAKE_LOFT;
+  process.env.FAKE_LOFT_LOG = log;
+  delete process.env.FAKE_LOFT;
+  return () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean);
+}
+
+test("S1 loft:\"WxH\" makes a loft that size, owned by perch, and opens the window there", async () => {
+  const runs = sized();
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY, SIZED] });
+  const { r, o } = await call("new_tab", { url: "https://job.test/", loft: "1280x800" });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.deepEqual(runs(), [`up 1280x800 --new --owner ${process.pid} --json`]);
+  assert.deepEqual(made().map(([, , , p]) => p), [{ bounds: { x: -1280, y: 0, width: 1280, height: 800 } }]);
+  assert.deepEqual(o, { app: "Google Chrome", tabId: "chrome:w901", loft: "loft-1" });
+});
+
+test("S2 the same size again reuses perch's loft; its last window closing removes it", async () => {
+  const runs = sized();
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY, SIZED] });
+  const a = await call("new_tab", { url: "https://one.test/", loft: "1280x800" });
+  const b = await call("new_tab", { url: "https://two.test/", loft: "1280x800" });
+  assert.equal(b.r.isError, undefined, b.t);
+  assert.equal(runs().length, 1, "one loft for both");
+  await call("close_tab", { tabId: a.o.tabId });
+  assert.equal(runs().length, 1, "a window is still on it");
+  await call("close_tab", { tabId: b.o.tabId });
+  assert.deepEqual(runs().slice(1), ["down loft-1"]);
+  await call("new_tab", { url: "https://three.test/", loft: "1280x800" });
+  assert.match(runs()[2], /^up 1280x800 --new --owner /, "a new one after it was removed");
+});
+
+test("S3 without loft installed, or when loft fails, the error says so and nothing is made", async () => {
+  sized();
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY] });
+  process.env.LOFT_BIN = join(home, "no-such-loft");
+  let { t } = await call("new_tab", { url: "https://a.test/", loft: "1280x800" });
+  assert.equal(t, "error: no_browser: loft:\"1280x800\" makes a loft, which needs loft installed (github.com/sryo/loft)");
+  process.env.LOFT_BIN = FAKE_LOFT;
+  process.env.FAKE_LOFT = "fail";
+  ({ t } = await call("new_tab", { url: "https://a.test/", loft: "1280x800" }));
+  assert.equal(t, "error: no_browser: loft up 1280x800 failed: could not add the display: CGVirtualDisplay returned no display");
+  process.env.FAKE_LOFT = "bad_size";
+  ({ t } = await call("new_tab", { url: "https://a.test/", loft: "9999x9999" }));
+  assert.equal(t, "error: bad_args: size must be WIDTHxHEIGHT, from 640x480 to 5120x2880 (got 9999x9999)");
+  assert.deepEqual(made(), []);
+  delete process.env.FAKE_LOFT;
+});
+
+test("S4 loft ids follow rooms' pattern, so a size is never an id", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] });
+  const { t } = await call("new_tab", { url: "https://a.test/", loft: "9a" });
+  assert.match(t, /^error: bad_args: new_tab loft takes true, a loft id or WxH/);
 });

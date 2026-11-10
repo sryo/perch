@@ -14,6 +14,11 @@
 // which needs no focus grant. Expect: front pid unchanged; one new Safari window,
 // inside the loft's bounds; its page visible; an untargeted eval_js not reaching
 // it; close_tab on its only tab closing the window, with no window left behind.
+//   node scripts/new-tab-live.mjs --yes --loft <id>
+// The same on a loft made with loft up WxH --id <id>, and the window is that
+// loft's size.
+//   node scripts/new-tab-live.mjs --yes --loft 1280x800
+// perch makes that loft itself: the same checks, and the loft gone after close_tab.
 // The last line is the number of failed checks.
 
 import { execFileSync } from "node:child_process";
@@ -30,10 +35,13 @@ const frontPid = () => Number(jxa(`ObjC.import("AppKit"); $.NSWorkspace.sharedWo
 if (process.argv.includes("--loft")) process.exit(await loftCheck());
 
 async function loftCheck() {
-  let st = null;
-  try { st = JSON.parse(execFileSync("loft", ["status", "--json"], { encoding: "utf8" })); } catch {}
-  if (!st || !st.up) { console.error("the loft is down; run loft up first"); return 2; }
-  const B = st.bounds;
+  const next = process.argv[process.argv.indexOf("--loft") + 1];
+  let id = next && !next.startsWith("--") ? next : null;
+  const size = id && /^\d+x\d+$/.test(id) ? id : null;
+  const status = (l) => { try { return JSON.parse(execFileSync("loft", ["status", ...(l ? [l] : []), "--json"], { encoding: "utf8" })); } catch { return null; } };
+  let st = size ? { up: true, bounds: null } : status(id);
+  if (!st || !st.up) { console.error(id ? `loft ${id} is down; run loft up WxH --id ${id} first` : "the loft is down; run loft up first"); return 2; }
+  let B = st.bounds;
   // Safari keeps a closed window in its list, invisible, so only visible ones count.
   const windows = () => JSON.parse(jxa(`const a = Application("Safari"); JSON.stringify(a.running() ? a.windows().filter((w) => w.visible()).map((w) => [w.id(), w.bounds()]) : null)`));
   const before = windows();
@@ -44,14 +52,15 @@ async function loftCheck() {
   let failed = 0, made = null;
   const check = (ok, what) => { if (!ok) failed++; console.log(`${ok ? "PASS" : "FAIL"} ${what}`); };
   try {
-    const r = await guard.step("new_tab loft", () => client.call("new_tab", { app: "Safari", url, loft: true }).then((res) => {
-      try { if (!res.isError) made = JSON.parse(text(res)).tabId; } catch {}
+    const r = await guard.step("new_tab loft", () => client.call("new_tab", { app: "Safari", url, loft: id || true }).then((res) => {
+      try { if (!res.isError) { const o = JSON.parse(text(res)); made = o.tabId; if (size) { id = o.loft; B = status(id)?.bounds; } } } catch {}
       return res;
     }));
     check(!r.isError && !/warning/.test(text(r)), `new_tab {loft:true}, front app unchanged: ${text(r)}`);
     if (made) {
       const mine = windows().filter(([id]) => !before.some(([b]) => b === id));
       const c = mine.length === 1 && { x: mine[0][1].x + mine[0][1].width / 2, y: mine[0][1].y + mine[0][1].height / 2 };
+      if (id) check(mine.length === 1 && mine[0][1].width === B.w && mine[0][1].height <= B.h && mine[0][1].height >= B.h - 40, `the window is loft ${id}'s size: ${JSON.stringify(mine[0] && mine[0][1])} for ${B.w}x${B.h}`);
       check(c && c.x >= B.x && c.x < B.x + B.w && c.y >= B.y && c.y < B.y + B.h, `one new window, on the loft: ${JSON.stringify(mine)} in ${JSON.stringify(B)}`);
       const v = await guard.step("eval_js", () => client.call("eval_js", { target: { tabId: made }, script: "return document.visibilityState" }));
       check(text(v) === "visible", `its page is visible: ${text(v)}`);
@@ -62,6 +71,7 @@ async function loftCheck() {
       if (xo.ok) made = null;
       check(xo.ok && xo.window === true, `close_tab closed the window: ${text(x)}`);
       check(windows().length === before.length, "no window left behind");
+      if (size) check(!status(id)?.up, `perch removed its loft ${id}`);
     }
   } catch (e) {
     failed++;

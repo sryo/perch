@@ -5852,16 +5852,51 @@ async function navigate(url, target, raise) {
 // ---- loft ----
 // loft (github.com/sryo/loft) adds a display the user never sees; a window there
 // stays visible, painting and uncovered. Its holder process records the display
-// in $LOFT_HOME/holder.json while it lives; perch reads that, checks the pid here
-// and the display itself in the runtime, and never runs `loft`. perch makes and
+// in $LOFT_HOME/holder.json (or lofts/<id>.json) while it lives; perch reads that,
+// checks the pid here and the display itself in the runtime. perch makes and
 // closes only its own windows there: `wins` (app -> window ids) is what it made
-// in this server's life.
-export const loft = { wins: new Map(), rects: [], ever: false };
+// in this server's life. The one loft it runs `loft` for is its own: new_tab
+// {loft:"WxH"} makes one that size (`owned`: size -> id) with this process as its
+// owner, so the loft can't outlive perch, and removes it when the last window
+// perch put there (`winLoft`: app NUL window id -> loft id) closes.
+export const loft = { wins: new Map(), rects: [], ever: false, owned: new Map(), winLoft: new Map() };
 const LOFT_DOWN = "no_browser: the loft is down; run loft up (github.com/sryo/loft), then retry";
-const LOFT_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
-// new_tab's loft: true or "default" is the default loft (holder.json), any other
-// id one made with `loft up WxH --id <id>` (lofts/<id>.json); null when invalid.
-export const loftId = (v) => (v === true || v === "default" ? "default" : typeof v === "string" && LOFT_ID.test(v) ? v : null);
+// loft's ids are rooms' names: a letter first, so a WxH size is never one.
+const LOFT_ID = /^[a-z][a-z0-9-]{0,30}$/, LOFT_SIZE = /^\d{3,4}x\d{3,4}$/;
+// new_tab's loft: true or "default" is the default loft (holder.json), "WxH" one
+// perch makes that size, any other id one made with `loft up WxH --id <id>`
+// (lofts/<id>.json); null when invalid.
+export const loftId = (v) => (v === true || v === "default" ? "default" : typeof v === "string" && (LOFT_ID.test(v) || LOFT_SIZE.test(v)) ? v : null);
+// The app's PATH may lack Homebrew's bin; LOFT_BIN overrides.
+const LOFT_BINS = () => (process.env.LOFT_BIN ? [process.env.LOFT_BIN] : ["loft", "/opt/homebrew/bin/loft", "/usr/local/bin/loft"]);
+async function loftRun(args) {
+  let last;
+  for (const bin of LOFT_BINS()) {
+    try { return (await exec(bin, args, { timeout: 15000 })).stdout; } catch (e) { last = e; if (e.code !== "ENOENT") throw e; }
+  }
+  throw last;
+}
+async function loftMake(size) {
+  const have = loft.owned.get(size);
+  if (have && loftHolder(have)) return have;
+  loft.owned.delete(size);
+  let out;
+  try { out = await loftRun(["up", size, "--new", "--owner", String(process.pid), "--json"]); } catch (e) {
+    if (e.code === "ENOENT") throw new Error(`no_browser: loft:"${size}" makes a loft, which needs loft installed (github.com/sryo/loft)`);
+    let j = null; try { j = JSON.parse(e.stdout); } catch {}
+    if (j?.code === "bad_size") throw new Error(`bad_args: ${j.error}`);
+    throw new Error(`no_browser: loft up ${size} failed: ${j?.error ?? e.message}`);
+  }
+  const id = JSON.parse(out).id;
+  loft.owned.set(size, id);
+  return id;
+}
+// Removes a loft perch made once no window perch put there is left.
+async function loftRelease(id) {
+  if (![...loft.owned.values()].includes(id) || [...loft.winLoft.values()].includes(id)) return;
+  for (const [size, v] of loft.owned) if (v === id) loft.owned.delete(size);
+  try { await loftRun(["down", id]); } catch {}
+}
 const LOFT_HINT = "or open it on the loft: new_tab {url, loft:true}";
 const loftHome = () => process.env.LOFT_HOME || join(homedir(), "Library", "Application Support", "loft");
 export function loftHolder(id = "default") {
@@ -5878,13 +5913,18 @@ function loftArg() {
   return { wins, rects: loft.rects };
 }
 async function loftTab(url, app, from, label, onLoft) {
-  const id = loftId(onLoft);
-  if (id == null) throw new Error("bad_args: new_tab loft takes true or a loft id (a-z, 0-9 and -, as `loft up --id` made it)");
+  let id = loftId(onLoft);
+  if (id == null) throw new Error("bad_args: new_tab loft takes true, a loft id or WxH (an id: a letter, then a-z, 0-9 and -)");
   if (from != null || label != null || ROOM_APP.test(String(app))) throw new Error("bad_args: new_tab loft:true opens a browser window; it takes no from, label or room app");
+  const size = LOFT_SIZE.test(id) ? id : null;
+  if (size) id = await loftMake(size);
   const h = loftHolder(id);
   if (!h) throw new Error(id === "default" ? LOFT_DOWN : `no_browser: loft ${id} is down; make it with loft up WIDTHxHEIGHT --id ${id} (github.com/sryo/loft), then retry`);
-  const r = await rt("newTab", { app: app || null, url: url == null ? "about:blank" : checkUrl("new_tab", url), loft: { displayId: h.displayId } });
+  let r;
+  try { r = await rt("newTab", { app: app || null, url: url == null ? "about:blank" : checkUrl("new_tab", url), loft: { displayId: h.displayId } }); }
+  catch (e) { if (size) await loftRelease(id); throw e; }
   const { loftWin, ...out } = r;
+  if (size && loftWin) { loft.winLoft.set(`${out.app}\0${loftWin.id}`, id); out.loft = id; }
   if (loftWin) {
     if (!loft.wins.has(out.app)) loft.wins.set(out.app, new Set());
     loft.wins.get(out.app).add(loftWin.id);
@@ -5957,6 +5997,8 @@ async function closeTab({ tabId } = {}) {
   if (!r || !r.loftClosed) return r;
   const { loftClosed, ...out } = r, ids = loft.wins.get(loftClosed.app);
   if (ids) { ids.delete(loftClosed.id); if (!ids.size) loft.wins.delete(loftClosed.app); }
+  const key = `${loftClosed.app}\0${loftClosed.id}`, lid = loft.winLoft.get(key);
+  if (lid) { loft.winLoft.delete(key); await loftRelease(lid); }
   return { ...out, window: true };
 }
 
@@ -11393,7 +11435,7 @@ Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it, don't retry blindly.
 Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
-Need a window of a set size, or one painting unseen? \`loft up WxH --new --json\` gives an id; new_tab {url, loft:"<id>"}; \`loft down <id>\` after.
+Need a window of a set size, or one painting unseen? new_tab {url, loft:"1280x800"}: perch makes that loft and removes it with its last window.
 Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, new_tab {loft:true}, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another agent's room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
@@ -11414,7 +11456,7 @@ const TOOLS = [
   tool("new_tab", "Open an unselected tab in a running browser (default: the one in use); needs_focus without a grant. Returns {app,tabId}.", {
     url: { type: "string", description: "http(s) or file URL; default about:blank." },
     app: { type: "string" },
-    loft: { description: "Own window on an unseen loft: true or a loft id" },
+    loft: { description: "Own window on an unseen loft: true, a loft id, or WxH" },
     from: { type: "string" },
     label: { type: "string", description: "Room: yours alone as room:<name>:<label>" },
   }),
@@ -11735,7 +11777,7 @@ function movesFocus(name, args) {
   if (roomArgs(args)) return false;
   // A down loft is refused before anything is sent, so there is nothing to ask for.
   // So is a bad loft id.
-  if (name === "new_tab" && args.loft != null && args.loft !== false && (loftId(args.loft) == null || !loftHolder(loftId(args.loft)))) return false;
+  if (name === "new_tab" && args.loft != null && args.loft !== false && (loftId(args.loft) == null || (!LOFT_SIZE.test(loftId(args.loft)) && !loftHolder(loftId(args.loft))))) return false;
   if (name === "activate_tab" || args.raise === true) return true;
   return name === "new_tab" && !/^safari$/i.test(String(args.app || ""));
 }
