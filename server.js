@@ -3654,11 +3654,23 @@ function jxaRuntime(BROWSERS, HANG) {
     newTab(a) {
       loadable("new_tab", a.url);
       const P = procs();
-      const name = a.app || defaultBrowser(P);
-      const kind = KIND[name];
-      const ap = app(name);
+      let name = a.app || defaultBrowser(P);
+      let kind = KIND[name];
+      let ap = app(name);
       if (!ap.running()) throw new Error("no_browser: " + name + " must already be running (new_tab never launches it)");
-      if (a.loft) return loftWindow(a, name, kind, ap, P);
+      if (a.loft) {
+        // The job goes on without the user: a browser that can't place the window
+        // (Arc), or that would come to the front making it (Chromium, no grant),
+        // hands it to Safari, which makes one in the background. Node starts Safari
+        // first when it isn't running.
+        const why = kind === "arc" ? name + " can't place a window on the loft"
+          : a.loft.noFocus && kind !== "safari" ? name + " would have come to the front, and the user hasn't allowed focus" : null;
+        if (!why) return loftWindow(a, name, kind, ap, P);
+        if (!alive("Safari", P)) throw new Error("no_browser: needs Safari started: " + why);
+        const out = loftWindow(a, "Safari", "safari", app("Safari"), P);
+        out.note = "opened in Safari: " + why + "; Safari has its own sign-ins, so a page that needs the user's may ask to sign in";
+        return out;
+      }
       // The first window that isn't minimized: a tab made in a minimized one restores
       // it and brings the browser forward (live, Canary). The one bulk read also
       // counts the windows; when it can't be read, every window counts as on screen.
@@ -5859,7 +5871,17 @@ async function navigate(url, target, raise) {
 // {loft:"WxH"} makes one that size (`owned`: size -> id) with this process as its
 // owner, so the loft can't outlive perch, and removes it when the last window
 // perch put there (`winLoft`: app NUL window id -> loft id) closes.
-export const loft = { wins: new Map(), rects: [], ever: false, owned: new Map(), winLoft: new Map() };
+export const loft = { wins: new Map(), rects: [], ever: false, owned: new Map(), winLoft: new Map(),
+  // Safari is where a loft window goes when the agent's browser would need the user;
+  // started with open -g (no activation), then given time to answer Apple Events.
+  safari: {
+    launch: async () => {
+      await exec("open", ["-g", "-a", "Safari"]);
+      for (let i = 0; i < 40; i++) { try { await exec("pgrep", ["-x", "Safari"]); await new Promise((r) => setTimeout(r, 1500)); return; } catch {} await new Promise((r) => setTimeout(r, 250)); }
+      throw new Error("Safari did not start");
+    },
+  },
+};
 const LOFT_DOWN = "no_browser: the loft is down; run loft up (github.com/sryo/loft), then retry";
 // loft's ids are rooms' names: a letter first, so a WxH size is never one.
 const LOFT_ID = /^[a-z][a-z0-9-]{0,30}$/, LOFT_SIZE = /^\d{3,4}x\d{3,4}$/;
@@ -5920,9 +5942,18 @@ async function loftTab(url, app, from, label, onLoft) {
   if (size) id = await loftMake(size);
   const h = loftHolder(id);
   if (!h) throw new Error(id === "default" ? LOFT_DOWN : `no_browser: loft ${id} is down; make it with loft up WIDTHxHEIGHT --id ${id} (github.com/sryo/loft), then retry`);
+  const req = { app: app || null, url: url == null ? "about:blank" : checkUrl("new_tab", url), loft: { displayId: h.displayId, noFocus: !focus.granted } };
   let r;
-  try { r = await rt("newTab", { app: app || null, url: url == null ? "about:blank" : checkUrl("new_tab", url), loft: { displayId: h.displayId } }); }
-  catch (e) { if (size) await loftRelease(id); throw e; }
+  try {
+    try { r = await rt("newTab", req); } catch (e) {
+      const m = /^no_browser: needs Safari started: (.*)$/.exec(e.message);
+      if (!m) throw e;
+      try { await loft.safari.launch(); } catch (le) {
+        throw new Error(/can't place a window/.test(m[1]) ? `no_browser: ${m[1].split(" can't")[0]} can't place a window, so it can't open one on the loft; use another browser` : `no_browser: ${m[1].split(" would")[0]} would come to the front without the user's focus grant, and Safari, which wouldn't, could not be started (${le.message})`);
+      }
+      r = await rt("newTab", req);
+    }
+  } catch (e) { if (size) await loftRelease(id); throw e; }
   const { loftWin, ...out } = r;
   if (size && loftWin) { loft.winLoft.set(`${out.app}\0${loftWin.id}`, id); out.loft = id; }
   if (loftWin) {
@@ -11435,7 +11466,7 @@ Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it, don't retry blindly.
 Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
-Where: the user's logins, localhost, a set size or unseen painting: new_tab {url, loft:"1280x800"} (perch makes that loft, removes it with its last window); a login of its own, a phone or a locked Mac: a room.
+Where: the user's logins, localhost, a set size or unseen painting: new_tab {url, loft:"1280x800"} (perch makes it, in a browser that won't take focus); a login of its own, a phone or a locked Mac: a room. Blocked: take the next path. None left: tell the user and propose a session to find one.
 Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, new_tab {loft:true}, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another agent's room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
@@ -11777,7 +11808,8 @@ function movesFocus(name, args) {
   if (roomArgs(args)) return false;
   // A down loft is refused before anything is sent, so there is nothing to ask for.
   // So is a bad loft id.
-  if (name === "new_tab" && args.loft != null && args.loft !== false && (loftId(args.loft) == null || (!LOFT_SIZE.test(loftId(args.loft)) && !loftHolder(loftId(args.loft))))) return false;
+  // A loft tab never asks either: without the grant it opens in Safari (loftTab).
+  if (name === "new_tab" && args.loft != null && args.loft !== false) return false;
   if (name === "activate_tab" || args.raise === true) return true;
   return name === "new_tab" && !/^safari$/i.test(String(args.app || ""));
 }

@@ -48,6 +48,7 @@ beforeEach((t) => {
   loft.wins.clear();
   loft.owned.clear();
   loft.winLoft.clear();
+  loft.safari = { launch: async () => {} };
 });
 
 test("R1 a down loft is no_browser naming loft up, before any Apple Event", async () => {
@@ -141,14 +142,57 @@ test("R1 a window whose center is on the loft but hangs onto the user's display 
   assert.deepEqual([w.x, w.y, w.w, w.h], [4000, 0, 1440, 900]);
 });
 
-test("R1 outside Safari, loft:true is gated like new_tab: needs_focus without a grant, nothing made", async () => {
+// The agent does its job without interrupting the user: a browser that would come
+// to the front making the window (Chromium) isn't asked for the focus grant; the
+// window opens in Safari instead, which makes one without taking focus, started in
+// the background when it isn't running. The result says so: Safari has its own logins.
+test("F1 without the focus grant, a loft window opens in Safari instead of asking, and says so", async () => {
   focus.granted = false;
-  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] });
+  install({ browsers: [chrome([userWin()]), safari([userWin("s")])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }, { owner: "Safari" }] });
   holder();
-  const { t } = await call("new_tab", { url: "https://job.test/", loft: true });
-  assert.match(t, /^error: needs_focus: new_tab /);
-  assert.doesNotMatch(t, /loft:true/, "never suggests the call that was just refused");
-  assert.deepEqual(world.aeLog, []);
+  let asked = 0;
+  const { r, o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.equal(o.app, "Safari");
+  assert.match(o.note, /^opened in Safari: Google Chrome would have come to the front, and the user hasn't allowed focus; Safari has its own sign-ins/);
+  assert.deepEqual(made().map(([, app, via]) => [app, via]), [["Safari", "document"]]);
+  assert.deepEqual(activations(), []);
+  void asked;
+});
+
+test("F1 a named browser falls back too, Arc included; with the grant, the named browser is used", async () => {
+  for (const [app, spec] of [["Google Chrome", chrome([userWin()])], ["Arc", arc([userWin()])]]) {
+    focus.granted = app === "Arc";
+    install({ browsers: [spec, safari([userWin("s")])], cg: [{ owner: "Terminal" }, { owner: app }, { owner: "Safari" }] });
+    holder();
+    const { r, o } = await call("new_tab", { app, url: "https://job.test/", loft: true });
+    assert.equal(r.isError, undefined, `${app}: ${JSON.stringify(o)}`);
+    assert.equal(o.app, "Safari", app);
+    assert.match(o.note, app === "Arc" ? /^opened in Safari: Arc can't place a window on the loft/ : /^opened in Safari: Google Chrome would have come/, app);
+  }
+  focus.granted = true;
+  install({ browsers: [chrome([userWin()]), safari([userWin("s")])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  const { o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(o.app, "Google Chrome");
+  assert.equal(o.note, undefined);
+});
+
+test("F2 Safari not running is started in the background first; a launch that fails says so", async () => {
+  focus.granted = false;
+  const saf = safari([], { running: false });
+  install({ browsers: [chrome([userWin()]), saf], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  const launched = [];
+  loft.safari = { launch: async () => { launched.push("open -g -a Safari"); saf.running = true; } };
+  let { r, o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.deepEqual(launched, ["open -g -a Safari"]);
+  assert.equal(o.app, "Safari");
+  saf.running = false;
+  loft.safari = { launch: async () => { throw new Error("LSOpen failed"); } };
+  ({ o } = await call("new_tab", { url: "https://job.test/", loft: true }));
+  assert.match(o, /^error: no_browser: Google Chrome would come to the front without the user's focus grant, and Safari, which wouldn't, could not be started \(LSOpen failed\)/);
 });
 
 test("R1 the browser in front gets the user's window back in front of the loft window", async () => {
@@ -167,7 +211,8 @@ test("R1 a raise perch couldn't prevent is reported", async () => {
   assert.equal(o.warning, "creating the window brought the browser to the front");
 });
 
-test("R1 Arc can't place a window, so it is refused with nothing made", async () => {
+test("R1 Arc can't place a window, so with no Safari to fall back to it is refused with nothing made", async () => {
+  loft.safari = { launch: async () => { throw new Error("no Safari"); } };
   install({ browsers: [arc([userWin()])], cg: [{ owner: "Arc" }] });
   holder();
   const { t } = await call("new_tab", { app: "Arc", url: "https://job.test/", loft: true });
@@ -325,7 +370,7 @@ test("M2 untargeted calls skip perch's windows on every loft", async () => {
 });
 
 test("M3 the tool schema and instructions say when an agent makes a loft", () => {
-  assert.match(INSTRUCTIONS, /Where: the user.s logins, localhost, a set size or unseen painting: new_tab \{url, loft:"1280x800"\}[^\n]*a login of its own, a phone or a locked Mac: a room/);
+  assert.match(INSTRUCTIONS, /Where: the user.s logins, localhost, a set size or unseen painting: new_tab \{url, loft:"1280x800"\}[^\n]*a login of its own, a phone or a locked Mac: a room. Blocked: take the next path. None left: tell the user and propose a session to find one./);
 });
 
 // new_tab {loft:"WxH"}: perch makes a loft that size itself (loft up WxH --new

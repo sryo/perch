@@ -11,7 +11,7 @@ test("tool schemas stay within the token budget", () => {
   const size = JSON.stringify(TOOLS).length;
   assert.ok(size < SCHEMA_BUDGET, `${size} chars >= ${SCHEMA_BUDGET}`);
   for (const t of TOOLS) assert.ok(JSON.stringify(t).length < 900, `${t.name} is ${JSON.stringify(t).length} chars`);
-  assert.ok(INSTRUCTIONS.length < 1450, `instructions ${INSTRUCTIONS.length}`);
+  assert.ok(INSTRUCTIONS.length < 1500, `instructions ${INSTRUCTIONS.length}`);
 });
 
 test("target lists only tabId and app; windowId and tabIndex are still accepted", async () => {

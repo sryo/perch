@@ -109,7 +109,7 @@ Another tool may run its own copy of the user's browser (headless, own profile).
 
 ### Loft
 
-`new_tab {loft}`: a window on a loft (visible, painting, uncovered), bounds set in the make where the browser allows. `loft` is `true` (`$LOFT_HOME/holder.json`), an id (`lofts/<id>.json`) or `WxH`: a loft perch makes (`--owner` its pid) and downs with its last window. Node checks the pid, the runtime the display (vendor `0x6c66`, product `0x7466`). **perch makes and closes only its own loft windows** (and lofts): `loftArm` keeps them out of untargeted calls; `close_tab` on one's last tab closes it. Pinned by `test/loft.test.mjs`.
+`new_tab {loft}`: a window on a loft. `loft`: `true` (`$LOFT_HOME/holder.json`), an id (`lofts/<id>.json`) or `WxH`, a loft perch makes (`--owner` its pid) and downs with its last window. Arc, or Chromium without the grant, hands the window to Safari (`open -g` if needed; `note`), never asking. Node checks the pid, the runtime the display (`0x6c66`/`0x7466`). **perch makes and closes only its own loft windows** (and lofts); `loftArm` hides them from untargeted calls. Pinned by `test/loft.test.mjs`.
 
 ## Rules the code can't show
 
