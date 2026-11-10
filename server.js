@@ -5276,7 +5276,7 @@ const roomShow = (t) => t.conn.send("Target.activateTarget", { targetId: t.targe
 // Answers what the trusted recorder saw at the press, read before the release:
 // a link's click navigates on release, and the check after it would read the
 // next document.
-const ROOM_DOWN = "JSON.stringify(window.__perch_trusted?{down:window.__perch_trusted.down}:null)";
+const ROOM_DOWN = "(function(){var t=window.__perch_trusted;return JSON.stringify(t?{down:t.down===null&&t.miss?false:t.down}:null)})()";
 async function roomMouseClick(t, x, y) {
   const at = { x, y, button: "left", clickCount: 1 };
   await t.conn.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y }, t.S.id);
