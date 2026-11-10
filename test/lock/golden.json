@@ -4259,7 +4259,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: tab_not_visible: a background trusted click needs the tab its window shows; activate_tab (takes focus) or retry later, or pass raise:true; or open it on the loft: new_tab {url, loft:true}"
+     "text": "error: tab_not_visible: a background trusted click needs the tab its window shows; retry later, open it on the loft: new_tab {url, loft:true}, continue in a room: new_tab {from, app:\"room:<name>\"}, or activate_tab (takes focus), or pass raise:true"
     }
    ],
    "isError": true,
@@ -7096,7 +7096,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: tab_not_visible: eval_js needs the tab its window shows; activate_tab (takes focus) or retry later; or open it on the loft: new_tab {url, loft:true}"
+     "text": "error: tab_not_visible: eval_js needs the tab its window shows; retry later, open it on the loft: new_tab {url, loft:true}, continue in a room: new_tab {from, app:\"room:<name>\"}, or activate_tab (takes focus)"
     }
    ],
    "isError": true,

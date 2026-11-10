@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { handleCall, rooms, roomsReset, roomHint, roomLeaseHeld, JXA_PRELUDE, DAEMONS } from "../server.js";
+import { handleCall, rooms, roomsReset, roomHint, roomsCli, roomLeaseHeld, JXA_PRELUDE, DAEMONS } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { makeRooms } from "./fakes/cdp-room.mjs";
 
@@ -57,6 +57,46 @@ test("an unknown room or a room that is down is no_browser", async () => {
   use({ rooms: { work: {} }, down: ["work"] });
   assert.match(await fails("eval_js", { script: "return 1", target: tab() }), /^error: no_browser: room 'work' is not up/);
   assert.match(await fails("eval_js", { script: "return 1", target: tab("T0001", "nope") }), /^error: no_browser: no room 'nope'/);
+});
+
+const NOT_VISIBLE = 'tab_not_visible: page JS needs the tab its window shows; retry later, open it on the loft: new_tab {url, loft:true}, continue in a room: new_tab {from, app:"room:<name>"}, or activate_tab (takes focus)';
+test("tab_not_visible names the loft once and fills in the rooms that exist", () => {
+  use({ rooms: { main: { registeredSites: [] }, mail: { registeredSites: [{ origin: "https://a.test" }] } } });
+  const m = roomHint(NOT_VISIBLE, { url: "https://a.test/p" });
+  assert.match(m, /continue in a room: new_tab \{from, app:"room:mail"\}, or activate_tab/);
+  assert.equal(m.split("loft:true").length, 2, m);
+  assert.ok(!m.includes("<name>"), m);
+  assert.match(roomHint(NOT_VISIBLE, {}), /app:"room:main"\} \(rooms: main, mail\), or activate_tab/);
+  // No rooms: the placeholder stays, and the loft is still named once.
+  roomsReset({ home: "/nonexistent/perch-test-rooms" });
+  assert.equal(roomHint(NOT_VISIBLE, {}), NOT_VISIBLE);
+});
+
+test("no_browser for a room lists the rooms that exist, up or down, with their sites, and a command that runs", async () => {
+  use({ rooms: { main: { registeredSites: [{ origin: "https://www.figma.com" }] }, work: {} }, down: ["main"] });
+  rooms.cli = "node /x/rooms.mjs";
+  const none = await fails("eval_js", { script: "return 1", target: tab("T0001", "pecera") });
+  assert.match(none, /^error: no_browser: no room 'pecera'; rooms here: main \(down; signed in: www\.figma\.com\), work \(up\)/);
+  assert.match(none, /use one: new_tab \{app:"room:work"\} \(start one: node \/x\/rooms\.mjs up main\), or make it: /);
+  assert.match(none, /node \/x\/rooms\.mjs up main/);
+  assert.match(none, /node \/x\/rooms\.mjs init pecera, then node \/x\/rooms\.mjs up pecera/);
+  assert.ok(!/(^|[^/])rooms (init|up) /.test(none.replace(/node \/x\/rooms\.mjs/g, "")), none);
+  const down = await fails("eval_js", { script: "return 1", target: tab("T0001", "main") });
+  assert.match(down, /^error: no_browser: room 'main' is not up; start it: node \/x\/rooms\.mjs up main; rooms here: main \(down; signed in: www\.figma\.com\), work \(up\)/);
+  assert.match(await fails("list_tabs", { app: "room:pecera" }), /no room 'pecera'; rooms here: main \(down; signed in: www\.figma\.com\), work \(up\)/);
+  // list_tabs over every room keeps its per-room warnings short, with the command that runs.
+  assert.match((await call("list_tabs", { app: "room" })).warning, /room:main not listed: no_browser: room 'main' is not up; start it: node \/x\/rooms\.mjs up main(;|$)/);
+});
+
+test("the rooms command is the one on PATH, else node on the rooms checkout, else bare", async () => {
+  const { chmodSync } = await import("node:fs");
+  const { tempDir } = await import("../scripts/temp-dirs.mjs");
+  const bin = tempDir("perch-bin-"), repo = tempDir("perch-rooms-repo-");
+  writeFileSync(join(repo, "rooms.mjs"), "");
+  assert.equal(roomsCli({ PATH: "/nope", ROOMS_CLI: join(repo, "rooms.mjs") }), `node ${join(repo, "rooms.mjs")}`);
+  writeFileSync(join(bin, "rooms"), "#!/bin/sh\n"); chmodSync(join(bin, "rooms"), 0o755);
+  assert.equal(roomsCli({ PATH: `/nope:${bin}`, ROOMS_CLI: join(repo, "rooms.mjs") }), "rooms");
+  assert.equal(roomsCli({ PATH: "/nope", ROOMS_CLI: "/nope/rooms.mjs" }), "rooms");
 });
 
 test("a stalled room WebSocket upgrade has a deadline and closes its socket", async () => {

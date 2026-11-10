@@ -155,7 +155,7 @@ test("trusted: a control with no text box of its own, in a tab its window doesn'
   const edits = editing(w.dom);
   const o = await select({ selector: "#fruit", text: "Banana", trusted: true });
   assert.equal(o.isError, true, JSON.stringify(o));
-  assert.match(o.error, /^error: tab_not_visible: select \{trusted:true\} needs the tab its window shows; activate_tab \(takes focus\) or retry later; or open it on the loft: new_tab \{url, loft:true\}$/);
+  assert.match(o.error, /^error: tab_not_visible: select \{trusted:true\} needs the tab its window shows; retry later, open it on the loft: new_tab \{url, loft:true\}, continue in a room: new_tab \{from, app:"room:<name>"\}, or activate_tab \(takes focus\)$/);
   assert.deepEqual(w.posted, []);
   assert.deepEqual(edits, []);
   assert.deepEqual([...w.dom.pickerLog], []);

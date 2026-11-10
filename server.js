@@ -4,11 +4,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { execFile, spawn } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
-import { readFileSync, readdirSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, readFileSync, readdirSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { homedir, tmpdir } from "node:os";
-import { basename, join, resolve as resolvePath } from "node:path";
+import { basename, delimiter, join, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -44,7 +44,7 @@ function jxaRuntime(BROWSERS, HANG) {
   BROWSERS.forEach((b) => { KIND[b.app] = b.kind; KEY[b.app] = b.key; BY_KEY[b.key] = b.app; BUNDLE[b.app] = b.bundle; });
 
   // Errors start with a stable, browser-neutral code that clients branch on.
-  const notVisible = (what) => "tab_not_visible: " + what + " needs the tab its window shows; activate_tab (takes focus) or retry later";
+  const notVisible = (what) => "tab_not_visible: " + what + " needs the tab its window shows; retry later, open it on the loft: new_tab {url, loft:true}, continue in a room: new_tab {from, app:\"room:<name>\"}, or activate_tab (takes focus)";
   const OFFSCREEN = "window_offscreen: the browser window isn't on screen (minimized or on another Space)";
   const NEW_TAB_UNSHOWN = "page tools get tab_not_visible until it is shown: activate_tab (takes focus) when the user is away, or navigate a tab its window shows";
   const AMBIGUOUS = "window_ambiguous: another window of this browser has the same frame, so perch can't tell which is the target's; move or resize one";
@@ -4756,11 +4756,55 @@ export const rooms = {
   WebSocket: globalThis.WebSocket,
   notify: (a) => notify(a),
   conns: new Map(),
+  cli: null,
 };
+
+// The rooms CLI as a command that runs here: `rooms` when it is on PATH (npm link),
+// else node on the checkout's rooms.mjs, else the bare name.
+export function roomsCli(env = process.env) {
+  for (const dir of String(env.PATH || "").split(delimiter)) {
+    if (!dir) continue;
+    try { accessSync(join(dir, "rooms"), fsConstants.X_OK); return "rooms"; } catch {}
+  }
+  const file = env.ROOMS_CLI || join(homedir(), "Documents", "rooms", "rooms.mjs");
+  if (!existsSync(file)) return "rooms";
+  return `node ${/[\s"'$\\]/.test(file) ? JSON.stringify(file) : file}`;
+}
+const roomsCmd = () => rooms.cli || (rooms.cli = roomsCli());
+const noRoom = (name) => new Error(`no_browser: no room '${name}'; make it: ${roomsCmd()} init ${name}, then ${roomsCmd()} up ${name}`);
+
+// A room no_browser names the rooms that exist, whether each is up, and the sites
+// signed in there, so the agent picks a real room instead of inventing one.
+const ROOM_ABSENT_ERR = /^no_browser: no room '([^']+)'; make it: /;
+const ROOM_DOWN_ERR = /^no_browser: room '[^']+' is not up; start it: /;
+export async function roomsWhy(msg) {
+  if (typeof msg !== "string" || !(ROOM_ABSENT_ERR.test(msg) || ROOM_DOWN_ERR.test(msg))) return msg;
+  let reg;
+  try { reg = Object.values(roomRegistry()); } catch { return msg; }
+  const up = await Promise.all(reg.map(async (r) => {
+    if (!r.cdp) return false;
+    try { return (await rooms.fetch(`http://${r.cdp.host}:${r.cdp.port}/${r.cdp.token}/json/version`, { signal: AbortSignal.timeout(1000) })).ok === true; }
+    catch { return false; }
+  }));
+  const host = (o) => { try { return new URL(o).host; } catch { return String(o); } };
+  const row = (r, i) => {
+    const sites = (r.sites || []).map((s) => host(s.origin));
+    return `${r.name} (${up[i] ? "up" : "down"}${sites.length ? `; signed in: ${sites.join(", ")}` : ""})`;
+  };
+  const here = reg.length ? `rooms here: ${reg.map(row).join(", ")}` : "no rooms yet";
+  const m = ROOM_ABSENT_ERR.exec(msg);
+  if (!m) return `${msg}; ${here}`;
+  if (!reg.length) return msg.replace(ROOM_ABSENT_ERR, `no_browser: no room '${m[1]}'; ${here}; make it: `);
+  const live = reg.filter((r, i) => up[i]).map((r) => r.name), dead = reg.filter((r, i) => !up[i]).map((r) => r.name);
+  const pick = live.length ? `new_tab {app:"room:${live[0]}"}` : `new_tab {app:"room:${dead[0]}"} once it is up`;
+  const start = dead.length ? ` (start one: ${dead.map((n) => `${roomsCmd()} up ${n}`).join("; ")})` : "";
+  return msg.replace(ROOM_ABSENT_ERR, `no_browser: no room '${m[1]}'; ${here}; use one: ${pick}${start}, or make it: `);
+}
 export function roomsReset(over = {}) {
   for (const c of rooms.conns.values()) c.then((x) => x.close(), () => {});
   rooms.conns.clear();
   rooms.notify = (a) => notify(a);
+  rooms.cli = null;
   Object.assign(rooms, over);
 }
 
@@ -4939,8 +4983,8 @@ function roomConn(name) {
 }
 async function roomConnect(name) {
   const r = roomRegistry()[name];
-  if (!r || !r.cdp) throw new Error(`no_browser: no room '${name}'; rooms init ${name}, then rooms up ${name}`);
-  const down = () => new Error(`no_browser: room '${name}' is not up; rooms up ${name}`);
+  if (!r || !r.cdp) throw noRoom(name);
+  const down = () => new Error(`no_browser: room '${name}' is not up; start it: ${roomsCmd()} up ${name}`);
   let url;
   try {
     const res = await rooms.fetch(`http://${r.cdp.host}:${r.cdp.port}/${r.cdp.token}/json/version`, { signal: AbortSignal.timeout(3000) });
@@ -5255,7 +5299,7 @@ function roomLastSeen(v) {
 }
 async function roomListTabs(only, quiet) {
   const reg = roomRegistry();
-  if (only && !reg[only]) throw new Error(`no_browser: no room '${only}'; rooms init ${only}, then rooms up ${only}`);
+  if (only && !reg[only]) throw noRoom(only);
   const names = only ? [only] : Object.keys(reg);
   const lists = await Promise.all(names.map(async (n) => {
     try {
@@ -5989,11 +6033,12 @@ async function moveToRoom(from, app, label) {
 
 // A browser call that failed for want of the user's window names the rooms that
 // could carry on unattended, the ones registered for the URL first.
+const ROOM_SLOT = 'new_tab {from, app:"room:<name>"}';
 const ROOM_HINTED = /^(window_offscreen|tab_not_visible|no_browser): /;
 export function roomHint(msg, args) {
   if (!ROOM_HINTED.test(msg) || roomArgs(args)) return msg;
   // A loft window is never the key window, so it can't help a trusted press.
-  if (!/^no_browser|needs the keyboard/.test(msg)) msg = `${msg}; ${LOFT_HINT}`;
+  if (!/^no_browser|needs the keyboard|loft:true/.test(msg)) msg = `${msg}; ${LOFT_HINT}`;
   let reg;
   try { reg = Object.values(roomRegistry()); } catch { return msg; }
   let origin = null;
@@ -6001,6 +6046,8 @@ export function roomHint(msg, args) {
   const fits = origin ? reg.filter((r) => (r.sites || []).some((s) => s.origin === origin)) : [];
   const names = (fits.length ? fits : reg).slice(0, 3).map((r) => r.name);
   if (!names.length) return msg;
+  const more = names.length > 1 ? ` (rooms: ${names.join(", ")})` : "";
+  if (msg.includes(ROOM_SLOT)) return msg.replace(ROOM_SLOT, `new_tab {from, app:"room:${names[0]}"}${more}`);
   return `${msg}; or continue in a room: new_tab {from, app:"room:${names[0]}"}${names.length > 1 ? ` (rooms: ${names.join(", ")})` : ""}`;
 }
 
@@ -11746,7 +11793,7 @@ async function withScreenWhy(out) {
   const why = await screenWhy();
   if (!why) return out;
   // The why belongs to the error, ahead of the hints that say where else to go.
-  const at = first.text.indexOf("; " + LOFT_HINT);
+  const at = [first.text.indexOf("; " + LOFT_HINT), first.text.indexOf("; retry later, ")].filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? -1;
   first.text = failed ? (at < 0 ? first.text + "; " + why : first.text.slice(0, at) + "; " + why + first.text.slice(at)) : first.text.replace(/^(\{"ok":false,"error":"[^"]*)"/, "$1; " + why + '"');
   return out;
 }
@@ -11890,7 +11937,7 @@ async function handleCallCore(name, args = {}, signal) {
       return formatResult({ ok: false, error: `nothing ${name === "press" ? "pressed" : "clicked"}: ${LATE_HOLD_WHY}`, late: note.late.found });
     }
     if (e instanceof RefMiss) return withLate(formatResult({ __perch_ref_miss: true, ref: e.ref }), note && note.late && note.late.found);
-    return withLate({ content: [{ type: "text", text: `error: ${roomHint(e.message, args)}` }], isError: true }, note && note.late && note.late.found);
+    return withLate({ content: [{ type: "text", text: `error: ${roomHint(await roomsWhy(e.message), args)}` }], isError: true }, note && note.late && note.late.found);
   }
 }
 
