@@ -64,7 +64,7 @@ test("trusted_fill_probe records the typeahead's prior value before clearing it,
   assert.equal(w.__perch_ta.text, undefined, "the check sets the text once it is typed");
   down(w, el);
   setValue(w, el, "Rosario");
-  assert.deepEqual(run(w, "trusted_check", K), { hit: true, pending: true, trusted: true, tok: p.tok });
+  assert.deepEqual(run(w, "trusted_check", K), { hit: true, pending: true, trusted: true, tok: p.tok, rec: p.rec });
   assert.equal(w.__perch_ta.text, "Rosario");
 });
 

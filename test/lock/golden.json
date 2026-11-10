@@ -936,7 +936,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 890
+   "pageBytes": 816
   },
   {
    "call": [
@@ -962,7 +962,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 616
+   "pageBytes": 550
   }
  ],
  "navigate: arc ok": [
@@ -992,7 +992,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 890
+   "pageBytes": 816
   },
   {
    "call": [
@@ -1018,7 +1018,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 616
+   "pageBytes": 550
   }
  ],
  "navigate: safari ok": [
@@ -1049,7 +1049,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 890
+   "pageBytes": 816
   },
   {
    "call": [
@@ -1077,7 +1077,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 616
+   "pageBytes": 550
   }
  ],
  "navigate: targeted, redirect reports requested": [
@@ -1111,7 +1111,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 882
+   "pageBytes": 808
   }
  ],
  "navigate: load_failed stayed (204)": [
@@ -1156,7 +1156,7 @@
     ]
    },
    "pageScripts": 10,
-   "pageBytes": 3172
+   "pageBytes": 3034
   }
  ],
  "navigate: load_failed error page": [
@@ -1199,7 +1199,7 @@
     ]
    },
    "pageScripts": 6,
-   "pageBytes": 2024
+   "pageBytes": 1918
   }
  ],
  "navigate: timeout not committed": [
@@ -1357,7 +1357,7 @@
     ]
    },
    "pageScripts": 36,
-   "pageBytes": 10544
+   "pageBytes": 10198
   }
  ],
  "navigate: bad_url": [
@@ -1409,7 +1409,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 284
+   "pageBytes": 276
   },
   {
    "call": [
@@ -1438,7 +1438,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 882
+   "pageBytes": 808
   }
  ],
  "navigate: arc background tab is tab_not_visible": [
@@ -1505,7 +1505,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 652
+   "pageBytes": 578
   }
  ],
  "eval_js: sync value, default target": [
@@ -4170,7 +4170,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 26920
+   "pageBytes": 27195
   },
   {
    "call": [
@@ -4197,7 +4197,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 26921
+   "pageBytes": 27196
   }
  ],
  "click: trusted raised": [
@@ -4241,7 +4241,7 @@
     ]
    },
    "pageScripts": 13,
-   "pageBytes": 32630
+   "pageBytes": 32905
   }
  ],
  "click: trusted needs the shown tab": [
@@ -5596,7 +5596,7 @@
     ]
    },
    "pageScripts": 13,
-   "pageBytes": 36363
+   "pageBytes": 36638
   },
   {
    "call": [
@@ -6280,7 +6280,7 @@
     ]
    },
    "pageScripts": 13,
-   "pageBytes": 25494
+   "pageBytes": 25682
   }
  ],
  "console_capture: start, read, stop": [

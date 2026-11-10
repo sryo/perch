@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { JXA_PRELUDE, DAEMONS, handleCall, chunkUtf16, imageDims } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page, run, deliverPress } from "./helpers/page.mjs";
+const runPage = run;
 
 // ---- pure helpers ----
 
@@ -37,6 +38,8 @@ test("trusted_probe estimates the screen point including browser chrome", () => 
   const w = page(`<button id=b>Go</button>`);
   withWindowMetrics(w, { screenX: 100, screenY: 50, outerWidth: 1200, innerWidth: 1000, outerHeight: 900, innerHeight: 820 });
   const o = run(w, "trusted_probe", { selector: "#b" });
+  assert.match(o.rec, /^1\.[a-z0-9]+$/, "the recorder's owner token");
+  delete o.rec;
   // rect is stubbed at 0,0 100x20: center (50,10); chrome = 200 left (sidebar), 80 top (toolbar).
   assert.deepEqual(o, { ok: true, el: `button "Go"`, x: 100 + 200 + 50, y: 50 + 80 + 10, cx: 50, cy: 10, iw: 1000, ih: 820 });
 });
@@ -77,6 +80,7 @@ test("trusted_fill_probe skips checkboxes by label and refuses rich editors", ()
 
 test("trusted_check reports whether the mousedown hit the element, then disarms", () => {
   const w = page(`<button id=b>Go</button><p id=o>other</p>`);
+  const run = (w, name, A) => { const o = runPage(w, name, A); if (o) delete o.rec; return o; };
   const press = (id) => w.document.getElementById(id).dispatchEvent(new w.MouseEvent("mousedown", { bubbles: true }));
   run(w, "trusted_probe", { selector: "#b" });
   assert.deepEqual(run(w, "trusted_check", {}), { hit: null });
@@ -731,7 +735,7 @@ test("screenshot: a failed downscale still returns the full-size capture", async
 // ---- a click by point proves delivery the way an element click does ----
 
 const reachesPage = (dom, world) => deliverPress(world, dom, dom.document.getElementById("b"));
-const isCheck = (js) => js.includes("if (st.off) st.off();\nconst out = { hit: st.down };");
+const isCheck = (js) => js.includes("if (st.off && st.down) st.off();\nconst out = { hit:");
 function recordScripts(dom) {
   const seen = [];
   const evalPage = dom.eval.bind(dom);
@@ -837,7 +841,7 @@ const noRaw = (x) => {
 };
 const RB_ARM = "return rbArm(A.probed";
 const RB_READ = "const text = rbText(s ? s.sel : A.readback);";
-const CHECK = "const out = { hit: st.down };";
+const CHECK = "const out = { hit: st.down === null";
 const clickReply = async (args) => {
   const r = await handleCall("click", { ...args, trusted: true, target: { tabIndex: 1 } });
   assert.equal(r.isError, undefined, r.content[0].text);

@@ -70,7 +70,7 @@ test("fill {trusted, raise}: a check that throws after typing says the text went
   const { dom, world } = raisedTab(`<input id=i aria-label="Name">`);
   const el = dom.document.getElementById("i");
   world.state.onPost = (e) => { if (e.kind === "key" && e.down) el.value += e.text; };
-  const o = await faulted("fill", { trusted: true, raise: true, selector: "#i", text: "Ada", target: { tabIndex: 1 } }, throwAt(dom, "if (st.off) st.off();"));
+  const o = await faulted("fill", { trusted: true, raise: true, selector: "#i", text: "Ada", target: { tabIndex: 1 } }, throwAt(dom, "if (st.off && st.down) st.off();"));
   assert.equal(o.ok, false);
   assert.equal(o.error, "fill: the page script failed on this page (TypeError); the text was sent, outcome unverified");
   assert.equal(o.delivery, "hid");
@@ -80,7 +80,7 @@ test("fill {trusted, raise}: a check that throws after typing says the text went
 
 test("click {trusted, raise}: a check that throws after the press keeps the point and says the click went out", async () => {
   const { dom } = raisedTab(`<button id=b>Go</button>`);
-  const o = await faulted("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } }, throwAt(dom, "if (st.off) st.off();"));
+  const o = await faulted("click", { trusted: true, raise: true, selector: "#b", target: { tabIndex: 1 } }, throwAt(dom, "if (st.off && st.down) st.off();"));
   assert.equal(o.ok, false);
   assert.equal(o.error, "click: the click was sent; the page script failed checking it (TypeError); outcome unverified");
   assert.equal(o.delivery, "hid");

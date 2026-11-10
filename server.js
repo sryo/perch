@@ -1874,6 +1874,16 @@ function jxaRuntime(BROWSERS, HANG) {
     const r = a.wait ? poll(T.t, a.wait, 300, 25) : null;
     return r ? r.value : readExec(T.t, a.check);
   }
+  // Whether a check's answer came from the recorder its probe took (rec, the
+  // probe's token); the token is dropped from the answer. A check with no
+  // recorder at all read a new document, which is the caller's to report.
+  const TRUSTED_TAKEN = "the press was sent, but another perch call on this tab took over its recorder; the outcome is not verified";
+  function recOwn(check, rec) {
+    if (!check || typeof check !== "object" || threw(check)) return true;
+    const r = check.rec;
+    delete check.rec;
+    return rec == null || r == null || r === rec;
+  }
 
   // A key pair addressed to the browser pid only: no window fields, no Command
   // flag. The Unicode string goes on both events, as AppKit's own key events carry it.
@@ -2272,7 +2282,7 @@ function jxaRuntime(BROWSERS, HANG) {
     function aimed() {
       const off = offPage(T, probe, pt, area);
       if (!off && probe.cover) return { out: { ok: false, covered: true, error: probe.cover + "; nothing was clicked" } };
-      return off ? { out: off } : { pt: pt, el: probe.el, blank: probe.blank, tok: probe.tok, calibration: trace, aim: via };
+      return off ? { out: off } : { pt: pt, el: probe.el, blank: probe.blank, tok: probe.tok, rec: probe.rec, calibration: trace, aim: via };
     }
   }
 
@@ -2293,6 +2303,7 @@ function jxaRuntime(BROWSERS, HANG) {
       // The click is posted, so a dropped reply says `tool` ran rather than inviting a
       // retry; the check only reads what the recorders saw, so it may be sent twice.
       const check = afterStep(tool, function () { return clickCheck(T, a); });
+      if (!recOwn(check, A.rec)) return { out: frontWarn(T, { ok: false, el: A.el, point: A.pt, delivery: T.background ? "skylight" : "hid", error: TRUSTED_TAKEN }) };
       const out = frontWarn(T, { ok: check.hit === true, el: A.el, point: A.pt, calibration: A.calibration, aim: A.aim, delivery: T.background ? "skylight" : "hid" });
       return { out: threw(check) ? Object.assign(out, { ok: false, error: checkFault(tool, check) }) : Object.assign(out, check) };
     } finally {
@@ -4032,6 +4043,7 @@ function jxaRuntime(BROWSERS, HANG) {
           delay(0.05);
           const check = afterStep("click", function () { return clickCheck(T, a); });
           out = frontWarn(T, { ok: true, point: { x: a.x, y: a.y }, delivery: T.background ? "skylight" : "hid" });
+          if (!recOwn(check, f.rec)) return Object.assign(out, { ok: false, error: TRUSTED_TAKEN });
           if (threw(check)) return Object.assign(out, { ok: false, error: checkFault("click", check) });
           if (check.hit === undefined) out.note = "the page changed after the click (it may have navigated), so whether it landed is unknown";
           else if (check.hit !== true) return Object.assign(out, { ok: false, hit: false, error: "no click reached the page at " + a.x + "," + a.y });
@@ -4122,7 +4134,9 @@ function jxaRuntime(BROWSERS, HANG) {
         delay(0.05); // let focus settle before typing
         typeChunks(a.chunks);
         delay(0.05);
-        const out = Object.assign({ el: A.el, calibration: A.calibration, aim: A.aim, delivery: "hid" }, afterStep("fill", function () { return readExec(T.t, a.check); }));
+        const check = afterStep("fill", function () { return readExec(T.t, a.check); });
+        if (!recOwn(check, A.rec)) return { ok: false, el: A.el, delivery: "hid", error: TRUSTED_TAKEN };
+        const out = Object.assign({ el: A.el, calibration: A.calibration, aim: A.aim, delivery: "hid" }, check);
         // The probe's typeahead state (A.tok) must be the one the check hands on.
         if (!threw(out) && out.ok !== false && (A.tok != null || out.pending) && !(out.pending && out.tok === A.tok)) {
           return { ok: false, kind: "typeahead", el: A.el, hit: out.hit, delivery: "hid", error: TA_TAKEN };
@@ -5343,9 +5357,11 @@ async function roomProbe(t, js) {
     await sleep(50);
   }
 }
+// A room tab is one server's at a time (its lease), so the recorder's token is only dropped.
+const noRec = (c) => { if (c && typeof c === "object") delete c.rec; return c; };
 const roomClickCheck = async (t, a) => {
   const r = a.wait ? await roomPoll(t, a.wait, 300, 25) : null;
-  return r ? r.value : roomRead(t, a.check);
+  return noRec(r ? r.value : await roomRead(t, a.check));
 };
 // A trusted click at the probed element's center, in page (CSS) pixels: CDP's
 // own coordinate space, so no calibration or Accessibility walk is needed.
@@ -5609,7 +5625,7 @@ const ROOM_FNS = {
     const pt = { x: Math.round(p.cx), y: Math.round(p.cy) };
     await roomMouseClick(t, pt.x, pt.y);
     await t.conn.send("Input.insertText", { text: a.chunks.join("") }, t.S.id);
-    const out = Object.assign({ el: p.el, aim: "cdp", delivery: "cdp" }, await roomAfterStep("fill", () => roomRead(t, a.check)));
+    const out = Object.assign({ el: p.el, aim: "cdp", delivery: "cdp" }, await roomAfterStep("fill", async () => noRec(await roomRead(t, a.check))));
     if (!roomThrew(out) && out.ok !== false && (p.tok != null || out.pending) && !(out.pending && out.tok === p.tok)) {
       return { ok: false, kind: "typeahead", el: p.el, hit: out.hit, delivery: "cdp", error: "another perch call on this tab took over this fill's suggestions; not verified" };
     }
@@ -8597,6 +8613,21 @@ return { ok: true, blank: { href: href }, tok: tok };
 // + the element's center. A hidden tab's screenX/outerWidth are stale, so it
 // asks to retry until the tab is visible. An element that is or sits under an
 // embedded frame is refused: frame controls take an fN ref.
+// A trusted click's recorder (window.__perch_trusted) is one per document, and a
+// mouse event names no caller. Each probe replaces it under a fresh owner token,
+// and the check answers that token (rec) for the caller to compare with its
+// probe's: a call whose recorder another replaced is not verified. A press that
+// lands off the recorder's element is only noted (miss) and the recorder keeps
+// listening, and a check disarms only a recorder that saw its press: another
+// call's press or check arriving first costs this call nothing. One left armed
+// is disarmed by the next probe.
+export const TRUSTED_TAKEN = "the press was sent, but another perch call on this tab took over its recorder; the outcome is not verified";
+const TRUSTED_REC_LIB = String.raw`
+const prev = window.__perch_trusted;
+if (prev && prev.off) prev.off();
+window.__perch_tok_n = (window.__perch_tok_n | 0) + 1;
+const st = window.__perch_trusted = { tok: window.__perch_tok_n + "." + Math.random().toString(36).slice(2, 10), down: null, moves: [] };
+`;
 const TRUSTED_PROBE_HEAD = CLICK_LIB + String.raw`
 if (document.visibilityState === "hidden") return { ok: false, retry: "hidden" };
 let el, selTok;
@@ -8650,12 +8681,10 @@ if (inFrame(atPt)) return { ok: false, error: ident(el) + FRAMED };
 // (a closed shadow root's, which page JS sees only as its host) more usefully.
 const cover = atPt && !hitsOwn(el, atPt, cx, cy) ? ident(el) + " is covered by " + ident(atPt) : null;
 if (cover && (A.select || A.forFill)) return { ok: false, covered: true, error: cover + (A.select ? "; nothing was clicked or picked" : "; nothing was typed") };
+` + TRUSTED_REC_LIB + String.raw`st.el = el;
 `;
 // A click that opens a new tab also records whether the page cancelled it.
 const TRUSTED_PROBE_TAIL = BLANK_LIB + String.raw`if (A.forFill && !A.background) { setNativeValue(el, ""); fire(el, ["input"]); }
-const prev = window.__perch_trusted;
-if (prev && prev.off) prev.off();
-const st = window.__perch_trusted = { el: el, down: null, moves: [] };
 const href = !A.forFill && !A.select ? blankHref(el) : null;
 const onMove = function (e) { if (st.moves.length < 20) st.moves.push([e.clientX, e.clientY, e.screenX, e.screenY]); };
 // A mousedown on el, inside it (shadow trees too), or on a label of el's or one
@@ -8664,7 +8693,8 @@ const onMove = function (e) { if (st.moves.length < 20) st.moves.push([e.clientX
 // cards) suppresses the press's mousedown but still acts on the click.
 const onDown = function (e) {
   const p = e.composedPath(), lab = p[0].closest && p[0].closest("label");
-  st.down = p.indexOf(el) >= 0 || !!lab && (lab.contains(el) || [].indexOf.call(el.labels || [], lab) >= 0);
+  if (!(p.indexOf(el) >= 0 || !!lab && (lab.contains(el) || [].indexOf.call(el.labels || [], lab) >= 0))) { st.miss = true; return; }
+  st.down = true;
   window.removeEventListener("pointerdown", onDown, true);
   window.removeEventListener("mousedown", onDown, true);
 };
@@ -8685,6 +8715,7 @@ return {
   iw: window.innerWidth,
   ih: window.innerHeight,
   tok: selTok,
+  rec: st.tok,
   cover: cover || undefined,
 };`;
 
@@ -10296,15 +10327,12 @@ return out;
   // the page's embedded frames, plus the page's own estimate of its screen origin
   // for when Accessibility can't place the page. It also arms trusted_check's
   // recorder: the first trusted mousedown and what it landed on.
-  trusted_frames: String.raw`
-const out = { iw: innerWidth, ih: innerHeight, ox: screenX + outerWidth - innerWidth, oy: screenY + outerHeight - innerHeight, rects: [] };
+  trusted_frames: TRUSTED_REC_LIB + String.raw`
+const out = { rec: st.tok, iw: innerWidth, ih: innerHeight, ox: screenX + outerWidth - innerWidth, oy: screenY + outerHeight - innerHeight, rects: [] };
 deepAll("iframe, frame, object, embed").forEach(function (f) {
   const r = f.getBoundingClientRect();
   if (r.width && r.height) out.rects.push([r.left, r.top, r.right, r.bottom]);
 });
-const prev = window.__perch_trusted;
-if (prev && prev.off) prev.off();
-const st = window.__perch_trusted = { down: null, moves: [] };
 const onDown = function (e) {
   if (!e.isTrusted) return;
   const at = e.composedPath ? e.composedPath()[0] : e.target;
@@ -10333,11 +10361,12 @@ return A.reset || !moves.length ? null : { moves: moves };
   // hit: the mousedown landed on the element (a click by point: on the page, at
   // `el`); null: no mousedown reached the page; missing: no recorder, a new document.
   // A.wait: null, recorder left armed, while no mousedown has arrived yet.
+  // rec: the recorder's owner token, for the caller to hold against its probe's.
   trusted_check: TA_OWN_LIB + String.raw`
 const st = window.__perch_trusted || {};
-if (A.wait && st.down === null) return null;
-if (st.off) st.off();
-const out = { hit: st.down };
+if (A.wait && st.down === null && !st.miss) return null;
+if (st.off && st.down) st.off();
+const out = { hit: st.down === null && st.miss ? false : st.down, rec: st.tok };
 if (st.at) out.el = st.at;
 if (st.cancelled) out.cancelled = true;
 if (A.forFill && st.el) {
@@ -10355,7 +10384,7 @@ if (A.forFill && st.el) {
   const ta = taNow;
   if (out.ok && ta && !taLost && ta.el === st.el) {
     if (out.hit !== true) { out.ok = false; out.error = "the click did not reach " + ident(st.el) + ", so no suggestion can be picked"; }
-    else { ta.text = text; return { hit: true, pending: true, trusted: true, tok: ta.tok }; }
+    else { ta.text = text; return { hit: true, pending: true, trusted: true, tok: ta.tok, rec: st.tok }; }
   }
   if (out.ok && st.el === st.el.ownerDocument.activeElement) st.el.blur();
 }
