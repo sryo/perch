@@ -34,7 +34,8 @@ async function loftCheck() {
   try { st = JSON.parse(execFileSync("loft", ["status", "--json"], { encoding: "utf8" })); } catch {}
   if (!st || !st.up) { console.error("the loft is down; run loft up first"); return 2; }
   const B = st.bounds;
-  const windows = () => JSON.parse(jxa(`const a = Application("Safari"); JSON.stringify(a.running() ? a.windows().map((w) => [w.id(), w.bounds()]) : null)`));
+  // Safari keeps a closed window in its list, invisible, so only visible ones count.
+  const windows = () => JSON.parse(jxa(`const a = Application("Safari"); JSON.stringify(a.running() ? a.windows().filter((w) => w.visible()).map((w) => [w.id(), w.bounds()]) : null)`));
   const before = windows();
   if (!before) { console.error("Safari isn't running; new_tab never launches it"); return 2; }
   const url = `file://${join(ROOT, "bench", "fixture.html")}#loft`;
