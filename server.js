@@ -3169,18 +3169,29 @@ function jxaRuntime(BROWSERS, HANG) {
     let before = [];
     try { before = ap.windows.id(); } catch (e) {}
     const userFront = before.filter(function (id) { return own.indexOf(String(id)) < 0; })[0];
+    // Live (Safari 26): `make new window` throws yet leaves a window with no tab,
+    // which nothing pushed into ever shows, so Safari makes a document instead.
+    // A window a failed make left is closed, never reused.
     let via = null;
-    try { ap.Window({ bounds: B }).make(); via = "window"; } catch (e) {}
-    if (!via && kind === "safari") { try { ap.Document({ url: a.url }).make(); via = "document"; } catch (e) {} }
+    const fresh = function () { try { return ap.windows.id().filter(function (id) { return before.indexOf(id) < 0; }); } catch (e) { return []; } };
+    if (kind !== "safari") { try { ap.Window({ bounds: B }).make(); via = "window"; } catch (e) {} }
+    if (!via) {
+      fresh().forEach(function (id) { try { ap.windows.byId(id).close(); } catch (e) {} });
+      try { before = ap.windows.id(); } catch (e) {}
+      if (kind === "safari") { try { ap.Document({ url: a.url }).make(); via = "document"; } catch (e) {} }
+    }
     if (!via) throw new Error("no_browser: " + name + " could not make a window");
-    let raw = null;
-    try { raw = ap.windows.id().filter(function (id) { return before.indexOf(id) < 0; })[0]; } catch (e) {}
+    const raw = fresh()[0];
     if (raw == null) throw new Error("no_browser: " + name + " made no window perch could find; retry");
     const win = ap.windows.byId(raw), wid = String(raw);
+    // Wholly on the loft, not just its center: a window hanging past the loft's
+    // edge shows on the user's display.
     const placed = function () {
-      try { const b = win.bounds(); return centerIn(R, { x: b.x, y: b.y, w: b.width, h: b.height }); } catch (e) { return false; }
+      try { const b = win.bounds(); return b.x >= R.x && b.y >= R.y && b.x + b.width <= R.x + R.w && b.y + b.height <= R.y + R.h; } catch (e) { return false; }
     };
-    if (!placed()) {
+    // A document opens at the browser's default size; the loft's size is the
+    // point of being there.
+    if (via === "document" || !placed()) {
       try { win.bounds = B; } catch (e) {}
       if (!placed()) {
         try { win.close(); } catch (e) {}
