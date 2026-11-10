@@ -334,12 +334,12 @@ test("the trusted click's hit test adds Accessibility reads only, no Apple Event
     world.reset();
   }
   // [Apple Events, AX reads] for background selector, background point, raised
-  // selector. The AX reads are the window match and page area (13) plus the hit
-  // test (4). A click by point reads its hit check after posting, as a selector
+  // selector. The AX reads are the window match and page area (13), the hit
+  // test (4) and the look for a file chooser the click opened (6). A click by point reads its hit check after posting, as a selector
   // click does. Every page read (probe or frames, calibration, check) goes through
   // the bounded execute, which the fake counts twice (NSAppleScript and
   // tab.execute); live each is one event: 3, 3 and 17.
-  assert.deepEqual(cost, [[5, 17], [5, 17], [30, 17]]);
+  assert.deepEqual(cost, [[5, 23], [5, 23], [30, 23]]);
 });
 
 // Chromium builds a page's Accessibility tree only once an assistive client asks

@@ -1902,6 +1902,7 @@ function jxaRuntime(BROWSERS, HANG) {
     const near = function (a, b, d) { return Math.abs(a.x - b.x) <= d && Math.abs(a.y - b.y) <= d && Math.abs(a.w - b.w) <= d && Math.abs(a.h - b.h) <= d; };
     const same = wf ? (P.byPid[I.pid] || []).filter(function (c) { return near(c, wf, 4); }) : [];
     if (same.length !== 1 || same[0].wid !== I.windowNumber) {
+      if (findPanel(ax, I)) return "a file chooser has the keyboard; " + CHOOSER_NEXT;
       return "another browser window has the keyboard (or it can't be told apart); click {trusted:true, raise:true} on the page first";
     }
     const area = axPageArea(I, probe), af = area && ax.frame(area.el);
@@ -2180,6 +2181,7 @@ function jxaRuntime(BROWSERS, HANG) {
     for (let i = 0; el && i < 64; i++, el = ax.attr(el, "AXParent")) {
       const role = ax.str(el, "AXRole");
       if (role === "AXWebArea" && !web) { if (ax.same(el, area.el)) return null; web = true; }
+      if (role === "AXSheet" && isOpenPanel(ax, el)) return { ok: false, chooser: "open", error: "a file chooser covers the page, so nothing was clicked; " + CHOOSER_NEXT };
       if (role === "AXSheet" || role === "AXPopover") return { ok: false, error: "a browser sheet or popover covers the page at that point, so nothing was clicked; answer a leave-page prompt with press {key, dialog:true}, or hand it to the user" };
       if (role !== "AXWindow") continue;
       const id = ax.wid(el), f = ax.frame(el), r = T.I.cgBounds || T.I.geom;
@@ -2727,6 +2729,8 @@ function jxaRuntime(BROWSERS, HANG) {
   // press {dialog} on a leave-page sheet: Enter leaves, Escape stays. The caller
   // asks for it explicitly, so structure is enough where no page proof exists.
   function answerSheet(a) {
+    const panel = openPanelOf(a.target);
+    if (panel) return answerChooser(a, panel);
     const s = ownSheet(a.target);
     if (!s) return { ok: false, error: "no open alert/confirm/prompt on the target tab" };
     const no = "; perch does not answer it, hand it to the user";
@@ -2741,6 +2745,21 @@ function jxaRuntime(BROWSERS, HANG) {
       delay(0.05);
     }
     return { ok: true, dialog: "leave", message: s.message, answer: a.key === "Enter" ? "accept" : "dismiss" };
+  }
+
+  // press {dialog} on the browser's open file chooser: Escape presses its cancel
+  // button by Accessibility, so no key and no focus; Enter is file_upload's.
+  function answerChooser(a, panel) {
+    if (a.key !== "Escape") return { ok: false, error: 'the open dialog is a file chooser: file_upload {path, raise:true, target} with no control chooses a file in it; press {key:"Escape", dialog:true} cancels it' };
+    const ax = axInit(), c = panelButton(ax, panel, "AXCancelButton", "CancelButton");
+    if (!c) return { ok: false, error: "the file chooser has no cancel button perch can find; hand it to the user" };
+    $.AXUIElementPerformAction(c, $("AXPress"));
+    const start = Date.now();
+    while (ax.attr(panel, "AXRole") != null) {
+      if (Date.now() - start >= 1000) return { ok: false, error: "the file chooser is still open" };
+      delay(0.05);
+    }
+    return { ok: true, dialog: "chooser", answer: "dismiss" };
   }
 
   // The native open panel a raised trusted click opened (file_upload {raise:true}).
@@ -2786,6 +2805,12 @@ function jxaRuntime(BROWSERS, HANG) {
       }
     }
     return null;
+  }
+  // What an agent does with a chooser that is open: perch fills or cancels it,
+  // so it is never handed to the user.
+  const CHOOSER_NEXT = 'file_upload {path, raise:true} with no control chooses a file in it, press {key:"Escape", dialog:true} cancels it';
+  function openPanelOf(target) {
+    try { return findPanel(axInit(), ownWindow(ids(resolve(target)))); } catch (e) { return null; }
   }
   // The Go to folder field: PathTextField, or a text field in a sheet inside the panel.
   function gotoField(ax, panel) {
@@ -2844,7 +2869,10 @@ function jxaRuntime(BROWSERS, HANG) {
       if (c) $.AXUIElementPerformAction(c, $("AXPress"));
       return { ok: false, chooser: true, error: why + (c ? "; the chooser was cancelled" : "; the chooser is still open, hand it to the user") };
     };
-    if (panelPids(I).indexOf(procs().frontPid) < 0) return cancel("the browser is not in front, so no key was typed");
+    if (panelPids(I).indexOf(procs().frontPid) < 0) {
+      if (a.open) return { ok: false, chooser: true, error: "the browser is not in front, so no key was typed; the chooser is still open: activate_tab brings it to the front, then call again, or press {key:\"Escape\", dialog:true} cancels it" };
+      return cancel("the browser is not in front, so no key was typed");
+    }
     fgKey(5, "g", 0x120000); // Cmd+Shift+G: Go to folder
     const field = until(2000, function () { return gotoField(ax, panel); });
     if (!field) return cancel("the chooser's Go to folder field never appeared");
@@ -3979,6 +4007,7 @@ function jxaRuntime(BROWSERS, HANG) {
         if (before && out.ok) noteOpened(out, W, before, href);
         delete out.cancelled;
       }
+      if (findPanel(axInit(), T.I)) { out.chooser = "open"; out.note = (out.note ? out.note + "; " : "") + "a file chooser is open: " + CHOOSER_NEXT; }
       // The cursor is already home, so the settle wait doesn't hold it.
       return a.arm ? Object.assign(out, readback(T.t, a, tok)) : out;
     },
@@ -10916,9 +10945,9 @@ async function fileUpload(args = {}) {
     if (ref || selector) throw new Error("file_upload: pass `label_pattern` alone, without `ref` or `selector`");
     validateLabelPattern("file_upload", label_pattern);
   }
-  if (raise && !ref && !selector && !label_pattern) throw new Error("file_upload: raise:true needs the control that opens the chooser (`ref`, `selector` or `label_pattern`)");
   const { abs, data } = await readUserFile(path, undefined, uploadCap);
   const name = abs.split("/").pop();
+  if (raise && !ref && !selector && !label_pattern) return chooserUpload({ target, abs, name, open: true });
   if (raise) return chooserUpload({ selector, ref, label_pattern, target, abs, name });
   const mime = MIME_BY_EXT[name.split(".").pop().toLowerCase()] || "application/octet-stream";
   const key = { ref, selector, label_pattern, name };
@@ -10961,14 +10990,20 @@ const CHOOSER_SHOWN_WAIT = 5000;
 // A site with no file input of its own opens the native chooser from a click:
 // refuse if one is open already (the user's), click the control raised, type the
 // path into the chooser, then believe the page only when it shows the file.
-async function chooserUpload({ selector, ref, label_pattern, target, abs, name }) {
-  if ((await rt("chooser", { target, probe: true })).open) return { ok: false, error: "file_upload: a file chooser is already open in this browser; nothing was clicked, hand it to the user" };
+// open: the chooser is already open (a click opened it); nothing is clicked.
+async function chooserUpload({ selector, ref, label_pattern, target, abs, name, open = false }) {
+  const was = (await rt("chooser", { target, probe: true })).open;
+  if (open && !was) return { ok: false, error: "file_upload: raise:true needs the control that opens the chooser (`ref`, `selector` or `label_pattern`); with none it fills a chooser already open, and none is" };
+  if (!open && was) return { ok: false, chooser: "open", error: 'file_upload: a file chooser is already open in this browser, so nothing was clicked; file_upload {path, raise:true} with no control chooses the file in it, press {key:"Escape", dialog:true} cancels it' };
   const before = await runPage("file_upload", "upload_census", { name }, target);
   if (!before || before.__perch_error != null || before.media == null) return before;
-  const clicked = await trustedClick({ ref, selector, label_pattern, raise: true, target });
-  if (!clicked || clicked.ok !== true) return { ...clicked, ok: false, error: (clicked && clicked.error) || "file_upload: the click on the control didn't land; no chooser was used" };
-  const el = clicked.el;
-  const picked = await rt("chooser", { target, path: abs }, { lane: "slow" });
+  let el;
+  if (!open) {
+    const clicked = await trustedClick({ ref, selector, label_pattern, raise: true, target });
+    if (!clicked || clicked.ok !== true) return { ...clicked, ok: false, error: (clicked && clicked.error) || "file_upload: the click on the control didn't land; no chooser was used" };
+    el = clicked.el;
+  }
+  const picked = await rt("chooser", { target, path: abs, open }, { lane: "slow" });
   if (!picked.ok) return { ok: false, el, ...picked, error: "file_upload: " + picked.error };
   let seen = null;
   try {
@@ -11593,7 +11628,7 @@ const TOOLS = [
     subtitle: { type: "string" },
     sound: { type: "string", description: "Default Glass." },
   }, ["message"]),
-  tool("file_upload", "Set a local file on an <input type=file>; its bytes never enter context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. `raise:true`: via the native chooser, foreground (chooser:true). {ok:false}: hand off, don't retry.", {
+  tool("file_upload", "Set a local file on an <input type=file>; its bytes never enter context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. `raise:true`: the native chooser, foreground (chooser:true), or with no control the open one.", {
     path: { type: "string" },
     ref: REF,
     selector: SEL,

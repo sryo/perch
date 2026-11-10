@@ -176,3 +176,84 @@ test("raise:true needs a trigger to click", async () => {
   const r = await handleCall("file_upload", { raise: true, path, target: { tabIndex: 1 } });
   assert.match(r.content[0].text, /raise:true needs the control that opens the chooser/);
 });
+
+// A chooser a click opened, or one already open, gets a path of its own: the
+// click says it opened one, press {Escape, dialog} cancels it by Accessibility
+// (no key, no focus), and file_upload {raise:true} with no control chooses the file in it.
+const tabOf = async () => {
+  const r = await handleCall("list_tabs", {});
+  const tabs = JSON.parse(r.content[0].text.replace(/^[^[{]*/, ""));
+  const list = Array.isArray(tabs) ? tabs : tabs.tabs;
+  return { tabId: list.find((t) => /:t$/.test(t.tabId)).tabId };
+};
+const call = async (name, args) => {
+  const t = (await handleCall(name, args)).content[0].text;
+  try { return JSON.parse(t); } catch { return t; }
+};
+
+test("a trusted click that opens the chooser says so and names how to fill or cancel it", async () => {
+  await setup();
+  const o = await call("click", { trusted: true, label_pattern: "^Add photo/video$", target: { tabIndex: 1 } });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.chooser, "open");
+  assert.match(o.note, /file_upload \{path, raise:true\} with no control/);
+  assert.match(o.note, /press \{key:"Escape", dialog:true\}/);
+  await setup({ opensOnClick: false });
+  const quiet = await call("click", { trusted: true, label_pattern: "^Add photo/video$", target: { tabIndex: 1 } });
+  assert.equal(quiet.ok, true);
+  assert.equal(quiet.chooser, undefined);
+});
+
+test("press {Escape, dialog:true} cancels an open chooser by Accessibility, no key posted", async () => {
+  for (const panel of [{}, { idsOnly: true }, { pid: 999, kind: "window" }]) {
+    const { world } = await setup({ panel: { open: true, ...panel }, service: panel.kind === "window" });
+    const o = await call("press", { key: "Escape", dialog: true, target: await tabOf() });
+    assert.deepEqual(o, { ok: true, dialog: "chooser", answer: "dismiss" }, JSON.stringify(panel));
+    assert.equal(world.state.panel.cancelled, true);
+    assert.equal(world.state.panel.open, false);
+    assert.equal(keys(world).length, 0);
+  }
+});
+
+test("press {Enter, dialog:true} on an open chooser is refused and names file_upload {raise:true} with no control", async () => {
+  const { world } = await setup({ panel: { open: true } });
+  const o = await call("press", { key: "Enter", dialog: true, target: await tabOf() });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /file_upload \{path, raise:true, target\} with no control/);
+  assert.equal(world.state.panel.open, true);
+  assert.equal(world.state.axActions.length, 0);
+});
+
+test("file_upload {raise:true} with no control chooses the file in the chooser already open, clicking nothing", async () => {
+  const { world, path } = await setup({ panel: { open: true } });
+  const o = await call("file_upload", { raise: true, path, target: { tabIndex: 1 } });
+  assert.equal(o.ok, true, JSON.stringify(o));
+  assert.equal(o.chooser, true);
+  assert.equal(o.shown, true);
+  assert.equal(world.state.panel.chosen, path);
+  assert.equal(mice(world).length, 0);
+});
+
+test("file_upload {raise:true} with no control and no chooser open, or the browser not in front, leaves things as they are", async () => {
+  const none = await setup();
+  const o = await call("file_upload", { raise: true, path: none.path, target: { tabIndex: 1 } });
+  assert.equal(o.ok, false);
+  assert.match(o.error, /needs the control that opens the chooser/);
+  assert.equal(mice(none.world).length, 0);
+  const behind = await setup({ panel: { open: true } });
+  behind.world.cg.unshift({ owner: "Terminal", pid: 1, wid: 1, x: 0, y: 0, w: 900, h: 900 });
+  const b = await call("file_upload", { raise: true, path: behind.path, target: { tabIndex: 1 } });
+  assert.equal(b.ok, false);
+  assert.match(b.error, /not in front/);
+  assert.match(b.error, /activate_tab/);
+  assert.equal(keys(behind.world).length, 0);
+  assert.equal(behind.world.state.panel.open, true, "an already-open chooser is not cancelled");
+});
+
+test("raise:true with a chooser already open names the ways to fill or cancel it", async () => {
+  const { path } = await setup({ panel: { open: true } });
+  const { o } = await upload({ path });
+  assert.match(o.error, /already open/);
+  assert.match(o.error, /raise:true\} with no control/);
+  assert.match(o.error, /Escape/);
+});
