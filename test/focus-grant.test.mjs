@@ -102,3 +102,23 @@ test("a deny, no answer, or a client that can't be asked leaves needs_focus", as
   focus.askMs = 60000;
   assert.equal(activates(), 0);
 });
+
+// The grant protects a user at the Mac; with no one there (no HID input for 5
+// minutes, or the screen locked) a raise interrupts no one.
+test("A3 while the user is away, a call that moves focus runs without the grant, and asks again once they're back", async () => {
+  {
+    world.state.idleSecs = 301;
+    let r = await handleCall("activate_tab", { target: { tabId: "chrome:b" } });
+    assert.doesNotMatch(r.content[0].text, /needs_focus/, r.content[0].text);
+    assert.equal(activates(), 1);
+    world.state.idleSecs = 0;
+    world.state.locked = true;
+    r = await handleCall("activate_tab", { target: { tabId: "chrome:a" } });
+    assert.doesNotMatch(r.content[0].text, /needs_focus/, r.content[0].text);
+    assert.equal(focus.granted, false, "being away grants nothing");
+    world.state.locked = false;
+    world.state.idleSecs = 299;
+    r = await handleCall("activate_tab", { target: { tabId: "chrome:b" } });
+    assert.match(r.content[0].text, /^error: needs_focus: /);
+  }
+});

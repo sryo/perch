@@ -3275,6 +3275,7 @@ function jxaRuntime(BROWSERS, HANG) {
     takeNote() { const n = note; note = null; return n; },
     lateArm(t) { late = t; lateHeld = null; },
     loftArm(x) { loftOwn = x; },
+    userAway() { return userAway(); },
     dialogs(a) {
       const found = provenDialogs(a.target).map(function (d) { return { kind: d.kind, message: d.message }; });
       const s = found.length ? null : leavePrompt(a.target);
@@ -11990,7 +11991,7 @@ async function handleCallCore(name, args = {}, signal) {
     args = normPatterns(args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
-    if (movesFocus(name, args) && !focus.granted && !(focus.granted = await askFocus(name, args, signal))) throw needsFocus(name, args);
+    if (movesFocus(name, args) && !focus.granted && !(await userAway()) && !(focus.granted = await askFocus(name, args, signal))) throw needsFocus(name, args);
     if (name === "close_tab" && args.tabId == null && args.target?.tabId != null) args = { ...args, tabId: args.target.tabId };
     // A label handle runs on its claimed tab's targetId handle, and results name it as the caller did.
     const shown = name === "close_tab" ? args.tabId : args.target?.tabId;
@@ -12049,6 +12050,12 @@ let mcpServer = null;
 // How long the user has to answer (focus.askMs), after which the answer is no; within
 // the call budget, when one caps a call (PERCH_CALL_MAX_MS).
 const FOCUS_ALLOW = "Allow for this session";
+// The grant protects a user at the Mac: with no one there (no HID input for 5
+// minutes, or the screen locked) a raise interrupts no one, so it needs no ask.
+// Being away grants nothing; the next call checks again.
+async function userAway() {
+  try { return (await rt("userAway", {})) === true; } catch { return false; }
+}
 async function askFocus(name, args, signal) {
   const s = mcpServer, caps = s && s.getClientCapabilities();
   if (!caps || !caps.elicitation) return false;
