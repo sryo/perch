@@ -5,9 +5,9 @@
 // its last tab. Tool errors that need the user's window name the loft.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, roomHint, INSTRUCTIONS } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, rooms, roomHint, INSTRUCTIONS } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { tempDir } from "../scripts/temp-dirs.mjs";
 
@@ -42,6 +42,8 @@ const activations = () => Object.keys(world.counts).filter((k) => /^activate\(/.
 beforeEach((t) => {
   home = tempDir("perch-loft-", t);
   process.env.LOFT_HOME = home;
+  // No rooms here: the user's own registry would add room hints to errors.
+  rooms.home = join(home, "rooms");
   focus.granted = true;
   loft.wins.clear();
 });
@@ -265,4 +267,61 @@ test("R4 errors that need the user's window name the loft beside rooms, live or 
   const n = await call("new_tab", { url: "https://a.test/" });
   assert.match(n.t, /^error: needs_focus: .*new_tab \{url, loft:true\}/);
   assert.match(INSTRUCTIONS, /tab_not_visible \([^)]*loft:true/);
+});
+
+// Named lofts (loft up WxH --id <name>): loft:"<name>" reads $LOFT_HOME/lofts/<name>.json
+// and sizes the window to that loft.
+const WIDE = { x: -1280, y: 0, w: 1280, h: 800 };
+const WIDE_DISPLAY = { id: 79, ...WIDE, vendor: 0x6c66, product: 0x7466 };
+function named(id, h = {}) {
+  mkdirSync(join(home, "lofts"), { recursive: true });
+  writeFileSync(join(home, "lofts", `${id}.json`), JSON.stringify({ pid: process.pid, cmd: "holder.js", displayId: 79, ...WIDE, serial: 2, started: "2026-11-10T10:00:00Z", ...h }));
+}
+
+test("M1 loft:\"<id>\" opens a window the size of that loft", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY, WIDE_DISPLAY] });
+  holder();
+  named("wide");
+  const { r, o } = await call("new_tab", { url: "https://job.test/", loft: "wide" });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.deepEqual(made().map(([, , , p]) => p), [{ bounds: { x: -1280, y: 0, width: 1280, height: 800 } }]);
+  assert.deepEqual(o, { app: "Google Chrome", tabId: "chrome:w901" });
+});
+
+test("M1 a named loft that is down says how to make it, before any Apple Event", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY] });
+  holder();
+  focus.granted = false;
+  const { t } = await call("new_tab", { url: "https://a.test/", loft: "wide" });
+  assert.equal(t, "error: no_browser: loft wide is down; make it with loft up WIDTHxHEIGHT --id wide (github.com/sryo/loft), then retry");
+  assert.deepEqual(world.aeLog, []);
+});
+
+test("M1 a bad loft id is bad_args", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] });
+  for (const loftArg of ["../x", "A", "", 3]) {
+    const { t } = await call("new_tab", { url: "https://a.test/", loft: loftArg });
+    assert.match(t, /^error: bad_args: new_tab loft takes true or a loft id/, JSON.stringify(loftArg));
+  }
+  const { t } = await call("new_tab", { url: "https://a.test/", loft: "default" });
+  assert.equal(t, DOWN, "\"default\" is the default loft");
+  assert.deepEqual(world.aeLog, []);
+});
+
+test("M2 untargeted calls skip perch's windows on every loft", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome", wid: 1 }] }, { displays: [LOFT_DISPLAY, WIDE_DISPLAY] });
+  holder();
+  named("wide");
+  const a = await call("new_tab", { url: "https://one.test/", loft: true });
+  const b = await call("new_tab", { url: "https://two.test/", loft: "wide" });
+  assert.equal(b.r.isError, undefined, b.t);
+  world.cg.unshift({ owner: "Google Chrome", wid: 8, ...RECT }, { owner: "Google Chrome", wid: 9, ...WIDE });
+  const e = await call("eval_js", { script: "return location.href" });
+  assert.equal(e.t, "https://u.test/");
+  for (const o of [a.o, b.o]) assert.equal((await call("close_tab", { tabId: o.tabId })).o.window, true);
+  assert.equal(loft.wins.size, 0);
+});
+
+test("M3 the tool schema and instructions say when an agent makes a loft", () => {
+  assert.match(INSTRUCTIONS, /set size[^\n]*loft up WxH --new --json[^\n]*loft:"<id>"[^\n]*loft down <id>/);
 });

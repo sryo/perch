@@ -109,7 +109,7 @@ Another tool may run its own copy of the user's browser (headless, own profile).
 
 ### Loft
 
-`new_tab {loft:true}` makes a window on loft's hidden display (visible, painting, never covered), bounds in the make where the browser takes them. Node reads `$LOFT_HOME/holder.json` and its pid, the runtime the display (vendor `0x6c66`, product `0x7466`); `loft` is never run. **perch makes and closes only its own loft windows:** `rt` arms the ids it made (`loftArm`) so no untargeted call picks one, and `close_tab` on one's last tab closes it. Errors needing the user's window offer it beside rooms. Pinned by `test/loft.test.mjs`.
+`new_tab {loft:true}` makes a window on loft's hidden display (visible, painting, never covered), bounds in the make where the browser takes them. Node reads `$LOFT_HOME/holder.json` and its pid, the runtime the display (vendor `0x6c66`, product `0x7466`); `loft` is never run. **perch makes and closes only its own loft windows:** `rt` arms the ids it made (`loftArm`) so no untargeted call picks one, and `close_tab` on one's last tab closes it. `loft` is `true` (the default loft) or the id of one an agent made with `loft up WxH --id <id>`/`--new` (`$LOFT_HOME/lofts/<id>.json`); the window takes that loft's size, and `rects` lists every loft perch's windows sit on. Agents make and remove their own lofts (server instructions); perch still never runs `loft`. Errors needing the user's window offer it beside rooms. Pinned by `test/loft.test.mjs`.
 
 ## Rules the code can't show
 
