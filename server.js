@@ -3693,8 +3693,17 @@ function jxaRuntime(BROWSERS, HANG) {
         // first when it isn't running.
         const why = kind === "arc" ? name + " can't place a window on the loft"
           : a.loft.noFocus && kind !== "safari" ? name + " would have come to the front, and the user hasn't allowed focus" : null;
-        if (!why) return loftWindow(a, name, kind, ap, P);
+        // A hidden app's windows don't paint, the loft's included.
+        const hidden = function (n) {
+          try { appKit(); const l = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(BUNDLE[n]); for (let i = 0; i < Number(l.count); i++) if (l.objectAtIndex(i).isHidden) return true; } catch (e) {}
+          return false;
+        };
+        if (!why) {
+          if (kind === "safari" && hidden(name)) throw new Error("no_browser: Safari is hidden (Cmd-H), so its window on the loft wouldn't paint");
+          return loftWindow(a, name, kind, ap, P);
+        }
         if (!alive("Safari", P)) throw new Error("no_browser: needs Safari started: " + why);
+        if (hidden("Safari")) throw new Error("no_browser: " + why + ", and Safari, which wouldn't, is hidden (Cmd-H), so its window wouldn't paint");
         const out = loftWindow(a, "Safari", "safari", app("Safari"), P);
         out.note = "opened in Safari: " + why + "; Safari has its own sign-ins, so a page that needs the user's may ask to sign in";
         return out;

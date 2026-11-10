@@ -447,3 +447,18 @@ test("F3 after starting Safari itself, perch closes only the start-page windows 
   assert.deepEqual(launchLeftovers(wins), [1, 2, 3, 6]);
   assert.deepEqual(launchLeftovers([]), []);
 });
+
+// A hidden app's windows don't paint, the loft's included, so a hidden Safari is no
+// path: the call says so and names the next one (a room), and makes nothing.
+test("F4 a hidden Safari is no path for a loft window: no_browser, nothing made, the room named next", async () => {
+  focus.granted = false;
+  install({ browsers: [chrome([userWin()]), safari([userWin("s")])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }, { owner: "Safari" }] });
+  world.state.pids = { "com.apple.Safari": [4242] };
+  world.state.hidden = [4242];
+  holder();
+  let { t } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.match(t, /^error: no_browser: Google Chrome would have come to the front, and the user hasn't allowed focus, and Safari, which wouldn't, is hidden \(Cmd-H\), so its window wouldn't paint/);
+  ({ t } = await call("new_tab", { app: "Safari", url: "https://job.test/", loft: true }));
+  assert.match(t, /^error: no_browser: Safari is hidden \(Cmd-H\), so its window on the loft wouldn't paint/);
+  assert.deepEqual(made(), []);
+});
