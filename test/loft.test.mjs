@@ -117,14 +117,24 @@ test("R1 Safari: a document window moved onto the loft, and no focus grant neede
   assert.deepEqual(activations(), []);
 });
 
-test("R1 Safari takes bounds in the window make where it allows one", async () => {
-  install({ browsers: [safari([userWin()], { windowMake: true })], cg: [{ owner: "Terminal" }, { owner: "Safari" }] });
+test("R1 Safari: never its window make, which leaves a window with no tab; one document window, sized to the loft", async () => {
+  install({ browsers: [safari([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Safari" }] });
   holder();
   const { r, o } = await call("new_tab", { app: "Safari", url: "https://job.test/", loft: true });
   assert.equal(r.isError, undefined, JSON.stringify(o));
-  assert.deepEqual(made().map(([, , via]) => via), ["window"]);
-  assert.equal(world.counts["win.bounds="], undefined);
-  assert.equal(world.tabsOf("Safari", 0)[0].page.url, "https://job.test/");
+  assert.deepEqual(made().map(([, , via]) => via), ["document"]);
+  assert.equal(world.winCount("Safari"), 2);
+  const w = world.winSpec("Safari", 0);
+  assert.deepEqual([w.x, w.y, w.w, w.h, w.tabs.length], [4000, 0, 1440, 900, 1]);
+});
+
+test("R1 a window whose center is on the loft but hangs onto the user's display is moved fully onto it", async () => {
+  install({ browsers: [safari([userWin()], { docAt: { x: 3800, y: 38, width: 574, height: 1074 } })], cg: [{ owner: "Terminal" }, { owner: "Safari" }] });
+  holder();
+  const { r, o } = await call("new_tab", { app: "Safari", url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  const w = world.winSpec("Safari", 0);
+  assert.deepEqual([w.x, w.y, w.w, w.h], [4000, 0, 1440, 900]);
 });
 
 test("R1 outside Safari, loft:true is gated like new_tab: needs_focus without a grant, nothing made", async () => {

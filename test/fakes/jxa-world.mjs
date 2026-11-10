@@ -372,15 +372,24 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       Window: (props = {}) => ({ make: () => makeWin("window", props) }),
       Document: (props = {}) => ({ make: () => makeWin("document", props) }),
     };
-    // `make new window` (Chromium; Safari only with b.windowMake) or Safari's `make
-    // new document`, in front of the app's other windows. A window made with
-    // `bounds` sits there unless b.makeBounds is false; otherwise at 0,0, 800x600.
-    // Its tab is the browser's new-tab page, a document's its url. Logged as
-    // ["makeWindow", app, via, props]; b.raiseOnMake brings the app's windows forward.
+    // `make new window` (Chromium) or Safari's `make new document`, in front of the
+    // app's other windows. A window made with `bounds` sits there unless
+    // b.makeBounds is false; a document at b.docAt, else 0,0, 800x600. Its tab is
+    // the browser's new-tab page, a document's its url. Live (Safari 26): `make new
+    // window` throws an Apple Event error yet leaves a window at the bounds with no
+    // tab, which nothing pushed into ever shows. Logged as ["makeWindow", app, via,
+    // props]; b.raiseOnMake brings the app's windows forward.
     function makeWin(via, props) {
       bump(`make ${via}`, b.name);
-      if (via === "window" ? b.kind === "safari" && !b.windowMake : b.kind !== "safari") throw new Error("Can't make class " + via + ".");
-      const id = 900 + (state.made = (state.made || 0) + 1), r = via === "window" && props.bounds && b.makeBounds !== false ? props.bounds : { x: 0, y: 0, width: 800, height: 600 };
+      if (via === "document" && b.kind !== "safari") throw new Error("Can't make class " + via + ".");
+      const id = 900 + (state.made = (state.made || 0) + 1);
+      if (via === "window" && b.kind === "safari") {
+        const g = props.bounds || { x: 0, y: 0, width: 800, height: 600 };
+        wins.unshift(makeWindow({ id, active: 0, tabs: [], x: g.x, y: g.y, w: g.width, h: g.height }, b));
+        log.push(["makeWindow", b.name, via, JSON.parse(JSON.stringify(props))]);
+        throw new Error("Error en el administrador de eventos Apple.");
+      }
+      const r = via === "window" && props.bounds && b.makeBounds !== false ? props.bounds : via === "document" && b.docAt ? b.docAt : { x: 0, y: 0, width: 800, height: 600 };
       const url = via === "document" ? props.url || "about:blank" : b.kind === "chrome" ? "chrome://newtab/" : "about:blank";
       const spec = { id, active: 0, tabs: [{ url, id: "w" + id }], x: r.x, y: r.y, w: r.width, h: r.height };
       wins.unshift(makeWindow(spec, b));
@@ -1135,6 +1144,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     // Reorder a window's tabs in place: tabs[w] is the live list the runtime reads.
     tabsOf: (name, w) => winsByApp[name][w].tabs,
     winSpec: (name, w) => winsByApp[name][w].spec,
+    winCount: (name) => winsByApp[name].length,
     // The browser opens a tab by itself (a link's target, a popup), costing no
     // Apple Event; `select` shows it, as some browsers do.
     openTab: (name, w, url, { select = false } = {}) => {
