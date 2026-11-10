@@ -178,6 +178,61 @@ test("F1 a named browser falls back too, Arc included; with the grant, the named
   assert.equal(o.note, undefined);
 });
 
+test("A1 without the grant, while the user is away, the loft window opens in their Chromium browser and the app they left gets the front back", async () => {
+  focus.granted = false;
+  install({ browsers: [chrome([userWin()], { raiseOnMake: true }), safari([userWin("s")])], cg: [{ owner: "Terminal", pid: 200 }, { owner: "Google Chrome", pid: 300 }, { owner: "Safari", pid: 400 }] });
+  world.state.idleSecs = 301;
+  holder();
+  const { r, o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.equal(o.app, "Google Chrome");
+  assert.equal(o.note, undefined);
+  assert.equal(o.warning, undefined, "a raise nobody saw, undone, is not reported");
+  assert.deepEqual(made().map(([, app, via]) => [app, via]), [["Google Chrome", "window"]]);
+  assert.deepEqual(activations(), []);
+  assert.deepEqual(world.log.filter(([k]) => k === "activatePid"), [["activatePid", 200]]);
+});
+
+test("A1 a locked screen counts as away; nothing raised means nothing is given back", async () => {
+  focus.granted = false;
+  install({ browsers: [chrome([userWin()]), safari([userWin("s")])], cg: [{ owner: "Terminal", pid: 200 }, { owner: "Google Chrome", pid: 300 }] });
+  world.state.locked = true;
+  holder();
+  const { o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(o.app, "Google Chrome", JSON.stringify(o));
+  assert.deepEqual(world.log.filter(([k]) => k === "activatePid"), []);
+});
+
+test("A1 the new loft window topping the window list is no raise: nothing is given back or warned", async () => {
+  focus.granted = false;
+  install({ browsers: [chrome([userWin()], { newOnTop: true }), safari([userWin("s")])], cg: [{ owner: "Terminal", pid: 200 }, { owner: "Google Chrome", pid: 300 }] });
+  world.state.idleSecs = 600;
+  holder();
+  const { o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(o.app, "Google Chrome", JSON.stringify(o));
+  assert.equal(o.warning, undefined);
+  assert.deepEqual(world.log.filter(([k]) => k === "activatePid"), []);
+});
+
+test("A2 a user idle under five minutes is present: Safari, as without the grant", async () => {
+  focus.granted = false;
+  install({ browsers: [chrome([userWin()]), safari([userWin("s")])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }, { owner: "Safari" }] });
+  world.state.idleSecs = 299;
+  holder();
+  const { o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(o.app, "Safari", JSON.stringify(o));
+  assert.match(o.note, /^opened in Safari: Google Chrome would have come to the front, and the user hasn.t allowed focus/);
+});
+
+test("A2 Arc goes to Safari even while the user is away: it can't place a window", async () => {
+  focus.granted = false;
+  install({ browsers: [arc([userWin()]), safari([userWin("s")])], cg: [{ owner: "Terminal" }, { owner: "Arc" }, { owner: "Safari" }] });
+  world.state.idleSecs = 900;
+  holder();
+  const { o } = await call("new_tab", { app: "Arc", url: "https://job.test/", loft: true });
+  assert.equal(o.app, "Safari");
+});
+
 test("F2 Safari not running is started in the background first; a launch that fails says so", async () => {
   focus.granted = false;
   const saf = safari([], { running: false });

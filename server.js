@@ -3182,7 +3182,8 @@ function jxaRuntime(BROWSERS, HANG) {
   // that won't sit there is closed again. Nothing is activated; a browser that
   // was in front gets the user's own window back in front of the new one.
   // Chromium brings itself forward making it (as for a tab), which is why
-  // new_tab {loft} outside Safari runs only under the user's focus grant.
+  // new_tab {loft} outside Safari runs only under the user's focus grant or
+  // while the user is away (userAway).
   const LOFT_GONE = "no_browser: the loft is down (its display is gone); run loft up (github.com/sryo/loft), then retry";
   function loftRect(L) {
     let b = null, v = 0, m = 0;
@@ -3190,7 +3191,15 @@ function jxaRuntime(BROWSERS, HANG) {
     if (!b || !(b.size.width > 0 && b.size.height > 0) || v !== 0x6c66 || m !== 0x7466) throw new Error(LOFT_GONE);
     return { x: b.origin.x, y: b.origin.y, w: b.size.width, h: b.size.height };
   }
-  function loftWindow(a, name, kind, ap, P) {
+  // The user is away: no HID input for AWAY_SECS, or the screen is locked. A raise
+  // then interrupts no one, so a loft window may use the browser that raises.
+  // perch's own posted input may count as input, which only errs toward present.
+  const AWAY_SECS = 300;
+  function userAway() {
+    if (sessionLocked()) return true;
+    try { ObjC.import("CoreGraphics"); return Number($.CGEventSourceSecondsSinceLastEventType(1, 4294967295)) >= AWAY_SECS; } catch (e) { return false; }
+  }
+  function loftWindow(a, name, kind, ap, P, away) {
     if (kind === "arc") throw new Error("no_browser: " + name + " can't place a window, so it can't open one on the loft; use another browser");
     const R = loftRect(a.loft), B = { x: R.x, y: R.y, width: R.w, height: R.h };
     const own = ownedIds(name) || [];
@@ -3238,7 +3247,22 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     const out = { app: name, tabId, loftWin: { id: wid, rect: R } };
     if (P.front === name && userFront != null) { try { ap.windows.byId(userFront).index = 1; } catch (e) {} }
-    else if (P.front !== name && procs().front === name) out.warning = "creating the window brought the browser to the front";
+    else if (P.front !== name) {
+      // Chromium raises itself a moment after the make. With the user away, the
+      // app they left gets the front back before they return. The new window
+      // itself tops the window list without a raise, so it counts as perch's.
+      const own0 = loftOwn, wins = Object.assign({}, own0 && own0.wins);
+      wins[name] = (wins[name] || []).concat([wid]);
+      const armed = { wins: wins, rects: ((own0 && own0.rects) || []).concat([R]) };
+      const frontNow = function () { loftOwn = armed; try { return procs().front; } finally { loftOwn = own0; } };
+      let raised = frontNow() === name;
+      for (let i = 0; away && !raised && i < 3; i++) { delay(0.1); raised = frontNow() === name; }
+      if (raised && away && P.frontPid != null) {
+        try { appKit(); $.NSRunningApplication.runningApplicationWithProcessIdentifier(P.frontPid).activateWithOptions(0); } catch (e) {}
+        for (let i = 0; raised && i < 5; i++) { raised = frontNow() === name; if (raised) delay(0.1); }
+      }
+      if (raised) out.warning = "creating the window brought the browser to the front";
+    }
     return out;
   }
 
@@ -3691,8 +3715,11 @@ function jxaRuntime(BROWSERS, HANG) {
         // (Arc), or that would come to the front making it (Chromium, no grant),
         // hands it to Safari, which makes one in the background. Node starts Safari
         // first when it isn't running.
+        // With the user away, nobody sees Chromium come to the front, so it keeps
+        // the job and the user's sign-ins.
+        const away = a.loft.noFocus && kind !== "safari" && kind !== "arc" && userAway();
         const why = kind === "arc" ? name + " can't place a window on the loft"
-          : a.loft.noFocus && kind !== "safari" ? name + " would have come to the front, and the user hasn't allowed focus" : null;
+          : a.loft.noFocus && kind !== "safari" && !away ? name + " would have come to the front, and the user hasn't allowed focus" : null;
         // A hidden app's windows don't paint, the loft's included.
         const hidden = function (n) {
           try { appKit(); const l = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(BUNDLE[n]); for (let i = 0; i < Number(l.count); i++) if (l.objectAtIndex(i).isHidden) return true; } catch (e) {}
@@ -3700,7 +3727,7 @@ function jxaRuntime(BROWSERS, HANG) {
         };
         if (!why) {
           if (kind === "safari" && hidden(name)) throw new Error("no_browser: Safari is hidden (Cmd-H), so its window on the loft wouldn't paint");
-          return loftWindow(a, name, kind, ap, P);
+          return loftWindow(a, name, kind, ap, P, away);
         }
         if (!alive("Safari", P)) throw new Error("no_browser: needs Safari started: " + why);
         if (hidden("Safari")) throw new Error("no_browser: " + why + ", and Safari, which wouldn't, is hidden (Cmd-H), so its window wouldn't paint");

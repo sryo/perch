@@ -395,6 +395,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       wins.unshift(makeWindow(spec, b));
       log.push(["makeWindow", b.name, via, JSON.parse(JSON.stringify(props))]);
       if (b.raiseOnMake) raiseApp(b.name);
+      // b.newOnTop: the new window tops the window list (live, Canary, on a loft)
+      // while the app stays behind.
+      if (b.newOnTop) cgEntries.unshift({ owner: b.name, pid: (cgEntries.find((e) => e.owner === b.name) || {}).pid, wid: id, x: r.x, y: r.y, w: r.width, h: r.height });
       return specifier(() => { const x = wins.find((y) => y.spec === spec); return x && x.win; });
     }
     a.windows = new Proxy([], {
@@ -711,9 +714,16 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         // state.pids[bundle]: the pids of that bundle's regular instances, for a read of their elements.
         return { count: list ? list.length : n, objectAtIndex: (i) => ({ processIdentifier: list ? list[i] : 0, activationPolicy: 0, isHidden: !!(state.hidden || []).includes(list && list[i]) }) };
       },
+      // activateWithOptions brings the cg entries of that pid forward and is
+      // logged as ["activatePid", pid].
       runningApplicationWithProcessIdentifier: (pid) => {
         const x = (state.twins || []).find((y) => y.pid === pid);
-        return { isNil: () => false, activationPolicy: x ? x.policy ?? 2 : 0 };
+        return { isNil: () => false, activationPolicy: x ? x.policy ?? 2 : 0, activateWithOptions: () => {
+          log.push(["activatePid", pid]);
+          const i = cgEntries.findIndex((e) => (e.pid ?? 100) === pid);
+          if (i > 0) cgEntries.unshift(cgEntries.splice(i, 1)[0]);
+          return true;
+        } };
       },
     },
     // state.screenScale: every screen's backing scale (default state.shotScale, or 2).
@@ -868,6 +878,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // Recorded in state.shots as {sky: wid, options}; state.skyShotEmpty: no image.
       // state.displayAsleep: the main display is asleep (a locked, idle Mac).
       // state.locked: the login session's screen is locked (IOConsoleUsers gains CGSSessionScreenIsLocked).
+      // state.idleSecs: seconds since the user's last HID input (default 0, present).
+      CGEventSourceSecondsSinceLastEventType: () => state.idleSecs ?? 0,
       IORegistryGetRootEntry: () => 16395,
       IORegistryEntryCreateCFProperty: () => { state.screenReads = (state.screenReads || 0) + 1; return [{ kCGSSessionOnConsoleKey: true, ...(state.locked ? { CGSSessionScreenIsLocked: true } : {}) }]; },
       CGMainDisplayID: () => 1,
