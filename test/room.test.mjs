@@ -710,3 +710,23 @@ test("a dead server's label is taken over with its tab, and close_tab {target} e
   assert.equal(readdirSync(claimDir(R)).length, 0);
   assert.match(await text(other, "eval_js", { script: "return 1", target: { tabId: o.tabId } }), /stale_tab: .*x/);
 });
+
+// Another server's new_tab can land between this server's page listing and its
+// reap: the tab is missing from the listing, but its claim is newer than it.
+test("a tab another server made after this server listed the room keeps its claim and lease", async () => {
+  const { R, other, leases } = await twoServers({}, "reap-race");
+  await call("list_tabs", { app: "room" });
+  const room = R.room("work"), reply = room.reply.bind(room);
+  let held = null;
+  room.reply = (ws, msg) => {
+    if (!held && msg.result && msg.result.targetInfos) { held = () => reply(ws, msg); return; }
+    reply(ws, msg);
+  };
+  const listing = handleCall("list_tabs", { app: "room" });
+  while (!held) await new Promise((r) => setTimeout(r, 1));
+  const theirs = JSON.parse(await text(other, "new_tab", { app: "room:work", label: "x" }));
+  held();
+  await listing;
+  assert.deepEqual([readdirSync(claimDir(R)).length, leases().length], [1, 1], "reaped a live server's claim or lease");
+  assert.equal(await text(other, "eval_js", { script: "return 2", target: { tabId: theirs.tabId } }), "2");
+});

@@ -4984,14 +4984,16 @@ function roomLabeled(handle) {
   return { tabId: c.tabId, label: m[2] };
 }
 // Clears what dead servers left, and claims and leases of tabs the room no longer has.
-async function roomReap(name, pages) {
+// `at`: when `pages` was asked for. A claim or lease touched since is of a tab another
+// server made after the listing, not of one that left.
+async function roomReap(name, pages, at) {
   const ids = new Set(pages.map((p) => `room:${name}:${p.targetId}`));
-  const gone = (tabId) => typeof tabId === "string" && tabId.startsWith(`room:${name}:`) && !ids.has(tabId);
-  const stale = (c) => !!c && (!roomClaimLive(c) || gone(c.tabId));
+  const gone = (x) => typeof x.tabId === "string" && x.tabId.startsWith(`room:${name}:`) && !ids.has(x.tabId) && !(x.last >= at);
+  const stale = (c) => !!c && (!roomClaimLive(c) || gone(c));
   for (const c of roomClaims()) {
     if (stale(c)) await roomLeaseChange(c.tabId, () => { if (stale(readJson(roomClaimFile(c.tabId)))) roomClaimSet(c.tabId, null); return undefined; });
   }
-  const dead = (s) => !!s && (!roomLeaseLive(s) || gone(s.tabId));
+  const dead = (s) => !!s && (!roomLeaseLive(s) || gone(s));
   for (const f of jsonFiles(join(rooms.home, "run", "leases"))) {
     let s = null;
     try { s = readJson(f); } catch {}
@@ -5371,8 +5373,8 @@ async function roomListTabs(only, quiet) {
   const names = only ? [only] : Object.keys(reg);
   const lists = await Promise.all(names.map(async (n) => {
     try {
-      const pages = await roomPages(await roomConn(n));
-      await roomReap(n, pages);
+      const conn = await roomConn(n), at = Date.now(), pages = await roomPages(conn);
+      await roomReap(n, pages, at);
       return { rows: pages.map((p) => roomRow(n, p)) };
     }
     catch (e) { return { rows: [], failed: `room:${n} not listed: ${e.message}` }; }
@@ -5492,7 +5494,7 @@ const ROOM_FNS = {
     const label = a.label ?? null;
     if (label != null && !ROOM_LABEL.test(String(label))) throw new Error("bad_args: new_tab label is lowercase letters, digits and dashes, starting with a letter (31 at most)");
     const run = async () => {
-    const conn = await roomConn(name);
+    const conn = await roomConn(name), at = Date.now();
     const pages = await roomPages(conn);
     const out = (tabId, reused) => ({ app: `room:${name}`, tabId: label ? `room:${name}:${label}` : tabId, ...(reused ? { reused } : {}) });
     const claim = (tabId) => roomClaimSet(tabId, roomClaimNew(name, tabId, label));
@@ -5507,7 +5509,7 @@ const ROOM_FNS = {
       });
       return out(had.tabId, true);
     }
-    await roomReap(name, pages);
+    await roomReap(name, pages, at);
     // A blank tab nobody has driven (the room starts with one) is handed out
     // before a new one is made; writing its lease and claim first keeps two callers off it.
     if (a.url === "about:blank") {
