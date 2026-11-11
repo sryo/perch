@@ -66,14 +66,15 @@ const REFUSED = [
 // existed: an accepted url behaves exactly as it did. new_tab's were re-recorded
 // when it began reading windows' minimized state in place of their count, and
 // Chrome's again when the fake world began raising Chromium on tab creation, as live.
+// Chrome navigate's when it stopped reading the window id (text and log unchanged).
 const BEFORE = Object.fromEntries(Object.entries({
   "new_tab chrome": { "https://n.test/": "07caf878f14b", "HTTP://N.TEST/": "ab47014fc17a", "about:blank": "0f9e2d9471ab", "ABOUT:BLANK": "369770c64a95", "(none)": "0f9e2d9471ab" },
   "new_tab arc": { "https://n.test/": "32d7b5a7557a", "HTTP://N.TEST/": "21e8434d720f", "about:blank": "0354ec4e21ed", "ABOUT:BLANK": "042df259d90f", "(none)": "0354ec4e21ed" },
   "new_tab safari": { "https://n.test/": "a442fa9988eb", "HTTP://N.TEST/": "bbe3fbdb9b33", "about:blank": "ca0c6f0313ea", "ABOUT:BLANK": "b41edd7cb195", "(none)": "ca0c6f0313ea" },
-  "navigate chrome front tab": { "https://n.test/": "d98ccce11e87", "HTTP://N.TEST/": "ea58d27e419a", "about:blank": "4cc30578d12a", "ABOUT:BLANK": "c76d86c8c4e5" },
-  "navigate chrome background tab": { "https://n.test/": "f72180f51ef8", "HTTP://N.TEST/": "4ca6f831dc8a", "about:blank": "434b3bda941f", "ABOUT:BLANK": "5d5727e7c0e1" },
+  "navigate chrome front tab": { "https://n.test/": "268647c43fd3", "HTTP://N.TEST/": "0582fb11c98d", "about:blank": "49712b9a5d83", "ABOUT:BLANK": "94af204666f0" },
+  "navigate chrome background tab": { "https://n.test/": "194cc189cf4e", "HTTP://N.TEST/": "296e634eb520", "about:blank": "e476326487d7", "ABOUT:BLANK": "0fa5b071bf14" },
   "navigate safari": { "https://n.test/": "6560667c3c98", "HTTP://N.TEST/": "6cbc69b72435", "about:blank": "feb480f7f3cc", "ABOUT:BLANK": "0afa9e7f5461" },
-  "navigate raise:true": { "https://n.test/": "d98ccce11e87", "HTTP://N.TEST/": "ea58d27e419a", "about:blank": "4cc30578d12a", "ABOUT:BLANK": "c76d86c8c4e5" },
+  "navigate raise:true": { "https://n.test/": "268647c43fd3", "HTTP://N.TEST/": "0582fb11c98d", "about:blank": "49712b9a5d83", "ABOUT:BLANK": "94af204666f0" },
 }).flatMap(([c, o]) => Object.entries(o).map(([u, h]) => [`${c}|${u}`, h])));
 
 // The same calls with a file: url before the policy existed. navigate from a
@@ -82,10 +83,10 @@ const FILE_BEFORE = {
   "new_tab chrome": ["0c42ae4c69d7", "7f96a6586d08"],
   "new_tab arc": ["ae396e9161d7", "1642cc6fc3a2"],
   "new_tab safari": ["e7f6cd34f578", "09bb5cbf4c97"],
-  "navigate chrome front tab": ["b097b76b04b6", "32002bab1052"],
-  "navigate chrome background tab": ["fa381ae0b04e", "20ac90683ce5"],
+  "navigate chrome front tab": ["36d9d9a81238", "7edc515fd553"],
+  "navigate chrome background tab": ["65deeea28c61", "b8ff80feb19f"],
   "navigate safari": ["32f5fc58fc63", "070d89d84f8e"],
-  "navigate raise:true": ["4b97862bd417", "1b4d0892b1df"],
+  "navigate raise:true": ["0f3ceda449f3", "dc424b4e63be"],
 };
 
 const ACCEPTED = ["https://n.test/", "HTTP://N.TEST/", "about:blank", "ABOUT:BLANK", " https://n.test/ "];

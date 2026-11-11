@@ -208,9 +208,9 @@ test("navigate's load check polls every 50ms", () => {
 });
 
 // Chrome reads the tab's loading and url before the stamp in one properties() event.
-test("navigate that loads is 6 events on Chrome and Arc's shown tab, 7 on Safari", async () => {
+test("navigate that loads is 5 events on Chrome, 6 on Arc's shown tab, 7 on Safari", async () => {
   for (const [spec, app, n] of [
-    [chrome([{ id: 1, active: 0, tabs: tabs(1) }]), "Google Chrome", 6],
+    [chrome([{ id: 1, active: 0, tabs: tabs(1) }]), "Google Chrome", 5],
     [arc([{ id: "A", active: 0, tabs: tabs(1, "a") }]), "Arc", 6],
     [safari([{ id: 3, active: 0, tabs: tabs(1, "s") }]), "Safari", 7],
   ]) {

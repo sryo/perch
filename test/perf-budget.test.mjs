@@ -618,9 +618,11 @@ test("click: same-tab links and buttons cost what they did; a _blank link adds t
   });
 });
 
-// A page-started load whose first check finds the new document complete: the
-// handle's two reads, loading and url before the stamp (one properties() event), the stamp, one loading
-// read at the gate, one check (each execute counts twice). The idle exit's
+// A page-started load whose first check finds the new document complete: a
+// listed handle reads nothing before the tab's loading and url (one properties()
+// event, which finds the tab or re-finds it), then the stamp, one loading read
+// at the gate and one check (each execute counts twice). The bounded executes
+// name the tab's window by position, so no window id is read. The idle exit's
 // extra check is only for an unproven commit.
 test("navigate on Chrome costs a fixed count of Apple Events for a load the first check finds complete", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(2, "c") }])], cg: [{ owner: "Google Chrome" }] });
@@ -629,7 +631,7 @@ test("navigate on Chrome costs a fixed count of Apple Events for a load the firs
   const { o } = await call("navigate", { url: "https://next.test/", target: { tabId: h } });
   assert.equal(o.ok, true);
   assert.equal(o.waited, true);
-  assert.equal(appleEvents(), 2 + 1 + 2 + 1 + 2, breakdown());
+  assert.equal(appleEvents(), 1 + 2 + 1 + 2, breakdown());
 });
 
 // A file: page loading another file: url takes the same page path, at the same cost.
@@ -640,7 +642,7 @@ test("navigate from a file: page to a file: url costs the same Apple Events as a
   const { o } = await call("navigate", { url: "file:///tmp/p/b.html", target: { tabId: h } });
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.waited, true);
-  assert.equal(appleEvents(), 2 + 1 + 2 + 1 + 2, breakdown());
+  assert.equal(appleEvents(), 1 + 2 + 1 + 2, breakdown());
 });
 
 // The re-read a task after a write: one bounded execute in the same runtime

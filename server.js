@@ -470,14 +470,8 @@ function jxaRuntime(BROWSERS, HANG) {
   // a Chromium browser on top, it goes to the front window's shown tab (`front`).
   // Anything else resolves and is guarded as usual.
   function pageTarget(want, tool, once) {
-    const hn = want && want.windowId == null && want.tabId != null && hints[want.tabId];
-    if (hn) {
-      const name = parseHandle(want.tabId).app, P = procs();
-      if (alive(name, P)) {
-        const win = app(name).windows[hn.w];
-        return { tab: win.tabs.byId(hn.id), idx: null, tabId: hn.id, kind: "chrome", app: name, win, w: hn.w, P, lazy: want };
-      }
-    }
+    const h = hintedTab(want);
+    if (h) return h;
     want = want || {};
     if (once && want.tabId == null && want.windowId == null && want.tabIndex == null && want.app == null) {
       const P = procs(), top = P.z[0];
@@ -489,6 +483,16 @@ function jxaRuntime(BROWSERS, HANG) {
     const t = resolve(want);
     visibleGuard(t, tool);
     return t;
+  }
+  // A hinted Chromium handle's tab, read nothing yet: the first read or execute
+  // through onTab finds it, or re-finds it once the hint misses.
+  function hintedTab(want) {
+    const hn = want && want.windowId == null && want.tabId != null && hints[want.tabId];
+    if (!hn) return null;
+    const name = parseHandle(want.tabId).app, P = procs();
+    if (!alive(name, P)) return null;
+    const win = app(name).windows[hn.w];
+    return { tab: win.tabs.byId(hn.id), idx: null, tabId: hn.id, kind: "chrome", app: name, win, w: hn.w, P, lazy: want };
   }
   // Pins a front target to the tab its window shows now, by id. One closed or
   // left since the first page JS is another tab by then, where the call's own
@@ -833,10 +837,24 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     return t.solo;
   }
+  // The window goes by the position the call found the tab at (`window N` is
+  // JXA's windows[N-1]), which costs no window id read. The tab id pins the tab,
+  // so a window moved since makes the execute miss, never land elsewhere: a fast
+  // failure with the tab no longer at that position never ran, so the tab is
+  // found again, its window pinned by id, and the script sent there once.
   function execWithin(t, js, secs) {
     if (t.kind !== "chrome" || t.tabId == null || !soleInstance(t)) return exec(t, js);
-    if (t.winId == null) t.winId = t.win.id();
-    return asExecute(t, js, secs, "window id " + asQuote(t.winId));
+    if (t.winId == null && t.w == null) t.winId = t.win.id();
+    try { return asExecute(t, js, secs, namedWindow(t)); }
+    catch (e) {
+      let moved = false;
+      if (t.winId == null && !isNoReply(e) && !held(e)) { try { moved = !inNamedWindow(t); } catch (x) {} }
+      if (!moved) throw e;
+    }
+    const r = resolve({ tabId: handle(t.app, t.tabId) });
+    Object.assign(t, r, { lazy: null, front: null, pageOk: false });
+    t.winId = t.win.id();
+    return asExecute(t, js, secs, namedWindow(t));
   }
   // execWithin for polls and the reads after them, one Apple Event like exec: with
   // no window id at hand the window goes by position (`window N` is JXA's
@@ -3444,7 +3462,7 @@ function jxaRuntime(BROWSERS, HANG) {
     // alone can read the OLD document's 'complete' right after the load starts.
     navigate(a) {
       loadable("navigate", a.url);
-      const t = resolve(a.target);
+      const t = hintedTab(a.target) || resolve(a.target);
       const deadline = Date.now() + a.timeout;
       // Each page-JS call gets at most NAV_EXEC_SECS, and never more than the time
       // left, so one unanswered execute can't carry navigate past its timeout.
@@ -3585,7 +3603,12 @@ function jxaRuntime(BROWSERS, HANG) {
       // is followed through its url and loading properties alone.
       const arcBehind = t.kind === "arc" && !canEval && !arcPage;
       if (arcBehind) preUrl = read(function () { return String(t.tab.url()); });
-      if (!viaPage) onTab(t, function () { t.tab.url = a.url; });
+      // Setting the url raises the window and reorders the list, so the bounded
+      // checks after it name the window by id.
+      if (!viaPage) {
+        if (t.kind === "chrome" && t.winId == null) { try { onTab(t, function () { t.winId = t.win.id(); }); } catch (e) { if (isStale(e)) throw e; } }
+        onTab(t, function () { t.tab.url = a.url; });
+      }
       if (/^same/.test(r || "")) return result(true);
       // Until the url commits the tab still reads arc:. Arc can drop a url set while
       // its new-tab page is loading, so it is set once more after a second.

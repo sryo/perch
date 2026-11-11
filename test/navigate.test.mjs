@@ -298,6 +298,25 @@ test("navigate on Chrome: another of its windows raised while the page doesn't a
   assert.equal(world.counts["tab.url="], undefined, "set the url of a tab whose window is no longer in front");
 });
 
+// The bounded executes name the tab's window by position, so a reorder after the
+// stamp makes the next one miss; the tab is found again, the load is followed
+// to the end, and it was started once.
+test("navigate on Chrome: the tab's window raised after the stamp still finishes the load, started once", () => {
+  install(away({
+    browsers: [chrome([{ id: 1, active: 0, tabs: [{ url: "https://front.test/", id: 5 }] }, { id: 2, active: 0, tabs: [{ url: "https://other.test/", id: 7 }] }])],
+    cg: [{ owner: "Google Chrome" }],
+  }));
+  let n = 0;
+  world.state.onExecute = () => { if (++n === 1) world.apps["Google Chrome"].windows[1].index = 1; };
+  const r = navWith({ url: "https://next.test/", target: { tabId: "chrome:7" } });
+  assert.equal(r.waited, true, JSON.stringify(r));
+  assert.equal(r.tabId, "chrome:7");
+  assert.equal(r.warning, undefined);
+  assert.deepEqual(paths(), [["assign", "Google Chrome", "https://next.test/"]]);
+  assert.equal(world.counts["tab.url="], undefined);
+  assert.equal(world.page("Google Chrome", 0, 0).location.href, "https://next.test/");
+});
+
 test("navigate on Chrome: a bounded execute that fails fast loads from page JS on the plain path, once", () => {
   install(away(fixture()));
   world.state.compileFails = true;

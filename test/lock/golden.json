@@ -924,12 +924,11 @@
     }
    ],
    "isError": false,
-   "events": 6,
+   "events": 5,
    "ae": {
     "Google Chrome": [
      "tab.id",
      "tab.properties",
-     "win.id()",
      "tab.execute",
      "tab.loading",
      "tab.execute"
@@ -952,12 +951,11 @@
     }
    ],
    "isError": false,
-   "events": 4,
+   "events": 3,
    "ae": {
     "Google Chrome": [
      "tab.id",
      "tab.properties",
-     "win.id()",
      "tab.execute"
     ]
    },
@@ -1098,13 +1096,12 @@
     }
    ],
    "isError": false,
-   "events": 7,
+   "events": 6,
    "ae": {
     "Google Chrome": [
      "windows.length(Google Chrome)",
      "tabs.id()",
      "tab.properties",
-     "win.id()",
      "tab.execute",
      "tab.loading",
      "tab.execute"
@@ -1132,13 +1129,12 @@
     }
    ],
    "isError": false,
-   "events": 18,
+   "events": 17,
    "ae": {
     "Google Chrome": [
      "windows.length(Google Chrome)",
      "tabs.id()",
      "tab.properties",
-     "win.id()",
      "tab.execute",
      "tab.loading",
      "tab.execute",
@@ -1177,13 +1173,12 @@
     }
    ],
    "isError": false,
-   "events": 16,
+   "events": 15,
    "ae": {
     "Google Chrome": [
      "windows.length(Google Chrome)",
      "tabs.id()",
      "tab.properties",
-     "win.id()",
      "tab.execute",
      "tab.loading",
      "tab.execute",
@@ -1220,13 +1215,12 @@
     }
    ],
    "isError": false,
-   "events": 131,
+   "events": 130,
    "ae": {
     "Google Chrome": [
      "windows.length(Google Chrome)",
      "tabs.id()",
      "tab.properties",
-     "win.id()",
      "tab.execute",
      "tab.loading",
      "tab.loading",
@@ -1402,9 +1396,9 @@
      "tab.id",
      "tab.properties",
      "tab.id",
+     "win.id()",
      "tab.url=",
      "tab.loading",
-     "win.id()",
      "tab.execute"
     ]
    },
@@ -1426,12 +1420,11 @@
     }
    ],
    "isError": false,
-   "events": 6,
+   "events": 5,
    "ae": {
     "Google Chrome": [
      "tab.id",
      "tab.properties",
-     "win.id()",
      "tab.execute",
      "tab.loading",
      "tab.execute"
@@ -1496,9 +1489,9 @@
      "windows.length(Google Chrome)",
      "tabs.id()",
      "tab.properties",
-     "win.id()",
      "tab.execute",
      "tab.id",
+     "win.id()",
      "tab.url=",
      "tab.loading",
      "tab.execute"
@@ -6812,7 +6805,7 @@
     }
    ],
    "isError": true,
-   "events": 9,
+   "events": 8,
    "ae": {
     "Google Chrome": [
      "windows.length(Google Chrome)",
@@ -6822,7 +6815,6 @@
      "tab.id",
      "win.bounds()",
      "tab.url",
-     "win.id()",
      "tab.execute"
     ]
    },
@@ -6847,14 +6839,13 @@
     }
    ],
    "isError": false,
-   "events": 6,
+   "events": 5,
    "ae": {
     "Google Chrome": [
      "tabs.id()",
      "tab.id",
      "win.bounds()",
      "tab.url",
-     "win.id()",
      "tab.execute"
     ]
    },
