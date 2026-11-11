@@ -3841,7 +3841,7 @@ function jxaRuntime(BROWSERS, HANG) {
           const t = { app: name, kind: kind, tabId: newId, win: win, tab: nt };
           const js = "location.replace(" + JSON.stringify(a.url) + ");'ok'";
           let started = false;
-          try { started = String(soleInstance(t) ? asExecute(t, js, POLL_EXEC_SECS, "window 1") : nt.execute({ javascript: js })) === "ok"; }
+          try { started = String(soleInstance(t) ? asExecute(t, js, POLL_EXEC_SECS, "window " + (at + 1)) : nt.execute({ javascript: js })) === "ok"; }
           catch (e) {
             // A reply dropped as the new document replaced about:blank: the load started.
             if (isNoReply(e)) { try { started = String(nt.url()) !== "about:blank"; } catch (x) {} }
@@ -3871,7 +3871,7 @@ function jxaRuntime(BROWSERS, HANG) {
         } else if (newId != null) {
           tabId = handle(name, newId);
           // Arc's new tab is put behind the one shown, so it has no window to hint.
-          if (kind === "chrome") hint(name, newId, 0);
+          if (kind === "chrome") hint(name, newId, at);
         }
       } catch (e) {}
       const out = { app: name, tabId };

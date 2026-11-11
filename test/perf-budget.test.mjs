@@ -140,6 +140,19 @@ test("eval_js on a new Chrome tab's handle is one Apple Event", async () => {
   assert.equal(appleEvents(), 1, breakdown());
 });
 
+// new_tab skips a minimized front window, and the handle remembers the window
+// the tab was made in.
+test("eval_js on a new Chrome tab made past a minimized window is one Apple Event", async () => {
+  install({ browsers: [chrome([{ id: 1, active: 0, minimized: true, tabs: tabs(1, "m") }, { id: 2, active: 0, tabs: tabs(2, "c") }])], cg: [{ owner: "Google Chrome" }] });
+  const { o: made } = await call("new_tab", { url: "https://fresh.test/" });
+  assert.equal(world.tabsOf("Google Chrome", 1).length, 3, "made in the window not minimized");
+  assert.equal(world.counts["tab.url="] || 0, 0, "loaded from the page, not by setting the url (which raises the window)");
+  world.reset();
+  const { o } = await call("eval_js", { script: "return location.href", target: { tabId: made.tabId } });
+  assert.equal(o, "https://fresh.test/");
+  assert.equal(appleEvents(), 1, breakdown());
+});
+
 test("a cold Chrome handle is found once, then costs one Apple Event", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(2, "a") }, { id: 2, active: 0, tabs: tabs(3, "c") }])], cg: [{ owner: "Google Chrome" }] });
   const target = { tabId: "chrome:c1" };
