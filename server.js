@@ -2,7 +2,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { readFile, stat, unlink } from "node:fs/promises";
 import { accessSync, constants as fsConstants, existsSync, readFileSync, readdirSync, realpathSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
@@ -4840,6 +4840,9 @@ export const rooms = {
   notify: (a) => notify(a),
   conns: new Map(),
   cli: null,
+  // The process that started this one, and this one's ancestors (see roomKin).
+  client: null,
+  ancestors: null,
 };
 
 // The rooms CLI as a command that runs here: `rooms` when it is on PATH (npm link),
@@ -4888,6 +4891,7 @@ export function roomsReset(over = {}) {
   rooms.conns.clear();
   rooms.notify = (a) => notify(a);
   rooms.cli = null;
+  rooms.client = rooms.ancestors = null;
   Object.assign(rooms, over);
 }
 
@@ -4957,8 +4961,27 @@ function roomClaim(tabId) {
   return c;
 }
 const roomClaimSet = (tabId, c) => c ? writeJson(roomClaimFile(tabId), c) : rmSync(roomClaimFile(tabId), { force: true });
-const roomClaimNew = (room, tabId, label) => ({ room, tabId, label, owner: ROOM_OWNER, pid: process.pid, last: Date.now() });
-const roomClaimHeld = (c) => `tab_held: room tab claimed ${c.label ? `as ${c.label} ` : ""}by pid ${c.pid}; open your own with new_tab {app:"room:${c.room}", label}`;
+const roomClaimNew = (room, tabId, label) => ({ room, tabId, label, owner: ROOM_OWNER, pid: process.pid, client: rooms.client ?? process.ppid, last: Date.now() });
+const roomClaimHeld = (c) => roomKin(c) && c.label
+  ? `tab_held: this room tab is yours as room:${c.room}:${c.label}; target that handle`
+  : `tab_held: room tab claimed ${c.label ? `as ${c.label} ` : ""}by pid ${c.pid}; open your own with new_tab {app:"room:${c.room}", label}`;
+// An agent's helper script loads a perch of its own, in a process the agent's client started
+// from its shell. A claim records its server's parent (the client), so a perch with that
+// client among its ancestors is the same agent's and shares the claim; the claim stays its
+// server's. The ancestors are read once, since a daemon's parents exit and leave it launchd's.
+let roomAncestry = null;
+function roomAncestors() {
+  if (rooms.ancestors) return rooms.ancestors();
+  if (roomAncestry) return roomAncestry;
+  const up = [];
+  try {
+    const parent = new Map(execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8", timeout: 5000 }).trim().split("\n").map((l) => l.trim().split(/\s+/).map(Number)));
+    for (let p = parent.get(process.pid); p > 1 && !up.includes(p); p = parent.get(p)) up.push(p);
+  } catch {}
+  return (roomAncestry = up);
+}
+const roomKin = (c) => !!c && c.owner !== ROOM_OWNER && Number.isInteger(c.client) && c.client > 1 && roomAncestors().includes(c.client);
+const roomOwn = (c) => !!c && (c.owner === ROOM_OWNER || roomKin(c));
 // Reserve a room label before reading claims or creating a target. The holder refreshes
 // `last` every ROOM_LABEL_BEAT_MS, so a reservation nobody refreshed for ROOM_LEASE_IDLE_MS
 // (a crashed holder, a reused pid, a release that found the lock busy) is anyone's.
@@ -5020,9 +5043,10 @@ async function withRoomLease(tabId, note, fn, label = null) {
   if (roomViewing(tabId)) throw new Error("tab_held: room tab held by the user in rooms view; retry after they close it (rooms logs <room> --follow --until handoff.ended)");
   await roomLeaseChange(tabId, (s) => {
     // An exited process holds nothing; the idle window only spans a live one's gap between calls.
-    const held = s && s.owner !== ROOM_OWNER && roomLeaseHeld(s);
     const c = roomClaim(tabId);
-    if (c && (c.owner !== ROOM_OWNER || (c.label ?? null) !== label)) throw new Error(roomClaimHeld(c));
+    if (c && (!roomOwn(c) || (c.label ?? null) !== label)) throw new Error(roomClaimHeld(c));
+    // The idle window keeps other agents off between calls; an agent's server and its helper wait only out each other's call.
+    const held = s && s.owner !== ROOM_OWNER && (roomOwn(c) ? roomLeaseLive(s) && s.active : roomLeaseHeld(s));
     if (held) throw new Error(`tab_held: room tab held by pid ${s.pid}; retry after five seconds idle`);
     if (c) roomClaimSet(tabId, { ...c, last: Date.now() });
     return { ...roomLeaseNew(tabId), active: true };
@@ -5409,7 +5433,7 @@ function roomRow(n, p) {
   if (roomViewing(tabId)) row.holder = "user";
   else if (roomClaimLive(c)) {
     row.holder = c.label || `pid ${c.pid}`;
-    if (c.owner === ROOM_OWNER) row.mine = true;
+    if (roomOwn(c)) row.mine = true;
   } else if (roomLeaseHeld(s)) {
     row.holder = `pid ${s.pid}`;
     if (s.owner === ROOM_OWNER) row.mine = true;
@@ -5520,8 +5544,9 @@ const ROOM_FNS = {
     if (had) {
       await roomLeaseChange(had.tabId, () => {
         const c = roomClaim(had.tabId);
-        if (c && c.owner !== ROOM_OWNER) throw new Error(roomClaimHeld(c));
-        claim(had.tabId);
+        if (c && !roomOwn(c)) throw new Error(roomClaimHeld(c));
+        if (roomKin(c)) roomClaimSet(had.tabId, { ...c, last: Date.now() });
+        else claim(had.tabId);
         return undefined;
       });
       return out(had.tabId, true);

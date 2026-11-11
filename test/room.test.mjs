@@ -535,8 +535,9 @@ test("a tab the user is driving in rooms view is held by the user, and perch say
 const twoServers = async (opts, tag) => {
   const R = makeRooms(opts);
   const other = await import(`../server.js?${tag}=${Date.now()}`);
-  roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
-  other.roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket });
+  // Two servers in one process share a parent; each gets a client of its own unless a test says otherwise.
+  roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket, client: 4000001, ancestors: () => [4000001] });
+  other.roomsReset({ home: R.home, fetch: R.fetch, WebSocket: R.WebSocket, client: 4000002, ancestors: () => [4000002], ...opts.other });
   return { R, other, leases: () => readdirSync(join(R.home, "run", "leases")).filter((x) => x.endsWith(".json")) };
 };
 
@@ -680,6 +681,38 @@ test("an unlabeled new_tab's tab stays its server's past the idle window", async
   assert.equal(await call("eval_js", { script: "return 1", target: { tabId: o.tabId } }), 1);
   const row = (await call("list_tabs", { app: "room" })).tabs.find((t) => t.tabId === o.tabId);
   assert.deepEqual([row.holder, row.mine], [`pid ${process.pid}`, true]);
+});
+
+// A helper the agent runs from its shell is another perch process of the same client: the
+// MCP server's parent is one of its ancestors.
+const HELPER = { other: { client: 4000009, ancestors: () => [4000009, 4000001] } };
+
+test("a helper started by the same client drives the tab its MCP server opened, with no idle wait", async () => {
+  const { other } = await twoServers(HELPER, "kin-plain");
+  const o = await call("new_tab", { app: "room:work" });
+  assert.equal(JSON.parse(await text(other, "eval_js", { script: "return 2", target: { tabId: o.tabId } })), 2);
+  assert.equal(await call("eval_js", { script: "return 1", target: { tabId: o.tabId } }), 1);
+  const claim = JSON.parse(readFileSync(join(claimDir({ home: rooms.home }), readdirSync(claimDir({ home: rooms.home }))[0]), "utf8"));
+  assert.deepEqual([claim.pid, claim.client], [process.pid, 4000001], "the claim stays its server's");
+  const row = JSON.parse(await text(other, "list_tabs", { app: "room" })).tabs.find((t) => t.tabId === o.tabId);
+  assert.equal(row.mine, true);
+});
+
+test("a helper reaches a labeled tab of its client by the label handle, and is told so on the raw one", async () => {
+  const { other } = await twoServers(HELPER, "kin-label");
+  const o = await call("new_tab", { app: "room:work", label: "epam" });
+  assert.equal(JSON.parse(await text(other, "eval_js", { script: "return 2", target: { tabId: o.tabId } })), 2);
+  assert.match(await text(other, "eval_js", { script: "return 2", target: tab("T0002") }), /tab_held: this room tab is yours as room:work:epam; target that handle/);
+  assert.deepEqual(JSON.parse(await text(other, "new_tab", { app: "room:work", label: "epam" })), { ...o, reused: true });
+  assert.equal(await call("eval_js", { script: "return 1", target: { tabId: o.tabId } }), 1, "still its server's");
+});
+
+test("a server mid-call holds its tab against its own helper", async () => {
+  const { R, other } = await twoServers(HELPER, "kin-active");
+  const o = await call("new_tab", { app: "room:work" });
+  const f = join(R.home, "run", "leases", readdirSync(join(R.home, "run", "leases")).find((x) => x.endsWith(".json")));
+  writeFileSync(f, JSON.stringify({ ...JSON.parse(readFileSync(f, "utf8")), active: true }));
+  assert.match(await text(other, "eval_js", { script: "return 2", target: { tabId: o.tabId } }), /tab_held: room tab held by pid \d+/);
 });
 
 test("a claim lapses after its idle cap, and a dead server's claim and lease are reaped", async () => {
