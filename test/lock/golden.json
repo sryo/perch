@@ -5060,7 +5060,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":false,\"results\":[{\"ok\":true,\"el\":\"textbox \\\"First\\\"\",\"len\":3},{\"ok\":true,\"selected\":\"Brazil\",\"el\":\"combobox \\\"Country\\\"\",\"pref\":1,\"kind\":\"select\"},{\"ok\":false,\"error\":\"no fillable field matched /nothing/i; it may appear only after clicking a button\",\"kind\":\"text\"}],\"form\":{\"requiredEmpty\":2,\"left\":[{\"name\":\"last\",\"label\":\"Last\"},{\"name\":\"p\",\"label\":\"Phone\"}]}}"
+     "text": "{\"ok\":false,\"results\":[{\"ok\":true,\"el\":\"textbox \\\"First\\\"\",\"len\":3},{\"ok\":true,\"selected\":\"Brazil\",\"el\":\"combobox \\\"Country\\\"\",\"pref\":1,\"kind\":\"select\"},{\"ok\":false,\"error\":\"no fillable field matched /nothing/i; it may appear only after clicking a button\"}],\"form\":{\"requiredEmpty\":2,\"left\":[{\"name\":\"last\",\"label\":\"Last\"},{\"name\":\"p\",\"label\":\"Phone\"}]}}"
     }
    ],
    "isError": false,
@@ -5098,7 +5098,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"skipped\":\"has value\",\"el\":\"textbox \\\"First\\\"\",\"value\":\"Ada\"},{\"ok\":true,\"el\":\"textbox \\\"Last\\\"\",\"len\":1},{\"ok\":true,\"skipped\":\"absent\",\"kind\":\"text\"}],\"skipped\":2,\"form\":{\"requiredEmpty\":1,\"left\":[{\"name\":\"p\",\"label\":\"Phone\"}]}}"
+     "text": "{\"ok\":true,\"results\":[{\"ok\":true,\"skipped\":\"has value\",\"el\":\"textbox \\\"First\\\"\",\"value\":\"Ada\"},{\"ok\":true,\"el\":\"textbox \\\"Last\\\"\",\"len\":1},{\"ok\":true,\"skipped\":\"absent\"}],\"skipped\":2,\"form\":{\"requiredEmpty\":1,\"left\":[{\"name\":\"p\",\"label\":\"Phone\"}]}}"
     }
    ],
    "isError": false,

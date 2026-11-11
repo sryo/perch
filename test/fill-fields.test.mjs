@@ -794,7 +794,9 @@ test("fill {fields, only_empty}: fields the form lacks are skipped as absent, th
   assert.equal(o.ok, true, JSON.stringify(o));
   assert.equal(o.skipped, 7);
   assert.deepEqual(o.results.map((x) => x.skipped || x.kind), [undefined, undefined, undefined, undefined, undefined, "absent", "absent", "absent", "absent", "absent", "absent", "absent"]);
-  assert.ok(o.results.slice(5).every((x) => x.ok === true && x.kind));
+  assert.ok(o.results.slice(5).every((x) => x.ok === true));
+  // A text entry carries no kind (none: plain); an option or checked entry names its own.
+  assert.deepEqual(o.results.slice(5).map((x) => x.kind), [undefined, undefined, undefined, undefined, undefined, "select", "check"]);
   assert.deepEqual(["fn", "ln", "em", "ph", "li"].map((n) => dom.document.querySelector(`[name=${n}]`).value),
     ["Ada", "Lovelace", "ada@example.test", "+1 555 010 0199", "https://linkedin.example/ada"]);
 });

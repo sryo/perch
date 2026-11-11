@@ -11466,8 +11466,10 @@ async function readFieldsFile(p) {
 
 // "plain" is a fill result's default kind, so it is left out of what the caller
 // sees; rich and typeahead keep theirs.
+// No kind means plain text. "text" is the kind of entry a fields batch tried
+// (one sent `text`) when nothing landed, which the caller already knows.
 function unplain(r) {
-  const drop = (x) => { if (x && x.kind === "plain") delete x.kind; return x; };
+  const drop = (x) => { if (x && (x.kind === "plain" || x.kind === "text")) delete x.kind; return x; };
   if (r && Array.isArray(r.results)) r.results.forEach(drop);
   return drop(r);
 }
