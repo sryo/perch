@@ -425,7 +425,7 @@ test("M2 untargeted calls skip perch's windows on every loft", async () => {
 });
 
 test("M3 the tool schema and instructions say when an agent makes a loft", () => {
-  assert.match(INSTRUCTIONS, /Where: the user.s logins, localhost, a set size or unseen painting: new_tab \{url, loft:"1280x800"\}[^\n]*a login of its own, a phone or a locked Mac: a room. Blocked: take the next path. None left: tell the user and propose a session to find one./);
+  assert.match(INSTRUCTIONS, /Where: the user.s logins, localhost, a set size or unseen painting: new_tab \{url, loft:"1280x800"\}[^\n]*a login of its own, a phone or a locked Mac: a room. Neither: perch picks. Blocked: take the next path. None left: tell the user and propose a session to find one./);
 });
 
 // new_tab {loft:"WxH"}: perch makes a loft that size itself (loft up WxH --new

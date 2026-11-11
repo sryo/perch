@@ -11641,7 +11641,7 @@ Targeting: pass \`target: {tabId}\` with a tabId from list_tabs or new_tab. With
 Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` over \`label_pattern\` (case-insensitive regex over label/aria-label/placeholder/name). Refs die on the next snapshot or navigation.
 {ok:false, error} is a normal outcome (no match, value didn't land): read it, don't retry blindly.
 Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
-Where: the user's logins, localhost, a set size or unseen painting: new_tab {url, loft:"1280x800"} (perch makes it, in a browser that won't take focus); a login of its own, a phone or a locked Mac: a room. Blocked: take the next path. None left: tell the user and propose a session to find one.
+Where: the user's logins, localhost, a set size or unseen painting: new_tab {url, loft:"1280x800"} (perch makes it, taking no focus); a login of its own, a phone or a locked Mac: a room. Neither: perch picks. Blocked: take the next path. None left: tell the user and propose a session to find one.
 Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, new_tab {loft:true}, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another agent's room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
@@ -11988,7 +11988,45 @@ function movesFocus(name, args) {
   if (name === "activate_tab" || args.raise === true) return true;
   return name === "new_tab" && !/^safari$/i.test(String(args.app || ""));
 }
-const needsFocus = (name, args = {}) => new Error(`needs_focus: ${name} would bring the browser to the front, and the user has not allowed perch to take focus; nothing was sent. ${name === "new_tab" ? "navigate an existing tab instead (it loads from the page, in the background), or open it in a room (new_tab {app:\"room:<name>\"})" : "Try the call without raise (most run in the background), or move the flow into a room (new_tab {from: tabId, app:\"room:<name>\"})"}${args.loft === true ? "" : `, ${LOFT_HINT}`}, or, in a client that can ask the user (MCP elicitation), they allow it when perch asks`);
+const needsFocus = (name, args = {}, tried) => new Error(`needs_focus: ${name} would bring the browser to the front, and the user has not allowed perch to take focus; nothing was sent. ${tried ? `No other place took it: ${tried.join("; ")}. ` : ""}${name === "new_tab" ? "navigate an existing tab instead (it loads from the page, in the background), or open it in a room (new_tab {app:\"room:<name>\"})" : "Try the call without raise (most run in the background), or move the flow into a room (new_tab {from: tabId, app:\"room:<name>\"})"}${args.loft === true ? "" : `, ${LOFT_HINT}`}, or, in a client that can ask the user (MCP elicitation), they allow it when perch asks`);
+
+// ---- routing ----
+// A new_tab that would answer needs_focus has sent nothing and makes a new
+// document wherever it opens, so perch picks a place that takes no focus: a room
+// registered for the url's origin (the user set up its sign-in), then a loft
+// window, then any room. A named browser, loft:false, from and label are the
+// caller's own choice of place and keep needs_focus. Calls on an existing tab
+// are never moved: their refs, form progress and session live in that document.
+const routable = (name, args) => name === "new_tab" && args.app == null && args.loft == null && args.from == null && args.label == null;
+const ROUTE_LOCAL = /^(localhost|.+\.localhost|127(\.\d+){3}|\[::1\])$/;
+const ROUTE_LOFT = "1280x800";
+async function routedTab(args) {
+  const url = args.url == null ? "about:blank" : checkUrl("new_tab", args.url);
+  let web = null;
+  try { const u = new URL(url); if (/^https?:$/.test(u.protocol) && !ROUTE_LOCAL.test(u.hostname)) web = u.origin; } catch {}
+  let reg = [];
+  if (web) try { reg = Object.values(roomRegistry()); } catch {}
+  const signedIn = (r) => (r.sites || []).some((s) => s.origin === web);
+  const tried = [];
+  // Only a route that made nothing (no_browser) gives way to the next one.
+  const attempt = async (what, open) => {
+    try { return await open(); } catch (e) {
+      const m = /^no_browser: (.*)$/s.exec(e.message);
+      if (!m) throw e;
+      tried.push(`${what} (${m[1]})`);
+      return null;
+    }
+  };
+  const room = (r) => attempt(`room:${r.name}`, async () => ({ ...(await rt("newTab", { app: `room:${r.name}`, url })), routed: `room:${r.name}`, note: `opened in room:${r.name}: the user hasn't allowed focus; the room has its own sign-ins` }));
+  for (const r of reg.filter(signedIn)) { const o = await room(r); if (o) return o; }
+  const o = await attempt("no loft", async () => {
+    const t = await loftTab(url, null, null, null, loftHolder() ? true : ROUTE_LOFT);
+    return { ...t, routed: "loft", note: t.note || "opened on the loft: the user hasn't allowed focus" };
+  });
+  if (o) return o;
+  for (const r of reg.filter((r) => !signedIn(r))) { const o = await room(r); if (o) return o; }
+  throw needsFocus("new_tab", args, tried);
+}
 
 // A client keeps one server for its whole session, so after a pull it runs old
 // code. server.js's mtime and size at start are its identity; a stat (a few µs)
@@ -12031,7 +12069,11 @@ async function handleCallCore(name, args = {}, signal) {
     args = normPatterns(args);
     if (args.app != null) args = { ...args, app: matchApp(args.app) };
     if (args.target && args.target.app != null) args = { ...args, target: { ...args.target, app: matchApp(args.target.app) } };
-    if (movesFocus(name, args) && !focus.granted && !(await userAway()) && !(focus.granted = await askFocus(name, args, signal))) throw needsFocus(name, args);
+    let routed = false;
+    if (movesFocus(name, args) && !focus.granted && !(await userAway()) && !(focus.granted = await askFocus(name, args, signal))) {
+      if (!routable(name, args)) throw needsFocus(name, args);
+      routed = true;
+    }
     if (name === "close_tab" && args.tabId == null && args.target?.tabId != null) args = { ...args, tabId: args.target.tabId };
     // A label handle runs on its claimed tab's targetId handle, and results name it as the caller did.
     const shown = name === "close_tab" ? args.tabId : args.target?.tabId;
@@ -12041,7 +12083,8 @@ async function handleCallCore(name, args = {}, signal) {
     const roomTab = ROOM_LEASE_TOOLS.has(name) ? args.target?.tabId ?? (name === "close_tab" ? args.tabId : null) : null;
     const leaseTab = isRoomTab(roomTab) ? roomTab : null;
     const lockKey = leaseTab ? tabKey({ tabId: leaseTab }) : tabLockKey(name, args);
-    const call = () => callNotes.run(note, () => leaseTab ? withRoomLease(leaseTab, note, () => handler(args), labeled?.label) : handler(args));
+    const run = routed ? () => routedTab(args) : () => handler(args);
+    const call = () => callNotes.run(note, () => leaseTab ? withRoomLease(leaseTab, note, run, labeled?.label) : run());
     let result = await (lockKey ? withTabLock(lockKey, call) : call());
     if (labeled && result && typeof result === "object") for (const k of ["tabId", "closed"]) if (result[k] === labeled.tabId) result = { ...result, [k]: shown };
     // A miss names the ref as the agent was shown it.

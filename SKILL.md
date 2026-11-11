@@ -15,7 +15,7 @@ Adds to the tool descriptions; none for `activate_tab`, `close_tab`, `wait`, `co
 | Tool | Use |
 |---|---|
 | `list_tabs` | Filter: `app`, `urlContains`, `titleContains`. |
-| `new_tab` | `shown:false`: page tools get `tab_not_visible` until shown; see `note`. `loft`: own window, always shown; `close_tab` on its last tab closes it. |
+| `new_tab` | `shown:false`: page tools get `tab_not_visible` until shown; see `note`. `loft`: own window, always shown; `close_tab` on its last tab closes it. `routed`: a room or loft took it. |
 | `navigate` | Returns the tab's current `tabId`. `url` is the committed URL (`requested` if it differs); `load_failed`: error page, or the tab stayed (download, 204). `waited:false`: not confirmed; `timeout`: not committed yet, may still load. |
 | `eval_js` | `awaitPromise` only for real async. `ref` binds `el` (a parameter): `return __avis.add(el, 'x')`. |
 | `screenshot` | Off-screen window: last frame only. `ref`: element only; scroll restored; `clipped`: cut. |
