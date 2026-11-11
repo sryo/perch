@@ -8,7 +8,7 @@ import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, roomsReset } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, rooms, roomsReset } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { makeRooms } from "./fakes/cdp-room.mjs";
 import { tempDir } from "../scripts/temp-dirs.mjs";
@@ -100,12 +100,20 @@ test("a room registered for the url's origin comes before the loft", async () =>
   assert.deepEqual(world.aeLog, []);
 });
 
-test("a registered room that is down gives way to the loft", async () => {
+// The loft would open it in Safari, which has none of the user's sign-ins: for a site a
+// room is signed in to, that page is a dead end, so nothing opens and the error says how
+// to get the room back.
+test("a registered room that is down is not replaced by a signed-out Safari window on the loft", async () => {
   holder();
   useRooms({ rooms: { mail: { registeredSites: [{ origin: "https://mail.test" }] } }, down: ["mail"] });
-  const { r, o } = await call({ url: "https://mail.test/inbox" });
-  assert.equal(r.isError, undefined, JSON.stringify(o));
-  assert.equal(o.routed, "loft");
+  rooms.cli = "rooms";
+  const { r, t } = await call({ url: "https://mail.test/inbox" });
+  assert.equal(r.isError, true, t);
+  assert.match(t, /^error: needs_focus: .*No other place took it: room:mail \(room 'mail' is not up; start it: rooms up mail\); no loft \(Google Chrome would have come to the front, and the user hasn't allowed focus, and Safari, which wouldn't, has none of the user's sign-ins; room:mail is signed in to mail\.test, so open it there: new_tab \{url, app:"room:mail"\}\)/);
+  assert.deepEqual(made(), []);
+  // A site no room is signed in to still opens on the loft.
+  const other = await call({ url: "https://job.test/" });
+  assert.equal(other.o.routed, "loft");
 });
 
 test("with no loft to be had, an http(s) url opens in a room", async () => {

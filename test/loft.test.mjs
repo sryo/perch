@@ -503,6 +503,31 @@ test("F3 after starting Safari itself, perch closes only the start-page windows 
   assert.deepEqual(launchLeftovers([]), []);
 });
 
+// Safari has none of the user's sign-ins, so for a site a room is signed in to, the
+// handoff to Safari would leave a signed-out page that reads as "the loft can't do this".
+// Nothing opens, and the error names the room. With the grant the browser itself is used.
+test("F5 a site a room is signed in to is not handed to Safari: no_browser naming the room, nothing made", async () => {
+  mkdirSync(rooms.home, { recursive: true });
+  writeFileSync(join(rooms.home, "rooms.json"), JSON.stringify({ version: 1, rooms: { main: { name: "main", cdp: { host: "127.0.0.1", port: 1, token: "t" }, sites: [{ origin: "https://www.figma.com", url: "https://www.figma.com/files" }] } } }));
+  const WHY = /^error: no_browser: (Google Chrome would have come to the front, and the user hasn't allowed focus|Arc can't place a window on the loft), and Safari, which wouldn't, has none of the user's sign-ins; room:main is signed in to www\.figma\.com, so open it there: new_tab \{url, app:"room:main"\}$/;
+  for (const [app, spec, loftArg] of [["Google Chrome", chrome([userWin()]), true], ["Arc", arc([userWin()]), true]]) {
+    focus.granted = app === "Arc";
+    install({ browsers: [spec, safari([userWin("s")])], cg: [{ owner: "Terminal" }, { owner: app }, { owner: "Safari" }] });
+    holder();
+    const { t } = await call("new_tab", { app, url: "https://www.figma.com/design/abc", loft: loftArg });
+    assert.match(t, WHY, app);
+    assert.deepEqual(made(), [], app);
+    // Another site still goes to Safari, with its note.
+    const { o } = await call("new_tab", { app, url: "https://job.test/", loft: true });
+    assert.equal(o.app, "Safari", app);
+  }
+  focus.granted = true;
+  install({ browsers: [chrome([userWin()]), safari([userWin("s")])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  const { o } = await call("new_tab", { url: "https://www.figma.com/design/abc", loft: true });
+  assert.equal(o.app, "Google Chrome", "with the grant the user's own browser, and their sign-ins, take it");
+});
+
 // A hidden app's windows don't paint, the loft's included, so a hidden Safari is no
 // path: the call says so and names the next one (a room), and makes nothing.
 test("F4 a hidden Safari is no path for a loft window: no_browser, nothing made, the room named next", async () => {

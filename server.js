@@ -3766,6 +3766,9 @@ function jxaRuntime(BROWSERS, HANG) {
           if (kind === "safari" && hidden(name)) throw new Error("no_browser: Safari is hidden (Cmd-H), so its window on the loft wouldn't paint");
           return loftWindow(a, name, kind, ap, P, away);
         }
+        // Safari has none of the user's sign-ins. For a site a room is signed in to,
+        // the room is the place: a signed-out page here reads as a dead end.
+        if (a.loft.room) throw new Error("no_browser: " + why + ", and Safari, which wouldn't, has none of the user's sign-ins; room:" + a.loft.room + " is signed in to " + a.loft.site + ", so open it there: new_tab {url, app:\"room:" + a.loft.room + "\"}");
         if (!alive("Safari", P)) throw new Error("no_browser: needs Safari started: " + why);
         if (hidden("Safari")) throw new Error("no_browser: " + why + ", and Safari, which wouldn't, is hidden (Cmd-H), so its window wouldn't paint");
         const out = loftWindow(a, "Safari", "safari", app("Safari"), P);
@@ -4885,20 +4888,41 @@ const noRoom = (name) => new Error(`no_browser: no room '${name}'; make it: ${ro
 // A room no_browser names the rooms that exist, whether each is up, and the sites
 // signed in there, so the agent picks a real room instead of inventing one.
 const ROOM_ABSENT_ERR = /^no_browser: no room '([^']+)'; make it: /;
-const ROOM_DOWN_ERR = /^no_browser: room '[^']+' is not up; start it: /;
+const ROOM_DOWN_ERR = /^no_browser: room '[^']+' is not (up; start it: |answering )/;
+// A room that holds its port but doesn't answer (busy, out of memory, restarting)
+// can come back by itself, so its error says how to look again; one that refuses
+// the connection is stopped.
+const roomSilent = (e) => !!e && (e.name === "TimeoutError" || e.name === "AbortError");
+const roomRecover = (name) => `(busy, out of memory or restarting); it can recover by itself: check ${roomsCmd()} status ${name} and retry, or restart it: ${roomsCmd()} down ${name}, then ${roomsCmd()} up ${name}`;
+const roomHung = (name) => new Error(`no_browser: room '${name}' is not answering ${roomRecover(name)}`);
+// A call on an open connection that timed out while the room's endpoint no longer
+// answers: the room went quiet, not the page. The connection is dropped, so the
+// next call finds the room as it is then.
+async function roomWentQuiet(e, name) {
+  if (!name || !e || !/^timeout: /.test(e.message)) return e;
+  let r;
+  try { r = roomRegistry()[name]; } catch { return e; }
+  if (!r || !r.cdp) return e;
+  try { if ((await rooms.fetch(`http://${r.cdp.host}:${r.cdp.port}/${r.cdp.token}/json/version`, { signal: AbortSignal.timeout(1500) })).ok) return e; } catch {}
+  const c = rooms.conns.get(name);
+  rooms.conns.delete(name);
+  if (c) c.then((x) => x.close(), () => {});
+  return new Error(`timeout: room '${name}' stopped answering ${roomRecover(name)}; the call may have run`);
+}
 export async function roomsWhy(msg) {
   if (typeof msg !== "string" || !(ROOM_ABSENT_ERR.test(msg) || ROOM_DOWN_ERR.test(msg))) return msg;
   let reg;
   try { reg = Object.values(roomRegistry()); } catch { return msg; }
-  const up = await Promise.all(reg.map(async (r) => {
-    if (!r.cdp) return false;
-    try { return (await rooms.fetch(`http://${r.cdp.host}:${r.cdp.port}/${r.cdp.token}/json/version`, { signal: AbortSignal.timeout(1000) })).ok === true; }
-    catch { return false; }
+  const state = await Promise.all(reg.map(async (r) => {
+    if (!r.cdp) return "down";
+    try { return (await rooms.fetch(`http://${r.cdp.host}:${r.cdp.port}/${r.cdp.token}/json/version`, { signal: AbortSignal.timeout(1000) })).ok === true ? "up" : "not answering"; }
+    catch (e) { return roomSilent(e) ? "not answering" : "down"; }
   }));
+  const up = state.map((x) => x === "up");
   const host = (o) => { try { return new URL(o).host; } catch { return String(o); } };
   const row = (r, i) => {
     const sites = (r.sites || []).map((s) => host(s.origin));
-    return `${r.name} (${up[i] ? "up" : "down"}${sites.length ? `; signed in: ${sites.join(", ")}` : ""})`;
+    return `${r.name} (${state[i]}${sites.length ? `; signed in: ${sites.join(", ")}` : ""})`;
   };
   const here = reg.length ? `rooms here: ${reg.map(row).join(", ")}` : "no rooms yet";
   const m = ROOM_ABSENT_ERR.exec(msg);
@@ -5116,13 +5140,16 @@ function roomConn(name) {
 async function roomConnect(name) {
   const r = roomRegistry()[name];
   if (!r || !r.cdp) throw noRoom(name);
-  const down = () => new Error(`no_browser: room '${name}' is not up; start it: ${roomsCmd()} up ${name}`);
+  // Once its endpoint has answered, a room that goes quiet is hung or restarting, not stopped.
+  let silent = false;
+  const down = () => silent ? roomHung(name) : new Error(`no_browser: room '${name}' is not up; start it: ${roomsCmd()} up ${name}`);
   let url;
   try {
     const res = await rooms.fetch(`http://${r.cdp.host}:${r.cdp.port}/${r.cdp.token}/json/version`, { signal: AbortSignal.timeout(3000) });
+    silent = true;
     if (!res.ok) throw down();
     url = (await res.json()).webSocketDebuggerUrl;
-  } catch { throw down(); }
+  } catch (e) { silent = silent || roomSilent(e); throw down(); }
   if (typeof url !== "string") throw down();
   const sock = new rooms.WebSocket(url);
   await new Promise((res, rej) => {
@@ -5441,9 +5468,10 @@ async function roomListTabs(only, quiet) {
       await roomReap(n, pages, at);
       return { rows: pages.map((p) => roomRow(n, p)) };
     }
-    catch (e) { return { rows: [], failed: `room:${n} not listed: ${e.message}` }; }
+    catch (e) { return { rows: [], failed: `room:${n} not listed: ${(await roomWentQuiet(e, n)).message}` }; }
   }));
-  const rows = lists.flatMap((l) => l.rows), failed = quiet ? [] : lists.filter((l) => l.failed).map((l) => l.failed);
+  // Quiet leaves out a room that is stopped, never one that stopped answering: its tabs are still there.
+  const rows = lists.flatMap((l) => l.rows), failed = lists.filter((l) => l.failed && (!quiet || / (is not|stopped) answering /.test(l.failed))).map((l) => l.failed);
   return { rows, failed };
 }
 
@@ -5833,7 +5861,11 @@ const ROOM_FNS = {
 async function roomRt(fn, args) {
   const f = Object.hasOwn(ROOM_FNS, fn) ? ROOM_FNS[fn] : null;
   if (!f) throw new Error(`tab_not_scriptable: ${fn} isn't available on a room tab`);
-  return f(args);
+  try { return await f(args); }
+  catch (e) {
+    const a = args || {}, h = ROOM_HANDLE.exec(String((a.target && a.target.tabId) || a.tabId || "")), m = ROOM_APP.exec(String(a.app || (a.target && a.target.app) || ""));
+    throw await roomWentQuiet(e, (h && h[1]) || (m && m[1]));
+  }
 }
 
 // ---- tools ----
@@ -5872,12 +5904,14 @@ async function listTabs(args = {}) {
     args.app ? null : roomListTabs(null, true).catch(() => null),
   ]);
   if (roomed && roomed.rows.length) r.rows = r.rows.concat(roomed.rows);
+  const quietRooms = roomed && roomed.failed.length ? roomed.failed.join("; ") : null;
   // A browser that couldn't be read fails the call when nothing else listed, so
   // "no tabs" always means none.
   if (r.failed && !r.rows.length && !r.more) throw new Error(listFailure(r.failed[0]));
   const out = shapeTabs(r.rows, args);
   out.total += r.more;
   if (r.failed) out.warning = r.failed.map((f) => `${f.app} not listed: ${listFailure(f)}`).join("; ");
+  if (quietRooms) out.warning = out.warning ? `${out.warning}; ${quietRooms}` : quietRooms;
   return out;
 }
 
@@ -6138,6 +6172,11 @@ async function loftTab(url, app, from, label, onLoft) {
   const h = loftHolder(id);
   if (!h) throw new Error(id === "default" ? LOFT_DOWN : `no_browser: loft ${id} is down; make it with loft up WIDTHxHEIGHT --id ${id} (github.com/sryo/loft), then retry`);
   const req = { app: app || null, url: url == null ? "about:blank" : checkUrl("new_tab", url), loft: { displayId: h.displayId, noFocus: !focus.granted } };
+  // The room signed in to the url's site, for the browser that would hand the window to Safari.
+  try {
+    const at = new URL(req.url), room = /^https?:$/.test(at.protocol) && Object.values(roomRegistry()).find((x) => (x.sites || []).some((s) => s.origin === at.origin));
+    if (room) Object.assign(req.loft, { room: room.name, site: at.host });
+  } catch {}
   let r;
   try {
     try { r = await rt("newTab", req); } catch (e) {
@@ -6187,7 +6226,7 @@ async function moveToRoom(from, app, label) {
 const ROOM_SLOT = 'new_tab {from, app:"room:<name>"}';
 const ROOM_HINTED = /^(window_offscreen|tab_not_visible|no_browser): /;
 export function roomHint(msg, args) {
-  if (!ROOM_HINTED.test(msg) || roomArgs(args)) return msg;
+  if (!ROOM_HINTED.test(msg) || roomArgs(args) || / is signed in to /.test(msg)) return msg;
   // A loft window is never the key window, so it can't help a trusted press.
   if (!/^no_browser|needs the keyboard|loft:true/.test(msg)) msg = `${msg}; ${LOFT_HINT}`;
   let reg;

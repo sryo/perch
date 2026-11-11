@@ -88,6 +88,54 @@ test("no_browser for a room lists the rooms that exist, up or down, with their s
   assert.match((await call("list_tabs", { app: "room" })).warning, /room:main not listed: no_browser: room 'main' is not up; start it: node \/x\/rooms\.mjs up main(;|$)/);
 });
 
+// A room whose browser stopped answering (out of memory, busy, restarting) is not a room
+// that was stopped: it can come back, so the error says how to look again, and a caller
+// that failed once doesn't write the room off.
+test("a room that holds its port but doesn't answer says it can recover and how to check again", async () => {
+  use({ rooms: { main: { registeredSites: [{ origin: "https://www.figma.com" }] }, work: {} } });
+  rooms.cli = "rooms";
+  const fetch = R.fetch;
+  let hung = true;
+  rooms.fetch = async (url, o) => {
+    if (hung && new URL(url).port === String(JSON.parse(readFileSync(join(R.home, "rooms.json"), "utf8")).rooms.main.cdp.port)) throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    return fetch(url, o);
+  };
+  const HUNG = "no_browser: room 'main' is not answering \\(busy, out of memory or restarting\\); it can recover by itself: check rooms status main and retry, or restart it: rooms down main, then rooms up main";
+  const e = await fails("eval_js", { script: "return 1", target: tab("T0001", "main") });
+  assert.match(e, new RegExp(`^error: ${HUNG}; rooms here: main \\(not answering; signed in: www\\.figma\\.com\\), work \\(up\\)$`));
+  assert.match(await fails("new_tab", { app: "room:main", url: "https://www.figma.com/files" }), new RegExp(`^error: ${HUNG}`));
+  // Listing everything names it too: its tabs are still there, unlike a stopped room's.
+  const all = await call("list_tabs", { app: "room" });
+  assert.match(all.warning, new RegExp(`^room:main not listed: ${HUNG}$`));
+  assert.deepEqual(all.tabs.map((t) => t.app), ["room:work"]);
+  // Once it answers again, the same call works: nothing remembered it as gone.
+  hung = false;
+  assert.equal((await call("eval_js", { script: "return 1", target: tab("T0001", "main") })), 1);
+});
+
+// The usual way to meet a hung room is mid-session, on a connection that is already open:
+// the send times out. That is the room going quiet, not the page, and the error says so.
+test("a call that times out on an open connection to a room that stopped answering names the room, and the next call reconnects", async () => {
+  use({ rooms: { main: {} } });
+  rooms.cli = "rooms";
+  assert.equal(await call("eval_js", { script: "return 1", target: tab("T0001", "main") }), 1);
+  const fetch = R.fetch, conn = await rooms.conns.get("main"), send = conn.send;
+  let hung = true;
+  rooms.fetch = async (url, o) => { if (hung) throw Object.assign(new Error("aborted"), { name: "TimeoutError" }); return fetch(url, o); };
+  conn.send = async () => { throw Object.assign(new Error("timeout: page JS got no reply within 30s"), { noReply: true }); };
+  const QUIET = /^error: timeout: room 'main' stopped answering \(busy, out of memory or restarting\); it can recover by itself: check rooms status main and retry, or restart it: rooms down main, then rooms up main; the call may have run$/;
+  assert.match(await fails("new_tab", { app: "room:main", url: "about:blank" }), QUIET);
+  assert.equal(rooms.conns.has("main"), false, "the dead connection is dropped");
+  // A timeout while the room's endpoint still answers is the page's, and stays as it was.
+  hung = false;
+  const again = await rooms.conns.get("main") ?? null;
+  assert.equal(again, null);
+  assert.equal(await call("eval_js", { script: "return 1", target: tab("T0001", "main") }), 1, "a fresh connection once it answers");
+  (await rooms.conns.get("main")).send = async () => { throw Object.assign(new Error("timeout: page JS got no reply within 30s"), { noReply: true }); };
+  assert.match(await fails("new_tab", { app: "room:main", url: "about:blank" }), /^error: timeout: page JS got no reply within 30s/);
+  void send;
+});
+
 test("the rooms command is the one on PATH, else node on the rooms checkout, else bare", async () => {
   const { chmodSync } = await import("node:fs");
   const { tempDir } = await import("../scripts/temp-dirs.mjs");
@@ -102,7 +150,7 @@ test("the rooms command is the one on PATH, else node on the rooms checkout, els
 test("a stalled room WebSocket upgrade has a deadline and closes its socket", async () => {
   use({ hangUpgrade: true });
   const start = Date.now();
-  assert.match(await fails("list_tabs", { app: "room:work" }), /no_browser: room 'work' is not up/);
+  assert.match(await fails("list_tabs", { app: "room:work" }), /no_browser: room 'work' is not answering/);
   assert.ok(Date.now() - start < 4500);
   assert.equal(R.room("work").sockets[0].closed, true);
 });
