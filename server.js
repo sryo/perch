@@ -5831,6 +5831,7 @@ const ROOM_FNS = {
         dims = imageDims(Buffer.from(data, "base64"));
       }
       const out = { data, image: dims, geom: { x: 0, y: 0, w: dims ? dims.w : 0, h: dims ? dims.h : 0 }, windowNumber: -1 };
+      try { out.appearance = (await roomRead(t, "JSON.stringify(matchMedia('(prefers-color-scheme: dark)').matches)")) === true ? "dark" : "light"; } catch {}
       if (clip) Object.assign(out, { clip: { x: c.x, y: c.y, w: c.w, h: c.h }, aim: "cdp" });
       return out;
     } finally {
@@ -6285,7 +6286,13 @@ export function imageDims(buf) {
 }
 
 // Process spawning behind a seam so tests can fake screencapture/sips.
-export const deps = { exec, dialogs: probeDialogs };
+// The Mac's appearance ("Dark" in dark mode, no key in light), which a browser's pages
+// follow unless the browser overrides it: a screenshot says which it was taken in.
+async function macAppearance() {
+  try { return /^Dark/.test((await exec("defaults", ["read", "-g", "AppleInterfaceStyle"], { timeout: 2000 })).stdout) ? "dark" : "light"; }
+  catch { return "light"; }
+}
+export const deps = { exec, dialogs: probeDialogs, appearance: macAppearance };
 
 // The runtime's clipPixels, for a screencapture of W x H pixels.
 function clipPixels(m, W, H) {
@@ -6330,9 +6337,10 @@ async function screenshot(args = {}) {
     ...(process.env.PERCH_CAPTURE_HELPER === "0" && { noHelper: true }),
     ...(process.env.PERCH_CAPTURE_SKYLIGHT === "0" && { noSky: true }),
   };
-  const g = await rt("shot", aimed
+  // A room tab answers with its own page's scheme; a browser's follows the Mac's.
+  const [g, mac] = await Promise.all([rt("shot", aimed
     ? { target, raise, format, maxWidth, ...noHelper, clip: pageFn("shot_clip", { ref, selector }), painted: pageFn("shot_painted", {}), restore: pageFn("shot_restore", {}) }
-    : { target, raise, format, maxWidth, ...noHelper });
+    : { target, raise, format, maxWidth, ...noHelper }), isRoomTab(target && target.tabId) ? null : deps.appearance().catch(() => null)]);
   // A refusal, or the element's own outcome: a ref miss, no match, a page fault, nothing visible.
   if (!g || g.ok === false || (aimed && g.windowNumber == null)) return g;
   const ext = format === "jpeg" ? "jpg" : "png";
@@ -6340,6 +6348,7 @@ async function screenshot(args = {}) {
   const rect = g.cgBounds || g.geom;
   const meta = (image, clip = g.clip, clipped = g.clipped) => ({
     window: rect, image,
+    ...((g.appearance || mac) && { appearance: g.appearance || mac }),
     ...(aimed && { clip, aim: g.aim }),
     ...(clipped && { clipped: true }),
     ...(g.warning && { warning: g.warning }),

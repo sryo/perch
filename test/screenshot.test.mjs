@@ -79,6 +79,32 @@ test("screenshot captures in the runtime: nothing spawned from Node, the window 
   assert.deepEqual(meta, { window: { x: 10, y: 0, w: 800, h: 620 }, image: { w: 1568, h: 1215 } });
 });
 
+// A dark page and a light one are different pictures of the same thing, so the result says
+// which the Mac was in. The setting is read by Node, never by another Apple Event.
+test("screenshot says whether the Mac was in dark or light, at no Apple Event", async () => {
+  const real = deps.appearance;
+  try {
+    for (const look of ["dark", "light"]) {
+      canary();
+      spawns();
+      deps.appearance = async () => look;
+      const before = world.aeLog.length;
+      const { meta } = await shoot({});
+      assert.deepEqual(meta, { window: { x: 10, y: 0, w: 800, h: 620 }, image: { w: 1568, h: 1215 }, appearance: look });
+      deps.appearance = async () => null;
+      const events = world.aeLog.length - before;
+      const plain = world.aeLog.length;
+      await shoot({});
+      assert.equal(world.aeLog.length - plain, events, "the same events with or without it");
+    }
+    // A setting that can't be read leaves the key out and the screenshot whole.
+    canary();
+    spawns();
+    deps.appearance = async () => { throw new Error("defaults: not found"); };
+    assert.deepEqual((await shoot({})).meta, { window: { x: 10, y: 0, w: 800, h: 620 }, image: { w: 1568, h: 1215 } });
+  } finally { deps.appearance = real; }
+});
+
 test("screenshot downscales only when wider than maxWidth; maxWidth:0 keeps full size", async () => {
   canary();
   spawns();

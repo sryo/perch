@@ -18,5 +18,7 @@ focus.granted = true;
 const refuse = (what) => { throw new Error(`test isolation: ${what} reached the real system; install a fake world or stub deps.exec first`); };
 for (const lane of Object.keys(DAEMONS)) DAEMONS[lane] = { run: async () => refuse(`DAEMONS.${lane}`) };
 deps.exec = async (cmd) => refuse(`deps.exec(${cmd})`);
+// Nor the Mac's own light or dark setting: a screenshot test that wants one sets it.
+deps.appearance = async () => null;
 // Rooms: no registry and no endpoint, so a room tab only answers through a fake (test/fakes/cdp-room.mjs).
 roomsReset({ home: "/nonexistent/perch-test-rooms", fetch: async () => refuse("rooms.fetch"), WebSocket: class { constructor() { refuse("rooms.WebSocket"); } } });

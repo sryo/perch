@@ -323,6 +323,18 @@ test("screenshot captures the room's tab over CDP", async () => {
   assert.equal(R.room("work").shot.format, "png");
 });
 
+// A room's page has its own scheme (the Mac's when the room started), so its screenshot
+// reports what the page itself sees, not the Mac's setting now.
+test("a room screenshot reports the page's own light or dark scheme", async () => {
+  use();
+  for (const dark of [true, false]) {
+    const dom = R.room("work").targets.get("T0001").dom;
+    (dom.window ?? dom).matchMedia = (q) => ({ matches: /dark/.test(q) === dark });
+    const r = await handleCall("screenshot", { target: tab() });
+    assert.equal(JSON.parse(r.content.find((c) => c.type === "text").text).appearance, dark ? "dark" : "light");
+  }
+});
+
 test("screenshot {selector} clips to the element", async () => {
   use({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<div id=d data-rect='10,20,300,100'>x</div>" }] } } });
   const r = await handleCall("screenshot", { selector: "#d", target: tab() });
