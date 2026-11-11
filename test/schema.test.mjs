@@ -93,10 +93,10 @@ test("composeEvalScript: no ref is byte-identical; a ref splices only its and it
   assert.doesNotThrow(() => new Function("return (async function(){" + asy + "\n})"));
 });
 
-test("shapeTabs: always {tabs,total}; filters are case-insensitive; default limit 50", () => {
+test("shapeTabs: always {tabs,total}; filters are case-insensitive; default limit 20", () => {
   const rows = Array.from({ length: 60 }, (_, i) => ({ app: "Arc", windowId: 1, tabIndex: i, url: `https://Site${i}.test`, title: `T${i}` }));
   const all = shapeTabs(rows, {});
-  assert.equal(all.tabs.length, 50);
+  assert.equal(all.tabs.length, 20);
   assert.equal(all.total, 60);
   const f = shapeTabs(rows, { urlContains: "site5", limit: 3 });
   assert.deepEqual(f.tabs.map((t) => t.tabIndex), [5, 50, 51]);

@@ -5790,7 +5790,7 @@ async function roomRt(fn, args) {
 
 // ---- tools ----
 
-export function shapeTabs(rows, { urlContains, titleContains, limit = 50 } = {}) {
+export function shapeTabs(rows, { urlContains, titleContains, limit = 20 } = {}) {
   const has = (v, q) => v.toLowerCase().includes(String(q).toLowerCase());
   if (urlContains) rows = rows.filter((t) => has(t.url, urlContains));
   if (titleContains) rows = rows.filter((t) => has(t.title, titleContains));
@@ -5809,7 +5809,7 @@ function listFailure(f) {
 }
 
 async function listTabs(args = {}) {
-  const { urlContains = null, titleContains = null, limit = 50 } = args;
+  const { urlContains = null, titleContains = null, limit = 20 } = args;
   const room = ROOM_APP.exec(String(args.app));
   if (room) {
     const r = await roomListTabs(room[1]);
@@ -11657,7 +11657,7 @@ const TOOLS = [
     app: { type: "string" },
     urlContains: { type: "string" },
     titleContains: { type: "string" },
-    limit: { type: "number", description: "Default 50." },
+    limit: { type: "number", description: "Default 20." },
   }),
   tool("new_tab", "Open an unselected tab in a running browser (default: the one in use); needs_focus without a grant. Returns {app,tabId}.", {
     url: { type: "string", description: "http(s) or file URL; default about:blank." },

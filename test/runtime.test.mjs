@@ -92,7 +92,7 @@ test("active tab detection per browser kind", async () => {
 
 test("list_tabs reads urls/titles in bulk, never per tab", async () => {
   install({ browsers: [chrome([{ id: 1, active: 0, tabs: tabs(50) }])], cg: [{ owner: "Google Chrome" }] });
-  const { o } = await call("list_tabs", {});
+  const { o } = await call("list_tabs", { limit: 50 });
   const rows = Array.isArray(o) ? o : o.tabs;
   assert.equal(rows.length, 50);
   assert.equal(world.counts["tabs.url()"], 1);
