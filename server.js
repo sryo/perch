@@ -10602,7 +10602,14 @@ function preludeFor(script) {
   }
   return PRELUDE_DECLS.filter((d) => need.has(d)).map((d) => d.src).join("\n");
 }
-const LEAN_PRELUDES = new Map([...LEAN_SCRIPTS].map(([k, v]) => [k, preludeFor(v)]));
+// Worked out on a script's first use rather than at import, where all of them
+// took most of the page layer's load time; the result is the same either way.
+const LEAN_PRELUDES = new Map();
+function leanPrelude(name) {
+  let p = LEAN_PRELUDES.get(name);
+  if (p === undefined && LEAN_SCRIPTS.has(name)) LEAN_PRELUDES.set(name, p = preludeFor(LEAN_SCRIPTS.get(name)));
+  return p;
+}
 
 // US states, Canadian provinces and common countries, each group's names equal
 // ("|" between groups, ":" between names), for comparing one comma part.
@@ -10641,7 +10648,7 @@ export function pageScript(name, A) {
   const c = callNotes.getStore();
   if (c) A = withRid(A, c.refs);
   const pl = !name || PLACE_SCRIPTS.has(name) ? placesIn(A) : null;
-  return (name ? LEAN_PRELUDES.get(name) : LEAN_PRELUDE) + "\nconst A = " + JSON.stringify(A) + ";\n" + (pl ? "const PLACES = " + JSON.stringify(pl) + ";\n" : "") + (name ? LEAN_SCRIPTS.get(name) : "");
+  return (name ? leanPrelude(name) : LEAN_PRELUDE) + "\nconst A = " + JSON.stringify(A) + ";\n" + (pl ? "const PLACES = " + JSON.stringify(pl) + ";\n" : "") + (name ? LEAN_SCRIPTS.get(name) : "");
 }
 
 // What this server's last snapshot of a tab listed, keyed by the target as
