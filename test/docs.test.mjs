@@ -1,12 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { TOOLS, INSTRUCTIONS, ERR } from "../server.js";
 import { SCHEMA_BUDGET } from "../scripts/mcp-client.mjs";
 
 const SKILL_MAX = 9200;
 const read = (f) => readFile(new URL("../" + f, import.meta.url), "utf8");
+// docs/contracts/: the tool contracts AGENTS.md indexes, read only by a session that touches them.
+const CONTRACTS = readdirSync(new URL("../docs/contracts/", import.meta.url)).filter((f) => f.endsWith(".md")).sort().map((f) => "docs/contracts/" + f);
 
 test("SKILL.md covers every tool and stays short", async () => {
   const skill = await read("SKILL.md");
@@ -17,7 +19,16 @@ test("SKILL.md covers every tool and stays short", async () => {
 
 test("AGENTS.md stays a lean reference: rules, contracts and test pointers, not per-case narration", async () => {
   const agents = await read("AGENTS.md");
-  assert.ok(agents.length < 64000, `AGENTS.md is ${agents.length} bytes; move per-case detail into a test or a commit message`);
+  assert.ok(agents.length < 33000, `AGENTS.md is ${agents.length} bytes; move a tool's contract to docs/contracts/, per-case detail into a test or a commit message`);
+});
+
+test("the tool contracts stay capped, and AGENTS.md's table lists each file once", async () => {
+  const agents = await read("AGENTS.md");
+  let total = 0;
+  for (const f of CONTRACTS) total += (await read(f)).length;
+  assert.ok(total < 34000, `docs/contracts/ is ${total} bytes; move per-case detail into a test or a commit message`);
+  const listed = [...agents.matchAll(/^\| `(docs\/contracts\/[\w-]+\.md)` \|/gm)].map((m) => m[1]).sort();
+  assert.deepEqual(listed, CONTRACTS);
 });
 
 test("SKILL.md adds to the schema and server instructions rather than repeating them", async () => {
@@ -34,7 +45,7 @@ test("SKILL.md adds to the schema and server instructions rather than repeating 
 
 test("docs don't mention removed tools, params or shapes", async () => {
   const stale = ["get_html", "page_state", "include_bounds", "clickCount", "`clear`", "bare array", "wait: false", "targetClause", "FRONTMOST", "{level, ts, args"];
-  for (const f of ["SKILL.md", "AGENTS.md", "README.md", "GOALS.md"]) {
+  for (const f of ["SKILL.md", "AGENTS.md", "README.md", "GOALS.md", ...CONTRACTS]) {
     const s = await read(f);
     for (const w of stale) assert.ok(!s.includes(w), `${f} still mentions ${w}`);
   }
@@ -104,26 +115,26 @@ test("docs say to verify from the call's own result, resend only failed fields, 
 
 test("docs say a natively disabled control refuses the click, trusted too, and aria-disabled still clicks", async () => {
   const skill = await read("SKILL.md");
-  const agents = await read("AGENTS.md");
+  const agents = await read("docs/contracts/page-scripts.md");
   const row = skill.split("\n").find((l) => l.startsWith("| `click` |"));
   assert.ok(row && /disabled/.test(row) && /aria-disabled/.test(row), "SKILL.md's click row misses disabled");
   const bullet = agents.split("\n").find((l) => l.startsWith("- **Click by name:**"));
-  assert.ok(bullet.includes("is disabled; nothing was clicked"), "AGENTS.md's click bullet misses the disabled refusal");
-  assert.ok(/fieldset/.test(bullet) && /legend/.test(bullet) && /trusted/.test(bullet) && /aria-disabled/.test(bullet), "AGENTS.md's click bullet misses fieldset, legend, trusted or aria-disabled");
+  assert.ok(bullet.includes("is disabled; nothing was clicked"), "page-scripts.md's click bullet misses the disabled refusal");
+  assert.ok(/fieldset/.test(bullet) && /legend/.test(bullet) && /trusted/.test(bullet) && /aria-disabled/.test(bullet), "page-scripts.md's click bullet misses fieldset, legend, trusted or aria-disabled");
 });
 
 test("docs say eval_js's ref binds el", async () => {
   const skill = await read("SKILL.md");
-  const agents = await read("AGENTS.md");
+  const agents = await read("docs/contracts/page-scripts.md");
   const row = skill.split("\n").find((l) => l.startsWith("| `eval_js` |"));
   assert.ok(row && /`ref`/.test(row) && /`el`/.test(row), "SKILL.md's eval_js row misses ref binding el");
   const bullet = agents.split("\n").find((l) => l.startsWith("- **eval_js ref:**"));
-  assert.ok(bullet && /__perch_ref_miss/.test(bullet) && /compile cache/.test(bullet), "AGENTS.md misses the eval_js ref bullet");
+  assert.ok(bullet && /__perch_ref_miss/.test(bullet) && /compile cache/.test(bullet), "page-scripts.md misses the eval_js ref bullet");
 });
 
 test("every repo path the docs name exists", async () => {
   const missing = [];
-  for (const doc of ["AGENTS.md", "README.md", "SKILL.md"]) {
+  for (const doc of ["AGENTS.md", "README.md", "SKILL.md", ...CONTRACTS]) {
     for (const [, p] of (await read(doc)).matchAll(/`((?:test|scripts|bench)\/[\w./-]+\.(?:mjs|js|json|html))`/g)) {
       if (!existsSync(new URL("../" + p, import.meta.url))) missing.push(`${doc}: ${p}`);
     }
@@ -133,7 +144,7 @@ test("every repo path the docs name exists", async () => {
 
 test("docs send bench runs to fium's runs folder, not bench/runs/", async () => {
   const stale = [];
-  for (const doc of ["AGENTS.md", "README.md", "SKILL.md", "bench/compare/README.md"]) {
+  for (const doc of ["AGENTS.md", "README.md", "SKILL.md", "bench/compare/README.md", ...CONTRACTS]) {
     if ((await read(doc)).includes("bench/runs")) stale.push(doc);
   }
   assert.deepEqual(stale, []);

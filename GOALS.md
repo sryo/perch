@@ -84,4 +84,4 @@ How the goals show up in every tool.
 
 What AppleScript can't reach at all (network interception, pre-load
 instrumentation) is in AGENTS.md "Ceiling". How each goal is met, and the
-designs rejected on the way, are in AGENTS.md too.
+designs rejected on the way, are in AGENTS.md and `docs/contracts/`.

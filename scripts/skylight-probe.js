@@ -13,7 +13,7 @@
 //                                           raising its window
 //
 // perch uses the first. It never posts the second in its background route: live,
-// it redirected the user's keyboard to the browser (see AGENTS.md, Trusted input).
+// it redirected the user's keyboard to the browser (see docs/contracts/trusted-input.md).
 //
 // The probe wires nothing into perch. It resolves the symbols and makes ONE
 // harmless SLPSPostEventRecordTo call to the CURRENT process's PSN with window
