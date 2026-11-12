@@ -3907,6 +3907,23 @@ function jxaRuntime(BROWSERS, HANG) {
       if (t.tabId != null) delete hints[handle(t.app, t.tabId)];
       return { ok: true, closed: a.target.tabId };
     },
+    // Each of perch's loft windows (a.wins) that still sits on a loft (a.rects) closes;
+    // one that moved off it may be the user's now, or another window with a reused id.
+    closeLoftWins(a) {
+      const out = [];
+      Object.keys(a.wins).forEach(function (name) {
+        if (!alive(name)) { a.wins[name].forEach(function (id) { out.push({ app: name, id: id, closed: false }); }); return; }
+        a.wins[name].forEach(function (id) {
+          let closed = false;
+          try {
+            const w = app(name).windows.byId(Number(id)), b = w.bounds();
+            if (a.rects.some(function (r) { return centerIn(r, { x: b.x, y: b.y, w: b.width, h: b.height }); })) { w.close(); closed = true; }
+          } catch (e) {}
+          out.push({ app: name, id: id, closed: closed });
+        });
+      });
+      return out;
+    },
     screenState() { return { locked: sessionLocked(), asleep: displayAsleep() }; },
     shotGeom(a) { return shotGeom(a); },
     // The geometry plus, when the runtime could capture, `data` (base64) and
@@ -6085,7 +6102,7 @@ async function navigate(url, target, raise) {
 // {loft:"WxH"} makes one that size (`owned`: size -> id) with this process as its
 // owner, so the loft can't outlive perch, and removes it when the last window
 // perch put there (`winLoft`: app NUL window id -> loft id) closes.
-export const loft = { wins: new Map(), rects: [], ever: false, owned: new Map(), winLoft: new Map(),
+export const loft = { wins: new Map(), rects: [], ever: false, owned: new Map(), winLoft: new Map(), tabWin: new Map(),
   // Safari is where a loft window goes when the agent's browser would need the user;
   // started with open -g (no activation), then given time to answer Apple Events.
   safari: {
@@ -6150,6 +6167,35 @@ async function loftRelease(id) {
   try { await loftRun(["down", id]); } catch {}
 }
 const LOFT_HINT = "or new_tab {url, loft:true}";
+
+// A session that opened a loft window and went quiet would leave it, and a loft
+// perch made, up for as long as perch runs. So once no call has reached this server
+// for loftIdle.ms (an hour, as rooms stop; PERCH_LOFT_IDLE_MS, 0: never), perch
+// closes its windows still on a loft and downs the lofts it made. `closed` keeps the
+// handles of tabs that went with them, so a later call says why they are gone.
+export const loftIdle = { ms: 3600000, timer: null, busy: 0, closed: new Set() };
+const LOFT_IDLE_GONE = "stale_tab: perch closed this tab's loft window after it went unused; reopen it with new_tab {url, loft}";
+function loftIdleArm(delta) {
+  loftIdle.busy += delta;
+  clearTimeout(loftIdle.timer);
+  loftIdle.timer = null;
+  if (loftIdle.busy > 0 || !loft.wins.size || !(loftIdle.ms > 0)) return;
+  loftIdle.timer = setTimeout(() => { loftIdleClose().catch(() => {}); }, loftIdle.ms);
+  loftIdle.timer.unref?.();
+}
+export async function loftIdleClose() {
+  if (loftIdle.busy > 0 || !loft.wins.size) return;
+  const res = await rt("closeLoftWins", loftArg());
+  const lofts = new Set();
+  for (const { app, id, closed } of res) {
+    const ids = loft.wins.get(app);
+    if (ids) { ids.delete(id); if (!ids.size) loft.wins.delete(app); }
+    const key = `${app}\0${id}`, lid = loft.winLoft.get(key);
+    if (lid) { loft.winLoft.delete(key); lofts.add(lid); }
+    for (const [tab, k] of loft.tabWin) if (k === key) { loft.tabWin.delete(tab); if (closed) loftIdle.closed.add(tab); }
+  }
+  for (const lid of lofts) await loftRelease(lid);
+}
 const loftHome = () => process.env.LOFT_HOME || join(homedir(), "Library", "Application Support", "loft");
 export function loftHolder(id = "default") {
   let h;
@@ -6192,6 +6238,7 @@ async function loftTab(url, app, from, label, onLoft) {
   const { loftWin, ...out } = r;
   if (size && loftWin) { loft.winLoft.set(`${out.app}\0${loftWin.id}`, id); out.loft = id; }
   if (loftWin) {
+    loft.tabWin.set(out.tabId, `${out.app}\0${loftWin.id}`);
     if (!loft.wins.has(out.app)) loft.wins.set(out.app, new Set());
     loft.wins.get(out.app).add(loftWin.id);
     const r = loftWin.rect;
@@ -6267,6 +6314,7 @@ async function closeTab({ tabId } = {}) {
   const { loftClosed, ...out } = r, ids = loft.wins.get(loftClosed.app);
   if (ids) { ids.delete(loftClosed.id); if (!ids.size) loft.wins.delete(loftClosed.app); }
   const key = `${loftClosed.app}\0${loftClosed.id}`, lid = loft.winLoft.get(key);
+  for (const [tab, k] of loft.tabWin) if (k === key) loft.tabWin.delete(tab);
   if (lid) { loft.winLoft.delete(key); await loftRelease(lid); }
   return { ...out, window: true };
 }
@@ -12157,11 +12205,17 @@ function withOutdated(out) {
 export async function handleCall(name, args = {}, opts = {}) {
   const kind = roomArgs(args) ? "system" : "display";
   holdAwake(kind);
+  loftIdleArm(1);
   try {
     const out = await handleCallCore(name, args, opts.signal);
-    return withOutdated(kind === "system" ? out : await withScreenWhy(out));
+    return withOutdated(kind === "system" ? out : await withScreenWhy(loftIdleGone(out, args)));
   }
-  finally { holdAwake(kind); }
+  finally { holdAwake(kind); loftIdleArm(-1); }
+}
+function loftIdleGone(out, args) {
+  const first = out?.content?.[0], tab = args?.target?.tabId ?? args?.tabId;
+  if (out?.isError && loftIdle.closed.has(tab) && /^error: stale_tab: /.test(first?.text ?? "")) first.text = "error: " + LOFT_IDLE_GONE;
+  return out;
 }
 
 async function handleCallCore(name, args = {}, signal) {
@@ -12278,6 +12332,7 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   // process and its osascript REPLs running for good.
   awake.on = process.env.PERCH_AWAKE !== "0";
   if (Number(process.env.PERCH_AWAKE_MS) > 0) awake.ms = Number(process.env.PERCH_AWAKE_MS);
+  if (process.env.PERCH_LOFT_IDLE_MS != null && Number(process.env.PERCH_LOFT_IDLE_MS) >= 0) loftIdle.ms = Number(process.env.PERCH_LOFT_IDLE_MS);
   const shutdown = () => {
     releaseAwake();
     for (const d of Object.values(DAEMONS)) { try { d.kill(); } catch {} }

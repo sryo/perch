@@ -7,7 +7,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, rooms, roomHint, INSTRUCTIONS, launchLeftovers } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, loftIdle, loftIdleClose, rooms, roomHint, INSTRUCTIONS, launchLeftovers } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { tempDir } from "../scripts/temp-dirs.mjs";
 
@@ -48,6 +48,9 @@ beforeEach((t) => {
   loft.wins.clear();
   loft.owned.clear();
   loft.winLoft.clear();
+  loft.tabWin.clear();
+  loftIdle.closed.clear();
+  loftIdle.ms = 3600000;
   loft.safari = { launch: async () => {} };
 });
 
@@ -541,4 +544,63 @@ test("F4 a hidden Safari is no path for a loft window: no_browser, nothing made,
   ({ t } = await call("new_tab", { app: "Safari", url: "https://job.test/", loft: true }));
   assert.match(t, /^error: no_browser: Safari is hidden \(Cmd-H\), so its window on the loft wouldn't paint/);
   assert.deepEqual(made(), []);
+});
+
+// A session that opened a loft window and went quiet leaves it there for good: the
+// loft lives while perch does. After loftIdle.ms with no call to this server, perch
+// closes the windows it made on a loft (only those still on one), and takes down a
+// loft it made; the agent's old handle then says what happened and how to reopen.
+const closedWins = () => world.log.filter(([k]) => k === "closeWindow").map(([, , id]) => id);
+const until = async (f, ms = 1000) => { const t0 = Date.now(); while (!f() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 10)); return f(); };
+
+test("I1 a loft window no call has used for loftIdle.ms is closed, and its handle says how to reopen it", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  loftIdle.ms = 40;
+  const { o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.ok(await until(() => closedWins().length), "closed once idle");
+  assert.deepEqual(closedWins(), [901]);
+  assert.equal(loft.wins.size, 0, "perch forgets the window");
+  const e = await call("eval_js", { script: "return 1", target: { tabId: o.tabId } });
+  assert.match(e.t, /^error: stale_tab: perch closed this tab's loft window after it went unused; reopen it with new_tab \{url, loft\}/);
+  assert.deepEqual(world.log.filter(([k, a]) => k === "closeWindow" && a !== "Google Chrome"), [], "nothing else closed");
+});
+
+test("I2 calls keep a loft window open; idle counts from the last one", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  loftIdle.ms = 80;
+  await call("new_tab", { url: "https://job.test/", loft: true });
+  for (let i = 0; i < 6; i++) { await new Promise((r) => setTimeout(r, 30)); await call("list_tabs", {}); }
+  assert.deepEqual(closedWins(), [], "used every 30ms");
+  assert.ok(await until(() => closedWins().length), "closed once the calls stop");
+});
+
+test("I3 a loft perch made goes down with its idle windows", async () => {
+  const runs = sized();
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY, SIZED] });
+  loftIdle.ms = 3600000;
+  await call("new_tab", { url: "https://job.test/", loft: "1280x800" });
+  await loftIdleClose();
+  assert.deepEqual(closedWins(), [901]);
+  assert.deepEqual(runs().slice(1), ["down loft-1"]);
+});
+
+test("I4 a window no longer on a loft is never closed for idle, and perch stops counting it as its own", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  await call("new_tab", { url: "https://job.test/", loft: true });
+  world.run('Application("Google Chrome").windows.byId(901).bounds = {x: 0, y: 0, width: 800, height: 600}');
+  await loftIdleClose();
+  assert.deepEqual(closedWins(), []);
+  assert.equal(loft.wins.size, 0);
+});
+
+test("I5 PERCH_LOFT_IDLE_MS=0 never closes a loft window for idle", async () => {
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  loftIdle.ms = 0;
+  await call("new_tab", { url: "https://job.test/", loft: true });
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(closedWins(), []);
 });

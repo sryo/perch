@@ -110,7 +110,7 @@ Another tool may run its own copy of the user's browser (headless, own profile).
 
 ### Loft
 
-`new_tab {loft}`: a window on a loft: `true` (`$LOFT_HOME/holder.json`), an id (`lofts/<id>.json`) or `WxH` (perch makes it, `--owner` its pid, and downs it with its last window). Without the grant, Chromium is used only while the user is away (the app they left gets the front back); otherwise, and for Arc, Safari takes it (`open -g` if needed; `note`), except for a site a room is signed in to: `no_browser` naming the room, nothing opened. Node checks the pid, the runtime the display (`0x6c66`/`0x7466`). **perch makes and closes only its own loft windows** and lofts; `loftArm` hides them from untargeted calls. Pinned by `test/loft.test.mjs`.
+`new_tab {loft}`: a window on a loft: `true` (`$LOFT_HOME/holder.json`), an id (`lofts/<id>.json`) or `WxH` (perch makes it, `--owner` its pid, and downs it with its last window). Without the grant, Chromium is used only while the user is away (the app they left gets the front back); otherwise, and for Arc, Safari takes it (`open -g` if needed; `note`), except for a site a room is signed in to: `no_browser` naming the room, nothing opened. Node checks the pid, the runtime the display (`0x6c66`/`0x7466`). **perch makes and closes only its own loft windows** and lofts; `loftArm` hides them from untargeted calls. After `loftIdle.ms` (1h, `PERCH_LOFT_IDLE_MS`, 0: never) with no call to the server, it closes those still on a loft and downs its lofts; their handles answer `stale_tab` saying so. Pinned by `test/loft.test.mjs`.
 
 ## Rules the code can't show
 
