@@ -19,6 +19,8 @@
 // loft's size.
 //   node scripts/new-tab-live.mjs --yes --loft 1280x800
 // perch makes that loft itself: the same checks, and the loft gone after close_tab.
+// Then, each way, a second window left with no call for the idle limit (IDLE_MS here):
+// perch closes it, its handle answers stale_tab saying so, and a loft perch made is gone.
 // The last line is the number of failed checks.
 
 import { execFileSync } from "node:child_process";
@@ -47,7 +49,8 @@ async function loftCheck() {
   const before = windows();
   if (!before) { console.error("Safari isn't running; new_tab never launches it"); return 2; }
   const url = `file://${join(ROOT, "bench", "fixture.html")}#loft`;
-  const client = await connect({ timeoutMs: 60000, env: { ...process.env, PERCH_AWAKE: "0" } });
+  const IDLE_MS = 8000;
+  const client = await connect({ timeoutMs: 60000, env: { ...process.env, PERCH_AWAKE: "0", PERCH_LOFT_IDLE_MS: String(IDLE_MS) } });
   const guard = frontGuard(frontPid);
   let failed = 0, made = null;
   const check = (ok, what) => { if (!ok) failed++; console.log(`${ok ? "PASS" : "FAIL"} ${what}`); };
@@ -72,6 +75,17 @@ async function loftCheck() {
       check(xo.ok && xo.window === true, `close_tab closed the window: ${text(x)}`);
       check(windows().length === before.length, "no window left behind");
       if (size) check(!status(id)?.up, `perch removed its loft ${id}`);
+      const again = await guard.step("new_tab loft, left idle", () => client.call("new_tab", { app: "Safari", url, loft: size || id || true }).then((res) => {
+        try { if (!res.isError) { const o = JSON.parse(text(res)); made = o.tabId; if (size) id = o.loft; } } catch {}
+        return res;
+      }));
+      check(!again.isError && windows().length === before.length + 1, `a second loft window: ${text(again)}`);
+      await guard.step("idle", () => new Promise((r) => setTimeout(r, IDLE_MS + 4000)));
+      check(windows().length === before.length, `perch closed it after ${IDLE_MS}ms with no call`);
+      if (size) check(!status(id)?.up, `and took its loft ${id} down`);
+      const gone = await guard.step("eval_js on the closed tab", () => client.call("eval_js", { target: { tabId: made }, script: "return 1" }));
+      if (/went unused/.test(text(gone))) made = null;
+      check(/^error: stale_tab: perch closed this tab's loft window after it went unused/.test(text(gone)), `its handle says why: ${text(gone)}`);
     }
   } catch (e) {
     failed++;
