@@ -59,11 +59,11 @@ test("an unknown room or a room that is down is no_browser", async () => {
   assert.match(await fails("eval_js", { script: "return 1", target: tab("T0001", "nope") }), /^error: no_browser: no room 'nope'/);
 });
 
-const NOT_VISIBLE = 'tab_not_visible: page JS needs the tab its window shows; retry later, open it on the loft: new_tab {url, loft:true}, continue in a room: new_tab {from, app:"room:<name>"}, or activate_tab (takes focus)';
+const NOT_VISIBLE = 'tab_not_visible: page JS needs the tab its window shows; retry later, new_tab {url, loft:true}, new_tab {from, app:"room:<name>"}, or activate_tab (takes focus)';
 test("tab_not_visible names the loft once and fills in the rooms that exist", () => {
   use({ rooms: { main: { registeredSites: [] }, mail: { registeredSites: [{ origin: "https://a.test" }] } } });
   const m = roomHint(NOT_VISIBLE, { url: "https://a.test/p" });
-  assert.match(m, /continue in a room: new_tab \{from, app:"room:mail"\}, or activate_tab/);
+  assert.match(m, /new_tab \{from, app:"room:mail"\}, or activate_tab/);
   assert.equal(m.split("loft:true").length, 2, m);
   assert.ok(!m.includes("<name>"), m);
   assert.match(roomHint(NOT_VISIBLE, {}), /app:"room:main"\} \(rooms: main, mail\), or activate_tab/);

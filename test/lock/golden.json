@@ -1448,7 +1448,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: tab_not_visible: navigate can't run page JS in a tab its window doesn't show; loading it from outside the page would bring the browser to the front: pass raise:true to allow that, or activate_tab first; or open it on the loft: new_tab {url, loft:true}"
+     "text": "error: tab_not_visible: navigate can't run page JS in a tab its window doesn't show; loading it from outside the page would bring the browser to the front: pass raise:true to allow that, or activate_tab first; or new_tab {url, loft:true}"
     }
    ],
    "isError": true,
@@ -4252,7 +4252,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: tab_not_visible: a background trusted click needs the tab its window shows; retry later, open it on the loft: new_tab {url, loft:true}, continue in a room: new_tab {from, app:\"room:<name>\"}, or activate_tab (takes focus), or pass raise:true"
+     "text": "error: tab_not_visible: a background trusted click needs the tab its window shows; retry later, new_tab {url, loft:true}, new_tab {from, app:\"room:<name>\"}, or activate_tab (takes focus), or pass raise:true"
     }
    ],
    "isError": true,
@@ -6771,7 +6771,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space); or open it on the loft: new_tab {url, loft:true}"
+     "text": "error: window_offscreen: the browser window isn't on screen (minimized or on another Space); or new_tab {url, loft:true}"
     }
    ],
    "isError": true,
@@ -7087,7 +7087,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: tab_not_visible: eval_js needs the tab its window shows; retry later, open it on the loft: new_tab {url, loft:true}, continue in a room: new_tab {from, app:\"room:<name>\"}, or activate_tab (takes focus)"
+     "text": "error: tab_not_visible: eval_js needs the tab its window shows; retry later, new_tab {url, loft:true}, new_tab {from, app:\"room:<name>\"}, or activate_tab (takes focus)"
     }
    ],
    "isError": true,

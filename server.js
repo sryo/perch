@@ -44,7 +44,7 @@ function jxaRuntime(BROWSERS, HANG) {
   BROWSERS.forEach((b) => { KIND[b.app] = b.kind; KEY[b.app] = b.key; BY_KEY[b.key] = b.app; BUNDLE[b.app] = b.bundle; });
 
   // Errors start with a stable, browser-neutral code that clients branch on.
-  const notVisible = (what) => "tab_not_visible: " + what + " needs the tab its window shows; retry later, open it on the loft: new_tab {url, loft:true}, continue in a room: new_tab {from, app:\"room:<name>\"}, or activate_tab (takes focus)";
+  const notVisible = (what) => "tab_not_visible: " + what + " needs the tab its window shows; retry later, new_tab {url, loft:true}, new_tab {from, app:\"room:<name>\"}, or activate_tab (takes focus)";
   const OFFSCREEN = "window_offscreen: the browser window isn't on screen (minimized or on another Space)";
   const NEW_TAB_UNSHOWN = "page tools get tab_not_visible until it is shown: activate_tab (takes focus) when the user is away, or navigate a tab its window shows";
   const AMBIGUOUS = "window_ambiguous: another window of this browser has the same frame, so perch can't tell which is the target's; move or resize one";
@@ -6149,7 +6149,7 @@ async function loftRelease(id) {
   for (const [size, v] of loft.owned) if (v === id) loft.owned.delete(size);
   try { await loftRun(["down", id]); } catch {}
 }
-const LOFT_HINT = "or open it on the loft: new_tab {url, loft:true}";
+const LOFT_HINT = "or new_tab {url, loft:true}";
 const loftHome = () => process.env.LOFT_HOME || join(homedir(), "Library", "Application Support", "loft");
 export function loftHolder(id = "default") {
   let h;
@@ -6239,7 +6239,7 @@ export function roomHint(msg, args) {
   if (!names.length) return msg;
   const more = names.length > 1 ? ` (rooms: ${names.join(", ")})` : "";
   if (msg.includes(ROOM_SLOT)) return msg.replace(ROOM_SLOT, `new_tab {from, app:"room:${names[0]}"}${more}`);
-  return `${msg}; or continue in a room: new_tab {from, app:"room:${names[0]}"}${names.length > 1 ? ` (rooms: ${names.join(", ")})` : ""}`;
+  return `${msg}; or new_tab {from, app:"room:${names[0]}"}${names.length > 1 ? ` (rooms: ${names.join(", ")})` : ""}`;
 }
 
 // Browser names are matched loosely (case-insensitive app name, key such as

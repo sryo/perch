@@ -153,7 +153,7 @@ test("navigate to a file: url from a window behind another app still needs raise
   const { seen, hash } = await observe("chromeAway", "navigate", { url: "file:///tmp/p.html" });
   assert.match(seen.text, /^error: tab_not_visible: .*raise:true/);
   assert.equal(seen.counts["tab.url="], undefined);
-  assert.equal(hash, "1067d75af0d5", JSON.stringify(seen));
+  assert.equal(hash, "2186f9c6c3b8", JSON.stringify(seen));
 });
 
 test("the runtime refuses a raw call with a url it must not load, before any Apple Event", () => {

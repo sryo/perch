@@ -29,7 +29,7 @@ const offscreen = (state) => install({
 const shot = async () => (await handleCall("screenshot", {})).content[0].text;
 const BASE = "error: window_offscreen: the browser window isn't on screen (minimized or on another Space)";
 // The why goes ahead of the hint that names somewhere else to run.
-const HINT = "; or open it on the loft: new_tab {url, loft:true}";
+const HINT = "; or new_tab {url, loft:true}";
 
 test("a screenshot that fails says the screen is locked, from the IO registry's console-session key", async () => {
   const world = offscreen({ locked: true });

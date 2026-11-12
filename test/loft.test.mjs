@@ -355,7 +355,7 @@ test("R3 a loft window with more tabs loses only the tab", async () => {
 });
 
 test("R4 errors that need the user's window name the loft beside rooms, live or not", async () => {
-  const hint = "or open it on the loft: new_tab {url, loft:true}";
+  const hint = "or new_tab {url, loft:true}";
   assert.ok(roomHint("tab_not_visible: hidden", {}).includes(hint));
   assert.ok(roomHint("window_offscreen: minimized", {}).includes(hint));
   assert.equal(roomHint("stale_tab: gone", {}), "stale_tab: gone");
