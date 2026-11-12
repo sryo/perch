@@ -604,3 +604,13 @@ test("I5 PERCH_LOFT_IDLE_MS=0 never closes a loft window for idle", async () => 
   await new Promise((r) => setTimeout(r, 60));
   assert.deepEqual(closedWins(), []);
 });
+
+test("I6 a loft perch made goes down after idle even when its window was closed some other way", async () => {
+  const runs = sized();
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY, SIZED] });
+  await call("new_tab", { url: "https://job.test/", loft: "1280x800" });
+  world.run('Application("Google Chrome").windows.byId(901).close()');
+  await loftIdleClose();
+  assert.deepEqual(runs().slice(1), ["down loft-1"]);
+  assert.equal(loft.wins.size + loft.owned.size, 0);
+});
