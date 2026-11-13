@@ -29,6 +29,8 @@ export function makeRooms({ rooms = { work: {} }, down = [], hangUpgrade = false
     if (!room || room.down) throw new TypeError("fetch failed");
     if (!u.pathname.startsWith(`/${TOKEN}/`)) return { ok: false, status: 401, json: async () => ({}) };
     if (u.pathname.endsWith("/json/version")) return { ok: true, status: 200, json: async () => ({ Browser: "Chrome/156", webSocketDebuggerUrl: `ws://127.0.0.1:${u.port}/${TOKEN}/devtools/browser/b` }) };
+    // The guard's state, as rooms' relay serves it; an older image has no such path.
+    if (u.pathname.endsWith("/rooms/memory") && room.memory) return { ok: true, status: 200, json: async () => room.memory };
     return { ok: false, status: 404, json: async () => ({}) };
   };
   const all = [...byPort.values()];
@@ -58,6 +60,7 @@ class FakeRoom {
     this.connects = 0;
     this.n = 0;
     this.shown = null;
+    this.memory = null;
     for (const t of tabs) this.open(t.url, t.html, t.id);
   }
   open(url, html, id) {
@@ -72,6 +75,13 @@ class FakeRoom {
     const t = this.targets.get(targetId);
     t.dialog = { type, message, waiting: [] };
     this.event("Page.javascriptDialogOpening", { type, message, url: t.url }, this.sessionOf(targetId));
+  }
+  // The renderer is gone (the room's memory guard ended it): the target stays listed, and its
+  // session answers only Inspector.enable and Page.navigate, as seen live.
+  crash(targetId) {
+    this.targets.get(targetId).crashed = true;
+    const s = this.sessionOf(targetId);
+    if (s) this.event("Inspector.targetCrashed", {}, s);
   }
   sessionOf(targetId) { for (const [s, t] of this.sessions) if (t === targetId) return s; return undefined; }
   reply(ws, msg) { setTimeout(() => ws.onmessage?.({ data: JSON.stringify(msg) }), 0); }
@@ -97,6 +107,12 @@ class FakeRoom {
     const err = (message) => this.reply(ws, { id, error: { code: -32000, message } });
     const t = sessionId ? this.targets.get(this.sessions.get(sessionId)) : null;
     if (sessionId && !t) return err("Session with given id not found.");
+    if (t && t.crashed) {
+      if (method === "Inspector.enable") { this.event("Inspector.targetCrashed", {}, sessionId); return ok(); }
+      if (method !== "Page.navigate") return; // no reply, ever
+      t.crashed = false;
+      this.event("Inspector.targetReloadedAfterCrash", {}, sessionId);
+    }
     switch (method) {
       case "Target.getTargets": return ok({ targetInfos: [...this.targets].map(([targetId, x]) => ({ targetId, type: "page", url: x.dom.location.href, title: x.dom.document.title, attached: false })) });
       case "Target.createTarget": { const targetId = this.open(params.url); if (!params.background) this.shown = targetId; return ok({ targetId }); }
@@ -113,7 +129,8 @@ class FakeRoom {
         this.sessions.set(s, params.targetId);
         return ok({ sessionId: s });
       }
-      case "Page.enable": case "Runtime.enable": case "Browser.setDownloadBehavior": return ok();
+      case "Page.enable": case "Inspector.enable": case "Runtime.enable": case "Browser.setDownloadBehavior": return ok();
+      case "Target.detachFromTarget": this.sessions.delete(params.sessionId); return ok();
       case "Page.getFrameTree": return ok({ frameTree: { frame: { id: "F-" + this.sessions.get(sessionId), url: t.dom.location.href } } });
       case "Page.createIsolatedWorld": t.worlds++; return ok({ executionContextId: 100 + t.worlds });
       case "Page.navigate": {

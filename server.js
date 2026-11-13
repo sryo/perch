@@ -5217,6 +5217,16 @@ async function roomConnect(name) {
       }
     } else if (msg.method === "Page.javascriptDialogClosed" && S) S.dialog = null;
     else if (msg.method === "Page.frameNavigated" && S && P.frame && !P.frame.parentId) { S.ctx = null; S.loaderId = P.frame.loaderId; }
+    else if (msg.method === "Inspector.targetCrashed" && S) {
+      S.crashed = true;
+      // Nothing sent to a page with no renderer is ever answered, except a navigation.
+      for (const [id, p] of conn.pending) {
+        if (p.sessionId !== S.id || p.method === "Page.navigate" || p.method === "Inspector.enable") continue;
+        conn.pending.delete(id); clearTimeout(p.t); p.rej(roomCrashed(`room:${name}:${S.targetId}`));
+      }
+    }
+    // Reloaded, by this server's navigate or anyone's: the session never had its page events, so the next call makes another.
+    else if (msg.method === "Inspector.targetReloadedAfterCrash" && S) roomForget(conn, S);
     else if (msg.method === "Target.detachedFromTarget") {
       const s = conn.bySession.get(P.sessionId);
       if (s) { conn.bySession.delete(P.sessionId); conn.sessions.delete(s.targetId); }
@@ -5236,6 +5246,14 @@ async function roomConnect(name) {
 }
 
 const roomGone = (tabId) => new Error(`stale_tab: ${tabId} is gone (closed or crashed); re-run list_tabs`);
+// A page whose renderer ended: rooms' memory guard ends the heaviest one when the room runs low.
+// The target stays listed and answers nothing but a navigation, which loads it again.
+const roomCrashed = (tabId) => new Error(`stale_tab: ${tabId} crashed, most likely ended by the room when it ran low on memory; navigate it to load the page again (what the page held is gone)`);
+function roomForget(conn, S) {
+  conn.bySession.delete(S.id);
+  conn.sessions.delete(S.targetId);
+  conn.send("Target.detachFromTarget", { sessionId: S.id }).catch(() => {});
+}
 function roomSession(conn, targetId, tabId) {
   let s = conn.sessions.get(targetId);
   if (!s) {
@@ -5243,9 +5261,11 @@ function roomSession(conn, targetId, tabId) {
       let r;
       try { r = await conn.send("Target.attachToTarget", { targetId, flatten: true }); }
       catch (e) { throw /No target/i.test(e.message) ? roomGone(tabId) : e; }
-      const S = { id: r.sessionId, targetId, ctx: null, dialog: null, loaderId: null };
+      const S = { id: r.sessionId, targetId, ctx: null, dialog: null, loaderId: null, crashed: false };
       conn.bySession.set(S.id, S);
-      await conn.send("Page.enable", {}, S.id);
+      // A crashed page answers this one, with its targetCrashed event ahead of the reply, and never Page.enable.
+      await conn.send("Inspector.enable", {}, S.id);
+      if (!S.crashed) await conn.send("Page.enable", {}, S.id);
       return S;
     })();
     conn.sessions.set(targetId, s);
@@ -5258,7 +5278,18 @@ async function roomTarget(target, tool) {
   const m = ROOM_HANDLE.exec(String(tabId));
   if (!m) throw new Error(`bad_args: ${tool} on a room needs target.tabId, a room:<name>:<id> handle from list_tabs {app:"room"}`);
   const conn = await roomConn(m[1]);
-  return { conn, S: await roomSession(conn, m[2], tabId), name: m[1], targetId: m[2], tabId };
+  const S = await roomSession(conn, m[2], tabId);
+  if (S.crashed && tool !== "navigate" && tool !== "close_tab") throw roomCrashed(tabId);
+  return { conn, S, name: m[1], targetId: m[2], tabId };
+}
+// rooms' memory guard, as its relay reports it: {totalMb, availableMb, ended, last}, or null.
+async function roomMemory(name) {
+  const r = roomRegistry()[name];
+  try {
+    const res = await rooms.fetch(`http://${r.cdp.host}:${r.cdp.port}/${r.cdp.token}/rooms/memory`, { signal: AbortSignal.timeout(1000) });
+    const m = res.ok ? await res.json() : null;
+    return m && Number.isFinite(m.totalMb) && Number.isFinite(m.availableMb) ? m : null;
+  } catch { return null; }
 }
 const roomPages = async (conn) => (await conn.send("Target.getTargets")).targetInfos.filter((x) => x.type === "page");
 
@@ -5575,18 +5606,25 @@ const ROOM_FNS = {
   // Page.frameNavigated) and its document reads complete. A same-document
   // navigation has no loader and is done at once.
   async navigate(a) {
-    const t = await roomTarget(a.target, "navigate"), start = Date.now();
+    let t = await roomTarget(a.target, "navigate");
+    const start = Date.now(), crashed = t.S.crashed;
     if (t.S.dialog) throw dialogOpen(t.S.dialog);
     const r = await t.conn.send("Page.navigate", { url: a.url }, t.S.id, a.timeout);
     if (r.errorText) return { loadFailed: true };
+    // A crashed page's session had no page events to follow the load by: take a new one on the new renderer.
+    if (crashed) {
+      roomForget(t.conn, t.S);
+      t = await roomTarget(a.target, "navigate");
+      if (t.S.crashed) throw roomCrashed(t.tabId);
+    }
     const state = "JSON.stringify({href:location.href,ready:document.readyState})";
     if (!r.loaderId) {
       const href = (await roomRead(t, state)).href;
       return { href, waited: true, handoff: await roomHandoff(t, href) };
     }
     const left = () => a.timeout - (Date.now() - start);
-    while (t.S.loaderId !== r.loaderId && left() > 0) await sleep(25);
-    if (t.S.loaderId !== r.loaderId) {
+    while (!crashed && t.S.loaderId !== r.loaderId && left() > 0) await sleep(25);
+    if (!crashed && t.S.loaderId !== r.loaderId) {
       const now = (await roomPages(t.conn).catch(() => [])).find((p) => p.targetId === t.targetId);
       return { notCommitted: now ? now.url : "", after: a.timeout };
     }
@@ -5633,6 +5671,12 @@ const ROOM_FNS = {
         });
         if (next) return out(tabId, true);
       }
+    }
+    // The room's guard ends the heaviest page once memory runs out, which is rarely the new one:
+    // a room that can't hold another refuses it instead. An image from before the guard says nothing.
+    const mem = await roomMemory(name);
+    if (mem && mem.availableMb < Math.min(1024, mem.totalMb / 3)) {
+      throw new Error(`no_browser: room '${name}' has ${mem.availableMb} MB free of ${mem.totalMb} MB, and another page could make it end one that is open; close_tab one you are done with, or give the room more memory: ${roomsCmd()} set ${name} memory=${2 * Math.ceil(mem.totalMb / 1024)}G, then ${roomsCmd()} down ${name} and ${roomsCmd()} up ${name}`);
     }
     // Its own window: a room tab behind another in one window is hidden and gets no animation
     // frames (requestAnimationFrame never fires), so canvas apps like Figma stall until activated.

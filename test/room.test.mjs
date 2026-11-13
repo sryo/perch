@@ -743,6 +743,60 @@ test("an unlabeled new_tab's tab stays its server's past the idle window", async
   assert.deepEqual([row.holder, row.mine], [`pid ${process.pid}`, true]);
 });
 
+// A room low on memory ends its heaviest tab (rooms' guard). The tab stays listed, crashed,
+// and answers no page call: seen live as figma_run waiting out 100s on each of three such tabs.
+test("a room tab whose page crashed says so at once, and navigate loads it again", async () => {
+  use({ rooms: { work: { tabs: [{ url: "https://a.test/", html: "<title>A</title>" }], sites: { "https://a.test/": "<title>Again</title>" } } } });
+  assert.equal(await call("eval_js", { script: "return 1", target: tab() }), 1);
+  R.room("work").crash("T0001");
+  const start = Date.now();
+  for (const [name, args] of [["eval_js", { script: "return 1" }], ["get_text", {}], ["screenshot", {}], ["eval_js", { script: "return 1", world: "main" }]]) {
+    assert.match(await fails(name, { ...args, target: tab() }), /^error: stale_tab: room:work:T0001 crashed, most likely ended by the room when it ran low on memory; navigate it to load the page again/, name);
+  }
+  assert.ok(Date.now() - start < 1500, `a crashed tab is not waited on (${Date.now() - start}ms)`);
+  const nav = await call("navigate", { url: "https://a.test/", target: tab() });
+  assert.equal(nav.url, "https://a.test/");
+  assert.equal(await call("eval_js", { script: "return document.title", target: tab() }), "Again");
+});
+
+test("a tab already crashed when perch first reaches it, or crashing mid-call, is told the same way", async () => {
+  use({ rooms: { work: { tabs: [{ url: "https://a.test/" }, { url: "https://b.test/" }] } } });
+  R.room("work").crash("T0001");
+  const start = Date.now();
+  assert.match(await fails("eval_js", { script: "return 1", target: tab() }), /^error: stale_tab: room:work:T0001 crashed/);
+  const waiting = fails("eval_js", { script: "return new Promise(() => {})", awaitPromise: true, timeout: 20000, target: tab("T0002") });
+  await new Promise((r) => setTimeout(r, 50));
+  R.room("work").crash("T0002");
+  assert.match(await waiting, /^error: stale_tab: room:work:T0002 crashed/);
+  assert.ok(Date.now() - start < 2000, `${Date.now() - start}ms`);
+});
+
+test("a tab someone else reloaded after a crash works again", async () => {
+  use({ rooms: { work: { tabs: [{ url: "https://a.test/" }], sites: { "https://a.test/": "<title>Back</title>" } } } });
+  assert.equal(await call("eval_js", { script: "return 1", target: tab() }), 1);
+  const room = R.room("work");
+  room.crash("T0001");
+  assert.match(await fails("eval_js", { script: "return 1", target: tab() }), /crashed/);
+  room.handle(room.sockets[0], { id: 9999, method: "Page.navigate", params: { url: "https://a.test/" }, sessionId: room.sessionOf("T0001") });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(await call("eval_js", { script: "return document.title", target: tab() }), "Back");
+});
+
+test("new_tab refuses a room too low on memory to hold another page, and opens nothing", async () => {
+  use({ rooms: { work: {} } });
+  const room = R.room("work");
+  room.memory = { totalMb: 3048, availableMb: 700, ended: 3, last: null };
+  rooms.cli = "rooms";
+  const e = await fails("new_tab", { app: "room:work", url: "https://b.test/" });
+  assert.match(e, /^error: no_browser: room 'work' has 700 MB free of 3048 MB, and another page could make it end one that is open; close_tab one you are done with, or give the room more memory: rooms set work memory=6G, then rooms down work and rooms up work/);
+  assert.equal(room.targets.size, 1);
+  room.memory = { totalMb: 3048, availableMb: 1700, ended: 3, last: null };
+  assert.match((await call("new_tab", { app: "room:work", url: "https://b.test/" })).tabId, /^room:work:/);
+  // An image from before the guard reports nothing, and is not refused.
+  room.memory = null;
+  assert.match((await call("new_tab", { app: "room:work", url: "https://b.test/" })).tabId, /^room:work:/);
+});
+
 // A helper the agent runs from its shell is another perch process of the same client: the
 // MCP server's parent is one of its ancestors.
 const HELPER = { other: { client: 4000009, ancestors: () => [4000009, 4000001] } };
