@@ -5676,7 +5676,7 @@ const ROOM_FNS = {
     // a room that can't hold another refuses it instead. An image from before the guard says nothing.
     const mem = await roomMemory(name);
     if (mem && mem.availableMb < Math.min(1024, mem.totalMb / 3)) {
-      throw new Error(`no_browser: room '${name}' has ${mem.availableMb} MB free of ${mem.totalMb} MB, and another page could make it end one that is open; close_tab one you are done with, or give the room more memory: ${roomsCmd()} set ${name} memory=${2 * Math.ceil(mem.totalMb / 1024)}G, then ${roomsCmd()} down ${name} and ${roomsCmd()} up ${name}`);
+      throw new Error(`no_browser: room '${name}' has ${mem.availableMb} MB free of ${mem.totalMb} MB, and another page could make it end one that is open; close_tab one you are done with, or give the room more memory, which restarts it: ${roomsCmd()} down ${name}; ${roomsCmd()} set ${name} memory=${2 * Math.ceil(mem.totalMb / 1024)}G; ${roomsCmd()} up ${name}`);
     }
     // Its own window: a room tab behind another in one window is hidden and gets no animation
     // frames (requestAnimationFrame never fires), so canvas apps like Figma stall until activated.

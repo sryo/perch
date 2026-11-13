@@ -788,7 +788,7 @@ test("new_tab refuses a room too low on memory to hold another page, and opens n
   room.memory = { totalMb: 3048, availableMb: 700, ended: 3, last: null };
   rooms.cli = "rooms";
   const e = await fails("new_tab", { app: "room:work", url: "https://b.test/" });
-  assert.match(e, /^error: no_browser: room 'work' has 700 MB free of 3048 MB, and another page could make it end one that is open; close_tab one you are done with, or give the room more memory: rooms set work memory=6G, then rooms down work and rooms up work/);
+  assert.match(e, /^error: no_browser: room 'work' has 700 MB free of 3048 MB, and another page could make it end one that is open; close_tab one you are done with, or give the room more memory, which restarts it: rooms down work; rooms set work memory=6G; rooms up work$/);
   assert.equal(room.targets.size, 1);
   room.memory = { totalMb: 3048, availableMb: 1700, ended: 3, last: null };
   assert.match((await call("new_tab", { app: "room:work", url: "https://b.test/" })).tabId, /^room:work:/);
