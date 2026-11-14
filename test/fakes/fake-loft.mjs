@@ -13,11 +13,12 @@ if (argv[0] === "up") {
   if (process.env.FAKE_LOFT === "fail") { console.log(JSON.stringify({ ok: false, code: "display_failed", error: "could not add the display: CGVirtualDisplay returned no display" })); process.exit(1); }
   const [w, h] = argv[1].split("x").map(Number);
   if (process.env.FAKE_LOFT === "bad_size" || w < 640) { console.log(JSON.stringify({ ok: false, code: "bad_size", error: `size must be WIDTHxHEIGHT, from 640x480 to 5120x2880 (got ${argv[1]})` })); process.exit(2); }
-  let n = 1;
-  while (existsSync(join(dir, `loft-${n}.json`))) n++;
-  const id = `loft-${n}`, displayId = Number(process.env.FAKE_LOFT_DISPLAY || 81);
+  const displayId = Number(process.env.FAKE_LOFT_DISPLAY || 81);
   const owner = Number(argv[argv.indexOf("--owner") + 1]);
   mkdirSync(dir, { recursive: true });
+  // Ups at once never share an id (loft takes a lock): the record is made exclusively.
+  let n = 1, id;
+  for (;; n++) { id = `loft-${n}`; try { writeFileSync(join(dir, `${id}.json`), "", { flag: "wx" }); break; } catch (e) { if (e.code !== "EEXIST") throw e; } }
   writeFileSync(join(dir, `${id}.json`), JSON.stringify({ pid: process.ppid, cmd: "holder.js", displayId, x: -w, y: 0, w, h, serial: 2, owner, started: "2026-11-10T10:00:00Z" }));
   console.log(JSON.stringify({ up: true, id, displayId, vendor: 0x6c66, product: 0x7466, name: "loft", bounds: { x: -w, y: 0, w, h } }));
 } else if (argv[0] === "down") {

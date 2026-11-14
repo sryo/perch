@@ -56,7 +56,7 @@ beforeEach((t) => {
   roomsReset({ home: join(home, "rooms") });
   focus.granted = false;
   loft.wins.clear();
-  loft.owned.clear(); loft.making.clear(); loft.opening.clear();
+  loft.owned.clear();
   loft.winLoft.clear();
   loft.safari = { launch: async () => {} };
   install();

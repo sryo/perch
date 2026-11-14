@@ -13,7 +13,7 @@ import { tempDir } from "../scripts/temp-dirs.mjs";
 
 const RECT = { x: 4000, y: 0, w: 1440, h: 900 };
 const LOFT_DISPLAY = { id: 77, ...RECT, vendor: 0x6c66, product: 0x7466 };
-const DOWN = "error: no_browser: the loft is down; run loft up (github.com/sryo/loft), then retry";
+const DOWN = "error: no_browser: the loft is down; ask for a size and perch makes one: new_tab {url, loft:\"1280x800\"}";
 const chrome = (windows, extra = {}) => ({ name: "Google Chrome", kind: "chrome", windows, ...extra });
 const safari = (windows, extra = {}) => ({ name: "Safari", kind: "safari", windows, ...extra });
 const arc = (windows, extra = {}) => ({ name: "Arc", kind: "arc", windows, ...extra });
@@ -46,7 +46,7 @@ beforeEach((t) => {
   rooms.home = join(home, "rooms");
   focus.granted = true;
   loft.wins.clear();
-  loft.owned.clear(); loft.making.clear(); loft.opening.clear();
+  loft.owned.clear();
   loft.winLoft.clear();
   loft.tabWin.clear();
   loftIdle.closed.clear();
@@ -73,7 +73,7 @@ test("R1 a holder whose display is gone or isn't loft's makes no window", async 
     install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome" }] }, { displays });
     holder();
     const { t } = await call("new_tab", { url: "https://a.test/", loft: true });
-    assert.match(t, /^error: no_browser: the loft is down \(its display is gone\); run loft up \(github\.com\/sryo\/loft\), then retry$/);
+    assert.match(t, /^error: no_browser: the loft is down \(its display is gone\); ask for a size and perch makes one: new_tab \{url, loft:"1280x800"\}$/);
     assert.deepEqual(made(), []);
   }
 });
@@ -468,29 +468,28 @@ test("S1 loft:\"WxH\" makes a loft that size, owned by perch, and opens the wind
   assert.deepEqual(o, { app: "Google Chrome", tabId: "chrome:w901", loft: "loft-1" });
 });
 
-test("S2 the same size again reuses perch's loft; its last window closing removes it", async () => {
+test("S2 each loft:\"WxH\" call gets a loft of its own, so two windows of one size never share a frame; each goes with its window", async () => {
   const runs = sized();
   install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY, SIZED] });
   const a = await call("new_tab", { url: "https://one.test/", loft: "1280x800" });
   const b = await call("new_tab", { url: "https://two.test/", loft: "1280x800" });
   assert.equal(b.r.isError, undefined, b.t);
-  assert.equal(runs().length, 1, "one loft for both");
+  assert.deepEqual([a.o.loft, b.o.loft], ["loft-1", "loft-2"]);
+  assert.equal(runs().length, 2, "a loft each");
   await call("close_tab", { tabId: a.o.tabId });
-  assert.equal(runs().length, 1, "a window is still on it");
+  assert.deepEqual(runs().slice(2), ["down loft-1"]);
   await call("close_tab", { tabId: b.o.tabId });
-  assert.deepEqual(runs().slice(1), ["down loft-1"]);
-  await call("new_tab", { url: "https://three.test/", loft: "1280x800" });
-  assert.match(runs()[2], /^up 1280x800 --new --owner /, "a new one after it was removed");
+  assert.deepEqual(runs().slice(2), ["down loft-1", "down loft-2"]);
 });
 
-test("S5 calls for one size at once share one loft, and its last window closing removes it", async () => {
+test("S5 calls for one size at once each get their own loft, and every one goes with its window", async () => {
   const runs = sized();
   install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY, SIZED] });
   const tabs = await Promise.all([1, 2, 3].map((n) => call("new_tab", { url: `https://job${n}.test/`, loft: "1280x800" })));
-  for (const x of tabs) assert.equal(x.o.loft, "loft-1", x.t);
-  assert.equal(runs().length, 1, "one loft up for all three");
+  assert.deepEqual(tabs.map((x) => x.o.loft).sort(), ["loft-1", "loft-2", "loft-3"], tabs.map((x) => x.t).join(" "));
   for (const x of tabs) await call("close_tab", { tabId: x.o.tabId });
-  assert.deepEqual(runs().slice(1), ["down loft-1"]);
+  assert.deepEqual(runs().filter((l) => l.startsWith("down ")).sort(), ["down loft-1", "down loft-2", "down loft-3"]);
+  assert.equal(loft.owned.size + loft.winLoft.size, 0);
 });
 
 test("S6 a loft perch's map lost still goes with its last window: its record names perch as owner", async () => {
