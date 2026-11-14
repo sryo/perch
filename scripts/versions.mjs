@@ -2,7 +2,7 @@
 // Live comparison of perch versions: the same calls, on the same local page,
 // through each version's own server.js, run from a detached worktree so main's
 // checkout is never touched.
-//   node scripts/versions.mjs [--refs c4010f4,6b0d9cf,main] [--reps 10] [--out ~/.fium/runs/perch/versions.json]
+//   node scripts/versions.mjs --yes [--refs c4010f4,6b0d9cf,main] [--reps 10] [--out ~/.fium/runs/perch/versions.json]
 //                             [--baseline bench/versions-baseline.json [--against <ref>]]
 //                             [--app canary|safari] [--only "<call regex>"] [--focus] [--offline]
 // It opens one scratch Chrome Canary window of its own (Canary may come to the
@@ -33,6 +33,10 @@ const arg = (k, d) => { const i = process.argv.lastIndexOf(k); return i >= 0 ? p
 const REFS = arg("--refs", "c4010f4,main").split(","), REPS = Number(arg("--reps", 10));
 const OUT = arg("--out") ?? join(runsDir(), "versions.json"), BASELINE = arg("--baseline"), AGAINST = arg("--against");
 const OFFLINE = process.argv.includes("--offline");
+if (!OFFLINE && !process.argv.includes("--yes")) {
+  console.error("versions opens a Canary or Safari window on your display and may raise the browser. Re-run with --yes to consent, or --offline for no browser.");
+  process.exit(2);
+}
 // --only "<regex>": run just the calls whose names match (a retake of a flagged call).
 const ONLY = arg("--only") ? new RegExp(arg("--only")) : null, keep = (name) => !ONLY || ONLY.test(name);
 // --focus: trusted click, press and fill with the scratch window in front, the
