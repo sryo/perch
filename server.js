@@ -3220,13 +3220,34 @@ function jxaRuntime(BROWSERS, HANG) {
     if (!b || !(b.size.width > 0 && b.size.height > 0) || v !== 0x6c66 || m !== 0x7466) throw new Error(LOFT_GONE);
     return { x: b.origin.x, y: b.origin.y, w: b.size.width, h: b.size.height };
   }
-  // The user is away: no HID input for AWAY_SECS, or the screen is locked. A raise
+  // The user is away: the screen is locked, or no HID input for AWAY_SECS while
+  // nothing of theirs keeps the display awake (displayHeld). A raise
   // then interrupts no one, so a loft window may use the browser that raises.
   // perch's own posted input may count as input, which only errs toward present.
   const AWAY_SECS = 300;
   function userAway() {
     if (sessionLocked()) return true;
+    if (displayHeld()) return false;
     try { ObjC.import("CoreGraphics"); return Number($.CGEventSourceSecondsSinceLastEventType(1, 4294967295)) >= AWAY_SECS; } catch (e) { return false; }
+  }
+  // Something keeps the display awake for the user: a playing video, a call, a
+  // slideshow. A movie's viewer sends no input for hours, so a quiet HID alone
+  // would call them away. caffeinate's holds are agents' (perch's own among
+  // them), not the user's. Unreadable counts as held: that only errs toward present.
+  function displayHeld() {
+    try {
+      ObjC.bindFunction("IOPMCopyAssertionsByProcess", ["int", ["void **"]]);
+      const r = Ref();
+      if ($.IOPMCopyAssertionsByProcess(r) !== 0) return true;
+      const lists = ObjC.castRefToObject(r[0]).allValues;
+      for (let i = 0; i < lists.count; i++) {
+        const held = (ObjC.deepUnwrap(lists.objectAtIndex(i)) || []).some(function (h) {
+          return !!h && /^(PreventUserIdleDisplaySleep|NoDisplaySleepAssertion)$/.test(h.AssertType) && h["Process Name"] !== "caffeinate";
+        });
+        if (held) return true;
+      }
+      return false;
+    } catch (e) { return true; }
   }
   function loftWindow(a, name, kind, ap, P, away) {
     if (kind === "arc") throw new Error("no_browser: " + name + " can't place a window, so it can't open one on the loft; use another browser");
@@ -6146,7 +6167,7 @@ async function navigate(url, target, raise) {
 // {loft:"WxH"} makes one that size (`owned`: size -> id) with this process as its
 // owner, so the loft can't outlive perch, and removes it when the last window
 // perch put there (`winLoft`: app NUL window id -> loft id) closes.
-export const loft = { wins: new Map(), rects: [], ever: false, owned: new Map(), winLoft: new Map(), tabWin: new Map(),
+export const loft = { wins: new Map(), rects: [], ever: false, owned: new Map(), making: new Map(), opening: new Map(), winLoft: new Map(), tabWin: new Map(),
   // Safari is where a loft window goes when the agent's browser would need the user;
   // started with open -g (no activation), then given time to answer Apple Events.
   safari: {
@@ -6189,12 +6210,26 @@ async function loftRun(args) {
   }
   throw last;
 }
-async function loftMake(size) {
+// The loft's label in `loft list`: the folder this server runs in, so a loft
+// left up names the project that made it.
+const loftLabel = () => basename(process.cwd()).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+// Calls for one size at once share one `loft up` (`making`): each making its own
+// left lofts no window's close would remove.
+function loftMake(size) {
   const have = loft.owned.get(size);
-  if (have && loftHolder(have)) return have;
+  if (have && loftHolder(have)) return Promise.resolve(have);
+  let p = loft.making.get(size);
+  if (!p) {
+    p = loftUp(size).finally(() => loft.making.delete(size));
+    loft.making.set(size, p);
+  }
+  return p;
+}
+async function loftUp(size) {
   loft.owned.delete(size);
+  const label = loftLabel();
   let out;
-  try { out = await loftRun(["up", size, "--new", "--owner", String(process.pid), "--json"]); } catch (e) {
+  try { out = await loftRun(["up", size, "--new", "--owner", String(process.pid), ...(label ? ["--label", label] : []), "--json"]); } catch (e) {
     if (e.code === "ENOENT") throw new Error(`no_browser: loft:"${size}" makes a loft, which needs loft installed (github.com/sryo/loft)`);
     let j = null; try { j = JSON.parse(e.stdout); } catch {}
     if (j?.code === "bad_size") throw new Error(`bad_args: ${j.error}`);
@@ -6205,8 +6240,11 @@ async function loftMake(size) {
   return id;
 }
 // Removes a loft perch made once no window perch put there is left.
+// Its own by the map or by the loft's record (owner: this process), so one the
+// map lost still goes; never while a window is on its way there (`opening`).
 async function loftRelease(id) {
-  if (![...loft.owned.values()].includes(id) || [...loft.winLoft.values()].includes(id)) return;
+  const mine = [...loft.owned.values()].includes(id) || loftHolder(id)?.owner === process.pid;
+  if (!mine || loft.opening.get(id) || [...loft.winLoft.values()].includes(id)) return;
   for (const [size, v] of loft.owned) if (v === id) loft.owned.delete(size);
   try { await loftRun(["down", id]); } catch {}
 }
@@ -6269,6 +6307,8 @@ async function loftTab(url, app, from, label, onLoft) {
     if (room) Object.assign(req.loft, { room: room.name, site: at.host });
   } catch {}
   let r;
+  if (size) loft.opening.set(id, (loft.opening.get(id) || 0) + 1);
+  const opened = () => { if (!size) return; const n = loft.opening.get(id) - 1; if (n > 0) loft.opening.set(id, n); else loft.opening.delete(id); };
   try {
     try { r = await rt("newTab", req); } catch (e) {
       const m = /^no_browser: needs Safari started: (.*)$/.exec(e.message);
@@ -6278,9 +6318,10 @@ async function loftTab(url, app, from, label, onLoft) {
       }
       r = await rt("newTab", req);
     }
-  } catch (e) { if (size) await loftRelease(id); throw e; }
+  } catch (e) { opened(); if (size) await loftRelease(id); throw e; }
   const { loftWin, ...out } = r;
   if (size && loftWin) { loft.winLoft.set(`${out.app}\0${loftWin.id}`, id); out.loft = id; }
+  opened();
   if (loftWin) {
     loft.tabWin.set(out.tabId, `${out.app}\0${loftWin.id}`);
     if (!loft.wins.has(out.app)) loft.wins.set(out.app, new Set());

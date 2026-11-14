@@ -6,7 +6,7 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, loftIdle, loftIdleClose, rooms, roomHint, INSTRUCTIONS, launchLeftovers } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { tempDir } from "../scripts/temp-dirs.mjs";
@@ -46,7 +46,7 @@ beforeEach((t) => {
   rooms.home = join(home, "rooms");
   focus.granted = true;
   loft.wins.clear();
-  loft.owned.clear();
+  loft.owned.clear(); loft.making.clear(); loft.opening.clear();
   loft.winLoft.clear();
   loft.tabWin.clear();
   loftIdle.closed.clear();
@@ -225,6 +225,19 @@ test("A2 a user idle under five minutes is present: Safari, as without the grant
   const { o } = await call("new_tab", { url: "https://job.test/", loft: true });
   assert.equal(o.app, "Safari", JSON.stringify(o));
   assert.match(o.note, /^opened in Safari: Google Chrome would have come to the front, and the user hasn.t allowed focus/);
+});
+
+test("A2 a user watching a video is present however long the input was quiet; an agent's caffeinate is not them", async () => {
+  focus.granted = false;
+  install({ browsers: [chrome([userWin()]), safari([userWin("s")])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }, { owner: "Safari" }] });
+  world.state.idleSecs = 3600;
+  world.state.holds = [{ "Process Name": "caffeinate", AssertType: "PreventUserIdleDisplaySleep" }, { "Process Name": "Arc Helper", AssertType: "PreventUserIdleDisplaySleep" }];
+  holder();
+  let { o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(o.app, "Safari", JSON.stringify(o));
+  world.state.holds = [{ "Process Name": "caffeinate", AssertType: "PreventUserIdleDisplaySleep" }, { "Process Name": "Claude", AssertType: "NoIdleSleepAssertion" }];
+  ({ o } = await call("new_tab", { url: "https://job2.test/", loft: true }));
+  assert.equal(o.app, "Google Chrome", JSON.stringify(o));
 });
 
 test("A2 Arc goes to Safari even while the user is away: it can't place a window", async () => {
@@ -450,7 +463,7 @@ test("S1 loft:\"WxH\" makes a loft that size, owned by perch, and opens the wind
   install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY, SIZED] });
   const { r, o } = await call("new_tab", { url: "https://job.test/", loft: "1280x800" });
   assert.equal(r.isError, undefined, JSON.stringify(o));
-  assert.deepEqual(runs(), [`up 1280x800 --new --owner ${process.pid} --json`]);
+  assert.deepEqual(runs(), [`up 1280x800 --new --owner ${process.pid} --label ${basename(process.cwd())} --json`]);
   assert.deepEqual(made().map(([, , , p]) => p), [{ bounds: { x: -1280, y: 0, width: 1280, height: 800 } }]);
   assert.deepEqual(o, { app: "Google Chrome", tabId: "chrome:w901", loft: "loft-1" });
 });
@@ -468,6 +481,25 @@ test("S2 the same size again reuses perch's loft; its last window closing remove
   assert.deepEqual(runs().slice(1), ["down loft-1"]);
   await call("new_tab", { url: "https://three.test/", loft: "1280x800" });
   assert.match(runs()[2], /^up 1280x800 --new --owner /, "a new one after it was removed");
+});
+
+test("S5 calls for one size at once share one loft, and its last window closing removes it", async () => {
+  const runs = sized();
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY, SIZED] });
+  const tabs = await Promise.all([1, 2, 3].map((n) => call("new_tab", { url: `https://job${n}.test/`, loft: "1280x800" })));
+  for (const x of tabs) assert.equal(x.o.loft, "loft-1", x.t);
+  assert.equal(runs().length, 1, "one loft up for all three");
+  for (const x of tabs) await call("close_tab", { tabId: x.o.tabId });
+  assert.deepEqual(runs().slice(1), ["down loft-1"]);
+});
+
+test("S6 a loft perch's map lost still goes with its last window: its record names perch as owner", async () => {
+  const runs = sized();
+  install({ browsers: [chrome([userWin()])], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] }, { displays: [LOFT_DISPLAY, SIZED] });
+  const { o } = await call("new_tab", { url: "https://job.test/", loft: "1280x800" });
+  loft.owned.clear();
+  await call("close_tab", { tabId: o.tabId });
+  assert.deepEqual(runs().slice(1), ["down loft-1"]);
 });
 
 test("S3 without loft installed, or when loft fails, the error says so and nothing is made", async () => {

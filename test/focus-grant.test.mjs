@@ -120,5 +120,11 @@ test("A3 while the user is away, a call that moves focus runs without the grant,
     world.state.idleSecs = 299;
     r = await handleCall("activate_tab", { target: { tabId: "chrome:b" } });
     assert.match(r.content[0].text, /^error: needs_focus: /);
+    // A movie's viewer sends no input: what keeps the display awake says they're there.
+    world.state.idleSecs = 3600;
+    world.state.holds = [{ "Process Name": "Arc Helper", AssertType: "PreventUserIdleDisplaySleep" }];
+    r = await handleCall("activate_tab", { target: { tabId: "chrome:b" } });
+    assert.match(r.content[0].text, /^error: needs_focus: /);
+    world.state.holds = [];
   }
 });

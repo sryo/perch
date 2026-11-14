@@ -880,6 +880,8 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // state.locked: the login session's screen is locked (IOConsoleUsers gains CGSSessionScreenIsLocked).
       // state.idleSecs: seconds since the user's last HID input (default 0, present).
       CGEventSourceSecondsSinceLastEventType: () => state.idleSecs ?? 0,
+      // state.holds: the power assertions held, as [{"Process Name", AssertType}] (default none).
+      IOPMCopyAssertionsByProcess: (r) => { const lists = [state.holds || []]; r[0] = { allValues: { count: lists.length, objectAtIndex: (i) => lists[i] } }; return 0; },
       IORegistryGetRootEntry: () => 16395,
       IORegistryEntryCreateCFProperty: () => { state.screenReads = (state.screenReads || 0) + 1; return [{ kCGSSessionOnConsoleKey: true, ...(state.locked ? { CGSSessionScreenIsLocked: true } : {}) }]; },
       CGMainDisplayID: () => 1,

@@ -7,7 +7,7 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, rooms, roomsReset } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { makeRooms } from "./fakes/cdp-room.mjs";
@@ -56,7 +56,7 @@ beforeEach((t) => {
   roomsReset({ home: join(home, "rooms") });
   focus.granted = false;
   loft.wins.clear();
-  loft.owned.clear();
+  loft.owned.clear(); loft.making.clear(); loft.opening.clear();
   loft.winLoft.clear();
   loft.safari = { launch: async () => {} };
   install();
@@ -83,7 +83,7 @@ test("with no loft up, perch makes one at 1280x800", async () => {
   assert.equal(r.isError, undefined, JSON.stringify(o));
   assert.equal(o.routed, "loft");
   assert.equal(o.loft, "loft-1");
-  assert.deepEqual(loftRuns(), [`up 1280x800 --new --owner ${process.pid} --json`]);
+  assert.deepEqual(loftRuns(), [`up 1280x800 --new --owner ${process.pid} --label ${basename(process.cwd())} --json`]);
   assert.deepEqual(activations(), []);
 });
 
