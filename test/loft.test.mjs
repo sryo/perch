@@ -255,10 +255,10 @@ test("F2 Safari not running is started in the background first; a launch that fa
   install({ browsers: [chrome([userWin()]), saf], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
   holder();
   const launched = [];
-  loft.safari = { launch: async () => { launched.push("open -g -a Safari"); saf.running = true; } };
+  loft.safari = { launch: async () => { launched.push("launch Safari"); saf.running = true; } };
   let { r, o } = await call("new_tab", { url: "https://job.test/", loft: true });
   assert.equal(r.isError, undefined, JSON.stringify(o));
-  assert.deepEqual(launched, ["open -g -a Safari"]);
+  assert.deepEqual(launched, ["launch Safari"]);
   assert.equal(o.app, "Safari");
   saf.running = false;
   loft.safari = { launch: async () => { throw new Error("LSOpen failed"); } };

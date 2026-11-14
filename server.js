@@ -6169,18 +6169,20 @@ async function navigate(url, target, raise) {
 // perch put there (`winLoft`: app NUL window id -> loft id) closes.
 export const loft = { wins: new Map(), rects: [], ever: false, owned: new Map(), making: new Map(), opening: new Map(), winLoft: new Map(), tabWin: new Map(),
   // Safari is where a loft window goes when the agent's browser would need the user;
-  // started with open -g (no activation), then given time to answer Apple Events.
+  // started with AppleScript's `launch`: no activation and no run event, so Safari
+  // opens no start page (live: `open -g` opened one on the user's display, and
+  // after perch closed it another came up beside the loft window and stayed).
   safari: {
     launch: async () => {
-      await exec("open", ["-g", "-a", "Safari"]);
+      await exec("osascript", ["-e", 'launch application "Safari"']);
       let up = false;
       for (let i = 0; i < 40 && !up; i++) { try { await exec("pgrep", ["-x", "Safari"]); up = true; } catch { await new Promise((r) => setTimeout(r, 250)); } }
       if (!up) throw new Error("Safari did not start");
-      // Launched, Safari opens a start page on the user's display (where a tiler
-      // makes room for it); perch started it, so it closes what the launch opened
-      // that shows nothing else. Restored windows with real tabs stay.
+      // Should a start page come up anyway, on the user's display (where a tiler
+      // makes room for it): perch started Safari, so it closes what the launch
+      // opened that shows nothing else. Restored windows with real tabs stay.
       const list = 'const a = Application("Safari"); JSON.stringify(a.windows().filter((w) => w.visible()).map((w) => ({ id: w.id(), urls: w.tabs.url() })))';
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < 4; i++) {
         await new Promise((r) => setTimeout(r, 250));
         let wins = [];
         try { wins = JSON.parse((await exec("osascript", ["-l", "JavaScript", "-e", list])).stdout); } catch { continue; }
