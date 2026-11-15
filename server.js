@@ -1009,7 +1009,7 @@ function jxaRuntime(BROWSERS, HANG) {
     if (I.windowNumber == null) throw new Error(OFFSCREEN);
     if (I.ambiguous) throw new Error(AMBIGUOUS);
     const r = I.cgBounds || I.geom;
-    if (!onAnyScreen(r)) throw new Error("window_offscreen: the browser window is outside every screen (at " + Math.round(r.x) + "," + Math.round(r.y) + "); move it onto a screen");
+    if (!onAnyScreen(r) && !onOwnLoft(r)) throw new Error("window_offscreen: the browser window is outside every screen (at " + Math.round(r.x) + "," + Math.round(r.y) + "); move it onto a screen");
     return I;
   }
   // A window dragged off every display keeps its CG entry, but nothing there can
@@ -1028,6 +1028,15 @@ function jxaRuntime(BROWSERS, HANG) {
       }
       return false;
     } catch (e) { return true; }
+  }
+
+  // NSScreen leaves out loft's display, yet a window on it takes posted input
+  // like any other; only the lofts perch made windows on count, at their live
+  // bounds (live: a loft made beside another moved after the window was placed).
+  function onOwnLoft(r) {
+    return ((loftOwn && loftOwn.displays) || []).some(function (d) {
+      try { return centerIn(loftRect({ displayId: d }), r); } catch (e) { return false; }
+    });
   }
 
   // Arc has no geometry verbs, so its window is matched to a CG entry by title.
@@ -1935,6 +1944,10 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     const area = axPageArea(I, probe), af = area && ax.frame(area.el);
     let el = af ? ax.attr(app, "AXFocusedUIElement") : null;
+    // Safari in the background names no focused element while its web view has
+    // the keyboard (live: it does name the address bar). Then nothing outside the
+    // window's web areas may claim focus; the page's arm refuses a frame.
+    if (af && el == null && !chromeFocused(ax, win)) return null;
     // The first web area up must be the page's: one below it is an embedded frame's
     // (a captcha, a sign-in widget), where a key must not go.
     let framed = false;
@@ -1945,6 +1958,19 @@ function jxaRuntime(BROWSERS, HANG) {
       framed = true;
     }
     return "the browser's keyboard focus is outside the page (toolbar, popup or panel); a background trusted click on the page first moves it back";
+  }
+
+  // Whether an element of the window outside its web areas reports AXFocused;
+  // a tree too big to walk counts as focused.
+  function chromeFocused(ax, win) {
+    const queue = [win];
+    for (let seen = 0; queue.length; seen++) {
+      if (seen > 400) return true;
+      const el = queue.shift(), f = ax.attr(el, "AXFocused");
+      if (f != null && ObjC.unwrap(f) === true) return true;
+      if (ax.str(el, "AXRole") !== "AXWebArea") queue.push.apply(queue, ax.list(ax.attr(el, "AXChildren")));
+    }
+    return false;
   }
 
   const cursorAt = () => { const p = $.CGEventGetLocation($.CGEventCreate($())); return { x: p.x, y: p.y }; };
@@ -6167,7 +6193,7 @@ async function navigate(url, target, raise) {
 // {loft:"WxH"} makes one that size for that window alone (`owned`: its ids) with
 // this process as its owner, so the loft can't outlive perch, and removes it when
 // the window perch put there (`winLoft`: app NUL window id -> loft id) closes.
-export const loft = { wins: new Map(), rects: [], ever: false, owned: new Set(), winLoft: new Map(), tabWin: new Map(),
+export const loft = { wins: new Map(), rects: [], displays: [], ever: false, owned: new Set(), winLoft: new Map(), tabWin: new Map(),
   // Safari is where a loft window goes when the agent's browser would need the user;
   // started with AppleScript's `launch`: no activation and no run event, so Safari
   // opens no start page (live: `open -g` opened one on the user's display, and
@@ -6282,7 +6308,7 @@ export function loftHolder(id = "default") {
 function loftArg() {
   const wins = {};
   for (const [app, ids] of loft.wins) wins[app] = [...ids];
-  return { wins, rects: loft.rects };
+  return { wins, rects: loft.rects, displays: loft.displays };
 }
 async function loftTab(url, app, from, label, onLoft) {
   let id = loftId(onLoft);
@@ -6317,6 +6343,7 @@ async function loftTab(url, app, from, label, onLoft) {
     loft.wins.get(out.app).add(loftWin.id);
     const r = loftWin.rect;
     if (!loft.rects.some((x) => x.x === r.x && x.y === r.y && x.w === r.w && x.h === r.h)) loft.rects.push(r);
+    if (!loft.displays.includes(h.displayId)) loft.displays.push(h.displayId);
     loft.ever = true;
   }
   return out;

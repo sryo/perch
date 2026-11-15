@@ -10,6 +10,7 @@ import { basename, join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, loftIdle, loftIdleClose, rooms, roomHint, INSTRUCTIONS, launchLeftovers } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { tempDir } from "../scripts/temp-dirs.mjs";
+import { page } from "./helpers/page.mjs";
 
 const RECT = { x: 4000, y: 0, w: 1440, h: 900 };
 const LOFT_DISPLAY = { id: 77, ...RECT, vendor: 0x6c66, product: 0x7466 };
@@ -49,6 +50,7 @@ beforeEach((t) => {
   loft.owned.clear();
   loft.winLoft.clear();
   loft.tabWin.clear();
+  loft.displays.length = 0;
   loftIdle.closed.clear();
   loftIdle.ms = 3600000;
   loft.safari = { launch: async () => {} };
@@ -357,6 +359,35 @@ test("R3 Safari: close_tab closes perch's loft window with its last tab", async 
   const c = await call("close_tab", { tabId: o.tabId });
   assert.equal(c.o.window, true, c.t);
   assert.deepEqual(world.log.filter(([k]) => k === "closeWindow").map(([, , id]) => id), [901]);
+});
+
+test("T1 trusted input lands on perch's Safari loft window though NSScreen omits the loft, taking no focus", async () => {
+  focus.granted = false;
+  install({ browsers: [safari([userWin()])], cg: [{ owner: "Terminal", pid: 1, wid: 10 }, { owner: "Safari", pid: 7, wid: 5 }] });
+  world.state.screens = [{ x: 0, y: 0, w: 1920, h: 1080 }];
+  holder();
+  const { o } = await call("new_tab", { app: "Safari", url: "https://job.test/", loft: true });
+  const dom = page("", { url: "https://job.test/" });
+  for (const [k, v] of Object.entries({ innerWidth: 1440, innerHeight: 820 })) Object.defineProperty(dom, k, { value: v, configurable: true });
+  world.winSpec("Safari", 0).tabs[0].dom = dom;
+  // The loft moved after the window was placed (another loft made beside it),
+  // taking the window along: its live bounds count, not the ones at the make.
+  world.state.displays = [{ ...LOFT_DISPLAY, x: 6000 }];
+  world.winSpec("Safari", 0).x = 6000;
+  world.cg.push({ owner: "Safari", pid: 7, wid: 901, x: 6000, y: 0, w: 1440, h: 900, ax: { web: [{ x: 6000, y: 80, w: 1440, h: 820 }] } });
+  world.reset();
+  const { r, t } = await call("click", { target: { tabId: o.tabId }, trusted: true, x: 6300, y: 300 });
+  assert.equal(r.isError, undefined, t);
+  assert.ok(world.posted.some((e) => e.kind === "mouse" && e.type === 1 && e.pid === 7 && e.fields[51] === 901), t);
+  assert.ok(world.posted.every((e) => e.via === "skylight"), "no HID route, so no cursor move");
+  assert.deepEqual(activations(), []);
+  // A window outside every screen and off perch's lofts is still refused.
+  world.cg.find((e) => e.wid === 901).x = -9000;
+  world.winSpec("Safari", 0).x = -9000;
+  const sent = world.posted.length;
+  const off = await call("click", { target: { tabId: o.tabId }, trusted: true, x: -8700, y: 300 });
+  assert.match(off.t, /^error: window_offscreen: .*outside every screen/);
+  assert.equal(world.posted.length, sent);
 });
 
 test("R3 a loft window with more tabs loses only the tab", async () => {

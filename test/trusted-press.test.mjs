@@ -246,6 +246,22 @@ test("trusted press refuses when focus is in a bubble, a child window or a side 
   await refused({ focus: { window: WIN, chain: [{ role: "AXTextField" }, { role: "AXWebArea", box: { x: 610, y: 20, w: 200, h: 600 } }, { role: "AXWindow", box: WIN }] } }, onClick);
 });
 
+// Live (Safari, inactive): no AXFocusedUIElement while the web view has the
+// keyboard; the address bar, focused, is named and reports AXFocused.
+const webOnly = (toolbar = {}) => ({ window: WIN, chain: null, kids: [{ role: "AXToolbar", kids: [{ role: "AXTextField", ...toolbar }] }, { role: "AXWebArea", kids: [{ role: "AXTextField", focused: true }] }] });
+
+test("trusted press goes ahead when no element is named focused and nothing outside the page claims focus", async () => {
+  const { world } = background({ focus: webOnly() });
+  const r = await handleCall("press", { key: "Enter", selector: "#i", trusted: true, target });
+  assert.equal(r.isError, undefined, r.content[0].text);
+  assert.equal(JSON.parse(r.content[0].text).hit, true);
+  assert.equal(keys(world).length, 2);
+});
+
+test("trusted press refuses when no element is named focused but the toolbar claims focus", async () => {
+  await refused({ focus: webOnly({ focused: true }) }, onClick);
+});
+
 test("trusted press refuses when the focused window can't be told apart", async () => {
   // A twin of the target's frame is refused before focus is read.
   await refused({ extra: [{ owner: "Google Chrome", pid: 5, wid: 78, ...WIN }] }, /same frame/, "window_ambiguous");

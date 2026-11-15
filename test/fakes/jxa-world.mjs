@@ -659,11 +659,16 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     const f = state.focus;
     if (el.role === "AXApplication" && (name === "AXFocusedWindow" || name === "AXFocusedUIElement")) {
       if (!f) return null;
-      if (name === "AXFocusedWindow") return { role: "AXWindow", fo: { box: f.window } };
+      if (name === "AXFocusedWindow") return { role: "AXWindow", fo: { box: f.window, kids: f.kids } };
+      if (!f.chain) return null;
       return { role: f.chain[0].role, fo: { chain: f.chain, i: 0, box: f.chain[0].box } };
     }
     if (!el.fo) return undefined;
     const o = el.fo, up = o.chain && o.chain[o.i + 1];
+    // `kids` (with `chain: null`, no focused element): the focused window's
+    // children as {role, focused?, kids?}, walked for AXFocused.
+    if (name === "AXChildren" && o.kids) return axList(o.kids.map((k) => ({ role: k.role, fo: { kids: k.kids || [], focused: k.focused } })));
+    if (name === "AXFocused") return o.focused == null ? null : o.focused;
     const v = { AXRole: el.role,
       AXPosition: o.box && axPoint(o.box.x, o.box.y), AXSize: o.box && axSize(o.box.w, o.box.h),
       AXParent: up && { role: up.role, fo: { chain: o.chain, i: o.i + 1, box: up.box } } }[name];
