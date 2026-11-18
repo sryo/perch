@@ -241,3 +241,13 @@ test("the sweep never closes a Safari tab: its handle can't prove which same-URL
   assert.deepEqual(world.aeLog, []);
   assert.deepEqual(claimFiles(), []);
 });
+
+test("a loft tab's claim goes once idle, and the sweep never closes its tab", async () => {
+  const { o: tab } = await me("new_tab", { url: "https://a.test/" });
+  age(tab.tabId, HOUR + 1000, { loft: true, pid: DEAD });
+  world.reset();
+  await tabClaimSweep();
+  assert.deepEqual(claimFiles(), []);
+  assert.deepEqual(world.aeLog, []);
+  assert.equal(urlsNow().length, 2);
+});

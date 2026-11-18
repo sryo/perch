@@ -5179,7 +5179,9 @@ export async function tabClaimSweep() {
     if (!c || typeof c.tabId !== "string") continue;
     if (!pidAlive(c.browser)) { rmSync(f, { force: true }); continue; }
     const mine = c.owner === ROOM_OWNER;
-    if (c.loft || tabClaims.busy.has(c.tabId) || Date.now() - c.last <= tabClaims.closeMs || (!mine && pidAlive(c.pid))) continue;
+    if (tabClaims.busy.has(c.tabId) || Date.now() - c.last <= tabClaims.closeMs || (!mine && pidAlive(c.pid))) continue;
+    // A loft tab's window is loftIdle's to close; its claim just goes.
+    if (c.loft) { rmSync(f, { force: true }); continue; }
     let r = null;
     // A Safari handle is found by window, index and URL, which can be a sibling tab's or
     // the user's; it can't prove which, so the claim goes and the tab stays.
