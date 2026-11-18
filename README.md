@@ -10,9 +10,11 @@ perch lets your AI agent use the browser you already have open on your Mac: Chro
 curl -fsSL https://raw.githubusercontent.com/sryo/perch/main/install.sh | bash
 ```
 
-Restart your agent; `perch` should appear in its MCP listing.
+It sets perch up in each agent app it finds on your Mac (Claude Code, Codex, GitHub Copilot, Cursor, VS Code) and leaves the other servers you have there alone. Restart your agent; `perch` should appear in its MCP listing.
 
-The first time, allow two things once: macOS asks whether the app running your agent may control your browser (Automation), and in the browser you turn on Allow JavaScript from Apple Events.
+It then checks each permission perch needs, in every browser you have open, and says which are missing and where to turn them on, opening that page of System Settings for you. Run the installer again any time to check again; it only changes what isn't set up yet.
+
+The permissions, allowed once: macOS asks whether the app running your agent may control your browser (Automation); in the browser you turn on Allow JavaScript from Apple Events; and for clicks, key presses and screenshots, System Settings lists the app running your agent under Accessibility and Screen Recording.
 
 ## Use
 
