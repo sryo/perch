@@ -86,7 +86,7 @@ Room tabs answer like shown ones: no `tab_not_visible`, `activate_tab` or `raise
 | `signed_out` / `challenge` (`handoff.status: "pending"`) | The user's; perch has notified them. Show `handoff.command` (`rooms signin <room> <url>`), wait, `navigate` again. Never type credentials. |
 | `no_browser: room 'x' is not up` | Run `rooms up x` in a shell, then retry. |
 | `no_browser: no room 'x'` | Setup is the user's (`rooms init x`). |
-| `tab_held` | Another agent has the tab: retry after 5s idle (unless claimed), or `new_tab`. |
+| `tab_held` | Another agent has the tab (a room tab: retry after 5s idle unless claimed): `new_tab`. |
 | `stale_tab` | Closed or crashed: `list_tabs {app:"room:x"}`. |
 
 When done, close the tabs you opened, `from` too; never the user's. `rooms check x` lists signed-out sites (exit 1 if any). Leave `rooms down`, `restore`, `signin` and `flags` to the user.

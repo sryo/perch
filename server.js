@@ -3321,7 +3321,7 @@ function jxaRuntime(BROWSERS, HANG) {
     } else {
       tabId = handle(name, win.tabs.id()[0]);
     }
-    const out = { app: name, tabId, loftWin: { id: wid, rect: R } };
+    const out = { app: name, tabId, loftWin: { id: wid, rect: R }, __pid: P.pid[name] != null ? P.pid[name] : regularPid(name) };
     if (P.front === name && userFront != null) { try { ap.windows.byId(userFront).index = 1; } catch (e) {} }
     else if (P.front !== name) {
       // Chromium raises itself a moment after the make. With the user away, the
@@ -3924,7 +3924,8 @@ function jxaRuntime(BROWSERS, HANG) {
           if (kind === "chrome") hint(name, newId, at);
         }
       } catch (e) {}
-      const out = { app: name, tabId };
+      // __pid: the browser process, which a claim on the tab records (Node strips it).
+      const out = { app: name, tabId, __pid: P.pid[name] != null ? P.pid[name] : regularPid(name) };
       // Page tools here run only in the tab a window shows (see visibleGuard).
       if (shown === false) { out.shown = false; out.note = NEW_TAB_UNSHOWN; }
       if (P.front !== name && procs().front === name) out.warning = "creating the tab brought the browser to the front";
@@ -5076,6 +5077,58 @@ const roomClaimNew = (room, tabId, label) => ({ room, tabId, label, owner: ROOM_
 const roomClaimHeld = (c) => roomKin(c) && c.label
   ? `tab_held: this room tab is yours as room:${c.room}:${c.label}; target that handle`
   : `tab_held: room tab claimed ${c.label ? `as ${c.label} ` : ""}by pid ${c.pid}; open your own with new_tab {app:"room:${c.room}", label}`;
+// A browser tab perch opened (new_tab, a loft tab, a popup of one) is its server's, in
+// run/tabs beside the room claims (roomReap walks run/claims and must not reap these).
+// It holds only while it proves the tab is the one opened: its server alive, the same
+// browser process (Chromium tab ids repeat after a browser restart) and a call within
+// idleMs. A claim that can't be written or read holds nothing, as before claims.
+// Targets given by tabIndex aren't checked; only handles are.
+export const tabClaims = {
+  idleMs: ROOM_CLAIM_IDLE_MS,
+  opened(from, tabId) {
+    const c = tabClaim(from);
+    if (c && roomOwn(c) && typeof tabId === "string" && !isRoomTab(tabId)) tabClaimSet(tabId, tabClaimNew(tabId, c.browser));
+  },
+};
+const tabClaimFile = (tabId) => roomFile("tabs", tabId);
+const tabClaimLive = (c) => !!c && Date.now() - c.last <= tabClaims.idleMs && pidAlive(c.pid) && pidAlive(c.browser);
+function tabClaim(tabId) {
+  if (typeof tabId !== "string" || isRoomTab(tabId)) return null;
+  let c = null;
+  try { c = readJson(tabClaimFile(tabId)); } catch {}
+  return tabClaimLive(c) && c.tabId === tabId ? c : null;
+}
+function tabClaimSet(tabId, c) {
+  try { if (c) writeJson(tabClaimFile(tabId), c); else rmSync(tabClaimFile(tabId), { force: true }); } catch {}
+}
+const tabClaimNew = (tabId, browser) => ({ tabId, browser, owner: ROOM_OWNER, pid: process.pid, client: rooms.client ?? process.ppid, last: Date.now() });
+const tabClaimHeld = (c) => new Error(`tab_held: another agent's tab (perch pid ${c.pid} opened it); open your own with new_tab`);
+function tabClaimsLive() {
+  const out = new Map();
+  for (const f of jsonFiles(join(rooms.home, "run", "tabs"))) {
+    let c = null;
+    try { c = readJson(f); } catch {}
+    if (tabClaimLive(c)) out.set(c.tabId, c);
+  }
+  return out;
+}
+// After a call: a new tab is claimed, a moved or renamed handle carries its claim, a
+// closed one lets it go, and a used one is touched at most every 10s.
+function tabClaimAfter(name, shown, claim, result, moved) {
+  if (!result || typeof result !== "object") return result;
+  if (name === "new_tab" && "__pid" in result) {
+    const { __pid, ...rest } = result;
+    if (Number.isInteger(__pid) && typeof rest.tabId === "string" && !isRoomTab(rest.tabId)) tabClaimSet(rest.tabId, tabClaimNew(rest.tabId, __pid));
+    return rest;
+  }
+  if (!claim || !roomOwn(claim)) return result;
+  if (name === "close_tab" && result.ok === true) { tabClaimSet(shown, null); return result; }
+  const now = typeof result.tabId === "string" && result.tabId !== shown ? result.tabId : moved && moved !== shown ? moved : null;
+  if (now) { tabClaimSet(shown, null); tabClaimSet(now, { ...claim, tabId: now, last: Date.now() }); }
+  else if (Date.now() - claim.last > 10000) tabClaimSet(shown, { ...claim, last: Date.now() });
+  if (name === "click" && result.opened && result.opened.tabId) tabClaims.opened(now || shown, result.opened.tabId);
+  return result;
+}
 // An agent's helper script loads a perch of its own, in a process the agent's client started
 // from its shell. A claim records its server's parent (the client), so a perch with that
 // client among its ancestors is the same agent's and shares the claim; the claim stays its
@@ -6019,6 +6072,11 @@ async function listTabs(args = {}) {
   if (r.failed && !r.rows.length && !r.more) throw new Error(listFailure(r.failed[0]));
   const out = shapeTabs(r.rows, args);
   out.total += r.more;
+  const claims = out.tabs.length ? tabClaimsLive() : null;
+  if (claims && claims.size) for (const t of out.tabs) {
+    const c = claims.get(t.tabId);
+    if (c) { t.holder = `pid ${c.pid}`; if (roomOwn(c)) t.mine = true; }
+  }
   if (r.failed) out.warning = r.failed.map((f) => `${f.app} not listed: ${listFailure(f)}`).join("; ");
   if (quietRooms) out.warning = out.warning ? `${out.warning}; ${quietRooms}` : quietRooms;
   return out;
@@ -11896,7 +11954,7 @@ Elements: prefer \`ref\` (from accessibility_snapshot) over CSS \`selector\` ove
 {ok:false, error} is a normal outcome (no match, value didn't land): read it, don't retry blindly.
 Verify with the call's own result (ok, readback, form.left), not a screenshot; after fill {fields}, resend only the ok:false ones.
 Where: the user's logins, localhost, a set size or unseen painting: new_tab {url, loft:"1280x800"} (perch makes it, taking no focus); a login of its own, a phone or a locked Mac: a room. Neither: perch picks. Blocked: take the next path. None left: tell the user and propose a session to find one.
-Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, new_tab {loft:true}, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another agent's room tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
+Errors start with a code: tab_not_visible (needs the tab its window shows: retry later, a room, new_tab {loft:true}, or activate_tab), stale_tab (re-run list_tabs), window_offscreen, no_browser, timeout, tab_not_scriptable (a browser-internal page; navigate first, with raise:true unless its window is in front), dialog_open (a JS dialog or leave-page prompt: press {dialog}), tab_held (another agent's tab), bad_url (only http(s), file or about:blank), bad_args (fix the call), needs_focus (focus needs the user's grant; nothing ran).`;
 
 // windowId and tabIndex still target (list_tabs rows without a tabId carry them) but stay unlisted.
 const TARGET = { type: "object", properties: { tabId: { type: "string" }, app: { type: "string" } } };
@@ -12339,13 +12397,16 @@ async function handleCallCore(name, args = {}, signal) {
     const shown = name === "close_tab" ? args.tabId : args.target?.tabId;
     const labeled = isRoomTab(shown) ? roomLabeled(shown) : null;
     if (labeled) args = name === "close_tab" ? { ...args, tabId: labeled.tabId } : { ...args, target: { ...args.target, tabId: labeled.tabId } };
-    note = { refs: refMaps.get(tabKey(args.target)), late: lateArm(name), signal };
+    const claim = tabClaim(shown);
+    if (claim && !roomOwn(claim)) throw tabClaimHeld(claim);
+    note ={ refs: refMaps.get(tabKey(args.target)), late: lateArm(name), signal };
     const roomTab = ROOM_LEASE_TOOLS.has(name) ? args.target?.tabId ?? (name === "close_tab" ? args.tabId : null) : null;
     const leaseTab = isRoomTab(roomTab) ? roomTab : null;
     const lockKey = leaseTab ? tabKey({ tabId: leaseTab }) : tabLockKey(name, args);
     const run = routed ? () => routedTab(args) : () => handler(args);
     const call = () => callNotes.run(note, () => leaseTab ? withRoomLease(leaseTab, note, run, labeled?.label) : run());
     let result = await (lockKey ? withTabLock(lockKey, call) : call());
+    result = tabClaimAfter(name, shown, claim, result, note.moved);
     if (labeled && result && typeof result === "object") for (const k of ["tabId", "closed"]) if (result[k] === labeled.tabId) result = { ...result, [k]: shown };
     // A miss names the ref as the agent was shown it.
     if (result && result.__perch_ref_miss && note.refs && note.refs.toPage) {
