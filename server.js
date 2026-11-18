@@ -9004,7 +9004,12 @@ function watchOpen() {
 }
 `;
 
-const CLICK_BODY = CLICK_LIB + String.raw`
+const CLICK_YET = String.raw`
+// Refused before anything was sent (nothing matched, or natively disabled):
+// Node may wait for the element and run the call again (settle).
+function clickYet(o) { if (o.ok === false && !o.candidates && !/^bad selector/.test(o.error)) o.__perch_unsent = location.href; return o; }
+`;
+const CLICK_BODY = CLICK_LIB + CLICK_YET + String.raw`
 const clickNow = function (el, blank) {
   const rb = A.readback ? rbArm(el) : null;
   if (rb && !rb.ok) return rb;
@@ -9018,9 +9023,9 @@ const clickNow = function (el, blank) {
   return out;
 };
 const r = resolveClick(A);
-if (r.out) return r.out;
+if (r.out) return clickYet(r.out);
 const el = r.el, off = inertCtl(el);
-if (off) return inertOut(off);
+if (off) return clickYet(inertOut(off));
 const href = A.probe && blankHref(el);
 if (!href) return clickNow(el, false);
 const held = window.__perch_blank;
@@ -9547,7 +9552,13 @@ if (carry) {
 return "# " + JSON.stringify(head) + (out.length ? "\n" + out.join("\n") : "");
 `,
 
-  fill: FILL_LIB + "return fillOne(A);",
+  // fillOne's refusals made before any write (no match, disabled) carry settle's
+  // flag: Node may wait for the field and run the fill again.
+  fill: FILL_LIB + String.raw`
+const o = fillOne(A);
+if (o.ok === false && !o.candidates && !o.reveal && /^no element for selector |^no fillable field matched [^;]*; it may appear only|the form will not submit it$/.test(o.error)) o.__perch_unsent = location.href;
+return o;
+`,
 
   // The fields a fill {fields} write pass landed (frRecord, under A.tok), read
   // again in the same runtime call. -> frJudge's answer, or {lost} (no record: a
@@ -10479,9 +10490,9 @@ return out;
 `,
 
   // JS-driven hover menus listen for these; CSS :hover needs a real pointer.
-  hover: CLICK_LIB + String.raw`
+  hover: CLICK_LIB + CLICK_YET + String.raw`
 const r = resolveClick(A);
-if (r.out) return r.out;
+if (r.out) return clickYet(r.out);
 const b = r.el.getBoundingClientRect();
 const at = { clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, pointerType: "mouse", composed: true };
 const P = typeof PointerEvent === "function" ? PointerEvent : MouseEvent;
@@ -11634,6 +11645,31 @@ async function roomDownloadClick(args) {
   }
 }
 
+// A click or fill the page refused before sending anything (the element not
+// there yet, or natively disabled) runs again until it lands or settleClock.ms
+// passes, then answers with `waited`. A navigation (a new href) ends the wait.
+export const settleClock = { ms: Number(process.env.PERCH_SETTLE_MS ?? 1500), now: () => Date.now(), sleep: (ms) => sleep(ms) };
+const unsentOf = (r) => (r && typeof r === "object" && typeof r.__perch_unsent === "string" ? r.__perch_unsent : null);
+async function settle(run) {
+  const t0 = settleClock.now(), budget = callBudget(), ms = budget ? Math.min(settleClock.ms, budget) : settleClock.ms;
+  const first = await run();
+  let r = first, step = 100;
+  for (let href = unsentOf(r); href && settleClock.now() - t0 + step <= ms && !callNotes.getStore()?.signal?.aborted;) {
+    await settleClock.sleep(step);
+    step = Math.min(step * 2, 400);
+    r = await run();
+    const h = unsentOf(r);
+    if (h !== href) break;
+  }
+  if (r !== first) {
+    if (r && typeof r === "object") {
+      for (const k of ["late", "warning"]) if (first[k] !== undefined && r[k] === undefined) r[k] = first[k];
+      r.waited = settleClock.now() - t0;
+    }
+  }
+  return r;
+}
+
 async function click(args = {}) {
   if (args.download) return roomDownloadClick(args);
   // A room has no cursor or window of the user's to disturb, so its clicks are
@@ -11657,10 +11693,10 @@ async function click(args = {}) {
   if (trusted) return trustedClick({ ref, selector, label_pattern, x, y, raise, target, readback });
   if (!ref && !selector && !label_pattern) throw new Error("click requires `ref`, `selector`, or `label_pattern` (x/y is screen coords, trusted:true only)");
   const A = { ref, selector, label_pattern };
-  if (hover) return runPage("click", "hover", A, target);
+  if (hover) return settle(() => runPage("click", "hover", A, target));
   const go = CLICK_BLANK_GO;
-  if (!readback) return parsePage(await rt("clickPage", { target, click: pageFn("click", { ...A, probe: true }), go }, { raw: true }));
-  return rt("click", { target, click: pageFn("click_readback", { ...A, probe: true, readback }), go, ...readbackSteps(readback) }, { lane: "slow" });
+  if (!readback) return settle(async () => parsePage(await rt("clickPage", { target, click: pageFn("click", { ...A, probe: true }), go }, { raw: true })));
+  return settle(() => rt("click", { target, click: pageFn("click_readback", { ...A, probe: true, readback }), go, ...readbackSteps(readback) }, { lane: "slow" }));
 }
 
 const KEY_CODES = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, Delete: 46, Space: 32, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34 };
@@ -11968,7 +12004,7 @@ async function fill(args = {}) {
   const key = taArgs({ ref, selector, label_pattern, text: body }, trusted);
   const r = trusted
     ? await trustedFill({ ...key, raise, target })
-    : await runPage("fill", "fill", { ...key, fr: true }, target);
+    : await settle(() => runPage("fill", "fill", { ...key, fr: true }, target));
   if (!trusted && r && r.fr) return hintTrusted(r.unseen ? await richSeen(r, target, body) : keepLate(r));
   if (!r || !r.pending) return trusted ? noTok(r) : hintTrusted(r);
   const out = { ...await (r.trusted ? pickSuggestion(target, r.tok, key) : pickTypeahead(key, target, r.tok).then(hintTrusted)), ...(r.trusted ? { trusted: true } : {}), ...(r.hit !== undefined ? { hit: r.hit } : {}), ...(r.delivery ? { delivery: r.delivery } : {}) };
@@ -12582,6 +12618,8 @@ async function handleCallCore(name, args = {}, signal) {
     const run = routed ? () => routedTab(args) : () => handler(args);
     const call = () => callNotes.run(note, () => leaseTab ? withRoomLease(leaseTab, note, run, labeled?.label) : run());
     let result = await (lockKey ? withTabLock(lockKey, call) : call());
+    // settle's page flag never reaches a caller (trusted paths and fill {fields} carry it too).
+    if (result && typeof result === "object") { delete result.__perch_unsent; if (Array.isArray(result.results)) for (const x of result.results) if (x && typeof x === "object") delete x.__perch_unsent; }
     result = tabClaimAfter(name, args, shown, claim, result, note.moved);
     if (labeled && result && typeof result === "object") for (const k of ["tabId", "closed"]) if (result[k] === labeled.tabId) result = { ...result, [k]: shown };
     // A miss names the ref as the agent was shown it.

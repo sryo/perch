@@ -131,7 +131,7 @@ function tabOf(dom) {
 // Any other thrown name is the neutral fault, with none of the page's text.
 test("(b) a frame document gone mid-call is the ref-miss hint through fill and click; another fault is neutral", async () => {
   const firstName = async () => (await handleCall("accessibility_snapshot", {})).content[0].text.split("\n").find((l) => l.includes(`"First name"`)).split(" ")[0];
-  for (const [tool, marker, args] of [["fill", "return fillOne(A);", { text: "Ada" }], ["click", "const r = resolveClick(A);", {}]]) {
+  for (const [tool, marker, args] of [["fill", "const o = fillOne(A);", { text: "Ada" }], ["click", "const r = resolveClick(A);", {}]]) {
     const { w } = sameOrigin();
     tabOf(w);
     const ref = await firstName();

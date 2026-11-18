@@ -10,6 +10,8 @@ process.env.ROOMS_HOME = "/nonexistent/perch-test-rooms";
 process.env.LOFT_HOME = "/nonexistent/perch-test-loft";
 // No loft CLI either: a routed new_tab would otherwise run the user's own `loft up`.
 process.env.LOFT_BIN = "/nonexistent/perch-test-loft/loft";
+// No settle wait: a refusal answers at once unless a test sets settleClock.
+process.env.PERCH_SETTLE_MS = "0";
 const { DAEMONS, deps, roomsReset, focus } = await import("../../server.js");
 // The suite runs under a focus grant, so tests of raise:true and activate_tab keep
 // their meaning; test/focus-grant.test.mjs clears it.

@@ -100,7 +100,7 @@ test("large page: snapshot, text, names, fill, select, typeahead and match tiers
   assert.deepEqual(Object.keys(o), Object.keys(g));
 });
 
-const FILL_BODY = PAGE_SCRIPTS.fill.slice(0, PAGE_SCRIPTS.fill.lastIndexOf("return fillOne(A);"));
+const FILL_BODY = PAGE_SCRIPTS.fill.slice(0, PAGE_SCRIPTS.fill.lastIndexOf("const o = fillOne(A);"));
 
 test("matchTier folds each item's key once, not once per tier", () => {
   const w = page(`<ul>${Array.from({ length: 50 }, (_, i) => `<li>Item ${i}</li>`).join("")}</ul>`);

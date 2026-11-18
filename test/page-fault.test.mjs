@@ -57,7 +57,7 @@ async function isNeutral(tool, args, threw) {
 
 test("fill {label_pattern}: a page script that throws is the neutral fault", async () => {
   const { dom } = onPage(`<label>Name <input name=n></label>`);
-  await isNeutral("fill", { label_pattern: "name", text: "Ada" }, throwAt(dom, "return fillOne(A);"));
+  await isNeutral("fill", { label_pattern: "name", text: "Ada" }, throwAt(dom, "const o = fillOne(A);"));
 });
 
 test("fill {trusted} in the background: a page script that throws is the neutral fault", async () => {
@@ -148,13 +148,13 @@ test("a fault named PerchStaleRef is the ref-miss hint with the call's ref, else
   const stale = "throw Object.assign(new Error('https://a.test/x secret-internal'), { name: 'PerchStaleRef' });";
   let { dom } = onPage(`<label>Name <input name=n></label>`);
   const ref = mapRefs(dom, { 7: dom.document.querySelector("input") })[7];
-  const threwRef = throwAt(dom, "return fillOne(A);", undefined, stale);
+  const threwRef = throwAt(dom, "const o = fillOne(A);", undefined, stale);
   const r = await handleCall("fill", { ref, text: "Ada" });
   assert.equal(threwRef(), 1);
   assert.equal(r.isError, true);
   assert.equal(r.content[0].text, `error: ref ${ref} is stale or unknown; call accessibility_snapshot again (refs die on re-snapshot and navigation)`);
   ({ dom } = onPage(`<label>Name <input name=n></label>`));
-  const threw = throwAt(dom, "return fillOne(A);", undefined, stale);
+  const threw = throwAt(dom, "const o = fillOne(A);", undefined, stale);
   const o = await faulted("fill", { selector: "input", text: "Ada" }, threw);
   assert.deepEqual(o, { ok: false, error: "fill: a ref's frame document is gone; call accessibility_snapshot again" });
 });

@@ -2741,7 +2741,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29581
+   "pageBytes": 29805
   },
   {
    "call": [
@@ -2931,7 +2931,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14545
+   "pageBytes": 14705
   },
   {
    "call": [
@@ -3087,7 +3087,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14541
+   "pageBytes": 14701
   }
  ],
  "accessibility_snapshot: max, role, query": [
@@ -3296,7 +3296,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29584
+   "pageBytes": 29808
   },
   {
    "call": [
@@ -3681,7 +3681,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14529
+   "pageBytes": 14689
   },
   {
    "call": [
@@ -3704,7 +3704,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14541
+   "pageBytes": 14701
   },
   {
    "call": [
@@ -3727,7 +3727,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14531
+   "pageBytes": 14691
   },
   {
    "call": [
@@ -3750,7 +3750,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14534
+   "pageBytes": 14694
   },
   {
    "call": [
@@ -3815,7 +3815,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14545
+   "pageBytes": 14705
   },
   {
    "call": [
@@ -3839,7 +3839,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 12545
+   "pageBytes": 12695
   },
   {
    "call": [
@@ -3924,7 +3924,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14539
+   "pageBytes": 14699
   },
   {
    "call": [
@@ -3947,7 +3947,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14532
+   "pageBytes": 14692
   },
   {
    "call": [
@@ -3970,7 +3970,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14531
+   "pageBytes": 14691
   }
  ],
  "click: arc": [
@@ -3997,7 +3997,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14529
+   "pageBytes": 14689
   }
  ],
  "click: safari": [
@@ -4022,7 +4022,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14529
+   "pageBytes": 14689
   }
  ],
  "click: readback changed, unchanged, invalid": [
@@ -4050,7 +4050,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 44739
+   "pageBytes": 44899
   },
   {
    "call": [
@@ -4086,7 +4086,7 @@
     ]
    },
    "pageScripts": 12,
-   "pageBytes": 248059
+   "pageBytes": 248219
   },
   {
    "call": [
@@ -4112,7 +4112,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 44739
+   "pageBytes": 44899
   },
   {
    "call": [
@@ -4148,7 +4148,7 @@
     ]
    },
    "pageScripts": 12,
-   "pageBytes": 248071
+   "pageBytes": 248231
   }
  ],
  "click: readback on a busy page is settled:false": [
@@ -4216,7 +4216,7 @@
     ]
    },
    "pageScripts": 42,
-   "pageBytes": 857948
+   "pageBytes": 858108
   }
  ],
  "click: _blank link opens a tab": [
@@ -4246,7 +4246,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 15356
+   "pageBytes": 15516
   }
  ],
  "click: _blank link with no tab is unconfirmed": [
@@ -4279,7 +4279,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 15356
+   "pageBytes": 15516
   }
  ],
  "click: trusted background": [
@@ -4829,7 +4829,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29578
+   "pageBytes": 29802
   },
   {
    "call": [
@@ -4853,7 +4853,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34336
+   "pageBytes": 34560
   },
   {
    "call": [
@@ -4900,7 +4900,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29583
+   "pageBytes": 29807
   },
   {
    "call": [
@@ -4924,7 +4924,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34324
+   "pageBytes": 34548
   },
   {
    "call": [
@@ -4948,7 +4948,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34331
+   "pageBytes": 34555
   },
   {
    "call": [
@@ -4972,7 +4972,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29597
+   "pageBytes": 29821
   },
   {
    "call": [
@@ -4996,7 +4996,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34327
+   "pageBytes": 34551
   },
   {
    "call": [
@@ -5060,7 +5060,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29585
+   "pageBytes": 29809
   },
   {
    "call": [
@@ -5084,7 +5084,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34317
+   "pageBytes": 34541
   }
  ],
  "fill: checkbox, radio, ambiguous": [
@@ -5168,7 +5168,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29575
+   "pageBytes": 29799
   }
  ],
  "fill: fields with form census, only_empty, preference list": [
@@ -5460,7 +5460,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29577
+   "pageBytes": 29801
   },
   {
    "call": [
@@ -5483,7 +5483,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 19291
+   "pageBytes": 19451
   },
   {
    "call": [
@@ -5506,7 +5506,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 14530
+   "pageBytes": 14690
   }
  ],
  "fill: typeahead pick and miss": [
@@ -5536,7 +5536,7 @@
     ]
    },
    "pageScripts": 4,
-   "pageBytes": 143700
+   "pageBytes": 143924
   },
   {
    "call": [
@@ -5571,7 +5571,7 @@
     ]
    },
    "pageScripts": 11,
-   "pageBytes": 414540
+   "pageBytes": 414764
   },
   {
    "call": [
@@ -5664,7 +5664,7 @@
     ]
    },
    "pageScripts": 69,
-   "pageBytes": 2647122
+   "pageBytes": 2647346
   }
  ],
  "fill: trusted background and raised": [
@@ -5792,7 +5792,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29577
+   "pageBytes": 29801
   }
  ],
  "fill: safari": [
@@ -5818,7 +5818,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29577
+   "pageBytes": 29801
   }
  ],
  "select: native exact, word, ambiguous, miss, disabled": [
@@ -7568,7 +7568,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 29971
+   "pageBytes": 30195
   }
  ],
  "errors: window_ambiguous with a second instance": [

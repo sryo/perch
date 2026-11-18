@@ -53,6 +53,8 @@ const tagRefs = (v, rid) => Array.isArray(v) ? v.map((x) => tagRefs(x, rid))
   : v;
 export const run = (w, name, A = {}) => {
   const out = parse(w.eval(buildEvalWrapper(pageScript(name, tagRefs(A, w.__perch_refsId)))));
+  // settle's flag, which Node drops before any caller sees it.
+  if (out && typeof out === "object") delete out.__perch_unsent;
   return typeof out === "string" ? takeRefsId(out).page : out;
 };
 export const runBody = (w, body) => parse(w.eval(buildEvalWrapper(pageScript(null, {}) + body)));
