@@ -221,6 +221,11 @@ add("wait: quiet", async (h) => {
   await h.call("wait", { quiet: 500, selector: "#s" });
   await h.call("wait", { quiet: 5000, timeout: 1000 });
 });
+add("wait: user, still signing in, and bad args", async (h) => {
+  onPage(h, `<input type=password>`);
+  await h.call("wait", { user: "Sign in", timeout: 300 });
+  await h.call("wait", { user: "", timeout: 300 });
+});
 for (const kind of ["arc", "safari"]) {
   add(`wait: ${kind} selector`, async (h) => { onPage(h, `<p id=a>x</p>`, { kind }); await h.call("wait", { selector: "#a" }); });
 }

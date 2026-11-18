@@ -6189,6 +6189,7 @@ async function kicked({ main, key, deadline, timeout, target, kick }) {
 }
 
 async function wait(args = {}) {
+  if (args.user !== undefined) return waitUser(args);
   const { selector, readyState = "complete", expression, timeout = 10000, target, quiet, job } = args;
   if (job != null) {
     const m = JOB_RE.exec(String(job));
@@ -6223,6 +6224,57 @@ async function waitQuiet({ quiet, selector, expression, target }, timeout) {
   const arm = buildEvalWrapper(pageScript("wait_quiet_arm", A)), js = buildEvalWrapper(pageScript("wait_quiet", A));
   const r = await rt("wait", { target, arm, js, timeout, quiet }, { lane: "slow", timeout: Math.max(timeout, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
   return { ok: true, waited: r.waited, quietFor: r.quietFor };
+}
+
+// wait {user}: notifies the user once, then polls until the page shows the step done:
+// no sign-in UI left (a visible password or one-time-code field, a sign-in or challenge
+// frame, a login path) and the page moved on (sign-in UI at the start, or another URL).
+// The start is kept on the page (__perch_user), so a call after a timeout resumes with
+// no second notice; a new document starts afresh with nothing to compare, so it is done
+// once it has no sign-in UI. Source is byte-identical per call.
+const USER_WAIT_MS = 300000, USER_RESUME_MS = 15 * 60000;
+// Built on first use: HANDOFF_HOST and ROOM_LOGIN_PATH are defined further down.
+let userJs = null;
+function userScripts() {
+  if (userJs) return userJs;
+  const USER_SIGNIN = `function(){var H=new RegExp(${JSON.stringify(HANDOFF_HOST.source)}),L=new RegExp(${JSON.stringify(ROOM_LOGIN_PATH.source)},"i");if(L.test(location.pathname))return true;var q=document.querySelectorAll('input[type=password],input[autocomplete~="one-time-code"],iframe[src]');for(var i=0;i<q.length;i++){var e=q[i];if(e.tagName==="IFRAME"){var u=null;try{u=new URL(e.src,location.href)}catch(x){}if(!u||!(H.test(u.hostname.toLowerCase())||/^(www\\.)?google\\.com$/.test(u.hostname)&&/^\\/recaptcha(\\/|$)/.test(u.pathname)))continue}var r=e.getBoundingClientRect(),st=getComputedStyle(e);if(r.width>0&&r.height>0&&st.visibility!=="hidden")return true}return false}`;
+  const USER_BASE = `var s=(${USER_SIGNIN})(),b=window.__perch_user;if(b&&b.url===location.href&&Date.now()-b.at<${USER_RESUME_MS})return{resumed:true};window.__perch_user={url:location.href,signin:s,at:Date.now()};return{resumed:false,host:location.host};`;
+  const USER_DONE = `(function(){var b=window.__perch_user;if((${USER_SIGNIN})()||b&&!b.signin&&location.href===b.url)return 0;window.__perch_user=undefined;return{url:location.href,title:document.title}})()`;
+  return (userJs = { base: USER_BASE, done: waitExpr(USER_DONE) });
+}
+async function waitUser(args) {
+  const { user, target } = args;
+  const bad = (why) => new Error(`bad_args: wait \`user\` ${why}`);
+  if (typeof user !== "string" || !user.trim()) throw bad("takes what the user must do, as a non-empty string");
+  if (args.selector != null || args.expression != null || args.quiet != null || args.job != null) throw bad("takes no selector, expression, quiet or job");
+  if (isRoomTab(target && target.tabId)) throw bad("is for browser tabs; a room tab's sign-in is the rooms CLI's (rooms signin)");
+  let timeout = args.timeout == null ? USER_WAIT_MS : args.timeout;
+  if (typeof timeout !== "number" || !(timeout >= WAIT_MIN_MS)) throw bad(`timeout is in milliseconds (at least ${WAIT_MIN_MS})`);
+  const budget = callBudget();
+  if (budget != null) timeout = Math.min(timeout, Math.max(WAIT_MIN_MS, budget - 1000));
+  const start = Date.now();
+  const gone = (e) => /^stale_tab: /.test(e && e.message) ? { ok: false, outcome: "closed", note: "the tab closed" } : null;
+  let base;
+  try { base = parsePage(await rt("evalJs", { target, js: buildEvalWrapper(userScripts().base), tool: "wait" }, { raw: true })); }
+  catch (e) { const g = gone(e); if (g) return g; throw e; }
+  if (base && base.__perch_error != null) throw new Error("wait: the page script failed on this page; nothing verified");
+  if (base && !base.resumed) {
+    const subtitle = typeof base.host === "string" && base.host ? base.host : undefined;
+    try { await deps.notify({ message: user, title: "perch needs you", subtitle }); } catch {}
+  }
+  const left = timeout - (Date.now() - start);
+  const lane = left > JXA_DEFAULT_TIMEOUT ? takeLongLane() : "slow";
+  try {
+    const ms = Math.max(WAIT_MIN_MS, left);
+    const r = await rt("wait", { target, js: userScripts().done, timeout: ms, interval: 500, expr: true }, { lane, timeout: Math.max(left, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
+    const v = r.value.v;
+    return { ok: true, outcome: "continued", waited: r.waited, url: v.url, title: v.title };
+  } catch (e) {
+    const g = gone(e);
+    if (g) return g;
+    if (/^timeout: wait timed out/.test(e && e.message)) return { ok: false, outcome: "timeout", waited: timeout, note: "not done yet; wait {user} again keeps waiting, with no second notice" };
+    throw e;
+  } finally { longBusy.delete(lane); }
 }
 
 const NAV_TIMEOUT = 15000;
@@ -6547,7 +6599,7 @@ async function macAppearance() {
   try { return /^Dark/.test((await exec("defaults", ["read", "-g", "AppleInterfaceStyle"], { timeout: 2000 })).stdout) ? "dark" : "light"; }
   catch { return "light"; }
 }
-export const deps = { exec, dialogs: probeDialogs, appearance: macAppearance };
+export const deps = { exec, dialogs: probeDialogs, appearance: macAppearance, notify: (a) => notify(a) };
 
 // The runtime's clipPixels, for a screencapture of W x H pixels.
 function clipPixels(m, W, H) {
@@ -12019,7 +12071,7 @@ const TOOLS = [
     titleContains: { type: "string" },
     limit: { type: "number", description: "Default 20." },
   }),
-  tool("new_tab", "Open an unselected tab in a running browser (default: the one in use); needs_focus without a grant. Returns {app,tabId}.", {
+  tool("new_tab", "Open an unselected tab in a running browser (default: the one in use); needs_focus without a grant: {app,tabId}.", {
     url: { type: "string", description: "http(s) or file URL; default about:blank." },
     app: { type: "string" },
     loft: { description: "Own window on an unseen loft: true, a loft id, or WxH" },
@@ -12027,9 +12079,9 @@ const TOOLS = [
     label: { type: "string", description: "Room: yours alone as room:<name>:<label>" },
   }),
   tool("activate_tab", "Bring the target tab and its window to the front; needs_focus without a grant.", { target: TARGET }),
-  tool("close_tab", "Close the tab with this handle; never a window's last tab, never changes focus.", { tabId: { type: "string" } }, ["tabId"]),
-  tool("navigate", "Load a URL in the target tab and wait for the new page to finish loading. Where the page can't start the load itself (not http(s), page JS unavailable), it needs `raise:true` (needs_focus without a grant).", { url: { type: "string" }, raise: { type: "boolean" }, target: TARGET }, ["url"]),
-  tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. Given both, `script_path` runs before `script`.", {
+  tool("close_tab", "Close this handle's tab; never a window's last, never moves focus.", { tabId: { type: "string" } }, ["tabId"]),
+  tool("navigate", "Load a URL in the target tab and wait for it to load. When the page can't start the load (not http(s), no page JS), it needs `raise:true` (needs_focus without a grant).", { url: { type: "string" }, raise: { type: "boolean" }, target: TARGET }, ["url"]),
+  tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. `script_path` runs before `script`.", {
     script: { type: "string" },
     script_path: { type: "string", description: "Local .js file." },
     awaitPromise: { type: "boolean", description: "Await async code." },
@@ -12044,10 +12096,11 @@ const TOOLS = [
     expression: { type: "string" },
     quiet: { type: "number", description: "ms with no DOM change or fetch/XHR finishing: {ok,waited,quietFor}." },
     job: { type: "string", description: "eval_js's pending job." },
+    user: { type: "string", description: "What the user must do (sign in, 2FA); notifies them, waits till done." },
     timeout: { type: "number", description: "ms, default 10000." },
     target: TARGET,
   }),
-  tool("screenshot", "Capture the target window unraised; only its shown tab renders. Returns the image and {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w. ref/selector (needs Accessibility): scroll it into view, crop to it (meta.clip).", {
+  tool("screenshot", "Capture the target window unraised; only its shown tab renders. Image plus {window:{x,y,w,h}, image:{w,h}}; screenX = window.x + imageX * window.w / image.w. ref/selector (needs Accessibility): scroll it into view, crop to it (meta.clip).", {
     ref: REF,
     selector: SEL,
     raise: { type: "boolean" },
@@ -12055,7 +12108,7 @@ const TOOLS = [
     format: { type: "string", enum: ["png", "jpeg"] },
     target: TARGET,
   }),
-  tool("get_text", "innerText (or outerHTML with `html`) of an element, default body/html, paged by `offset`/`maxChars`.", {
+  tool("get_text", "innerText (`html`: outerHTML) of an element, default body, paged by `offset`/`maxChars`.", {
     selector: SEL,
     ref: REF,
     html: { type: "boolean" },
@@ -12071,7 +12124,7 @@ const TOOLS = [
     diff: { type: "boolean", description: "Changes since your last snapshot only (`unchanged`, `gone` refs)." },
     target: TARGET,
   }),
-  tool("console_capture", "`start` records console.*, uncaught errors and rejections, `read` drains \"level: text\" lines, `stop` restores; navigation clears it.", {
+  tool("console_capture", "`start` records console.*, uncaught errors, rejections, `read` drains \"level: text\" lines, `stop` restores; navigation clears it.", {
     mode: { type: "string", enum: ["start", "read", "stop"], description: "Default read." },
     target: TARGET,
   }),
@@ -12081,7 +12134,7 @@ const TOOLS = [
     subtitle: { type: "string" },
     sound: { type: "string", description: "Default Glass." },
   }, ["message"]),
-  tool("file_upload", "Set a local file on an <input type=file>; its bytes never enter context. Of several matches it picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. `raise:true`: the native chooser, foreground (chooser:true), or with no control the open one.", {
+  tool("file_upload", "Set a local file on an <input type=file>; its bytes never enter context. Several matches: picks by accept, then a resume/CV name (ambiguous:true, el). A drop zone, or its hidden input nothing reads, gets a drop (dropped:true). detached/cleared: the site took the file. `raise:true`: the native chooser, foreground (chooser:true), or with no control the open one.", {
     path: { type: "string" },
     ref: REF,
     selector: SEL,
@@ -12110,7 +12163,7 @@ const TOOLS = [
     dialog: { type: ["boolean", "string"] },
     target: TARGET,
   }, ["key"]),
-  tool("fill", "Fill inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies it landed: {ok,kind,el,len}; empty `text` clears. `trusted`: trusted input, no key focus; `raise:true`: foreground keys.", {
+  tool("fill", "Fill inputs, textareas, rich editors, typeaheads (picks a suggestion); verifies: {ok,kind,el,len}; empty `text` clears. `trusted`: trusted input, no key focus; `raise:true`: foreground keys.", {
     fields: { type: "array", description: "[{ref|selector|label_pattern, text|checked|option, trusted?}]; option may be a list, in order" },
     fields_path: { type: "string", description: "JSON file of fields." },
     only_empty: { type: "boolean", description: "skip absent/set fields" },

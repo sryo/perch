@@ -10,7 +10,7 @@ Targeting and errors: server instructions. `app` matches `"canary"`.
 
 ## Tools
 
-Adds to the tool descriptions; none for `activate_tab`, `close_tab`, `wait`, `console_capture`, `notify`, `get_text`, `file_upload`.
+Adds to the tool descriptions; none for `activate_tab`, `close_tab`, `console_capture`, `notify`, `get_text`, `file_upload`.
 
 | Tool | Use |
 |---|---|
@@ -38,7 +38,7 @@ No `ready`: complete. Values are JSON. Keys: `name` (HTML name), `type`, `value`
 ## Results
 
 - `fill` returns `{ok, kind?: "rich"|"typeahead" (none: plain), el, len, ambiguous?, kept?, reveal?, hidden?}`. Typeaheads pick (`selected`) or fail; an empty lookup retries once with a short query (`query`); free text stays (`note`). `ok: true` is proof. A write the page undoes after the call is reported by the next call on that tab: `late:[{el, error}]`; a `click`/`press` then does nothing: refill, retry.
-- `fill {fields}` returns `{ok, results:[{ok, kind?, el, error?}]}`, `ok` if all landed. A field a later one cleared (named if known), or the page put back or emptied a moment later (Chrome; else `late`), is `ok:false` (the latter `reverted:true`; a list rebuilt after an earlier field may name it: refill once it settles), as is a select or radio group moved to another option; text reformatted later stays `ok` with a `note`. A pick the control didn't show is `ok:false` (`pressed`, `value`); `unverified`: count of fields a failed final re-read or a page change left unchecked (`warning`); an error after a field landed ends it with `error`, landed kept. `form: {requiredEmpty, unpicked?, left?:[{name, label}]}` (10 at most) is what the filled fields' form still wants, as the snapshot header counts it; absent after a page change. `checked` clicks only on a change; `option` also answers a radio group by question. `only_empty`: skip absent/filled/disabled fields (`skipped`).
+- `fill {fields}` returns `{ok, results:[{ok, kind?, el, error?}]}`, `ok` if all landed. A field a later one cleared (named if known), or the page put back or emptied a moment later (Chrome; else `late`), is `ok:false` (the latter `reverted:true`; a list an earlier field rebuilt may name it: refill once settled), as is a select or radio group moved to another option; text reformatted later stays `ok` with a `note`. A pick the control didn't show is `ok:false` (`pressed`, `value`); `unverified`: count of fields a failed final re-read or a page change left unchecked (`warning`); an error after a field landed ends it with `error`, landed kept. `form: {requiredEmpty, unpicked?, left?:[{name, label}]}` (10 at most) is what the filled fields' form still wants, as the snapshot header counts it; absent after a page change. `checked` clicks only on a change; `option` also answers a radio group by question. `only_empty`: skip absent/filled/disabled fields (`skipped`).
 - `select`: a native pick is checked as `fill` is (`late`). A custom pick showing only the typed text is `ok:false`, also when the list stays open: retry `trusted` or check.
 - `fill {trusted:true}`: `{ok, trusted, value, el}`; typeahead: pick result + `trusted:true`; free text: `{ok, note, trusted}`. Require `ok` and `trusted`.
 - `moved: true`: the tab moved; use its new `tabId` (`eval_js`: 2nd text item).
@@ -54,9 +54,9 @@ No `ready`: complete. Values are JSON. Keys: `name` (HTML name), `type`, `value`
 
 ## Trusted input
 
-`fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input`, value verified) wherever page JS runs, minimized too, no tab switch, no focus. `click {trusted: true}` reaches an on-screen window's shown tab (else `tab_not_visible`) without activating it or moving the cursor. So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked); other tabs, or a menu the click leaves shut: a filter typed into its own empty box (`"typed"`). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored, only once the user allows it (asked once per session): else `needs_focus`; offer a room or `loft`.
+`fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input`, verified) wherever page JS runs, minimized too, no tab switch or focus. `click {trusted: true}` reaches an on-screen window's shown tab (else `tab_not_visible`) without activating it or moving the cursor. So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked); other tabs, or a menu the click leaves shut: a filter typed into its own empty box (`"typed"`). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored, only once the user allows it (asked once per session): else `needs_focus`; offer a room or `loft`.
 
-`frames` rows carry no values; read a trusted click's `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they are the user's. `frames_unreadable`: retry.
+`frames` rows carry no values; read a trusted click's `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they're the user's (`wait {user}` hands over). `frames_unreadable`: retry.
 
 ## Where to work
 
@@ -79,7 +79,7 @@ A room is a signed-in Chromium in a VM on this Mac; it can't reach this Mac's lo
 | Act | Any tool with that `target.tabId`. Untargeted calls never reach a room. |
 | Move | `new_tab {from: <browser tabId>, app:"room:work"}`: same URL, page state stays behind; refill. `from` stays open. Errors needing the user's window suggest it. |
 
-Room tabs answer like shown ones: no `tab_not_visible`, `activate_tab` or `raise`. `click` is trusted by default (CDP input, no cursor or focus; `trusted:false` for `el.click()`). Not in rooms: `frames` rows and `fN` refs, the file chooser (`file_upload` sets the file through the page), the `late` check. Downloads are denied except in `click {download: true}`, which returns `download.file` (a path here).
+Room tabs answer like shown ones: no `tab_not_visible`, `activate_tab` or `raise`. `click` is trusted by default (CDP input, no cursor or focus; `trusted:false`: `el.click()`). Not in rooms: `frames` rows and `fN` refs, the file chooser (`file_upload` sets the file through the page), the `late` check. Downloads are denied except in `click {download: true}`, which returns `download.file` (a path here).
 
 | Error | Next |
 |---|---|

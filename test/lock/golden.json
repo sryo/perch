@@ -2324,6 +2324,55 @@
    "pageBytes": 0
   }
  ],
+ "wait: user, still signing in, and bad args": [
+  {
+   "call": [
+    "wait",
+    {
+     "user": "Sign in",
+     "timeout": 300
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":false,\"outcome\":\"timeout\",\"waited\":300,\"note\":\"not done yet; wait {user} again keeps waiting, with no second notice\"}"
+    }
+   ],
+   "isError": false,
+   "events": 4,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute",
+     "tab.execute",
+     "tab.id",
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 3,
+   "pageBytes": 4301
+  },
+  {
+   "call": [
+    "wait",
+    {
+     "user": "",
+     "timeout": 300
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "error: bad_args: wait `user` takes what the user must do, as a non-empty string"
+    }
+   ],
+   "isError": true,
+   "events": 0,
+   "ae": {},
+   "pageScripts": 0,
+   "pageBytes": 0
+  }
+ ],
  "wait: arc selector": [
   {
    "call": [
