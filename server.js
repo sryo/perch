@@ -9363,8 +9363,8 @@ let n = n0, matched = 0, omitted = 0, issued = 0;
 function newRef(el) { issued++; return carry && carry.has(el) ? carry.get(el) : String(++n); }
 const tiers = [[], [], []], kept = [], cut = new Set(), shown = new Set();
 let seq = 0;
-// A nav of links only, 12 or more, without the focus, is one row naming its
-// shown links, which click {label_pattern} reaches by name. Not with role or query.
+// A nav of links only, 12 or more shown, without the focus, is one row mapping
+// each link's ref to its name. Not with role or query.
 const collapse = roles == null && !re;
 let navC = null;
 function navOnly(nav) {
@@ -9393,7 +9393,7 @@ for (let k = 0; k < order.length; k++) {
     // Under 12 shown links, the nav's links take their own rows here.
     const vs = c.nav.filter(function (a) { return (a.v = snapVis(a.el) && !standIn(a.el)); });
     if (vs.length < 12) { order.splice.apply(order, [k + 1, 0].concat(vs)); continue; }
-    c.line = describe(c.el, c.r, attr(c.el, "aria-label") || attr(c.el, "aria-labelledby") ? accName(c.el) : "") + " links=" + q(vs.map(function (a) { return clip(accName(a.el), 40); })) + frameTag(c.el);
+    c.vs = vs;
   } else if (!c.v && (!snapVis(c.el) || standIn(c.el))) continue;
   shown.add(c.el);
   if (re) {
@@ -9408,6 +9408,12 @@ kept.sort(function (a, b) { return a.i - b.i; });
 for (const c of kept) {
   const ref = newRef(c.el);
   refs[ref] = c.el;
+  if (c.vs) {
+    // Each link keeps a ref of its own, outside count and max.
+    const ls = {};
+    for (const a of c.vs) { const k = carry && carry.has(a.el) ? carry.get(a.el) : String(++n); refs[k] = a.el; ls[k] = clip(accName(a.el), 40); }
+    c.line = describe(c.el, c.r, attr(c.el, "aria-label") || attr(c.el, "aria-labelledby") ? accName(c.el) : "") + " links=" + q(ls) + frameTag(c.el);
+  }
   lines.push(ref + " " + (c.line || describe(c.el, c.r, accName(c.el)) + frameTag(c.el)));
 }
 // A frame counts as walked only when the cap left all its rows listed.
@@ -9527,12 +9533,15 @@ if (embedded.length) head.iframes = embedded.map(function (e) {
 });
 const rows = Object.create(null);
 for (const l of lines) { const i = l.indexOf(" "); rows[l.slice(0, i)] = l.slice(i + 1); }
+// A diff under a modal keeps the refs and rows of what it hides, unprinted, so
+// they come back unchanged once it closes.
+if (carry && scope) for (const r in prevRefs) { const el = prevRefs[r]; if (!(r in refs) && el.isConnected && behindOf(el)) { refs[r] = el; if (r in prev.lines) rows[r] = prev.lines[r]; } }
 window.__perch_rows = { rid: rid, f: fkey, lines: rows };
 let out = lines;
 if (carry) {
   out = lines.filter(function (l) { const i = l.indexOf(" "); return prev.lines[l.slice(0, i)] !== l.slice(i + 1); });
   head.unchanged = lines.length - out.length;
-  const gone = Object.keys(prev.lines).filter(function (r) { return !(r in rows) && !(scope && prevRefs[r] && behindOf(prevRefs[r])); });
+  const gone = Object.keys(prev.lines).filter(function (r) { return !(r in rows); });
   if (gone.length) head.gone = gone;
 }
 return "# " + JSON.stringify(head) + (out.length ? "\n" + out.join("\n") : "");

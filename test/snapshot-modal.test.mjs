@@ -73,20 +73,29 @@ test("role and query bypass the scope; a modal with no rows of its own prints ev
   assert.equal(s.head.behind, undefined);
 });
 
-test("a diff taken once a modal opens lists no background ref as gone", () => {
-  const w = page(`<div id=bg>${BG}</div>`);
-  const first = snap(w);
-  assert.equal(first.lines.length, 4);
+test("a diff under a modal keeps the background's refs; once it closes they come back unchanged and still fill", () => {
+  const w = page(`<div id=bg>${navOf(12)}${BG}</div>`);
+  const first = run(w, "snapshot", { max: 500 });
+  const search = /^(\d+) textbox "Search"/m.exec(first)[1], s7 = /"(\d+)":"Section 7"/.exec(first)[1];
   w.document.getElementById("bg").setAttribute("aria-hidden", "true");
-  w.document.body.insertAdjacentHTML("beforeend", `<div role=dialog aria-modal=true aria-label=Edit><button>Save</button></div>`);
-  const { head, lines } = snap(w, { since: first.head.rid });
-  assert.deepEqual(lines, [`dialog "Edit"`, `button "Save"`]);
-  assert.equal(head.gone, undefined);
-  assert.equal(head.behind, 4);
+  w.document.body.insertAdjacentHTML("beforeend", `<div id=m role=dialog aria-modal=true aria-label=Edit><button>Save</button></div>`);
+  let s = snap(w, { since: w.__perch_refsId });
+  assert.deepEqual(s.lines, [`dialog "Edit"`, `button "Save"`]);
+  assert.equal(s.head.gone, undefined);
+  assert.equal(s.head.behind, 17, "unchecked: the nav's 13 links and the 4 rows below");
+  w.document.getElementById("m").remove();
+  w.document.getElementById("bg").removeAttribute("aria-hidden");
+  s = snap(w, { since: w.__perch_refsId });
+  assert.deepEqual(s.lines, []);
+  assert.equal(s.head.unchanged, 5);
+  assert.equal(s.head.gone.length, 2, "only the modal's rows");
+  const f = run(w, "fill", { ref: search, text: "shoes" });
+  assert.equal(f.ok, true, JSON.stringify(f));
+  assert.equal(run(w, "click", { ref: s7 }).ok, true);
 });
 
-// A nav of links only, 12 or more, prints as one row naming its shown links
-// (`click {label_pattern}` reaches each in one call): no refs or hrefs per link.
+// A nav of links only, 12 or more, prints as one row mapping each shown link's
+// ref to its name: no row or href per link.
 // A smaller nav, one with other controls (a search box, a menu button) or the
 // focus, and any snapshot with `role` or `query`, print link rows as before.
 const navOf = (n, extra = "") => `<nav aria-label=Main>${extra}${Array.from({ length: n }, (_, i) => `<a href=/s${i}>Section ${i}</a>`).join("")}<a href=/x style="display:none">Gone</a></nav>`;
@@ -94,8 +103,10 @@ const navOf = (n, extra = "") => `<nav aria-label=Main>${extra}${Array.from({ le
 test("a nav of 12 or more links collapses to one row naming the shown links", () => {
   const w = page(`${navOf(12, "<h2>Browse</h2>")}<button>Buy</button>`);
   const { head, lines } = snap(w);
-  assert.deepEqual(lines, [`navigation "Main" links=${JSON.stringify(Array.from({ length: 12 }, (_, i) => `Section ${i}`))}`, `button "Buy"`]);
-  assert.equal(head.count, 2);
+  const ls = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [String(2 + i), `Section ${i}`]));
+  assert.deepEqual(lines, [`navigation "Main" links=${JSON.stringify(ls)}`, `button "Buy"`]);
+  assert.equal(head.count, 2, "link refs count neither toward count nor max");
+  assert.equal(run(w, "click", { ref: "8" }).ok, true);
   const r = run(w, "click", { label_pattern: "^Section 7$" });
   assert.equal(r.ok, true, JSON.stringify(r));
 });

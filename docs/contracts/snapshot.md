@@ -2,7 +2,7 @@
 
 - **Format:** a `# {header}` line, then `ref role "name" key=json... flags`. Header keys: `url`, `title`, `ready`, `count`, `focus`, `dialogs`, `matched` (with `query`), `form`, `iframes`, `behind`. `query` tests lines without refs; `max` caps rows. Past `max`, focus, dialogs and fields come first (`omitted`). Refs continue a per-document counter.
 - **Blocking modal:** a modal `<dialog>`, or aria-modal over an inert or aria-hidden background, prints only its rows and live ones; `behind` counts the rest.
-- **Nav:** a nav of 12+ shown links and nothing else to act on is one `navigation` row, `links=[names]`.
+- **Nav:** a nav of 12+ shown links and nothing else is one `navigation` row, `links={ref: name}`.
 - Neither applies with `role`/`query`.
 - **Visibility:** `vis()` plus `snapVis` (a styled radio, checkbox or combobox shows when its label or box does).
 - **Values:** a select's `value` is its chosen option's text; a placeholder choice (`nothingChosen`) has none and counts as required-empty. A combobox's `value` falls back to its box's value or chips.

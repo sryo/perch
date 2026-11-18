@@ -1926,7 +1926,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   },
   {
    "call": [
@@ -2591,7 +2591,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   },
   {
    "call": [
@@ -2685,7 +2685,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   }
  ],
  "targeted calls on a page tool by tool": [
@@ -2714,7 +2714,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   },
   {
    "call": [
@@ -2997,7 +2997,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   }
  ],
  "accessibility_snapshot: a nav collapsed, then a modal over a hidden background": [
@@ -3009,7 +3009,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"count\":2}\n1 navigation \"Main\" links=[\"Section 0\",\"Section 1\",\"Section 2\",\"Section 3\",\"Section 4\",\"Section 5\",\"Section 6\",\"Section 7\",\"Section 8\",\"Section 9\",\"Section 10\",\"Section 11\"]\n2 textbox \"Q\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":2}\n1 navigation \"Main\" links={\"2\":\"Section 0\",\"3\":\"Section 1\",\"4\":\"Section 2\",\"5\":\"Section 3\",\"6\":\"Section 4\",\"7\":\"Section 5\",\"8\":\"Section 6\",\"9\":\"Section 7\",\"10\":\"Section 8\",\"11\":\"Section 9\",\"12\":\"Section 10\",\"13\":\"Section 11\"}\n14 textbox \"Q\""
     }
    ],
    "isError": false,
@@ -3020,7 +3020,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   },
   {
    "call": [
@@ -3053,7 +3053,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://a.test/p\",\"count\":3,\"behind\":1,\"dialogs\":[\"Edit\"]}\n3 navigation \"Main\" links=[\"Section 0\",\"Section 1\",\"Section 2\",\"Section 3\",\"Section 4\",\"Section 5\",\"Section 6\",\"Section 7\",\"Section 8\",\"Section 9\",\"Section 10\",\"Section 11\"]\n4 dialog \"Edit\"\n5 button \"Save\""
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":3,\"behind\":1,\"dialogs\":[\"Edit\"]}\n15 navigation \"Main\" links={\"16\":\"Section 0\",\"17\":\"Section 1\",\"18\":\"Section 2\",\"19\":\"Section 3\",\"20\":\"Section 4\",\"21\":\"Section 5\",\"22\":\"Section 6\",\"23\":\"Section 7\",\"24\":\"Section 8\",\"25\":\"Section 9\",\"26\":\"Section 10\",\"27\":\"Section 11\"}\n28 dialog \"Edit\"\n29 button \"Save\""
     }
    ],
    "isError": false,
@@ -3064,7 +3064,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   },
   {
    "call": [
@@ -3112,7 +3112,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35985
+   "pageBytes": 36252
   },
   {
    "call": [
@@ -3135,7 +3135,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35985
+   "pageBytes": 36252
   },
   {
    "call": [
@@ -3158,7 +3158,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35991
+   "pageBytes": 36258
   },
   {
    "call": [
@@ -3184,7 +3184,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36005
+   "pageBytes": 36272
   },
   {
    "call": [
@@ -3207,7 +3207,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35995
+   "pageBytes": 36262
   },
   {
    "call": [
@@ -3249,7 +3249,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   },
   {
    "call": [
@@ -3272,7 +3272,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36006
+   "pageBytes": 36273
   },
   {
    "call": [
@@ -3342,7 +3342,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36006
+   "pageBytes": 36273
   },
   {
    "call": [
@@ -3389,7 +3389,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35985
+   "pageBytes": 36252
   }
  ],
  "accessibility_snapshot: safari": [
@@ -3414,7 +3414,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35985
+   "pageBytes": 36252
   }
  ],
  "accessibility_snapshot: same-origin and cross-origin iframes": [
@@ -3437,7 +3437,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   }
  ],
  "accessibility_snapshot: frames from Accessibility": [
@@ -3464,7 +3464,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36001
+   "pageBytes": 36268
   },
   {
    "call": [
@@ -3607,7 +3607,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36001
+   "pageBytes": 36268
   }
  ],
  "accessibility_snapshot: hidden with reveal, unpicked, pressed, expanded": [
@@ -3630,7 +3630,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   }
  ],
  "accessibility_snapshot: frames unreadable without Accessibility": [
@@ -3656,7 +3656,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 36001
+   "pageBytes": 36268
   }
  ],
  "click: selector, label, ref, hover, coordinates": [
@@ -3792,7 +3792,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35989
+   "pageBytes": 36256
   },
   {
    "call": [
@@ -4876,7 +4876,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 40737
+   "pageBytes": 41004
   },
   {
    "call": [
@@ -6791,7 +6791,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 35987
+   "pageBytes": 36254
   },
   {
    "call": [

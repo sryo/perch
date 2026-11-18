@@ -33,7 +33,7 @@ Adds to the tool descriptions; none for `activate_tab`, `close_tab`, `console_ca
 3 combobox "Country" options=["Argentina","Brazil"] value="Argentina"
 ```
 
-No `ready`: complete. Values: JSON. Keys: `name` (HTML name), `type`, `value` (pick's text; none if placeholder), `options`, `level`, `href`, `error`, `reveal` (button ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). `navigation` `links`: click by `label_pattern`. `behind`: rows a modal hides. Refs die on re-snapshot or navigation. Use with the snapshot's `target`. `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`; `in`: parent row. `form.step`: wizard step. `requiredEmpty` includes required ones.
+No `ready`: complete. Values: JSON. Keys: `name` (HTML name), `type`, `value` (pick's text; none if placeholder), `options`, `level`, `href`, `error`, `reveal` (button ref). Flags: `required`, `checked`, `pressed`, `selected`, `disabled`, `expanded`, `invalid`, `unpicked` (typed, no pick), `hidden` (unseen; fill by ref). `navigation` `links`: `{ref: name}`. `behind`: rows a modal hides. Refs die on re-snapshot or navigation. Use with the snapshot's `target`. `iframes`: big frames; `same:true` rows end `frame=N`, else open `src`; `in`: parent row. `form.step`: wizard step. `requiredEmpty` includes required ones.
 
 ## Results
 
