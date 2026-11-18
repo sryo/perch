@@ -63,7 +63,7 @@ export async function connect({ timeoutMs = 20000, env = process.env, allowFocus
     clientInfo: { name: "perch-script", version: "0" },
   });
   send({ method: "notifications/initialized" });
-  return { rpc, call, init: init.result, close: () => child.kill() };
+  return { rpc, call, init: init.result, close: () => child.kill(), pid: child.pid };
 }
 
 // Whether two tab handles name the same tab. A Safari handle ends in a hash of
