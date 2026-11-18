@@ -11131,22 +11131,27 @@ export function takeRefsId(page) {
   return m ? { rid: m[1], page: "# {" + page.slice(m[0].length) } : { rid: null, page };
 }
 const REVEAL = / reveal="(\d+)"/;
+// A nav row's link refs: the keys of its links={ref: name} map. A key follows
+// { or , unescaped; a quote inside a name is escaped.
+const LINKS = / links=(\{.*?\})(?= frame=\d+$|$)/, LINK_KEY = /([{,])"(\d+)":/g;
+const linkRefs = (l) => { const m = LINKS.exec(l); return m ? [...m[1].matchAll(LINK_KEY)].map((x) => x[2]) : []; };
 // A diff (`prev`, the map it was taken against, and a page that answered with
 // `unchanged`) keeps prev's refs under the numbers this server showed for them: page
 // refs prev named map back to those, and the rows it didn't print stay valid.
 function issueRefs(keys, rid, page, prev) {
   const nl = page.indexOf("\n");
   const lines = nl < 0 ? [] : page.slice(nl + 1).split("\n");
-  const shown = lines.map((l) => l.slice(0, l.indexOf(" ")));
+  let shown = lines.map((l) => l.slice(0, l.indexOf(" ")));
+  const linked = lines.flatMap(linkRefs);
   const h = prev ? JSON.parse(page.slice(2, nl < 0 ? page.length : nl)) : null;
   const back = new Map();
   if (h && h.unchanged != null) for (const a of prev.refs) back.set(prev.toPage ? prev.toPage.get(a) || a : a, a);
   else prev = null;
   let toPage = null;
-  if (back.size || shown.some((r) => issuedRefs.has(r))) {
-    const taken = new Set(shown.concat([...back.values()])), as = new Map(back);
+  if (back.size || shown.some((r) => issuedRefs.has(r)) || linked.some((r) => issuedRefs.has(r))) {
+    const taken = new Set(shown.concat(linked, [...back.values()])), as = new Map(back);
     let next = 1;
-    for (const r of shown) {
+    for (const r of shown.concat(linked)) {
       if (as.has(r) || !issuedRefs.has(r)) continue;
       while (taken.has(String(next)) || issuedRefs.has(String(next))) next++;
       as.set(r, String(next++));
@@ -11154,9 +11159,11 @@ function issueRefs(keys, rid, page, prev) {
     const out = (r) => as.get(r) || r;
     for (let i = 0; i < lines.length; i++) {
       const r = shown[i];
-      lines[i] = out(r) + lines[i].slice(r.length).replace(REVEAL, (m, b) => ` reveal="${out(b)}"`);
+      lines[i] = out(r) + lines[i].slice(r.length).replace(REVEAL, (m, b) => ` reveal="${out(b)}"`)
+        .replace(LINKS, (m, o) => " links=" + o.replace(LINK_KEY, (x, p, k) => `${p}"${out(k)}":`));
       shown[i] = out(r);
     }
+    for (let i = 0; i < linked.length; i++) linked[i] = out(linked[i]);
     const head = h || JSON.parse(page.slice(2, nl));
     if (as.has(head.focus)) head.focus = as.get(head.focus);
     if (head.gone) head.gone = head.gone.map(out);
@@ -11164,6 +11171,7 @@ function issueRefs(keys, rid, page, prev) {
     toPage = new Map([...as].filter(([p, a]) => p !== a).map(([p, a]) => [a, p]));
     if (!toPage.size) toPage = null;
   }
+  shown = shown.concat(linked);
   for (const r of shown) { issuedRefs.delete(r); issuedRefs.add(r); }
   for (const r of issuedRefs) { if (issuedRefs.size <= ISSUED_MAX) break; issuedRefs.delete(r); }
   const gone = new Set(prev && h.gone || []);

@@ -9,6 +9,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { page, run } from "./helpers/page.mjs";
+import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
+import { makeWorld } from "./fakes/jxa-world.mjs";
 
 const snap = (w, A = {}) => {
   const [head, ...lines] = run(w, "snapshot", { max: 500, ...A }).split("\n");
@@ -119,4 +121,28 @@ test("a small nav, one with other controls or the focus, and role or query keep 
   assert.equal(rowsOf(navOf(12), {}, "a[href='/s3']").length, 12);
   assert.equal(rowsOf(navOf(12), { role: "link" }).length, 12);
   assert.deepEqual(rowsOf(navOf(12), { query: "Section 1\\b" }), [`link "Section 1" href="/s1"`]);
+});
+
+test("through the server, a nav row's link refs click, also renumbered past refs this server issued", async () => {
+  const dom = page(`${navOf(12)}<button>Buy</button>`);
+  dom.happyDOM.setURL("https://a.test/p");
+  const world = makeWorld({ browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 7, active: 0, tabs: [{ url: "https://a.test/p", id: "n", dom }] }] }], cg: [{ owner: "Google Chrome" }] });
+  world.run(JXA_PRELUDE);
+  DAEMONS.fast = DAEMONS.slow = world.daemon;
+  world.reset();
+  const target = { tabId: "chrome:n" };
+  let base = null, seen = null;
+  for (let k = 0; k < 2; k++) {
+    // The second snapshot's page refs reuse the first's numbers, so this server
+    // renumbers them past the refs it showed the first time.
+    if (k) dom.window.__perch_refN = base;
+    else base = dom.window.__perch_refN ?? null;
+    const t = (await handleCall("accessibility_snapshot", { target })).content[0].text;
+    if (base == null) base = Number(/^(\d+) /m.exec(t.split("\n")[1])[1]) - 1;
+    const ref = /"(\d+)":"Section 5"/.exec(t)[1];
+    if (k) assert.notEqual(ref, seen, "renumbered");
+    seen = ref;
+    const r = await handleCall("click", { target, ref });
+    assert.equal(JSON.parse(r.content[0].text).ok, true, r.content[0].text);
+  }
 });
