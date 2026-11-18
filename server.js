@@ -11422,6 +11422,7 @@ const MIME_BY_EXT = {
 
 // `cap(abs, size)` sees the size from a stat before anything is read, and may throw.
 async function readUserFile(p, encoding, cap) {
+  if (typeof p !== "string" || !p) throw new Error(`bad_args: a file path is a non-empty string; got ${JSON.stringify(p)}`);
   const abs = p.startsWith("~")
     ? resolvePath(homedir(), p.slice(p.startsWith("~/") ? 2 : 1))
     : resolvePath(p);
@@ -12373,6 +12374,7 @@ export async function composeEvalScript({ script, script_path, ref, rid, awaitPr
   let file = "";
   if (script_path) ({ data: file } = await readUserFile(script_path, "utf8"));
   if (!file && !script) throw new Error("eval_js requires `script` or `script_path`");
+  if (script != null && typeof script !== "string") throw new Error(`bad_args: eval_js \`script\` is a string; got ${JSON.stringify(script)}`);
   let body = file && script ? file + "\n;\n" + script : file || script;
   if (!file) body = asExpression(body, awaitPromise);
   if (ref == null || ref === "") return body;
