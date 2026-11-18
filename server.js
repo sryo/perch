@@ -3942,6 +3942,16 @@ function jxaRuntime(BROWSERS, HANG) {
       const t = resolve(a.target, true);
       let n = 2;
       try { n = t.kind === "arc" ? t.win.activeSpace.tabs.id().length : t.win.tabs.length; } catch (e) {}
+      // A sweep's close (a.guard) goes only on proof the tab is as perch left it: the same
+      // browser process, not shown in its window, on the URL perch saw, not the last tab.
+      if (a.guard) {
+        const pid = t.P.pid[t.app] != null ? t.P.pid[t.app] : regularPid(t.app);
+        let shown = true, url = null;
+        try { shown = !!t.shown || (t.kind === "safari" ? t.win.currentTab.index() - 1 === t.idx : String(t.win.activeTab.id()) === String(t.tabId)); } catch (e) {}
+        if (pid !== a.guard.pid || shown || n <= 1) return { ok: false };
+        try { url = t.tab.url(); } catch (e) {}
+        if (url !== a.guard.url) return { ok: false };
+      }
       if (n <= 1) {
         // A window perch made on the loft is its own to close with its last tab.
         let wid = null;
@@ -5085,23 +5095,37 @@ const roomClaimHeld = (c) => roomKin(c) && c.label
 // Targets given by tabIndex aren't checked; only handles are.
 export const tabClaims = {
   idleMs: ROOM_CLAIM_IDLE_MS,
-  opened(from, tabId) {
+  // How long a claimed tab goes uncalled before a sweep closes it (PERCH_TAB_IDLE_MS, 0: never).
+  closeMs: process.env.PERCH_TAB_IDLE_MS != null && process.env.PERCH_TAB_IDLE_MS !== "" ? Number(process.env.PERCH_TAB_IDLE_MS) : 3600000,
+  busy: new Map(),
+  timer: null,
+  opened(from, tabId, url = null) {
     const c = tabClaim(from);
-    if (c && roomOwn(c) && typeof tabId === "string" && !isRoomTab(tabId)) tabClaimSet(tabId, tabClaimNew(tabId, c.browser));
+    if (c && roomOwn(c) && typeof tabId === "string" && !isRoomTab(tabId)) tabClaimSet(tabId, tabClaimNew(tabId, c.browser, url));
   },
 };
 const tabClaimFile = (tabId) => roomFile("tabs", tabId);
 const tabClaimLive = (c) => !!c && Date.now() - c.last <= tabClaims.idleMs && pidAlive(c.pid) && pidAlive(c.browser);
+// The tab's claim file while the browser that opened the tab still runs, held or lapsed.
 function tabClaim(tabId) {
   if (typeof tabId !== "string" || isRoomTab(tabId)) return null;
   let c = null;
   try { c = readJson(tabClaimFile(tabId)); } catch {}
-  return tabClaimLive(c) && c.tabId === tabId ? c : null;
+  return c && c.tabId === tabId && pidAlive(c.browser) ? c : null;
 }
 function tabClaimSet(tabId, c) {
-  try { if (c) writeJson(tabClaimFile(tabId), c); else rmSync(tabClaimFile(tabId), { force: true }); } catch {}
+  try { if (c) writeJson(tabClaimFile(tabId), c); else rmSync(tabClaimFile(tabId), { force: true }); } catch { return; }
+  if (c) tabSweepArm();
 }
-const tabClaimNew = (tabId, browser) => ({ tabId, browser, owner: ROOM_OWNER, pid: process.pid, client: rooms.client ?? process.ppid, last: Date.now() });
+// Sweeps run every few minutes once a server holds a claim, or finds one left at start.
+function tabSweepArm() {
+  if (tabClaims.timer || !(tabClaims.closeMs > 0)) return;
+  tabClaims.timer = setInterval(() => { tabClaimSweep().catch(() => {}); }, Math.min(5 * 60000, tabClaims.closeMs));
+  tabClaims.timer.unref?.();
+}
+// `url`: the page perch last saw there, which a sweep requires before it closes the tab.
+const tabClaimNew = (tabId, browser, url = null, extra = {}) => ({ tabId, browser, url, ...extra, owner: ROOM_OWNER, pid: process.pid, client: rooms.client ?? process.ppid, last: Date.now() });
+const tabClaimMine = (c) => ({ ...c, owner: ROOM_OWNER, pid: process.pid, client: rooms.client ?? process.ppid, last: Date.now() });
 const tabClaimHeld = (c) => new Error(`tab_held: another agent's tab (perch pid ${c.pid} opened it); open your own with new_tab`);
 function tabClaimsLive() {
   const out = new Map();
@@ -5113,21 +5137,45 @@ function tabClaimsLive() {
   return out;
 }
 // After a call: a new tab is claimed, a moved or renamed handle carries its claim, a
-// closed one lets it go, and a used one is touched at most every 10s.
-function tabClaimAfter(name, shown, claim, result, moved) {
-  if (!result || typeof result !== "object") return result;
-  if (name === "new_tab" && "__pid" in result) {
+// closed one lets it go, a lapsed one is the caller's now, and a used one is touched at
+// most every 10s. navigate records the page it left the tab on.
+function tabClaimAfter(name, args, shown, claim, result, moved) {
+  const obj = result && typeof result === "object" && !Array.isArray(result);
+  if (name === "new_tab" && obj && "__pid" in result) {
     const { __pid, ...rest } = result;
-    if (Number.isInteger(__pid) && typeof rest.tabId === "string" && !isRoomTab(rest.tabId)) tabClaimSet(rest.tabId, tabClaimNew(rest.tabId, __pid));
+    if (Number.isInteger(__pid) && typeof rest.tabId === "string" && !isRoomTab(rest.tabId)) {
+      tabClaimSet(rest.tabId, tabClaimNew(rest.tabId, __pid, args.url == null ? "about:blank" : String(args.url), loft.tabWin.has(rest.tabId) ? { loft: true } : {}));
+    }
     return rest;
   }
-  if (!claim || !roomOwn(claim)) return result;
-  if (name === "close_tab" && result.ok === true) { tabClaimSet(shown, null); return result; }
-  const now = typeof result.tabId === "string" && result.tabId !== shown ? result.tabId : moved && moved !== shown ? moved : null;
-  if (now) { tabClaimSet(shown, null); tabClaimSet(now, { ...claim, tabId: now, last: Date.now() }); }
-  else if (Date.now() - claim.last > 10000) tabClaimSet(shown, { ...claim, last: Date.now() });
-  if (name === "click" && result.opened && result.opened.tabId) tabClaims.opened(now || shown, result.opened.tabId);
+  if (!claim) return result;
+  if (name === "close_tab" && obj && result.ok === true) { tabClaimSet(shown, null); return result; }
+  const now = obj && typeof result.tabId === "string" && result.tabId !== shown ? result.tabId : moved && moved !== shown ? moved : null;
+  const url = name === "navigate" && obj && typeof result.url === "string" ? { url: result.url } : {};
+  if (now) { tabClaimSet(shown, null); tabClaimSet(now, { ...tabClaimMine(claim), ...url, tabId: now }); }
+  else if (!roomOwn(claim) || url.url || Date.now() - claim.last > 10000) tabClaimSet(shown, { ...(roomOwn(claim) ? { ...claim, last: Date.now() } : tabClaimMine(claim)), ...url });
+  if (name === "click" && obj && result.opened && result.opened.tabId) tabClaims.opened(now || shown, result.opened.tabId, typeof result.opened.url === "string" ? result.opened.url : null);
   return result;
+}
+// Closes a claimed tab nobody called for closeMs (this server's, or one whose server is
+// gone) when the runtime proves it untouched; any other outcome lets the claim go and
+// leaves the tab. A claim whose browser quit goes with no Apple Event. Loft tabs are
+// loftIdle's; a tab mid-call here is skipped.
+export async function tabClaimSweep() {
+  if (!(tabClaims.closeMs > 0)) return;
+  for (const f of jsonFiles(join(rooms.home, "run", "tabs"))) {
+    let c = null;
+    try { c = readJson(f); } catch {}
+    if (!c || typeof c.tabId !== "string") continue;
+    if (!pidAlive(c.browser)) { rmSync(f, { force: true }); continue; }
+    const mine = c.owner === ROOM_OWNER;
+    if (c.loft || tabClaims.busy.has(c.tabId) || Date.now() - c.last <= tabClaims.closeMs || (!mine && pidAlive(c.pid))) continue;
+    let r = null;
+    if (c.url) try { r = await rt("closeTab", { target: { tabId: c.tabId }, guard: { pid: c.browser, url: c.url } }); } catch {}
+    const now = readJson(f);
+    if (now && now.owner === c.owner && now.last === c.last) rmSync(f, { force: true });
+    if (r && r.ok) refMaps.delete(tabKey({ tabId: c.tabId }));
+  }
 }
 // An agent's helper script loads a perch of its own, in a process the agent's client started
 // from its shell. A claim records its server's parent (the client), so a perch with that
@@ -12379,7 +12427,7 @@ function loftIdleGone(out, args) {
 
 async function handleCallCore(name, args = {}, signal) {
   const handler = Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : null;
-  let note = null;
+  let note = null, busyTab = null;
   try {
     if (!handler) throw new Error(`unknown tool: ${name}`);
     if (signal && signal.aborted) throw cancelled();
@@ -12398,7 +12446,8 @@ async function handleCallCore(name, args = {}, signal) {
     const labeled = isRoomTab(shown) ? roomLabeled(shown) : null;
     if (labeled) args = name === "close_tab" ? { ...args, tabId: labeled.tabId } : { ...args, target: { ...args.target, tabId: labeled.tabId } };
     const claim = tabClaim(shown);
-    if (claim && !roomOwn(claim)) throw tabClaimHeld(claim);
+    if (claim && !roomOwn(claim) && tabClaimLive(claim)) throw tabClaimHeld(claim);
+    if (claim) tabClaims.busy.set(busyTab = shown, (tabClaims.busy.get(shown) || 0) + 1);
     note ={ refs: refMaps.get(tabKey(args.target)), late: lateArm(name), signal };
     const roomTab = ROOM_LEASE_TOOLS.has(name) ? args.target?.tabId ?? (name === "close_tab" ? args.tabId : null) : null;
     const leaseTab = isRoomTab(roomTab) ? roomTab : null;
@@ -12406,7 +12455,7 @@ async function handleCallCore(name, args = {}, signal) {
     const run = routed ? () => routedTab(args) : () => handler(args);
     const call = () => callNotes.run(note, () => leaseTab ? withRoomLease(leaseTab, note, run, labeled?.label) : run());
     let result = await (lockKey ? withTabLock(lockKey, call) : call());
-    result = tabClaimAfter(name, shown, claim, result, note.moved);
+    result = tabClaimAfter(name, args, shown, claim, result, note.moved);
     if (labeled && result && typeof result === "object") for (const k of ["tabId", "closed"]) if (result[k] === labeled.tabId) result = { ...result, [k]: shown };
     // A miss names the ref as the agent was shown it.
     if (result && result.__perch_ref_miss && note.refs && note.refs.toPage) {
@@ -12430,6 +12479,8 @@ async function handleCallCore(name, args = {}, signal) {
     }
     if (e instanceof RefMiss) return withLate(formatResult({ __perch_ref_miss: true, ref: e.ref }), note && note.late && note.late.found);
     return withLate({ content: [{ type: "text", text: `error: ${roomHint(await roomsWhy(e.message), args)}` }], isError: true }, note && note.late && note.late.found);
+  } finally {
+    if (busyTab != null) { const n = tabClaims.busy.get(busyTab) - 1; if (n > 0) tabClaims.busy.set(busyTab, n); else tabClaims.busy.delete(busyTab); }
   }
 }
 
@@ -12506,4 +12557,5 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   await server.connect(new StdioServerTransport());
   // Pays the JXA bridge startup now instead of on each lane's first call.
   for (const lane of ["fast", "slow"]) DAEMONS[lane]?.warm();
+  if (jsonFiles(join(rooms.home, "run", "tabs")).length) tabSweepArm();
 }

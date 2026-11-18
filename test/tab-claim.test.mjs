@@ -2,13 +2,17 @@
 // another agent's call on it is tab_held before any Apple Event, list_tabs says whose
 // it is, close_tab lets it go. A claim holds only while it can prove the tab is the
 // one it opened: its server alive, the same browser process (Chromium ids repeat
-// after a restart), and a call within tabClaims.idleMs.
+// after a restart), and a call within tabClaims.idleMs. A sweep closes a claimed tab
+// nobody called for tabClaims.closeMs (its own server's, or one whose server is gone),
+// only when it can prove the tab is untouched: the same browser process, not shown in
+// its window, the URL perch last saw, not the window's last tab. Otherwise it lets the
+// claim go and leaves the tab. Loft tabs are loftIdle's.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { JXA_PRELUDE, DAEMONS, handleCall, roomsReset, tabClaims } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, roomsReset, tabClaims, tabClaimSweep } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { tempDir } from "../scripts/temp-dirs.mjs";
 
@@ -36,7 +40,7 @@ beforeEach(async (t) => {
   roomsReset({ home, fetch: NOT_FETCH, client: 4100001, ancestors: () => [4100001] });
   other.roomsReset({ home, fetch: NOT_FETCH, client: 4100002, ancestors: () => [4100002] });
   other.focus.granted = true;
-  for (const s of [tabClaims, other.tabClaims]) s.idleMs = 15 * 60000;
+  for (const s of [tabClaims, other.tabClaims]) Object.assign(s, { idleMs: 15 * 60000, closeMs: 3600000 });
   install({ browsers: [chrome([userWin()])], cg: [{ owner: "Google Chrome", pid: process.pid }] }, [{ DAEMONS }, other]);
 });
 
@@ -129,4 +133,81 @@ test("a tab a claimed tab's click opened is claimed too; one the user's tab open
   tabClaims.opened(user, pop2);
   assert.equal((await on(other)("eval_js", { script: "return 5", target: { tabId: pop2 } })).o, 5);
   assert.ok(existsSync(join(home, "run", "tabs")));
+});
+
+const claimOf = (tabId) => {
+  for (const f of claimFiles()) { const c = JSON.parse(readFileSync(join(home, "run", "tabs", f), "utf8")); if (c.tabId === tabId) return { f: join(home, "run", "tabs", f), c }; }
+  return null;
+};
+const age = (tabId, ms, patch = {}) => { const { f, c } = claimOf(tabId); writeFileSync(f, JSON.stringify({ ...c, last: Date.now() - ms, ...patch })); };
+const HOUR = 3600000;
+const noFocus = () => {
+  assert.ok(!world.log.some(([k]) => k === "activate"));
+  for (const k of ["tab.select", "win.activeTabIndex=", "win.currentTab=", "win.index="]) assert.equal(world.counts[k], undefined, k);
+};
+const urlsNow = () => world.tabsOf("Google Chrome", 0).map((t) => t.shownUrl());
+
+test("the sweep closes its own tab nobody called for closeMs, and nothing else", async () => {
+  const { o: tab } = await me("new_tab", { url: "https://a.test/" });
+  await tabClaimSweep();
+  assert.deepEqual(urlsNow(), ["https://user.test/", "https://a.test/"], "a fresh claim stays");
+  age(tab.tabId, HOUR + 1000);
+  world.reset();
+  await tabClaimSweep();
+  assert.deepEqual(urlsNow(), ["https://user.test/"]);
+  assert.deepEqual(claimFiles(), []);
+  noFocus();
+});
+
+test("the sweep keeps a tab the user may have taken: shown, navigated, or the window's last", async () => {
+  const { o: tab } = await me("new_tab", { url: "https://a.test/" });
+  world.winSpec("Google Chrome", 0).active = 1;
+  age(tab.tabId, HOUR + 1000);
+  await tabClaimSweep();
+  assert.deepEqual(urlsNow(), ["https://user.test/", "https://a.test/"], "shown in its window");
+  assert.deepEqual(claimFiles(), [], "and no longer perch's");
+  world.winSpec("Google Chrome", 0).active = 0;
+  const { o: t2 } = await me("new_tab", { url: "https://b.test/" });
+  world.tabsOf("Google Chrome", 0)[2].page.url = "https://b.test/elsewhere";
+  age(t2.tabId, HOUR + 1000);
+  await tabClaimSweep();
+  assert.equal(urlsNow().length, 3, "its URL isn't the one perch last saw");
+  assert.deepEqual(claimFiles(), []);
+});
+
+test("the sweep closes a dead server's tab once idle, and drops a claim from a browser that quit with no Apple Event", async () => {
+  const { o: tab } = await me("new_tab", { url: "https://a.test/" });
+  age(tab.tabId, 5 * 60000, { pid: DEAD });
+  await other.tabClaimSweep();
+  assert.equal(urlsNow().length, 2, "an orphan waits out closeMs too");
+  age(tab.tabId, HOUR + 1000, { pid: DEAD });
+  await other.tabClaimSweep();
+  assert.deepEqual(urlsNow(), ["https://user.test/"]);
+  const { o: t2 } = await me("new_tab", { url: "https://b.test/" });
+  age(t2.tabId, HOUR + 1000, { browser: DEAD });
+  world.reset();
+  await tabClaimSweep();
+  assert.deepEqual(world.aeLog, []);
+  assert.deepEqual(claimFiles(), []);
+  assert.equal(urlsNow().length, 2);
+});
+
+test("a tab whose hold lapsed is adopted by the agent that uses it next, so its first owner's sweep leaves it", async () => {
+  const { o: tab } = await me("new_tab", { url: "https://a.test/" });
+  age(tab.tabId, 20 * 60000);
+  assert.equal((await on(other)("eval_js", { script: "return 6", target: { tabId: tab.tabId } })).o, 6);
+  assert.equal(claimOf(tab.tabId).c.pid, process.pid);
+  assert.notEqual(claimOf(tab.tabId).c.client, 4100001, "the other server's now");
+  assert.match((await me("eval_js", { script: "return 1", target: { tabId: tab.tabId } })).o, /^error: tab_held/);
+  age(tab.tabId, HOUR + 1000);
+  await tabClaimSweep();
+  assert.equal(urlsNow().length, 2, "a live server's tab is its own to sweep");
+});
+
+test("closeMs 0 never closes", async () => {
+  tabClaims.closeMs = 0;
+  const { o: tab } = await me("new_tab", { url: "https://a.test/" });
+  age(tab.tabId, 100 * HOUR);
+  await tabClaimSweep();
+  assert.equal(urlsNow().length, 2);
 });
