@@ -277,6 +277,13 @@ add("accessibility_snapshot: a page still loading shows ready and title", async 
   await h.call("eval_js", { script: "Object.defineProperty(document, 'readyState', { value: 'interactive', configurable: true }); return document.title" });
   await h.call("accessibility_snapshot", {});
 });
+add("accessibility_snapshot: a nav collapsed, then a modal over a hidden background", async (h) => {
+  onPage(h, `<nav aria-label=Main>${Array.from({ length: 12 }, (_, i) => `<a href=/s${i}>Section ${i}</a>`).join("")}</nav><div id=bg><label>Q <input></label></div>`);
+  await h.call("accessibility_snapshot", {});
+  await h.call("eval_js", { script: "document.getElementById('bg').setAttribute('aria-hidden', 'true'); document.body.insertAdjacentHTML('beforeend', '<div role=dialog aria-modal=true aria-label=Edit><button>Save</button></div>'); return 1" });
+  await h.call("accessibility_snapshot", {});
+  await h.call("click", { label_pattern: "^Save$" });
+});
 add("accessibility_snapshot: max, role, query", async (h) => {
   onPage(h, FORM);
   await h.call("accessibility_snapshot", { max: 0 });

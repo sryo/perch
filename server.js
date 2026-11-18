@@ -9363,9 +9363,21 @@ let n = n0, matched = 0, omitted = 0, issued = 0;
 function newRef(el) { issued++; return carry && carry.has(el) ? carry.get(el) : String(++n); }
 const tiers = [[], [], []], kept = [], cut = new Set(), shown = new Set();
 let seq = 0;
+// A nav of links only, 12 or more, without the focus, is one row naming its
+// shown links, which click {label_pattern} reaches by name. Not with role or query.
+const collapse = roles == null && !re;
+let navC = null;
+function navOnly(nav) {
+  if (act && nav.contains(act)) return false;
+  let k = 0;
+  for (const c of nav.querySelectorAll(SEL)) { const r = role(c); if (r === "link") k++; else if (r !== "heading" && !(INERT.test(r) && !c.matches(OWN))) return false; }
+  return k >= 12;
+}
 function walk(root) {
-  for (const el of deepAll(SEL, root)) {
+  for (const el of deepAll(collapse ? SEL + ", nav" : SEL, root)) {
+    if (navC && navC.el.contains(el)) { if (role(el) === "link") navC.nav.push({ el: el, r: "link", i: seq++ }); continue; }
     const r = role(el);
+    if (collapse && (r === "navigation" || (el.tagName === "NAV" && r === "generic")) && !(scope && behindOf(el)) && navOnly(el)) { navC = { el: el, r: "navigation", i: seq++, nav: [] }; tiers[rank(el, r)].push(navC); continue; }
     if (roles ? roles.indexOf(r) < 0 : INERT.test(r) && !el.matches(OWN)) continue;
     if (scope && behindOf(el)) { behind++; continue; }
     tiers[rank(el, r)].push({ el: el, r: r, i: seq++ });
@@ -9373,9 +9385,16 @@ function walk(root) {
 }
 walk(null);
 frameDocs.forEach(function (i, d) { walk(d); });
-for (const c of tiers[0].concat(tiers[1], tiers[2])) {
+const order = tiers[0].concat(tiers[1], tiers[2]);
+for (let k = 0; k < order.length; k++) {
+  const c = order[k];
   if (!re && omitted) { omitted++; cut.add(c.el.ownerDocument); continue; }
-  if (!snapVis(c.el) || standIn(c.el)) continue;
+  if (c.nav) {
+    // Under 12 shown links, the nav's links take their own rows here.
+    const vs = c.nav.filter(function (a) { return (a.v = snapVis(a.el) && !standIn(a.el)); });
+    if (vs.length < 12) { order.splice.apply(order, [k + 1, 0].concat(vs)); continue; }
+    c.line = describe(c.el, c.r, attr(c.el, "aria-label") || attr(c.el, "aria-labelledby") ? accName(c.el) : "") + " links=" + q(vs.map(function (a) { return clip(accName(a.el), 40); })) + frameTag(c.el);
+  } else if (!c.v && (!snapVis(c.el) || standIn(c.el))) continue;
   shown.add(c.el);
   if (re) {
     c.line = describe(c.el, c.r, accName(c.el)) + frameTag(c.el);

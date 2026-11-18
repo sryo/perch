@@ -9,6 +9,8 @@ import { TOOLS } from "../../server.js";
 // Leftovers the fake world can't reach, or that are words in SKILL.md rather
 // than result keys, each with why.
 export const JUSTIFIED = {
+  // A row role SKILL.md names, not a result key; the nav scenario prints it.
+  navigation: "a snapshot row role (test/snapshot-modal.test.mjs)",
   // The lock's world runs with focus granted; test/focus-grant.test.mjs covers the refusal.
   needs_focus: "the refusal without a focus grant (test/focus-grant.test.mjs)",
   routed: "a new_tab without a focus grant (test/new-tab-route.test.mjs)",

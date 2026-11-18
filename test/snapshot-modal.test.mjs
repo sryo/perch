@@ -5,6 +5,7 @@
 // aria-hidden. An aria-modal box over a live page is not proof (a promo over a
 // form fill still reaches) and prints everything, as do `role` and `query`, and
 // a modal with no rows of its own. The `form` header follows the rows.
+// A nav of 12 or more shown links, and nothing else to act on, is one row.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { page, run } from "./helpers/page.mjs";
@@ -82,4 +83,29 @@ test("a diff taken once a modal opens lists no background ref as gone", () => {
   assert.deepEqual(lines, [`dialog "Edit"`, `button "Save"`]);
   assert.equal(head.gone, undefined);
   assert.equal(head.behind, 4);
+});
+
+// A nav of links only, 12 or more, prints as one row naming its shown links
+// (`click {label_pattern}` reaches each in one call): no refs or hrefs per link.
+// A smaller nav, one with other controls (a search box, a menu button) or the
+// focus, and any snapshot with `role` or `query`, print link rows as before.
+const navOf = (n, extra = "") => `<nav aria-label=Main>${extra}${Array.from({ length: n }, (_, i) => `<a href=/s${i}>Section ${i}</a>`).join("")}<a href=/x style="display:none">Gone</a></nav>`;
+
+test("a nav of 12 or more links collapses to one row naming the shown links", () => {
+  const w = page(`${navOf(12, "<h2>Browse</h2>")}<button>Buy</button>`);
+  const { head, lines } = snap(w);
+  assert.deepEqual(lines, [`navigation "Main" links=${JSON.stringify(Array.from({ length: 12 }, (_, i) => `Section ${i}`))}`, `button "Buy"`]);
+  assert.equal(head.count, 2);
+  const r = run(w, "click", { label_pattern: "^Section 7$" });
+  assert.equal(r.ok, true, JSON.stringify(r));
+});
+
+test("a small nav, one with other controls or the focus, and role or query keep link rows", () => {
+  const rowsOf = (html, A, focus) => { const w = page(html); if (focus) w.document.querySelector(focus).focus(); return snap(w, A).lines; };
+  assert.equal(rowsOf(navOf(11)).length, 11);
+  assert.equal(rowsOf(navOf(12, "<input aria-label=Search>")).length, 13);
+  assert.equal(rowsOf(navOf(12, "<button aria-expanded=false>More</button>")).length, 13);
+  assert.equal(rowsOf(navOf(12), {}, "a[href='/s3']").length, 12);
+  assert.equal(rowsOf(navOf(12), { role: "link" }).length, 12);
+  assert.deepEqual(rowsOf(navOf(12), { query: "Section 1\\b" }), [`link "Section 1" href="/s1"`]);
 });

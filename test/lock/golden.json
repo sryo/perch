@@ -1926,7 +1926,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34829
+   "pageBytes": 35987
   },
   {
    "call": [
@@ -2591,7 +2591,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34829
+   "pageBytes": 35987
   },
   {
    "call": [
@@ -2685,7 +2685,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34829
+   "pageBytes": 35987
   }
  ],
  "targeted calls on a page tool by tool": [
@@ -2714,7 +2714,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34829
+   "pageBytes": 35987
   },
   {
    "call": [
@@ -2997,7 +2997,97 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34829
+   "pageBytes": 35987
+  }
+ ],
+ "accessibility_snapshot: a nav collapsed, then a modal over a hidden background": [
+  {
+   "call": [
+    "accessibility_snapshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":2}\n1 navigation \"Main\" links=[\"Section 0\",\"Section 1\",\"Section 2\",\"Section 3\",\"Section 4\",\"Section 5\",\"Section 6\",\"Section 7\",\"Section 8\",\"Section 9\",\"Section 10\",\"Section 11\"]\n2 textbox \"Q\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35987
+  },
+  {
+   "call": [
+    "eval_js",
+    {
+     "script": "document.getElementById('bg').setAttribute('aria-hidden', 'true'); document.body.insertAdjacentHTML('beforeend', '<div role=dialog aria-modal=true aria-label=Edit><button>Save</button></div>'); return 1"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "1"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 561
+  },
+  {
+   "call": [
+    "accessibility_snapshot",
+    {}
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "# {\"url\":\"https://a.test/p\",\"count\":3,\"behind\":1,\"dialogs\":[\"Edit\"]}\n3 navigation \"Main\" links=[\"Section 0\",\"Section 1\",\"Section 2\",\"Section 3\",\"Section 4\",\"Section 5\",\"Section 6\",\"Section 7\",\"Section 8\",\"Section 9\",\"Section 10\",\"Section 11\"]\n4 dialog \"Edit\"\n5 button \"Save\""
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 35987
+  },
+  {
+   "call": [
+    "click",
+    {
+     "label_pattern": "^Save$"
+    }
+   ],
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"ok\":true,\"el\":\"button \\\"Save\\\"\"}"
+    }
+   ],
+   "isError": false,
+   "events": 1,
+   "ae": {
+    "Google Chrome": [
+     "tab.execute"
+    ]
+   },
+   "pageScripts": 1,
+   "pageBytes": 14541
   }
  ],
  "accessibility_snapshot: max, role, query": [
@@ -3022,7 +3112,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34827
+   "pageBytes": 35985
   },
   {
    "call": [
@@ -3045,7 +3135,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34827
+   "pageBytes": 35985
   },
   {
    "call": [
@@ -3068,7 +3158,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34833
+   "pageBytes": 35991
   },
   {
    "call": [
@@ -3094,7 +3184,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34847
+   "pageBytes": 36005
   },
   {
    "call": [
@@ -3117,7 +3207,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34837
+   "pageBytes": 35995
   },
   {
    "call": [
@@ -3159,7 +3249,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34829
+   "pageBytes": 35987
   },
   {
    "call": [
@@ -3182,7 +3272,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34848
+   "pageBytes": 36006
   },
   {
    "call": [
@@ -3252,7 +3342,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34848
+   "pageBytes": 36006
   },
   {
    "call": [
@@ -3299,7 +3389,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34827
+   "pageBytes": 35985
   }
  ],
  "accessibility_snapshot: safari": [
@@ -3324,7 +3414,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34827
+   "pageBytes": 35985
   }
  ],
  "accessibility_snapshot: same-origin and cross-origin iframes": [
@@ -3347,7 +3437,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34829
+   "pageBytes": 35987
   }
  ],
  "accessibility_snapshot: frames from Accessibility": [
@@ -3374,7 +3464,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34843
+   "pageBytes": 36001
   },
   {
    "call": [
@@ -3517,7 +3607,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34843
+   "pageBytes": 36001
   }
  ],
  "accessibility_snapshot: hidden with reveal, unpicked, pressed, expanded": [
@@ -3540,7 +3630,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34829
+   "pageBytes": 35987
   }
  ],
  "accessibility_snapshot: frames unreadable without Accessibility": [
@@ -3566,7 +3656,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34843
+   "pageBytes": 36001
   }
  ],
  "click: selector, label, ref, hover, coordinates": [
@@ -3702,7 +3792,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34831
+   "pageBytes": 35989
   },
   {
    "call": [
@@ -4786,7 +4876,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 39579
+   "pageBytes": 40737
   },
   {
    "call": [
@@ -6701,7 +6791,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 34829
+   "pageBytes": 35987
   },
   {
    "call": [
