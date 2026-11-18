@@ -159,7 +159,7 @@ test("world main on the default Chrome tab that the user leaves right after the 
 
 test("world main returns undefined as null and keeps a thrown error's shape", async () => {
   install();
-  assert.equal((await call({ script: "1", world: "main" })).t, "null");
+  assert.equal((await call({ script: "let a = 1", world: "main" })).t, "null");
   const { r, t } = await call({ script: "throw new TypeError('nope')", world: "main" });
   assert.equal(r.isError, true);
   assert.deepEqual([JSON.parse(t).__perch_error, JSON.parse(t).__perch_error_name], ["nope", "TypeError"]);

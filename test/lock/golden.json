@@ -824,7 +824,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 851
+   "pageBytes": 1597
   },
   {
    "call": [
@@ -856,7 +856,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 972
+   "pageBytes": 1718
   },
   {
    "call": [
@@ -1523,7 +1523,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 396
+   "pageBytes": 1142
   },
   {
    "call": [
@@ -1546,7 +1546,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 385
+   "pageBytes": 1131
   },
   {
    "call": [
@@ -1569,7 +1569,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 375
+   "pageBytes": 1121
   }
  ],
  "eval_js: arc": [
@@ -1596,7 +1596,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 379
+   "pageBytes": 1125
   }
  ],
  "eval_js: safari": [
@@ -1621,7 +1621,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 379
+   "pageBytes": 1125
   }
  ],
  "eval_js: thrown error": [
@@ -1646,7 +1646,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 386
+   "pageBytes": 1132
   }
  ],
  "eval_js: syntax error": [
@@ -1671,7 +1671,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 367
+   "pageBytes": 1113
   }
  ],
  "eval_js: awaitPromise": [
@@ -1699,7 +1699,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 863
+   "pageBytes": 1609
   },
   {
    "call": [
@@ -1726,7 +1726,7 @@
     ]
    },
    "pageScripts": 2,
-   "pageBytes": 867
+   "pageBytes": 1613
   }
  ],
  "eval_js: timeout argument checks": [
@@ -1835,7 +1835,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 402
+   "pageBytes": 1148
   },
   {
    "call": [
@@ -1880,7 +1880,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 2325
+   "pageBytes": 3119
   }
  ],
  "eval_js: world main with ref is refused": [
@@ -1950,7 +1950,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 1345
+   "pageBytes": 2091
   },
   {
    "call": [
@@ -1994,7 +1994,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 1345
+   "pageBytes": 2091
   }
  ],
  "eval_js: frame ref refused": [
@@ -2976,7 +2976,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 473
+   "pageBytes": 1219
   },
   {
    "call": [
@@ -3043,7 +3043,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 561
+   "pageBytes": 1307
   },
   {
    "call": [
@@ -3319,7 +3319,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 5154
+   "pageBytes": 5900
   },
   {
    "call": [
@@ -3899,7 +3899,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 374
+   "pageBytes": 1120
   }
  ],
  "click: disabled refused": [
@@ -4597,7 +4597,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 389
+   "pageBytes": 1135
   }
  ],
  "press: a prevented key, and the body": [
@@ -4646,7 +4646,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 398
+   "pageBytes": 1144
   },
   {
    "call": [
@@ -6489,7 +6489,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 414
+   "pageBytes": 1160
   },
   {
    "call": [
@@ -7271,7 +7271,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 367
+   "pageBytes": 1113
   },
   {
    "call": [
@@ -7473,7 +7473,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 367
+   "pageBytes": 1113
   }
  ],
  "errors: permission messages": [
@@ -7503,7 +7503,7 @@
     ]
    },
    "pageScripts": 1,
-   "pageBytes": 367
+   "pageBytes": 1113
   },
   {
    "call": [

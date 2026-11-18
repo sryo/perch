@@ -4816,9 +4816,19 @@ async function watchDialogs(target, lane, run, signal) {
 // Page-side error shape, shared by the sync wrapper and the async kickoff.
 const ERROR_SHAPE = `function(e){return {__perch_error:(e&&e.message)?e.message:String(e),__perch_error_name:(e&&e.name)||'Error',__perch_error_stack_head:(e&&e.stack)?String(e.stack).split('\\n').slice(0,2).join(' | ').slice(0,300):null}}`;
 
+// The script's value as JSON can carry it: an element as `<tag#id.class name=n> text`,
+// a NodeList, HTMLCollection or Set as an array, a Map as an object, an object
+// met again as "[seen]" (a cycle would otherwise throw).
+// eval_js's wrappers apply it to the value (shape); other page calls never do.
+const EVAL_SHAPE = `function(v){if(!v||typeof v!=="object"||typeof v.then==="function")return v;var s=new WeakSet(),t=Object.prototype.toString;` +
+  `return JSON.parse(JSON.stringify(v,function(k,x){if(!x||typeof x!=="object")return x;if(s.has(x))return "[seen]";s.add(x);` +
+  `if(x.nodeType===1){var c=typeof x.className==="string"&&x.className.trim(),n=x.getAttribute("name"),w=(x.textContent||"").replace(/\\s+/g," ").trim().slice(0,80);` +
+  `return "<"+x.tagName.toLowerCase()+(x.id?"#"+x.id:"")+(c?"."+c.split(/\\s+/).join("."):"")+(n?" name="+n:"")+">"+(w?" "+w:"")}` +
+  `if(x.nodeType)return x.nodeName;var y=t.call(x);if(y==="[object Map]")return Object.fromEntries(x);` +
+  `if(y==="[object Set]"||y==="[object NodeList]"||y==="[object HTMLCollection]")return Array.from(x);return x}))}`;
 // The newline before `})` keeps a trailing `// comment` in user code from eating the wrapper.
-export function buildEvalWrapper(js) {
-  return `(function(){var __E=${ERROR_SHAPE};try{var __r=(function(){${js}\n})();return JSON.stringify(__r===undefined?null:__r)}catch(e){return JSON.stringify(__E(e))}})()`;
+export function buildEvalWrapper(js, shape = false) {
+  return `(function(){var __E=${ERROR_SHAPE};try{var __r=(function(){${js}\n})();return JSON.stringify(__r===undefined?null:${shape ? `(${EVAL_SHAPE})(__r)` : "__r"})}catch(e){return JSON.stringify(__E(e))}})()`;
 }
 
 // AppleScript can't await, so eval_js {awaitPromise} and {world:"main"} kick the
@@ -4863,12 +4873,13 @@ const MW_ERROR_SHAPE = `function(e){return {__perch_error:(e&&e.message)?String(
 // the code settled at once. The isolated kick is awaitPromise's; its error's
 // __perch_error_stack_head names the column the code starts at, so the text
 // before ${js} is part of the result.
-export function buildKick(js, key, { world, awaitPromise = false } = {}) {
+export function buildKick(js, key, { world, awaitPromise = false, shape = false } = {}) {
   const k = JSON.stringify(key), sweep = `(${ASYNC_DONE}||[]).forEach(function(d){delete window[d]});${ASYNC_DONE}=[];`;
-  if (world !== "main") return `(function(){var __E=${ERROR_SHAPE};${sweep}window[${k}]=0;(async function(){try{var __r=await (async function(){${js}\n})();window[${k}]={value:__r===undefined?null:__r}}catch(e){window[${k}]=__E(e)}})();return "null"})()`;
+  const v = (r) => shape ? `(${EVAL_SHAPE})(${r})` : r;
+  if (world !== "main") return `(function(){var __E=${ERROR_SHAPE};${sweep}window[${k}]=0;(async function(){try{var __r=await (async function(){${js}\n})();window[${k}]={value:__r===undefined?null:${v("__r")}}}catch(e){window[${k}]=__E(e)}})();return "null"})()`;
   const run = awaitPromise
-    ? `(async function(){${js}\n})().then(function(r){p({value:r===undefined?null:r})},function(e){p(E(e))})`
-    : `try{var r=(function(){${js}\n})();p({value:r===undefined?null:r})}catch(e){p(E(e))}`;
+    ? `(async function(){${js}\n})().then(function(r){p({value:r===undefined?null:${v("r")}})},function(e){p(E(e))})`
+    : `try{var r=(function(){${js}\n})();p({value:r===undefined?null:${v("r")}})}catch(e){p(E(e))}`;
   const main = `(function(){var s=document.currentScript;if(!s)return;s.setAttribute("data-perch-ran","");var E=${MW_ERROR_SHAPE};` +
     `var p=function(o){var j;try{j=JSON.stringify(o)}catch(e){j=JSON.stringify(E(e))}s.setAttribute("data-perch-r",j)};${run}})()`;
   return `(function(){var __E=${ERROR_SHAPE},__M=${MW_ERROR_SHAPE};${sweep}` +
@@ -5494,11 +5505,11 @@ function roomCtx(t) {
 // eval_js {world:"main"} and {awaitPromise}: one Runtime.evaluate that awaits the
 // script, in the page's own world (no injected <script>, so no CSP or Trusted
 // Types refusal) or perch's, with the result shapes of the kicked protocol.
-async function roomEval(js, target, { main, awaitPromise, timeout }) {
+async function roomEval(js, target, { main, awaitPromise, timeout, shape }) {
   const t = await roomTarget(target, "eval_js"), what = main ? "world main" : "awaitPromise";
   if (t.S.dialog) throw dialogOpen(t.S.dialog);
   const run = awaitPromise ? `await (async function(){${js}\n})()` : `(function(){${js}\n})()`;
-  const expression = `(async function(){var E=${main ? MW_ERROR_SHAPE : ERROR_SHAPE},o;try{var r=${run};o={value:r===undefined?null:r}}catch(e){o=E(e)}try{return JSON.stringify(o)}catch(e){return JSON.stringify(E(e))}})()`;
+  const expression = `(async function(){var E=${main ? MW_ERROR_SHAPE : ERROR_SHAPE},o;try{var r=${run};o={value:r===undefined?null:${shape ? `(${EVAL_SHAPE})(r)` : "r"}}}catch(e){o=E(e)}try{return JSON.stringify(o)}catch(e){return JSON.stringify(E(e))}})()`;
   let r;
   for (let i = 0; ; i++) {
     try {
@@ -6163,7 +6174,7 @@ function takeLongLane() {
   return "long";
 }
 
-async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFAULT_TIMEOUT, tool = "eval_js", reread, world } = {}) {
+async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFAULT_TIMEOUT, tool = "eval_js", reread, world, shape = false } = {}) {
   if (world != null && world !== "main") throw new Error(`eval_js: unknown world '${world}' (expected main)`);
   // Safari runs Apple Events JS in the page's own world already, so world:"main"
   // on a Safari tab is a plain eval: one execute, and no injected <script> for a
@@ -6171,10 +6182,10 @@ async function evalJs(script, target, { awaitPromise = false, timeout = JXA_DEFA
   // here and keeps the main-world protocol.
   const pageWorld = typeof target?.tabId === "string" ? target.tabId.startsWith("safari:") : /^safari$/i.test(target?.app || "");
   const main = world === "main" && !pageWorld;
-  if ((main || awaitPromise) && isRoomTab(target && target.tabId)) return roomEval(script, target, { main, awaitPromise, timeout });
-  if (!main && !awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script), tool, ...(reread ? { reread } : {}) }, { raw: true }));
+  if ((main || awaitPromise) && isRoomTab(target && target.tabId)) return roomEval(script, target, { main, awaitPromise, timeout, shape });
+  if (!main && !awaitPromise) return parsePage(await rt("evalJs", { target, js: buildEvalWrapper(script, shape), tool, ...(reread ? { reread } : {}) }, { raw: true }));
   const key = `__perch_${main ? "mw" : "async"}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  return kicked({ main, key, timeout, target, kick: buildKick(script, key, { world: main ? "main" : undefined, awaitPromise }) });
+  return kicked({ main, key, timeout, target, kick: buildKick(script, key, { world: main ? "main" : undefined, awaitPromise, shape }) });
 }
 
 // The longest one call may take, for a client that cuts calls short
@@ -12199,7 +12210,7 @@ const TOOLS = [
   tool("activate_tab", "Bring the target tab and its window to the front; needs_focus without a grant.", { target: TARGET }),
   tool("close_tab", "Close this handle's tab; never a window's last, never moves focus.", { tabId: { type: "string" } }, ["tabId"]),
   tool("navigate", "Load a URL in the target tab and wait for it to load. When the page can't start the load (not http(s), no page JS), it needs `raise:true` (needs_focus without a grant).", { url: { type: "string" }, raise: { type: "boolean" }, target: TARGET }, ["url"]),
-  tool("eval_js", "Run JS in the tab as a function body; `return` a JSON-able value. `script_path` runs before `script`.", {
+  tool("eval_js", "Run JS in the tab as a function body or expression; `return` a value. `script_path` runs first.", {
     script: { type: "string" },
     script_path: { type: "string", description: "Local .js file." },
     awaitPromise: { type: "boolean", description: "Await async code." },
@@ -12325,7 +12336,7 @@ export const HANDLERS = {
   eval_js:       async (a) => {
     if (a.world === "main" && a.ref != null && a.ref !== "") throw new Error("eval_js: ref binds an element in perch's own world, so it can't go with world:\"main\"; find the element in the script instead");
     const timeout = awaitTimeout(a);
-    return evalJs(await composeEvalScript(a.ref == null || a.ref === "" ? a : { ...a, ...pageRef(a.ref, callNotes.getStore()?.refs) }), a.target, { awaitPromise: a.awaitPromise, world: a.world, timeout });
+    return evalJs(await composeEvalScript(a.ref == null || a.ref === "" ? a : { ...a, ...pageRef(a.ref, callNotes.getStore()?.refs) }), a.target, { awaitPromise: a.awaitPromise, world: a.world, timeout, shape: true });
   },
   wait:          (a) => wait(a),
   screenshot:    (a) => screenshot(a),
@@ -12349,11 +12360,21 @@ const EVAL_LIVE_DOC = "function __perch_frame(d, root, depth) { for (const x of 
 // With a ref, the body runs as a function of `el`, resolved in the same page
 // call; the ref's and its map id's JSON literals are the only parts that vary
 // between calls.
+// A script that parses as one expression returns its value. Only the parse is
+// checked (new Function compiles, never runs, the caller's code).
+const AsyncFn = Object.getPrototypeOf(async function () {}).constructor;
+function asExpression(body, async) {
+  const t = body.replace(/[\s;]+$/, "");
+  if (!t) return body;
+  const e = "return (\n" + t + "\n);";
+  try { (async ? AsyncFn : Function)(e); return e; } catch { return body; }
+}
 export async function composeEvalScript({ script, script_path, ref, rid, awaitPromise } = {}) {
   let file = "";
   if (script_path) ({ data: file } = await readUserFile(script_path, "utf8"));
   if (!file && !script) throw new Error("eval_js requires `script` or `script_path`");
-  const body = file && script ? file + "\n;\n" + script : file || script;
+  let body = file && script ? file + "\n;\n" + script : file || script;
+  if (!file) body = asExpression(body, awaitPromise);
   if (ref == null || ref === "") return body;
   if (!rid) throw new RefMiss(ref);
   const k = JSON.stringify(String(ref));
