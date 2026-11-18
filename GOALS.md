@@ -78,9 +78,6 @@ How the goals show up in every tool.
   finishes and verifies in one call (`fill {fields}`, `click {readback}`), not
   low-level steps it has to chain; no locator chaining or page objects.
   `eval_js` covers the rest.
-- **Stealth.** No motion humanizing, jitter, timing randomization or anything
-  captcha-specific. Sign-in and challenge frames go to the user.
-- **Driving several browsers at once in one call.**
 
 What AppleScript can't reach at all (network interception, pre-load
 instrumentation) is in AGENTS.md "Ceiling". How each goal is met, and the
