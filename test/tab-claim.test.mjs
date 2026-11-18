@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { JXA_PRELUDE, DAEMONS, handleCall, roomsReset, tabClaims, tabClaimSweep } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { tempDir } from "../scripts/temp-dirs.mjs";
+import { page } from "./helpers/page.mjs";
 
 const NOT_FETCH = async () => { throw new Error("no rooms here"); };
 const DEAD = spawnSync(process.execPath, ["-e", ""]).pid;
@@ -210,4 +211,33 @@ test("closeMs 0 never closes", async () => {
   age(tab.tabId, 100 * HOUR);
   await tabClaimSweep();
   assert.equal(urlsNow().length, 2);
+});
+
+test("a page that moved on by itself is closed once a result saw it there, and kept when none did", async () => {
+  const { o: tab } = await me("new_tab", { url: "https://a.test" });
+  assert.equal(claimOf(tab.tabId).c.url, "https://a.test/", "as the browser reports it");
+  world.tabsOf("Google Chrome", 0)[1].page.url = "https://a.test/step2";
+  age(tab.tabId, HOUR + 1000);
+  await tabClaimSweep();
+  assert.equal(urlsNow().length, 2, "perch never saw step2: it may be the user's doing");
+  // A page that renders, so a snapshot can see where it is: a popup of the claimed tab.
+  const { o: opener } = await me("new_tab", { url: "https://o.test/" });
+  world.openWindow("Google Chrome", { id: 2, active: 0, tabs: [{ url: "https://b.test/", id: "keep" }, { url: "https://b.test/step2", id: "d", dom: page("<button>Next</button>", { url: "https://b.test/step2" }) }] });
+  tabClaims.opened(opener.tabId, "chrome:d", "https://b.test/");
+  await me("accessibility_snapshot", { target: { tabId: "chrome:d" } });
+  assert.equal(claimOf("chrome:d").c.url, "https://b.test/step2");
+  age("chrome:d", HOUR + 1000);
+  await tabClaimSweep();
+  assert.deepEqual(world.tabsOf("Google Chrome", 0).map((t) => t.shownUrl()), ["https://b.test/"]);
+});
+
+test("the sweep never closes a Safari tab: its handle can't prove which same-URL tab it is", async () => {
+  install({ browsers: [safari([{ id: 5, active: 0, tabs: [{ url: "https://user.test/", id: "s0" }] }])], cg: [{ owner: "Safari", pid: process.pid }] }, [{ DAEMONS }, other]);
+  const { o: tab } = await me("new_tab", { url: "https://a.test/" });
+  age(tab.tabId, HOUR + 1000);
+  world.reset();
+  await tabClaimSweep();
+  assert.equal(world.tabsOf("Safari", 0).length, 2);
+  assert.deepEqual(world.aeLog, []);
+  assert.deepEqual(claimFiles(), []);
 });

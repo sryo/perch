@@ -1,18 +1,23 @@
 // wait {user}: the agent hands a step to the user (a sign-in, a 2FA code) and keeps
 // going once the page shows it done, with no turn in chat. perch notifies the user
-// once, then polls until no sign-in UI is left (password or one-time-code field, a
-// sign-in or challenge frame, a login path) and the page moved on: the sign-in UI was
-// there at the start, or the URL changed. It answers outcome continued, timeout (call
-// again to keep waiting, with no second notice) or closed. It never raises the tab.
+// once, then reads the page until a loaded document has no sign-in UI (password or
+// one-time-code field, a sign-in or challenge frame, a login path) and moved on: the
+// sign-in UI was there at the start, or the URL changed. The start lives in Node by
+// handle, so a call after a timeout resumes even on a document the sign-in loaded in
+// between. Outcome continued, timeout (call again; no second notice), closed, or moved
+// (a Safari handle the URL change staled). It never raises the tab.
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, deps, userWaits, userClock } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
 
-let world, dom, shown;
+let world, dom, shown, ready;
 function onPage(html, url = "https://a.test/p") {
   dom = page(html, { url });
+  // happy-dom stops at interactive; a page that finished loading reads complete.
+  ready = "complete";
+  Object.defineProperty(dom.document, "readyState", { configurable: true, get: () => ready });
   world = makeWorld({ browsers: [{ name: "Google Chrome", kind: "chrome", windows: [{ id: 7, active: 0, tabs: [{ url, id: "x", dom }, { url: "https://z.test/", id: "z" }] }] }], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
   world.run(JXA_PRELUDE);
   DAEMONS.fast = world.daemon;
@@ -20,10 +25,17 @@ function onPage(html, url = "https://a.test/p") {
   DAEMONS.long = world.daemon;
   world.reset();
 }
-beforeEach(() => { shown = []; deps.notify = async (a) => { shown.push(a); return { ok: true }; }; });
+// A virtual clock: each sleep advances it and runs the step a test set for that read.
+let now = 0, sleeps = 0, onSleep = null;
+beforeEach(() => {
+  shown = []; now = 1e12; sleeps = 0; onSleep = null;
+  deps.notify = async (a) => { shown.push(a); return { ok: true }; };
+  userWaits.clear();
+  Object.assign(userClock, { now: () => now, sleep: async (ms) => { now += ms; sleeps++; if (onSleep) onSleep(sleeps); } });
+});
 const call = async (args) => { const r = await handleCall("wait", args), t = r.content[0].text; return { r, o: r.isError ? t : JSON.parse(t) }; };
 const target = { tabId: "chrome:x" };
-const after = (n, fn) => { let k = 0; world.state.onDelay = () => { if (++k === n) fn(); }; };
+const after = (n, fn) => { const at = sleeps + n; onSleep = (k) => { if (k === at) fn(); }; };
 const noFocus = () => {
   assert.ok(!world.log.some(([k]) => k === "activate"));
   for (const k of ["tab.select", "win.activeTabIndex=", "win.index="]) assert.equal(world.counts[k], undefined, k);
@@ -81,9 +93,30 @@ test("the tab closing ends the wait as closed", async () => {
   assert.equal(o.outcome, "closed");
 });
 
+test("a sign-in that loaded a new document between two calls continues on the next call, with one notice", async () => {
+  onPage(`<input type=password>`, "https://a.test/login");
+  let { o } = await call({ user: "Sign in", target, timeout: 1000 });
+  assert.equal(o.outcome, "timeout");
+  // The user signed in meanwhile: a new document, signed in, on another URL.
+  dom.document.body.innerHTML = "<p>Welcome</p>";
+  dom.happyDOM.setURL("https://a.test/home");
+  ({ o } = await call({ user: "Sign in", target, timeout: 60000 }));
+  assert.equal(o.outcome, "continued");
+  assert.equal(o.url, "https://a.test/home");
+  assert.equal(shown.length, 1);
+});
+
+test("a document still loading is not done, even with no sign-in UI yet", async () => {
+  onPage(`<input type=password>`, "https://a.test/login");
+  onSleep = (k) => { if (k === 1) { ready = "loading"; dom.document.body.innerHTML = ""; dom.happyDOM.setURL("https://a.test/next"); } if (k === 4) ready = "complete"; };
+  const { o } = await call({ user: "Sign in", target, timeout: 60000 });
+  assert.equal(o.outcome, "continued");
+  assert.ok(sleeps >= 4, "kept reading while the document loaded");
+});
+
 test("user takes a non-empty string and no selector, expression, quiet or job, before any Apple Event", async () => {
   onPage(`<input type=password>`);
-  for (const args of [{ user: "" }, { user: 3 }, { user: "x", selector: "#a" }, { user: "x", expression: "1" }, { user: "x", quiet: 500 }]) {
+  for (const args of [{ user: "" }, { user: 3 }, { user: "x", selector: "#a" }, { user: "x", expression: "1" }, { user: "x", quiet: 500 }, { user: "x", target: undefined }]) {
     const { r, o } = await call({ target, ...args });
     assert.equal(r.isError, true, JSON.stringify(args));
     assert.match(o, /^error: bad_args: wait `user`/, JSON.stringify(args));

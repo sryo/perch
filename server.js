@@ -5136,6 +5136,16 @@ function tabClaimsLive() {
   }
   return out;
 }
+// The URL as the browser reports it (https://a.test -> https://a.test/).
+const claimUrl = (u) => { try { return new URL(u).href; } catch { return typeof u === "string" ? u : null; } };
+// The page a result saw the tab on: navigate's, a readback's or wait {user}'s url, or
+// a snapshot header's.
+function seenUrl(name, result) {
+  if (name === "accessibility_snapshot" && typeof result === "string" && result.startsWith("# {")) {
+    try { const h = JSON.parse(result.slice(2, result.indexOf("\n") < 0 ? undefined : result.indexOf("\n"))); return typeof h.url === "string" ? h.url : null; } catch { return null; }
+  }
+  return (name === "navigate" || name === "click" || name === "wait") && result && typeof result === "object" && typeof result.url === "string" ? result.url : null;
+}
 // After a call: a new tab is claimed, a moved or renamed handle carries its claim, a
 // closed one lets it go, a lapsed one is the caller's now, and a used one is touched at
 // most every 10s. navigate records the page it left the tab on.
@@ -5144,17 +5154,17 @@ function tabClaimAfter(name, args, shown, claim, result, moved) {
   if (name === "new_tab" && obj && "__pid" in result) {
     const { __pid, ...rest } = result;
     if (Number.isInteger(__pid) && typeof rest.tabId === "string" && !isRoomTab(rest.tabId)) {
-      tabClaimSet(rest.tabId, tabClaimNew(rest.tabId, __pid, args.url == null ? "about:blank" : String(args.url), loft.tabWin.has(rest.tabId) ? { loft: true } : {}));
+      tabClaimSet(rest.tabId, tabClaimNew(rest.tabId, __pid, claimUrl(args.url == null ? "about:blank" : String(args.url)), loft.tabWin.has(rest.tabId) ? { loft: true } : {}));
     }
     return rest;
   }
   if (!claim) return result;
   if (name === "close_tab" && obj && result.ok === true) { tabClaimSet(shown, null); return result; }
   const now = obj && typeof result.tabId === "string" && result.tabId !== shown ? result.tabId : moved && moved !== shown ? moved : null;
-  const url = name === "navigate" && obj && typeof result.url === "string" ? { url: result.url } : {};
+  const seen = seenUrl(name, result), url = seen && claimUrl(seen) !== claim.url ? { url: claimUrl(seen) } : {};
   if (now) { tabClaimSet(shown, null); tabClaimSet(now, { ...tabClaimMine(claim), ...url, tabId: now }); }
   else if (!roomOwn(claim) || url.url || Date.now() - claim.last > 10000) tabClaimSet(shown, { ...(roomOwn(claim) ? { ...claim, last: Date.now() } : tabClaimMine(claim)), ...url });
-  if (name === "click" && obj && result.opened && result.opened.tabId) tabClaims.opened(now || shown, result.opened.tabId, typeof result.opened.url === "string" ? result.opened.url : null);
+  if (name === "click" && obj && result.opened && result.opened.tabId) tabClaims.opened(now || shown, result.opened.tabId, typeof result.opened.url === "string" ? claimUrl(result.opened.url) : null);
   return result;
 }
 // Closes a claimed tab nobody called for closeMs (this server's, or one whose server is
@@ -5171,7 +5181,9 @@ export async function tabClaimSweep() {
     const mine = c.owner === ROOM_OWNER;
     if (c.loft || tabClaims.busy.has(c.tabId) || Date.now() - c.last <= tabClaims.closeMs || (!mine && pidAlive(c.pid))) continue;
     let r = null;
-    if (c.url) try { r = await rt("closeTab", { target: { tabId: c.tabId }, guard: { pid: c.browser, url: c.url } }); } catch {}
+    // A Safari handle is found by window, index and URL, which can be a sibling tab's or
+    // the user's; it can't prove which, so the claim goes and the tab stays.
+    if (c.url && !c.tabId.startsWith("safari:")) try { r = await rt("closeTab", { target: { tabId: c.tabId }, guard: { pid: c.browser, url: c.url } }); } catch {}
     const now = readJson(f);
     if (now && now.owner === c.owner && now.last === c.last) rmSync(f, { force: true });
     if (r && r.ok) refMaps.delete(tabKey({ tabId: c.tabId }));
@@ -6226,55 +6238,63 @@ async function waitQuiet({ quiet, selector, expression, target }, timeout) {
   return { ok: true, waited: r.waited, quietFor: r.quietFor };
 }
 
-// wait {user}: notifies the user once, then polls until the page shows the step done:
-// no sign-in UI left (a visible password or one-time-code field, a sign-in or challenge
-// frame, a login path) and the page moved on (sign-in UI at the start, or another URL).
-// The start is kept on the page (__perch_user), so a call after a timeout resumes with
-// no second notice; a new document starts afresh with nothing to compare, so it is done
-// once it has no sign-in UI. Source is byte-identical per call.
+// wait {user}: notifies the user once, then reads the page until it shows the step done:
+// a loaded document with no sign-in UI (a visible password or one-time-code field, a
+// sign-in or challenge frame, a login path) that moved on from the start (sign-in UI
+// then, or another URL now). The start and the notice are kept here by handle, so a
+// call after a timeout resumes, even on the document a sign-in loaded in between. The
+// page only reports; its script is the same bytes every call. Reads back off to 1s.
+export const userWaits = new Map();
+// The clock behind it, a seam for tests.
+export const userClock = { now: () => Date.now(), sleep: (ms) => sleep(ms) };
 const USER_WAIT_MS = 300000, USER_RESUME_MS = 15 * 60000;
 // Built on first use: HANDOFF_HOST and ROOM_LOGIN_PATH are defined further down.
 let userJs = null;
-function userScripts() {
+function userReport() {
   if (userJs) return userJs;
-  const USER_SIGNIN = `function(){var H=new RegExp(${JSON.stringify(HANDOFF_HOST.source)}),L=new RegExp(${JSON.stringify(ROOM_LOGIN_PATH.source)},"i");if(L.test(location.pathname))return true;var q=document.querySelectorAll('input[type=password],input[autocomplete~="one-time-code"],iframe[src]');for(var i=0;i<q.length;i++){var e=q[i];if(e.tagName==="IFRAME"){var u=null;try{u=new URL(e.src,location.href)}catch(x){}if(!u||!(H.test(u.hostname.toLowerCase())||/^(www\\.)?google\\.com$/.test(u.hostname)&&/^\\/recaptcha(\\/|$)/.test(u.pathname)))continue}var r=e.getBoundingClientRect(),st=getComputedStyle(e);if(r.width>0&&r.height>0&&st.visibility!=="hidden")return true}return false}`;
-  const USER_BASE = `var s=(${USER_SIGNIN})(),b=window.__perch_user;if(b&&b.url===location.href&&Date.now()-b.at<${USER_RESUME_MS})return{resumed:true};window.__perch_user={url:location.href,signin:s,at:Date.now()};return{resumed:false,host:location.host};`;
-  const USER_DONE = `(function(){var b=window.__perch_user;if((${USER_SIGNIN})()||b&&!b.signin&&location.href===b.url)return 0;window.__perch_user=undefined;return{url:location.href,title:document.title}})()`;
-  return (userJs = { base: USER_BASE, done: waitExpr(USER_DONE) });
+  return (userJs = buildEvalWrapper(`var H=new RegExp(${JSON.stringify(HANDOFF_HOST.source)}),L=new RegExp(${JSON.stringify(ROOM_LOGIN_PATH.source)},"i");function f(){if(L.test(location.pathname))return true;var q=document.querySelectorAll('input[type=password],input[autocomplete~="one-time-code"],iframe[src]');for(var i=0;i<q.length;i++){var e=q[i];if(e.tagName==="IFRAME"){var u=null;try{u=new URL(e.src,location.href)}catch(x){}if(!u||!(H.test(u.hostname.toLowerCase())||/^(www\\.)?google\\.com$/.test(u.hostname)&&/^\\/recaptcha(\\/|$)/.test(u.pathname)))continue}var r=e.getBoundingClientRect(),st=getComputedStyle(e);if(r.width>0&&r.height>0&&st.visibility!=="hidden")return true}return false}return{signin:f(),url:location.href,host:location.host,title:document.title,ready:document.readyState};`));
 }
 async function waitUser(args) {
   const { user, target } = args;
   const bad = (why) => new Error(`bad_args: wait \`user\` ${why}`);
   if (typeof user !== "string" || !user.trim()) throw bad("takes what the user must do, as a non-empty string");
   if (args.selector != null || args.expression != null || args.quiet != null || args.job != null) throw bad("takes no selector, expression, quiet or job");
-  if (isRoomTab(target && target.tabId)) throw bad("is for browser tabs; a room tab's sign-in is the rooms CLI's (rooms signin)");
+  const tab = target && target.tabId;
+  if (typeof tab !== "string" || !tab) throw bad("needs target.tabId, the tab the user acts in");
+  if (isRoomTab(tab)) throw bad("is for browser tabs; a room tab's sign-in is the rooms CLI's (rooms signin)");
   let timeout = args.timeout == null ? USER_WAIT_MS : args.timeout;
   if (typeof timeout !== "number" || !(timeout >= WAIT_MIN_MS)) throw bad(`timeout is in milliseconds (at least ${WAIT_MIN_MS})`);
   const budget = callBudget();
   if (budget != null) timeout = Math.min(timeout, Math.max(WAIT_MIN_MS, budget - 1000));
-  const start = Date.now();
-  const gone = (e) => /^stale_tab: /.test(e && e.message) ? { ok: false, outcome: "closed", note: "the tab closed" } : null;
-  let base;
-  try { base = parsePage(await rt("evalJs", { target, js: buildEvalWrapper(userScripts().base), tool: "wait" }, { raw: true })); }
-  catch (e) { const g = gone(e); if (g) return g; throw e; }
-  if (base && base.__perch_error != null) throw new Error("wait: the page script failed on this page; nothing verified");
-  if (base && !base.resumed) {
-    const subtitle = typeof base.host === "string" && base.host ? base.host : undefined;
-    try { await deps.notify({ message: user, title: "perch needs you", subtitle }); } catch {}
+  const start = userClock.now(), signal = callNotes.getStore()?.signal;
+  // A Safari handle follows the URL, so a sign-in that moves the tab stales it.
+  const lost = (e) => !/^stale_tab: /.test(e && e.message) ? null
+    : tab.startsWith("safari:") ? { ok: false, outcome: "moved", note: "the tab's handle went stale, as Safari's do when the URL changes; list_tabs to find it" }
+    : { ok: false, outcome: "closed", note: "the tab closed" };
+  const read = async () => {
+    const r = parsePage(await rt("evalJs", { target, js: userReport(), tool: "wait" }, { raw: true }));
+    if (!r || r.__perch_error != null || typeof r.url !== "string") throw new Error("wait: the page script failed on this page; nothing verified");
+    return r;
+  };
+  for (const [k, b] of userWaits) if (userClock.now() - b.at > USER_RESUME_MS) userWaits.delete(k);
+  let r;
+  try { r = await read(); } catch (e) { const g = lost(e); if (g) { userWaits.delete(tab); return g; } throw e; }
+  let base = userWaits.get(tab);
+  if (!base) {
+    userWaits.set(tab, base = { url: r.url, signin: r.signin, at: userClock.now() });
+    try { await deps.notify({ message: user, title: "perch needs you", subtitle: r.host || undefined }); } catch {}
+  } else base.at = userClock.now();
+  for (let n = 0; ; n++) {
+    if (r.ready === "complete" && !r.signin && (base.signin || r.url !== base.url)) {
+      userWaits.delete(tab);
+      return { ok: true, outcome: "continued", waited: userClock.now() - start, url: r.url, title: r.title };
+    }
+    const left = timeout - (userClock.now() - start);
+    if (left <= 0) return { ok: false, outcome: "timeout", waited: timeout, note: "not done yet; wait {user} again keeps waiting, with no second notice" };
+    await userClock.sleep(Math.min(left, n < 6 ? 500 : 1000));
+    if (signal && signal.aborted) throw cancelled();
+    try { r = await read(); } catch (e) { const g = lost(e); if (g) { userWaits.delete(tab); return g; } throw e; }
   }
-  const left = timeout - (Date.now() - start);
-  const lane = left > JXA_DEFAULT_TIMEOUT ? takeLongLane() : "slow";
-  try {
-    const ms = Math.max(WAIT_MIN_MS, left);
-    const r = await rt("wait", { target, js: userScripts().done, timeout: ms, interval: 500, expr: true }, { lane, timeout: Math.max(left, JXA_DEFAULT_TIMEOUT) + JXA_OVERHEAD });
-    const v = r.value.v;
-    return { ok: true, outcome: "continued", waited: r.waited, url: v.url, title: v.title };
-  } catch (e) {
-    const g = gone(e);
-    if (g) return g;
-    if (/^timeout: wait timed out/.test(e && e.message)) return { ok: false, outcome: "timeout", waited: timeout, note: "not done yet; wait {user} again keeps waiting, with no second notice" };
-    throw e;
-  } finally { longBusy.delete(lane); }
 }
 
 const NAV_TIMEOUT = 15000;

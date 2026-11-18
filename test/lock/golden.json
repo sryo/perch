@@ -2330,7 +2330,10 @@
     "wait",
     {
      "user": "Sign in",
-     "timeout": 300
+     "timeout": 300,
+     "target": {
+      "tabId": "chrome:x"
+     }
     }
    ],
    "content": [
@@ -2343,21 +2346,24 @@
    "events": 4,
    "ae": {
     "Google Chrome": [
+     "windows.length(Google Chrome)",
+     "tabs.id()",
      "tab.execute",
-     "tab.execute",
-     "tab.id",
      "tab.execute"
     ]
    },
-   "pageScripts": 3,
-   "pageBytes": 4301
+   "pageScripts": 2,
+   "pageBytes": 2928
   },
   {
    "call": [
     "wait",
     {
      "user": "",
-     "timeout": 300
+     "timeout": 300,
+     "target": {
+      "tabId": "chrome:x"
+     }
     }
    ],
    "content": [
