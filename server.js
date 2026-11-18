@@ -9234,7 +9234,8 @@ const refs = {};
 const fkey = JSON.stringify([A.max, A.role, A.query]);
 const prev = window.__perch_rows;
 const carry = A.since && window.__perch_refsId === A.since && prev && prev.rid === A.since && prev.f === fkey && window.__perch_refs ? new Map() : null;
-if (carry) { const o = window.__perch_refs; for (const k in o) carry.set(o[k], k); }
+const prevRefs = window.__perch_refs;
+if (carry) { for (const k in prevRefs) carry.set(prevRefs[k], k); }
 window.__perch_refs = refs;
 // el.labels searches the whole tree for label[for] on every read. The snapshot
 // changes nothing, so a field with an id takes its labels from one scan per
@@ -9326,6 +9327,27 @@ for (let inner; act && (inner = embedded.some(function (e) { return e.same && e.
 }
 const DLG = "[role=dialog], [aria-modal=true], dialog[open]", marks = Array.from(document.querySelectorAll("form, " + DLG));
 const dlgs = marks.filter(function (el) { return el.matches(DLG) && vis(el); });
+// A modal the site made blocking: the one visible modal <dialog> (top layer), or
+// aria-modal box over a background under inert or aria-hidden. An unfiltered
+// snapshot lists only its rows and what the site left live (a portaled
+// dropdown); behind counts the rest, unchecked. A modal with no rows of its own
+// scopes nothing.
+function topModal(el) { try { return el.tagName === "DIALOG" && el.matches(":modal"); } catch (e) { return false; } }
+function up(n) { return n.parentNode || (n.nodeType === 11 ? n.host : n.nodeType === 9 && n.defaultView ? n.defaultView.frameElement : null); }
+const mods = A.role == null && A.query == null ? dlgs.filter(function (d) { return topModal(d) || attr(d, "aria-modal") === "true"; }) : [];
+let scope = mods.length === 1 && (mods[0].matches(SEL) || mods[0].querySelector(SEL)) ? mods[0] : null, behind = 0;
+const native = !!scope && topModal(scope), dead = new Set();
+if (scope && !native) {
+  const above = new Set();
+  for (let n = scope; n; n = up(n)) above.add(n);
+  for (const r of deepAll("[inert], [aria-hidden=true]", null)) if (!above.has(r)) dead.add(r);
+  if (!dead.size) scope = null;
+}
+function behindOf(el) {
+  let hit = native;
+  for (let n = el; n; n = up(n)) { if (n === scope) return false; if (!hit && dead.has(n)) hit = true; }
+  return hit;
+}
 // Which rows a capped snapshot keeps first: 0, the focused element and an open
 // dialog's; 1, form fields, and checkboxes, radios and submit buttons of a form.
 function rank(el, r) {
@@ -9345,6 +9367,7 @@ function walk(root) {
   for (const el of deepAll(SEL, root)) {
     const r = role(el);
     if (roles ? roles.indexOf(r) < 0 : INERT.test(r) && !el.matches(OWN)) continue;
+    if (scope && behindOf(el)) { behind++; continue; }
     tiers[rank(el, r)].push({ el: el, r: r, i: seq++ });
   }
 }
@@ -9435,7 +9458,7 @@ function hiddenRows(cands) {
 let form = null;
 let forms = marks.filter(function (el) { return el.tagName === "FORM"; });
 frameDocs.forEach(function (i, d) { forms = forms.concat(Array.from(d.querySelectorAll("form"))); });
-forms = forms.filter(vis);
+forms = forms.filter(function (f) { return vis(f) && !(scope && behindOf(f)); });
 if (forms.length) {
   let big = forms[0], most = -1;
   forms.forEach(function (f) { const k = f.querySelectorAll(FIELDS).length; if (k > most) { big = f; most = k; } });
@@ -9469,6 +9492,7 @@ if (A.frames) {
 }
 if (re) head.matched = matched;
 if (omitted) head.omitted = omitted;
+if (behind) head.behind = behind;
 if (act && act !== document.body && act !== document.documentElement) {
   let fr = null;
   for (const k in refs) if (refs[k] === act) { fr = k; break; }
@@ -9489,7 +9513,7 @@ let out = lines;
 if (carry) {
   out = lines.filter(function (l) { const i = l.indexOf(" "); return prev.lines[l.slice(0, i)] !== l.slice(i + 1); });
   head.unchanged = lines.length - out.length;
-  const gone = Object.keys(prev.lines).filter(function (r) { return !(r in rows); });
+  const gone = Object.keys(prev.lines).filter(function (r) { return !(r in rows) && !(scope && prevRefs[r] && behindOf(prevRefs[r])); });
   if (gone.length) head.gone = gone;
 }
 return "# " + JSON.stringify(head) + (out.length ? "\n" + out.join("\n") : "");
