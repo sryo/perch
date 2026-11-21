@@ -6395,22 +6395,34 @@ export const loft = { wins: new Map(), rects: [], displays: [], ever: false, own
       let up = false;
       for (let i = 0; i < 40 && !up; i++) { try { await exec("pgrep", ["-x", "Safari"]); up = true; } catch { await new Promise((r) => setTimeout(r, 250)); } }
       if (!up) throw new Error("Safari did not start");
-      // Should a start page come up anyway, on the user's display (where a tiler
-      // makes room for it): perch started Safari, so it closes what the launch
-      // opened that shows nothing else. Restored windows with real tabs stay.
-      const list = 'const a = Application("Safari"); JSON.stringify(a.windows().filter((w) => w.visible()).map((w) => ({ id: w.id(), urls: w.tabs.url() })))';
-      for (let i = 0; i < 4; i++) {
-        await new Promise((r) => setTimeout(r, 250));
-        let wins = [];
-        try { wins = JSON.parse((await exec("osascript", ["-l", "JavaScript", "-e", list])).stdout); } catch { continue; }
-        const ids = launchLeftovers(wins);
-        if (!wins.length) continue;
-        if (ids.length) await exec("osascript", ["-l", "JavaScript", "-e", `const a = Application("Safari"); ${JSON.stringify(ids)}.forEach((id) => { try { a.windows.byId(id).close(); } catch (e) {} })`]).catch(() => {});
-        break;
-      }
     },
+    // Should a start page come up anyway, on the user's display (where a tiler
+    // makes room for it): perch started Safari, so it closes what the launch
+    // opened that shows nothing else. Restored windows with real tabs stay.
+    // Run once perch's own window is made, so `own` names it; not awaited.
+    sweep: (own) => sweepLeftovers({
+      list: async () => JSON.parse((await exec("osascript", ["-l", "JavaScript", "-e", 'const a = Application("Safari"); JSON.stringify(a.windows().filter((w) => w.visible()).map((w) => ({ id: w.id(), urls: w.tabs.url() })))'])).stdout),
+      close: (ids) => exec("osascript", ["-l", "JavaScript", "-e", `const a = Application("Safari"); ${JSON.stringify(ids)}.forEach((id) => { try { a.windows.byId(id).close(); } catch (e) {} })`]),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: Date.now,
+      until: Date.now() + SWEEP_MS,
+      own,
+    }).catch(() => {}),
   },
 };
+// Live, the start page can come up about 3s after the launch; a second can follow.
+const SWEEP_MS = 8000;
+// Looks every 250ms until `until`, closing each start-page window that isn't one of perch's own.
+export async function sweepLeftovers({ list, close, sleep, now, until, own }) {
+  while (now() < until) {
+    await sleep(250);
+    let wins;
+    try { wins = await list(); } catch { continue; }
+    const mine = own().map(String);
+    const ids = launchLeftovers(wins).filter((id) => !mine.includes(String(id)));
+    if (ids.length) await close(ids).catch(() => {});
+  }
+}
 // The windows a Safari launch opened that show only a start page.
 export const launchLeftovers = (wins) => wins.filter((w) => w.urls.length === 1 && /^(favorites:\/\/|topsites:\/\/|about:blank|)$/.test(w.urls[0] ?? "")).map((w) => w.id);
 // An agent can't run `loft up`; a size is the call it can make.
@@ -6515,17 +6527,17 @@ async function loftTab(url, app, from, label, onLoft) {
     const at = new URL(req.url), room = /^https?:$/.test(at.protocol) && Object.values(roomRegistry()).find((x) => (x.sites || []).some((s) => s.origin === at.origin));
     if (room) Object.assign(req.loft, { room: room.name, site: at.host });
   } catch {}
-  let r;
+  let r, launched = false;
   try {
     try { r = await rt("newTab", req); } catch (e) {
       const m = /^no_browser: needs Safari started: (.*)$/.exec(e.message);
       if (!m) throw e;
-      try { await loft.safari.launch(); } catch (le) {
+      try { await loft.safari.launch(); launched = true; } catch (le) {
         throw new Error(/can't place a window/.test(m[1]) ? `no_browser: ${m[1].split(" can't")[0]} can't place a window, so it can't open one on the loft; use another browser` : `no_browser: ${m[1].split(" would")[0]} would come to the front without the user's focus grant, and Safari, which wouldn't, could not be started (${le.message})`);
       }
       r = await rt("newTab", req);
     }
-  } catch (e) { if (size) await loftRelease(id); throw e; }
+  } catch (e) { if (launched) loft.safari.sweep?.(() => []); if (size) await loftRelease(id); throw e; }
   const { loftWin, ...out } = r;
   if (size && loftWin) { loft.winLoft.set(`${out.app}\0${loftWin.id}`, id); out.loft = id; }
   if (loftWin) {
@@ -6537,6 +6549,7 @@ async function loftTab(url, app, from, label, onLoft) {
     if (!loft.displays.includes(h.displayId)) loft.displays.push(h.displayId);
     loft.ever = true;
   }
+  if (launched) loft.safari.sweep?.(() => [...(loft.wins.get("Safari") || [])]);
   return out;
 }
 

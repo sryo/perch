@@ -7,7 +7,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, loftIdle, loftIdleClose, rooms, roomHint, INSTRUCTIONS, launchLeftovers } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, focus, loft, loftIdle, loftIdleClose, rooms, roomHint, INSTRUCTIONS, launchLeftovers, sweepLeftovers } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { tempDir } from "../scripts/temp-dirs.mjs";
 import { page } from "./helpers/page.mjs";
@@ -566,6 +566,50 @@ test("F3 after starting Safari itself, perch closes only the start-page windows 
   ];
   assert.deepEqual(launchLeftovers(wins), [1, 2, 3, 6]);
   assert.deepEqual(launchLeftovers([]), []);
+});
+
+// Live, Safari's start page can come up about 3s after the launch, on the user's
+// display where a tiler makes room for it, so the sweep looks for a while.
+test("F3 a start page that comes up late is still closed, perch's own windows never", async () => {
+  const at = [[], [], [], [{ id: 7, urls: ["favorites://"] }, { id: 9, urls: ["about:blank"] }], [{ id: 9, urls: ["about:blank"] }]];
+  let tick = 0, clock = 0;
+  const closed = [];
+  await sweepLeftovers({
+    list: async () => at[Math.min(tick++, at.length - 1)],
+    close: async (ids) => { closed.push(...ids); },
+    sleep: async (ms) => { clock += ms; },
+    now: () => clock,
+    until: 8000,
+    own: () => ["9"],
+  });
+  assert.deepEqual(closed, [7]);
+  assert.ok(clock >= 8000, "the sweep looks until its deadline, since another start page can follow");
+});
+
+test("F3 a sweep that can't read Safari's windows keeps trying and closes nothing", async () => {
+  let clock = 0;
+  const closed = [];
+  await sweepLeftovers({
+    list: async () => { throw new Error("not answering yet"); },
+    close: async (ids) => { closed.push(...ids); },
+    sleep: async (ms) => { clock += ms; },
+    now: () => clock,
+    until: 2000,
+    own: () => [],
+  });
+  assert.deepEqual(closed, []);
+});
+
+test("F2 once perch's window is made in a Safari it started, the sweep runs knowing that window", async () => {
+  focus.granted = false;
+  const saf = safari([], { running: false });
+  install({ browsers: [chrome([userWin()]), saf], cg: [{ owner: "Terminal" }, { owner: "Google Chrome" }] });
+  holder();
+  let swept = null;
+  loft.safari = { launch: async () => { saf.running = true; }, sweep: (own) => { swept = own(); } };
+  const { r, o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(r.isError, undefined, JSON.stringify(o));
+  assert.ok(swept && swept.length === 1, `the sweep knows perch's window (${JSON.stringify(swept)})`);
 });
 
 // Safari has none of the user's sign-ins, so for a site a room is signed in to, the
