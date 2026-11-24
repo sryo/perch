@@ -1812,6 +1812,24 @@ function jxaRuntime(BROWSERS, HANG) {
     } catch (e) { return false; }
   }
 
+  // The pid of the process in front, read fresh: NSWorkspace's answer goes stale
+  // in a process with no run loop, as the lanes are. null when unknown.
+  let frontBound = false;
+  function frontPid() {
+    try {
+      if (!skyLoad()) return null;
+      if (!frontBound) {
+        appKit();
+        ObjC.bindFunction("_SLPSGetFrontProcess", ["int", ["void *"]]);
+        ObjC.bindFunction("GetProcessPID", ["int", ["void *", "int *"]]);
+        frontBound = true;
+      }
+      const psn = $.NSMutableData.dataWithLength(8), pid = Ref();
+      if ($._SLPSGetFrontProcess(psn.mutableBytes) !== 0 || $.GetProcessPID(psn.mutableBytes, pid) !== 0) return null;
+      return Number(pid[0]) || null;
+    } catch (e) { return null; }
+  }
+
   let skyReady = false;
   function skyInit() {
     if (skyReady) return;
@@ -3355,17 +3373,23 @@ function jxaRuntime(BROWSERS, HANG) {
     if (P.front === name && userFront != null) { try { ap.windows.byId(userFront).index = 1; } catch (e) {} }
     else if (P.front !== name) {
       // Chromium raises itself a moment after the make. With the user away, the
-      // app they left gets the front back before they return. The new window
-      // itself tops the window list without a raise, so it counts as perch's.
+      // app they left gets the front back before they return. The front process
+      // tells: the new window tops the window list without a raise, and a browser
+      // whose only on-screen window is the loft's raises with the list unchanged.
+      // The list, with perch's window counted as its own, only when that read fails.
       const own0 = loftOwn, wins = Object.assign({}, own0 && own0.wins);
       wins[name] = (wins[name] || []).concat([wid]);
       const armed = { wins: wins, rects: ((own0 && own0.rects) || []).concat([R]) };
-      const frontNow = function () { loftOwn = armed; try { return procs().front; } finally { loftOwn = own0; } };
-      let raised = frontNow() === name;
-      for (let i = 0; away && !raised && i < 3; i++) { delay(0.1); raised = frontNow() === name; }
+      const raisedNow = function () {
+        const f = out.__pid != null ? frontPid() : null;
+        if (f != null) return f === out.__pid;
+        loftOwn = armed; try { return procs().front === name; } finally { loftOwn = own0; }
+      };
+      let raised = raisedNow();
+      for (let i = 0; away && !raised && i < 3; i++) { delay(0.1); raised = raisedNow(); }
       if (raised && away && P.frontPid != null) {
         try { appKit(); $.NSRunningApplication.runningApplicationWithProcessIdentifier(P.frontPid).activateWithOptions(0); } catch (e) {}
-        for (let i = 0; raised && i < 5; i++) { raised = frontNow() === name; if (raised) delay(0.1); }
+        for (let i = 0; raised && i < 5; i++) { raised = raisedNow(); if (raised) delay(0.1); }
       }
       if (raised) out.warning = "creating the window brought the browser to the front";
     }

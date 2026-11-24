@@ -87,6 +87,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
   function raiseApp(name) {
     const i = cgEntries.findIndex((entry) => entry.owner === name);
     if (i > 0) cgEntries.unshift(cgEntries.splice(i, 1)[0]);
+    if (state.frontPid != null && i >= 0) state.frontPid = cgEntries[0].pid ?? 100;
   }
   function makeTab(spec, b, w) {
     // The page lives on the spec, so one spec listed in several windows is one tab
@@ -397,7 +398,10 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       if (b.raiseOnMake) raiseApp(b.name);
       // b.newOnTop: the new window tops the window list (live, Canary, on a loft)
       // while the app stays behind.
-      if (b.newOnTop) cgEntries.unshift({ owner: b.name, pid: (cgEntries.find((e) => e.owner === b.name) || {}).pid, wid: id, x: r.x, y: r.y, w: r.width, h: r.height });
+      // b.raiseUnseen: that, and the app comes to the front all the same (live,
+      // Canary whose only on-screen window is the loft's): only the front process shows it.
+      if (b.newOnTop || b.raiseUnseen) cgEntries.unshift({ owner: b.name, pid: (cgEntries.find((e) => e.owner === b.name) || {}).pid, wid: id, x: r.x, y: r.y, w: r.width, h: r.height, made: true });
+      if (b.raiseUnseen) state.frontPid = (cgEntries.find((e) => e.owner === b.name) || {}).pid ?? 100;
       return specifier(() => { const x = wins.find((y) => y.spec === spec); return x && x.win; });
     }
     a.windows = new Proxy([], {
@@ -748,6 +752,7 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
         const x = (state.twins || []).find((y) => y.pid === pid);
         return { isNil: () => false, activationPolicy: x ? x.policy ?? 2 : 0, activateWithOptions: () => {
           log.push(["activatePid", pid]);
+          if (state.frontPid != null) state.frontPid = pid;
           const i = cgEntries.findIndex((e) => (e.pid ?? 100) === pid);
           if (i > 0) cgEntries.unshift(cgEntries.splice(i, 1)[0]);
           return true;
@@ -948,7 +953,15 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       SLSWindowIteratorGetPID: (it) => it.rows[it.at].pid,
       SLSWindowIteratorGetWindowID: (it) => it.rows[it.at].wid,
       GetProcessForPID: (pid, psn) => { psn.writeUInt32LE(pid, 4); return 0; },
-      _SLPSGetFrontProcess: (psn) => { psn.writeUInt32LE(cgEntries[0]?.pid ?? 100, 4); return 0; },
+      // The front process: state.frontPid once something set it, else the owner of the
+      // topmost window the app didn't just make. Unreadable (-600) when that pid is
+      // shared with another owner (entries without a pid all read as 100).
+      _SLPSGetFrontProcess: (psn) => {
+        const pid = state.frontPid ?? cgEntries.find((e) => !e.made)?.pid ?? 100;
+        if (new Set(cgEntries.filter((e) => (e.pid ?? 100) === pid).map((e) => e.owner)).size > 1) return -600;
+        psn.writeUInt32LE(pid, 4); return 0;
+      },
+      GetProcessPID: (psn, out) => { out[0] = psn.readUInt32LE(4); return 0; },
       SLPSPostEventRecordTo: (psn, bytes) => {
         log.push(["SLPSPostEventRecordTo", Buffer.from(psn), Buffer.from(bytes)]);
         return 0;

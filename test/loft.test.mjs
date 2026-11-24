@@ -198,6 +198,18 @@ test("A1 without the grant, while the user is away, the loft window opens in the
   assert.deepEqual(world.log.filter(([k]) => k === "activatePid"), [["activatePid", 200]]);
 });
 
+test("A1 a raise the window list can't show is still given back: the browser's only on-screen window is the loft's", async () => {
+  focus.granted = false;
+  install({ browsers: [chrome([userWin()], { raiseUnseen: true }), safari([userWin("s")])], cg: [{ owner: "Terminal", pid: 200 }, { owner: "Google Chrome", pid: 300 }] });
+  world.state.idleSecs = 600;
+  holder();
+  const { o } = await call("new_tab", { url: "https://job.test/", loft: true });
+  assert.equal(o.app, "Google Chrome", JSON.stringify(o));
+  assert.equal(o.warning, undefined);
+  assert.deepEqual(world.log.filter(([k]) => k === "activatePid"), [["activatePid", 200]]);
+  assert.equal(world.state.frontPid, 200, "the app the user left is in front again");
+});
+
 test("A1 a locked screen counts as away; nothing raised means nothing is given back", async () => {
   focus.granted = false;
   install({ browsers: [chrome([userWin()]), safari([userWin("s")])], cg: [{ owner: "Terminal", pid: 200 }, { owner: "Google Chrome", pid: 300 }] });
