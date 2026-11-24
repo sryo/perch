@@ -98,11 +98,13 @@ PROJECTS = {
                        rows=["trab", "AGI", "tos@sun"], size=52, gap=0.08, seed=9, extra="sun", er=20),
     "loft": dict(tilt=10, ground="#F2B705", ink="#1B2466",
                  rows=["lo", "ft@screen"], size=72, seed=13, extra="screen", er=24),
+    "veil": dict(tilt=-16, ground="#16131F", ink="#C9B8FF",
+                 rows=["ve", "il@lock"], size=72, seed=21, tumble=16, extra="lock", er=24),
 }
 
 def tokens(row):
     """'pe@bird' -> ['p', 'e', '@bird']"""
-    return re.findall(r"@(?:bird|pin|key|nib|sun|screen)|.", row)
+    return re.findall(r"@(?:bird|pin|key|nib|sun|screen|lock)|.", row)
 
 
 def pile(p):
@@ -145,7 +147,7 @@ def pile(p):
     return out, pts, bottom - (len(rows) - 1) * step
 
 
-NAT_R = {"bird": 27, "pin": 25, "key": 28, "nib": 24, "sun": 26, "screen": 26}
+NAT_R = {"bird": 27, "pin": 25, "key": 28, "nib": 24, "sun": 26, "screen": 26, "lock": 26}
 
 # One outline per project, same stroke weight as the letters' visual weight.
 OUTLINE = {
@@ -155,6 +157,7 @@ OUTLINE = {
     "nib":   "M0 -24 L16 2 L8 22 L-8 22 L-16 2 Z M0 -24 L0 4",
     "sun":   "M0 -12 A12 12 0 1 0 0.01 -12 Z",
     "screen": "M-24 -16 L24 -16 L24 12 L-24 12 Z M0 12 L0 21 M-10 21 L10 21",  # monitor: loft
+    "lock":  "M-18 -2 L18 -2 L18 22 L-18 22 Z M-11 -2 L-11 -10 A11 11 0 0 1 11 -10 L11 -2 M0 8 L0 12",  # padlock: veil
 }
 
 
@@ -255,8 +258,8 @@ def small(name, p):
 
 # Lockup: the tool's tile, and to its right a column with the tiles of what it
 # runs on. perch has all of them.
-BESIDE = {"perch": ["avis", "rooms", "figma-cdp", "trabAGItos", "loft"], "avis": ["perch"], "rooms": ["perch"],
-          "figma-cdp": ["perch", "rooms"], "trabAGItos": ["perch"], "loft": ["perch", "rooms"]}
+BESIDE = {"perch": ["avis", "rooms", "figma-cdp", "trabAGItos", "loft", "veil"], "avis": ["perch"], "rooms": ["perch"],
+          "figma-cdp": ["perch", "rooms"], "trabAGItos": ["perch"], "loft": ["perch", "rooms"], "veil": ["perch", "loft"]}
 
 
 def inner(svg):
