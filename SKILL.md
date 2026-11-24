@@ -66,7 +66,7 @@ No `ready`: complete. Values: JSON. Keys: `name` (HTML name), `type`, `value` (p
 | Their logins, localhost, a set size, or unseen painting | Loft: `new_tab {url, loft:"1280x800"}` (`true`: theirs) |
 | A login of its own, a phone, or a locked Mac | Room (below) |
 
-A loft window is yours, in their profile, or in Safari's (`note` says when). Locked Mac: macOS makes no loft (live, locked and asleep); use a room.
+A loft window is yours, in their profile, or in Safari's (`note` says when). Locked Mac: a loft comes up, but trusted input fails there; use a room.
 
 ## Rooms
 
