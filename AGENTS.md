@@ -183,7 +183,7 @@ Each blocked layer returns an actionable error naming the exact toggle (`ERR.jsO
 
 ## Live checks
 
-- **Never disturb the user.** Live steps need a browser tab the user isn't using. Reuse an existing scratch tab (`about:blank`, or `about:blank#perch-<ts>` from `--with-tab-creation`); never create or select tabs or activate another app to set one up. If the preconditions are absent, don't wait on the user: poll for them and start once they hold, or say what is left and defer it. Never skip silently.
+- **Never disturb the user.** Live steps need a browser tab the user isn't using. Reuse an existing scratch tab (`about:blank`, or `about:blank#perch-<ts>` from `--with-tab-creation`), or open one of your own while the user is away and close it after. If the preconditions are absent, don't wait on the user: poll for them and start once they hold, or say what is left and defer it. Never skip silently.
 - **Never submit a real form**, sign in, solve a challenge or answer the user's dialogs. Live checks run on 127.0.0.1 fixtures (`test/fixtures/`, `bench/fixture.html`).
 - **Record foreground state** (frontmost app, key process, cursor) around each background step; a change is a failure of goal 1.
 - **Run the adverse cases too:** a covered window, a minimized one, a slow or loaded page, two perch servers on one tab, a hostile page.
