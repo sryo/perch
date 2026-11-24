@@ -323,9 +323,10 @@ test("accessibility_snapshot: the default does no Accessibility work; frames:tru
   // resolve (1, the front window's shown tab, so no separate shown check) and the
   // page script (1); the fake world doesn't count window geometry reads (2 more live).
   assert.equal(events(), 2, breakdown());
-  // Window match (its geometry and CGWindowID) and page area, then role, name,
-  // flags and frame per node.
-  assert.equal(ax(), 35, breakdown());
+  // Window match (its geometry and CGWindowID) and page area, then one batched
+  // read per node (role, children, name, flags, frame, URL); it was 35 at one
+  // read per attribute.
+  assert.equal(ax(), 18, breakdown());
 });
 
 // A trusted page click checks its final point with Accessibility's hit test: a
@@ -347,12 +348,13 @@ test("the trusted click's hit test adds Accessibility reads only, no Apple Event
     world.reset();
   }
   // [Apple Events, AX reads] for background selector, background point, raised
-  // selector. The AX reads are the window match and page area (13), the hit
+  // selector. The AX reads are the window match and page area (8, one batched
+  // read per node of the page-area walk; 13 at one read per attribute), the hit
   // test (4) and the look for a file chooser the click opened (6). A click by point reads its hit check after posting, as a selector
   // click does. Every page read (probe or frames, calibration, check) goes through
   // the bounded execute, which the fake counts twice (NSAppleScript and
   // tab.execute); live each is one event: 3, 3 and 17.
-  assert.deepEqual(cost, [[5, 23], [5, 23], [30, 23]]);
+  assert.deepEqual(cost, [[5, 18], [5, 18], [30, 18]]);
 });
 
 // Chromium builds a page's Accessibility tree only once an assistive client asks

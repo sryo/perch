@@ -2364,12 +2364,6 @@ function jxaRuntime(BROWSERS, HANG) {
   function axPageArea(I, probe, until) {
     if (I.pid == null || !probe.iw || !probe.ih) return null;
     const ax = axInit(), attr = ax.attr, list = ax.list;
-    // AXValue has no JS bridge; its description reads "{value = x:917.000000 y:57.000000 ...}".
-    const pair = function (el, name, a, b) {
-      const v = attr(el, name);
-      const m = v && new RegExp(a + ":(-?[\\d.]+) " + b + ":(-?[\\d.]+)").exec(String(ObjC.unwrap(v.description)));
-      return m ? [Number(m[1]), Number(m[2])] : null;
-    };
     // When an AX window near the frame reports its CGWindowID, the ids decide;
     // otherwise geometry must leave exactly one.
     let near = axWindowsAt(I.pid, I.cgBounds || I.geom);
@@ -2381,11 +2375,11 @@ function jxaRuntime(BROWSERS, HANG) {
       const queue = [win];
       while (queue.length && seen < 600) {
         if (until != null && Date.now() > until) return { best: null, areas: -1 };
-        const el = queue.shift();
+        const el = queue.shift(), a = ax.many(el, AREA_ATTRS);
         seen++;
-        if (String(ObjC.unwrap(attr(el, "AXRole"))) !== "AXWebArea") { queue.push.apply(queue, list(attr(el, "AXChildren"))); continue; }
+        if (ax.text(a.AXRole) !== "AXWebArea") { queue.push.apply(queue, list(a.AXChildren)); continue; }
         areas++;
-        const p = pair(el, "AXPosition", "x", "y"), s = pair(el, "AXSize", "w", "h");
+        const p = ax.pairOf(a.AXPosition, "x", "y"), s = ax.pairOf(a.AXSize, "w", "h");
         if (!p || !s || !s[0]) continue;
         const scale = s[0] / probe.iw, d = Math.abs(s[1] - probe.ih * scale);
         if (scale > 0.2 && scale < 5 && d <= 2 && d < miss) { miss = d; best = { x: p[0], y: p[1], scale: scale, el: el }; }
@@ -2407,7 +2401,7 @@ function jxaRuntime(BROWSERS, HANG) {
     }
     return r.best;
   }
-  const axWoken = {}, AX_WAKE_MS = 5 * 60000;
+  const axWoken = {}, AX_WAKE_MS = 5 * 60000, AREA_ATTRS = ["AXRole", "AXChildren", "AXPosition", "AXSize"];
 
   // The pid's AX windows within 8pt of the frame r, each as {el, wid}, wid being
   // the CGWindowID it reports (null when unreadable).
@@ -2444,17 +2438,54 @@ function jxaRuntime(BROWSERS, HANG) {
       try { const out = Ref(); return $._AXUIElementGetWindow(el, out) === 0 ? Number(out[0]) : null; } catch (e) { return null; }
     };
     const attr = function (el, name) { const out = Ref(); return $.AXUIElementCopyAttributeValue(el, $(name), out) === 0 ? out[0] : null; };
-    const list = function (v) { const n = v ? Number(v.count) : 0, out = []; for (let i = 0; i < n; i++) out.push(v.objectAtIndex(i)); return out; };
+    // Unwrapping an NSArray is one bridge crossing; reading it item by item is
+    // one per item, which live cost more than the Accessibility reads themselves.
+    // An error slot from `many` is no array: its count reads as nothing.
+    const list = function (v) {
+      const u = v == null ? null : ObjC.unwrap(v);
+      if (Array.isArray(u)) return u;
+      let n = 0;
+      try { n = v ? Number(v.count) || 0 : 0; } catch (e) {}
+      const out = [];
+      for (let i = 0; i < n; i++) out.push(v.objectAtIndex(i));
+      return out;
+    };
     const str = function (el, name) { const v = attr(el, name); return v == null ? "" : String(ObjC.unwrap(v)); };
+    // Several attributes in one call: {name: value}, null for every name when the
+    // element is gone. The result is unwrapped one level only: a full unwrap turns
+    // AXValues and URLs into opaque objects. Live, a frame walk this way took 157ms
+    // where one call per attribute took 361ms (Safari, 629 nodes). A missing
+    // attribute's slot holds an AXValue of type kAXValueAXErrorType, which text,
+    // pairOf, url and axTruth all read as absent.
+    let manyOk = false;
+    try { ObjC.bindFunction("AXUIElementCopyMultipleAttributeValues", ["int", ["id", "id", "int", "id *"]]); manyOk = true; } catch (e) {}
+    const many = function (el, names) {
+      const o = {};
+      let vals = null;
+      if (manyOk) {
+        const out = Ref(), rc = $.AXUIElementCopyMultipleAttributeValues(el, $(names), 0, out);
+        if (rc === -25202) vals = [];
+        else if (rc === 0) { vals = list(out[0]); if (vals.length !== names.length) vals = null; }
+      }
+      names.forEach(function (n, i) { o[n] = vals ? (vals[i] === undefined ? null : vals[i]) : attr(el, n); });
+      return o;
+    };
+    const text = function (v) { const u = v == null ? null : ObjC.unwrap(v); return typeof u === "string" ? u : ""; };
     // AXValue has no JS bridge; its description reads "{value = x:917.000000 y:57.000000 ...}".
-    const pair = function (el, name, a, b) {
-      const v = attr(el, name);
+    const pairOf = function (v, a, b) {
       const m = v && new RegExp(a + ":(-?[\\d.]+) " + b + ":(-?[\\d.]+)").exec(String(ObjC.unwrap(v.description)));
       return m ? [Number(m[1]), Number(m[2])] : null;
     };
-    const frame = function (el) {
-      const p = pair(el, "AXPosition", "x", "y"), s = pair(el, "AXSize", "w", "h");
+    const pair = function (el, name, a, b) { return pairOf(attr(el, name), a, b); };
+    const frameOf = function (pos, size) {
+      const p = pairOf(pos, "x", "y"), s = pairOf(size, "w", "h");
       return p && s ? { x: p[0], y: p[1], w: s[0], h: s[1] } : null;
+    };
+    const frame = function (el) { return frameOf(attr(el, "AXPosition"), attr(el, "AXSize")); };
+    const url = function (v) {
+      if (v == null) return "";
+      try { if (v.absoluteString !== undefined) return String(ObjC.unwrap(v.absoluteString)); } catch (e) {}
+      return text(v);
     };
     // The element at a screen point in the pid's windows; null when the hit test
     // fails or can't be bound.
@@ -2472,7 +2503,7 @@ function jxaRuntime(BROWSERS, HANG) {
       const f = frame(a), g = frame(b);
       return !!f && !!g && Math.abs(f.x - g.x) <= 1 && Math.abs(f.y - g.y) <= 1 && Math.abs(f.w - g.w) <= 1 && Math.abs(f.h - g.h) <= 1;
     };
-    axKit = { attr: attr, list: list, str: str, frame: frame, wid: wid, hit: hit, same: same };
+    axKit = { attr: attr, list: list, str: str, many: many, text: text, pairOf: pairOf, frameOf: frameOf, url: url, frame: frame, wid: wid, hit: hit, same: same };
     return axKit;
   }
 
@@ -2494,16 +2525,15 @@ function jxaRuntime(BROWSERS, HANG) {
     const u = v == null ? null : ObjC.unwrap(v);
     return typeof u === "boolean" ? u : typeof u === "number" || /^[01]$/.test(u) ? Number(u) === 1 : null;
   };
-  function axUrl(el) {
-    const v = axInit().attr(el, "AXURL");
-    if (v == null) return "";
-    try { if (v.absoluteString !== undefined) return String(ObjC.unwrap(v.absoluteString)); } catch (e) {}
-    return String(ObjC.unwrap(v));
-  }
-  const axName = function (ax, el) {
-    const s = (ax.str(el, "AXTitle") || ax.str(el, "AXDescription")).replace(/\s+/g, " ").trim();
+  function axUrl(el) { const ax = axInit(); return ax.url(ax.attr(el, "AXURL")); }
+  const nameOf = function (raw) {
+    const s = raw.replace(/\s+/g, " ").trim();
     return s.length > 100 ? s.slice(0, 100) + "…" : s;
   };
+  const axName = function (ax, el) { return nameOf(ax.str(el, "AXTitle") || ax.str(el, "AXDescription")); };
+  // What the walk reads of each node, in one call. A checkbox or radio's AXValue
+  // is read on its own, so no other control's value is ever fetched.
+  const FRAME_ATTRS = ["AXRole", "AXChildren", "AXPosition", "AXSize", "AXTitle", "AXDescription", "AXExpanded", "AXEnabled", "AXSubrole", "AXURL"];
 
   // The frame walk's preconditions, the background trusted click's own:
   // Accessibility, the tab its window shows, and an on-screen window.
@@ -2520,24 +2550,24 @@ function jxaRuntime(BROWSERS, HANG) {
     const inside = function (p, b) { return !!b && p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h; };
     const bounds = [I.cgBounds || I.geom, ax.frame(area.el)];
     const rows = [], ords = {}, start = Date.now(), queue = [];
-    const kids = function (el, fr) { ax.list(ax.attr(el, "AXChildren")).forEach(function (k) { queue.push({ el: k, fr: fr }); }); };
-    kids(area.el, null);
+    const kids = function (v, fr) { ax.list(v).forEach(function (k) { queue.push({ el: k, fr: fr }); }); };
+    kids(ax.attr(area.el, "AXChildren"), null);
     let n = 0, truncated = false;
     while (queue.length) {
       if (++n > FRAME_NODES || Date.now() - start > FRAME_MS) { truncated = true; break; }
-      const q = queue.shift(), axRole = ax.str(q.el, "AXRole");
-      if (axRole === "AXWebArea") { kids(q.el, { el: q.el, url: axUrl(q.el), box: ax.frame(q.el), up: q.fr }); continue; }
+      const q = queue.shift(), a = ax.many(q.el, FRAME_ATTRS), axRole = ax.text(a.AXRole);
+      if (axRole === "AXWebArea") { kids(a.AXChildren, { el: q.el, url: ax.url(a.AXURL), box: ax.frameOf(a.AXPosition, a.AXSize), up: q.fr }); continue; }
       const role = FRAME_ROLES[axRole];
-      if (!role) { kids(q.el, q.fr); continue; }
+      if (!role) { kids(a.AXChildren, q.fr); continue; }
       if (!q.fr) continue;
-      const box = ax.frame(q.el);
+      const box = ax.frameOf(a.AXPosition, a.AXSize);
       if (!box || !box.w || !box.h) continue;
-      const name = axName(ax, q.el), key = q.fr.url + "\n" + role + "\n" + name;
+      const name = nameOf(ax.text(a.AXTitle) || ax.text(a.AXDescription)), key = q.fr.url + "\n" + role + "\n" + name;
       const flags = [];
       if ((role === "checkbox" || role === "radio") && axTruth(ax.attr(q.el, "AXValue"))) flags.push("checked");
-      if (axTruth(ax.attr(q.el, "AXExpanded"))) flags.push("expanded");
-      if (axTruth(ax.attr(q.el, "AXEnabled")) === false) flags.push("disabled");
-      if (axRole === "AXSecureTextField" || (axRole === "AXTextField" && ax.str(q.el, "AXSubrole") === "AXSecureTextField")) flags.push("secure");
+      if (axTruth(a.AXExpanded)) flags.push("expanded");
+      if (axTruth(a.AXEnabled) === false) flags.push("disabled");
+      if (axRole === "AXSecureTextField" || (axRole === "AXTextField" && ax.text(a.AXSubrole) === "AXSecureTextField")) flags.push("secure");
       const c = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
       let shown = bounds.every(function (b) { return inside(c, b); });
       for (let f = q.fr; f && shown; f = f.up) shown = inside(c, f.box);

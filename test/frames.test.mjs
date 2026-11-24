@@ -71,6 +71,20 @@ const ALL = [
   `f8 button "Below" frame="widget.example" offscreen`,
 ];
 
+// The walk reads each node's attributes in one batched call; where that can't
+// be bound it reads them one by one, with the same rows. Either way it reads
+// AXValue only for checkboxes and radios, never a field's value.
+for (const batched of [true, false]) {
+  test(`frame rows are the same ${batched ? "with batched reads" : "one attribute at a time"}, and no field's value is read`, async () => {
+    const { world } = frameWorld();
+    if (!batched) world.state.unbound = ["AXUIElementCopyMultipleAttributeValues"];
+    world.state.axLog = [];
+    assert.deepEqual(frameLines(await snap()).map(unref), ALL.map(unref));
+    const values = world.state.axLog.filter(([, n]) => n === "AXValue").map(([r]) => r);
+    assert.deepEqual([...new Set(values)], ["AXCheckBox"]);
+  });
+}
+
 test("the default snapshot has no frame rows, no frames header and does no Accessibility work", async () => {
   const { world } = frameWorld();
   const r = await handleCall("accessibility_snapshot", {});

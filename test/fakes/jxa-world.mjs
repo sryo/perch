@@ -569,6 +569,29 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
     return undefined;
   }
 
+  // kAXErrorInvalidUIElement for an element that is gone, else 0.
+  function axGone(el) {
+    // A closed dialog's elements are gone, as is a kid removed from its frame.
+    if (el.d && !state.dialogs.includes(el.d)) return -25202;
+    if (el.fk && el.fk.gone) return -25202;
+    if (el.pn && (!el.pn.open || (el.goto && !el.pn.goto))) return -25202;
+    if (el.sh && !state.sheets.includes(el.sh)) return -25202;
+    // state.axThrow: reading a frame's web area throws it, as a bridge failure would.
+    if (el.fr && state.axThrow) throw state.axThrow;
+    return 0;
+  }
+  // An attribute's value, undefined when the element lacks it. state.axLog, if
+  // set, records each read as [role, attribute].
+  function axRead(el, name) {
+    if (state.axLog) state.axLog.push([el.role, name]);
+    if (name === "AXParent" && el.parent !== undefined) return el.parent || undefined;
+    let f = sheetAttr(el, name);
+    if (f === undefined) f = panelAttr(el, name);
+    if (f === undefined) f = focusAttr(el, name);
+    if (f === undefined) f = frameAttr(el, name);
+    return f === undefined ? axAttr(el, name) : f === null ? undefined : f;
+  }
+
   // Nested frames: a web area box's optional `frames: [{url, box, kids, frames}]`
   // adds frame web areas after the area's own children. A kid is
   // `{role, subrole, title, description, value, enabled, expanded, focused, box}`,
@@ -965,28 +988,26 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       },
       AXUIElementCopyAttributeValue: (el, name, out) => {
         bump("AX");
-        // state.axMs: each attribute read takes that long (a browser slow to answer Accessibility).
+        // state.axMs: each Accessibility call takes that long (a browser slow to answer).
         if (state.axMs) clock.t += state.axMs;
-        // A closed dialog's elements are gone: kAXErrorInvalidUIElement.
-        if (el.d && !state.dialogs.includes(el.d)) return -25202;
-        // A kid removed from its frame is gone, like a closed dialog's elements.
-        if (el.fk && el.fk.gone) return -25202;
-        if (el.pn && (!el.pn.open || (el.goto && !el.pn.goto))) return -25202;
-        if (el.sh && !state.sheets.includes(el.sh)) return -25202;
-        // state.axThrow: reading a frame's web area throws it, as a bridge failure would.
-        if (el.fr && state.axThrow) throw state.axThrow;
-        if (name.js === "AXParent" && el.parent !== undefined) {
-          if (!el.parent) return -25205;
-          out[0] = el.parent;
-          return 0;
-        }
-        let f = sheetAttr(el, name.js);
-        if (f === undefined) f = panelAttr(el, name.js);
-        if (f === undefined) f = focusAttr(el, name.js);
-        if (f === undefined) f = frameAttr(el, name.js);
-        const v = f === undefined ? axAttr(el, name.js) : f === null ? undefined : f;
+        const gone = axGone(el);
+        if (gone) return gone;
+        const v = axRead(el, name.js);
         if (v === undefined) return -25205; // kAXErrorAttributeUnsupported
         out[0] = v;
+        return 0;
+      },
+      // One call for several attributes, as live: an attribute the element lacks
+      // comes back as an AXValue of type kAXValueAXErrorType in its slot.
+      AXUIElementCopyMultipleAttributeValues: (el, names, opts, out) => {
+        bump("AX");
+        if (state.axMs) clock.t += state.axMs;
+        const gone = axGone(el);
+        if (gone) return gone;
+        out[0] = axList(names.map((n) => {
+          const v = axRead(el, n);
+          return v === undefined ? { description: "<AXValue 0x3> {value = error:-25205 type = kAXValueAXErrorType}" } : v;
+        }));
         return 0;
       },
       // Dialog answers are recorded; an AXPress on a dialog's button closes it
