@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # perch installer — clones, installs deps, registers as an MCP server in every
-# client CLI it finds: Claude Code, Codex, GitHub Copilot.
+# client CLI it finds: Claude Code, Codex, GitHub Copilot, Gemini CLI, opencode.
 # Re-runnable: skips clone if already present, idempotent registration.
 #
 # Overrides:
@@ -9,6 +9,37 @@
 #   PERCH_SCOPE=...  Claude Code scope: user | local | project (default: user)
 
 set -euo pipefail
+
+# merge_json FILE KEY NAME ENTRY_JSON: sets FILE[KEY][NAME] = ENTRY. Refuses a
+# file that isn't a JSON object rather than replacing it, writes through a temp
+# file and rename, and leaves an unchanged file untouched.
+merge_json() {
+  MJ_FILE="$1" MJ_KEY="$2" MJ_NAME="$3" MJ_ENTRY="$4" node -e '
+    const fs = require("fs"), path = require("path"), e = process.env, f = e.MJ_FILE;
+    let text = null, cfg = {};
+    try { text = fs.readFileSync(f, "utf8"); } catch (err) { if (err.code !== "ENOENT") throw err; }
+    if (text !== null && text.trim()) {
+      try { cfg = JSON.parse(text); } catch { cfg = null; }
+      if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) {
+        console.error(`${f} is not a JSON object; left it alone. Add perch by hand.`);
+        process.exit(1);
+      }
+    }
+    const box = cfg[e.MJ_KEY];
+    if (box !== undefined && (!box || typeof box !== "object" || Array.isArray(box))) {
+      console.error(`${f}: "${e.MJ_KEY}" is not an object; left it alone. Add perch by hand.`);
+      process.exit(1);
+    }
+    cfg[e.MJ_KEY] = Object.assign({}, box, { [e.MJ_NAME]: JSON.parse(e.MJ_ENTRY) });
+    const out = JSON.stringify(cfg, null, 2) + "\n";
+    if (out === text) process.exit(0);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    const tmp = `${f}.perch-${process.pid}.tmp`;
+    fs.writeFileSync(tmp, out);
+    fs.renameSync(tmp, f);
+  '
+}
+[[ "${PERCH_INSTALL_LIB:-}" == "1" ]] && return 0
 
 PERCH_REPO="${PERCH_REPO:-https://github.com/sryo/perch.git}"
 PERCH_DIR="${PERCH_DIR:-$HOME/.perch}"
@@ -20,12 +51,14 @@ command -v git >/dev/null || { echo "git not found. Run: xcode-select --install"
 command -v node >/dev/null || { echo "node not found. Install Node 20+ from https://nodejs.org" >&2; exit 1; }
 node_major="$(node -p 'process.versions.node.split(".")[0]')"
 [[ "$node_major" -ge 20 ]] || { echo "node $node_major < 20. Upgrade Node." >&2; exit 1; }
-HAS_CLAUDE=0; HAS_CODEX=0; HAS_COPILOT=0
+HAS_CLAUDE=0; HAS_CODEX=0; HAS_COPILOT=0; HAS_GEMINI=0; HAS_OPENCODE=0
 command -v claude >/dev/null && HAS_CLAUDE=1
 command -v codex >/dev/null && HAS_CODEX=1
 command -v copilot >/dev/null && HAS_COPILOT=1
-if [[ "$HAS_CLAUDE$HAS_CODEX$HAS_COPILOT" == "000" ]]; then
-  echo "No claude, codex or copilot CLI found; config snippets will be printed for manual paste."
+command -v gemini >/dev/null && HAS_GEMINI=1
+command -v opencode >/dev/null && HAS_OPENCODE=1
+if [[ "$HAS_CLAUDE$HAS_CODEX$HAS_COPILOT$HAS_GEMINI$HAS_OPENCODE" == "00000" ]]; then
+  echo "No claude, codex, copilot, gemini or opencode CLI found; config snippets will be printed for manual paste."
 fi
 
 if [[ -f "$PERCH_DIR/server.js" ]]; then
@@ -68,16 +101,20 @@ fi
 
 if [[ "$HAS_COPILOT" == "1" ]]; then
   echo "Registering perch in GitHub Copilot..."
-  COPILOT_CONFIG="${COPILOT_HOME:-$HOME/.copilot}/mcp-config.json" PERCH_DIR="$PERCH_DIR" node -e '
-    const fs = require("fs"), path = require("path"), f = process.env.COPILOT_CONFIG;
-    let cfg = {};
-    try { cfg = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
-    cfg.mcpServers = cfg.mcpServers || {};
-    cfg.mcpServers.perch = { type: "local", command: "node",
-      args: [path.join(process.env.PERCH_DIR, "server.js")], tools: ["*"], timeout: 330000 };
-    fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f, JSON.stringify(cfg, null, 2) + "\n");
-  '
+  merge_json "${COPILOT_HOME:-$HOME/.copilot}/mcp-config.json" mcpServers perch "$(PD="$PERCH_DIR" node -p \
+    'JSON.stringify({ type: "local", command: "node", args: [process.env.PD + "/server.js"], tools: ["*"], timeout: 330000 })')" || true
+fi
+
+if [[ "$HAS_GEMINI" == "1" ]]; then
+  echo "Registering perch in Gemini CLI..."
+  gemini mcp remove --scope user perch >/dev/null 2>&1 || true
+  gemini mcp add --scope user --timeout 330000 perch node "$PERCH_DIR/server.js" >/dev/null || true
+fi
+
+if [[ "$HAS_OPENCODE" == "1" ]]; then
+  echo "Registering perch in opencode..."
+  merge_json "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json" mcp perch "$(PD="$PERCH_DIR" node -p \
+    'JSON.stringify({ type: "local", command: ["node", process.env.PD + "/server.js"], enabled: true })')" || true
 fi
 
 cat <<EOF
