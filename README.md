@@ -30,3 +30,4 @@ Ask your agent for things in a tab you have open: "fill this application from my
 - [figma-cdp](https://github.com/sryo/figma-cdp): works in your open Figma tabs without Chrome asking you to allow remote debugging.
 - [loft](https://github.com/sryo/loft): a hidden screen for a window in your own profile, out of your way.
 - [rooms](https://github.com/sryo/rooms): browsers of the agent's own, for its own sign-ins or work that goes on while your Mac is locked.
+- [veil](https://github.com/sryo/veil): covers your screens and locks your Mac on the first touch, while your agent keeps working in your browser.

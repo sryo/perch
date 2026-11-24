@@ -128,3 +128,15 @@ test("A3 while the user is away, a call that moves focus runs without the grant,
     world.state.holds = [];
   }
 });
+
+// The any-type idle counter also counts null events, which a process's first
+// posted event and other background work reset every few seconds, so it says
+// the user is here long after they left. Away reads key, click, move and scroll.
+test("A4 away is read from real input only: null events that reset the any-type counter don't make the user present", async () => {
+  world.state.idleSecs = 600;
+  world.state.anyIdleSecs = 0;
+  const r = await handleCall("activate_tab", { target: { tabId: "chrome:b" } });
+  assert.doesNotMatch(r.content[0].text, /needs_focus/, r.content[0].text);
+  assert.equal(activates(), 1);
+  world.state.anyIdleSecs = undefined;
+});

@@ -47,14 +47,14 @@ No `ready`: complete. Values: JSON. Keys: `name` (HTML name), `type`, `value` (p
 
 ## Gotchas
 
-- **Page globals may be invisible** (isolated world): read the DOM.
+- **Page globals are invisible** (isolated world): read the DOM.
 - **Don't sleep in page code.** Background timers run ~1/s. Use `wait` (`quiet` to settle).
 - **Client timeouts.** Some cut calls at 30-60s; keep `timeout` under, or set `PERCH_CALL_MAX_MS` so a longer await answers `{pending, job}` and `wait {job, target}` picks it up.
 - **Dialogs.** `dialog_open` comes in ~3s; answer with `press {dialog}`, then re-read. Other prompts are the user's.
 
 ## Trusted input
 
-`fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input`, verified) wherever page JS runs, minimized too, no tab switch or focus. `click {trusted: true}` reaches an on-screen window's shown tab (else `tab_not_visible`) without activating it or moving the cursor. So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked); other tabs, or a menu the click leaves shut: a filter typed into its own empty box (`"typed"`). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored, only once the user allows it (asked once per session): else `needs_focus`; offer a room or `loft`.
+`fill {trusted: true}` edits a plain input or textarea via the browser's editing command (trusted `input`, verified) in any tab, minimized too, no focus. `click {trusted: true}` reaches an on-screen window's shown tab (else `tab_not_visible`) without activating it or moving the cursor. So does `select {trusted: true}` on a control or option ignoring synthetic presses (`trusted`: what it clicked); other tabs, or a menu the click leaves shut: a filter typed into its own empty box (`"typed"`). Plain `click`: any tab; verify it. `raise: true` takes focus briefly (HID), cursor restored, once the user allows it (asked once): else `needs_focus`; offer a room or `loft`.
 
 `frames` rows carry no values; read a trusted click's `after`. `handoff` (sign-in, captcha) and `secure` rows won't click: they're the user's (`wait {user}` hands over). `frames_unreadable`: retry.
 
@@ -65,31 +65,32 @@ No `ready`: complete. Values: JSON. Keys: `name` (HTML name), `type`, `value` (p
 | The user is watching, or must act | Their tab |
 | Their logins, localhost, a set size, or unseen painting | Loft: `new_tab {url, loft:"1280x800"}` (`true`: theirs) |
 | A login of its own, a phone, or a locked Mac | Room (below) |
+| They leave the Mac unlocked for you | Their tab, under `veil up --owner <pid>`; `raise`, `activate_tab` lock it |
 
 A loft window is yours, in their profile, or in Safari's (`note` says when). Locked Mac: a loft comes up, but trusted input fails there; use a room.
 
 ## Rooms
 
-A room is a signed-in Chromium in a VM on this Mac; it can't reach this Mac's localhost.
+A room: a signed-in Chromium in a VM here; it can't reach this Mac's localhost.
 
 | Step | Call |
 |---|---|
 | Find | `list_tabs {app:"room"}` or `{app:"room:work"}`; ids are `room:<name>:<targetId>`. No `app`: rooms that are up list last. |
 | Open | `new_tab {app:"room:work"}`, then `navigate`. Yours until `close_tab` (rows: `holder`, `mine`). Subagent: own `label`, tabId `room:work:<label>`; reuse it to get the tab back. |
 | Act | Any tool with that `target.tabId`. Untargeted calls never reach a room. |
-| Move | `new_tab {from: <browser tabId>, app:"room:work"}`: same URL, page state stays behind; refill. `from` stays open. Errors needing the user's window suggest it. |
+| Move | `new_tab {from: <browser tabId>, app:"room:work"}`: same URL, page state stays behind; refill. `from` stays open. |
 
 Room tabs answer like shown ones: no `tab_not_visible`, `activate_tab` or `raise`. `click` is trusted by default (CDP input, no cursor or focus; `trusted:false`: `el.click()`). Not in rooms: `frames` rows and `fN` refs, the file chooser (`file_upload` sets the file through the page), the `late` check. Downloads are denied except in `click {download: true}`, which returns `download.file` (a path here).
 
 | Error | Next |
 |---|---|
 | `signed_out` / `challenge` (`handoff.status: "pending"`) | The user's; perch has notified them. Show `handoff.command` (`rooms signin <room> <url>`), wait, `navigate` again. Never type credentials. |
-| `no_browser: room 'x' is not up` | Run `rooms up x` in a shell, then retry. |
-| `no_browser: no room 'x'` | Setup is the user's (`rooms init x`). |
+| `no_browser: room 'x' is not up` | `rooms up x` in a shell, then retry. |
+| `no_browser: no room 'x'` | The user's: `rooms init x`. |
 | `tab_held` | Another agent has the tab (a room tab: retry after 5s idle unless claimed): `new_tab`. |
 | `stale_tab` | Closed or crashed: `list_tabs {app:"room:x"}`. |
 
-When done, close the tabs you opened, `from` too; never the user's. `rooms check x` lists signed-out sites (exit 1 if any). Leave `rooms down`, `restore`, `signin` and `flags` to the user.
+Done: close the tabs you opened, `from` too; never the user's. `rooms check x` lists signed-out sites (exit 1 if any). Leave `rooms down`, `restore`, `signin` and `flags` to the user.
 
 ## Permissions
 

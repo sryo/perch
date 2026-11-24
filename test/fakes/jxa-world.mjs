@@ -912,7 +912,9 @@ export function makeWorld({ browsers = [], cg = [], loadTicks = 0, linger = 0, f
       // state.displayAsleep: the main display is asleep (a locked, idle Mac).
       // state.locked: the login session's screen is locked (IOConsoleUsers gains CGSSessionScreenIsLocked).
       // state.idleSecs: seconds since the user's last HID input (default 0, present).
-      CGEventSourceSecondsSinceLastEventType: () => state.idleSecs ?? 0,
+      // state.anyIdleSecs: the any-type counter, which null events (a process's
+      // first posted event, among others) also reset (default idleSecs).
+      CGEventSourceSecondsSinceLastEventType: (src, type) => (type === 4294967295 ? state.anyIdleSecs ?? state.idleSecs : state.idleSecs) ?? 0,
       // state.holds: the power assertions held, as [{"Process Name", AssertType}] (default none).
       IOPMCopyAssertionsByProcess: (r) => { const lists = [state.holds || []]; r[0] = { allValues: { count: lists.length, objectAtIndex: (i) => lists[i] } }; return 0; },
       IORegistryGetRootEntry: () => 16395,
