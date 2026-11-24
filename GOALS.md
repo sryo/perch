@@ -51,6 +51,7 @@ When two goals conflict, the higher one wins.
 | 5 | p50/p95 per tool; Apple Events per call | `bench/baseline.json`, `test/perf-budget.test.mjs` | costly: `node scripts/bench.mjs --app canary --fium ~/.fium/runs/perch/done-live.json && echo ~/.fium/runs/perch/done-live.json` |
 | 5 | Apple Events per call (`lock events <tool>`) | `test/perf-budget.test.mjs`, behaviour lock | `node scripts/bench.mjs --offline --fium ~/.fium/runs/perch/done-fium.json && echo ~/.fium/runs/perch/done-fium.json` |
 | 6 | no browser names in descriptions | `test/runtime.test.mjs` | `npm test` |
+| 2 | `install entries lost` (other servers or the user's keys gone, a config it couldn't parse rewritten) and `install rerun writes`, over install, rerun and uninstall | `scripts/install-bench.mjs`, `test/install.test.mjs` | `node scripts/install-bench.mjs` |
 
 Caps: `all=ask quality=hard bytes=ask+10% time=ask+10%`
 
