@@ -3644,7 +3644,7 @@
    "content": [
     {
      "type": "text",
-     "text": "# {\"url\":\"https://form.test/\",\"count\":1,\"frames\":{\"error\":\"Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch (Codex / ChatGPT / Terminal / iTerm), then retry.\"}}\n1 heading \"Shop\" level=1"
+     "text": "# {\"url\":\"https://form.test/\",\"count\":1,\"frames\":{\"error\":\"Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch (claude), then retry.\"}}\n1 heading \"Shop\" level=1"
     }
    ],
    "isError": false,
@@ -4424,7 +4424,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch (Codex / ChatGPT / Terminal / iTerm), then retry."
+     "text": "error: Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch (claude), then retry."
     }
    ],
    "isError": true,
@@ -6892,7 +6892,7 @@
    "content": [
     {
      "type": "text",
-     "text": "{\"ok\":false,\"error\":\"screenshot: needs the Screen Recording grant for the app running perch (System Settings > Privacy & Security > Screen Recording); nothing was captured\"}"
+     "text": "{\"ok\":false,\"error\":\"screenshot: needs the Screen Recording grant for the app running perch (claude) (System Settings > Privacy & Security > Screen Recording; a new grant applies once that app restarts); nothing was captured\"}"
     }
    ],
    "isError": false,
@@ -7518,7 +7518,7 @@
    "content": [
     {
      "type": "text",
-     "text": "error: Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, ticking the target browser under the app running your agent (Terminal, iTerm, VS Code, Claude, Codex...)."
+     "text": "error: Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, ticking the target browser under the app running perch (claude)."
     }
    ],
    "isError": true,

@@ -3,7 +3,7 @@
 // the frames, matches the row again and clicks its fresh Accessibility center.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { JXA_PRELUDE, DAEMONS, handleCall } from "../server.js";
+import { JXA_PRELUDE, DAEMONS, handleCall, deps } from "../server.js";
 import { makeWorld } from "./fakes/jxa-world.mjs";
 import { page } from "./helpers/page.mjs";
 
@@ -144,6 +144,23 @@ test("when the frame walk can't run, the page rows still come back with frames:{
     assert.match(s.split("\n")[1], /^\d+ button "(Go|Other)"$/, name);
     assert.deepEqual(world.posted, [], name);
   }
+});
+
+// A permission error names the app the grant goes to, looked up once, and only
+// when an error needs it.
+test("a permission error names the app running perch", async (t) => {
+  const was = deps.grantee;
+  t.after(() => { deps.grantee = was; });
+  let asked = 0;
+  deps.grantee = async () => { asked++; return "iTerm"; };
+  const { world } = frameWorld();
+  await snap();
+  assert.equal(asked, 0, "no error, no lookup");
+  world.state.ax = false;
+  for (let i = 0; i < 2; i++) assert.match(head(await snap()).frames.error, /enable the app running perch \(iTerm\), then retry/);
+  assert.equal(asked, 1);
+  deps.grantee = async () => null;
+  assert.match(head(await snap()).frames.error, /enable the app running perch, then retry/);
 });
 
 test("a minimized window (no CGWindowID) gives frames:{error:window_offscreen} beside the page rows", async () => {

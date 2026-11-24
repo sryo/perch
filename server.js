@@ -1193,7 +1193,7 @@ function jxaRuntime(BROWSERS, HANG) {
   // Without the grant Node's screencapture has the same responsible process and
   // no grant either: its prompt would take the user's key focus mid-call, and a
   // capture could come back as wallpaper or a bare frame.
-  const SHOT_NO_GRANT = "screenshot: needs the Screen Recording grant for the app running perch (System Settings > Privacy & Security > Screen Recording); nothing was captured";
+  const SHOT_NO_GRANT = "screenshot: needs the Screen Recording grant for the app running perch (System Settings > Privacy & Security > Screen Recording; a new grant applies once that app restarts); nothing was captured";
   // A capture with the grant that still gave no usable image (both screencapture runs
   // failed or wrote nothing readable, or the crop or downscale failed).
   const SHOT_NO_CAPTURE = "screenshot: the window capture gave no image; nothing was captured";
@@ -1707,7 +1707,7 @@ function jxaRuntime(BROWSERS, HANG) {
     ObjC.import("ApplicationServices");
     // Read-only permission check; AXIsProcessTrusted never triggers the grant prompt.
     if (!$.AXIsProcessTrusted()) {
-      throw new Error("Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch (Codex / ChatGPT / Terminal / iTerm), then retry.");
+      throw new Error("Accessibility permission required: System Settings > Privacy & Security > Accessibility, enable the app running perch, then retry.");
     }
   }
 
@@ -4319,7 +4319,7 @@ export const ERR = {
   jsOff: "JavaScript-from-AppleEvents is off. Enable it: Chromium-family → View > Developer > Allow JavaScript from Apple Events. " +
     "Safari → Settings > Advanced > Show Develop menu, then Develop > Allow JavaScript from Apple Events.",
   automation: "Automation permission denied. Grant it in System Settings > Privacy & Security > Automation, " +
-    "ticking the target browser under the app running your agent (Terminal, iTerm, VS Code, Claude, Codex...).",
+    "ticking the target browser under the app running perch.",
   timeout: (ms) => `timeout: ${HANG.killed} ${ms}ms: the tab is unreachable (hung page, or a tab its window doesn't show). Re-run list_tabs.`,
 };
 
@@ -6675,7 +6675,36 @@ async function macAppearance() {
   try { return /^Dark/.test((await exec("defaults", ["read", "-g", "AppleInterfaceStyle"], { timeout: 2000 })).stdout) ? "dark" : "light"; }
   catch { return "light"; }
 }
-export const deps = { exec, dialogs: probeDialogs, appearance: macAppearance, notify: (a) => notify(a) };
+export const deps = { exec, dialogs: probeDialogs, appearance: macAppearance, notify: (a) => notify(a), grantee: responsibleApp };
+
+// The app macOS charges this process's privacy grants to: the first process up
+// the parent chain that runs from an .app bundle, named by the outermost bundle
+// in its path (VS Code for its helpers; Claude Code's CLI is its own claude.app,
+// which Claude's disclaimer helper makes responsible). Null when none is found.
+// Read only when an error names it, then kept.
+async function responsibleApp() {
+  let pid = process.ppid;
+  for (let i = 0; i < 16 && pid > 1; i++) {
+    const out = await new Promise((done) => execFile("ps", ["-o", "ppid=,comm=", "-p", String(pid)], { timeout: 1000 }, (e, so) => done(e ? "" : String(so))));
+    const m = /^\s*(\d+)\s+(.+)$/.exec(out.trim());
+    if (!m) return null;
+    const app = /^[^]*?\/([^/]+)\.app(\/|$)/.exec(m[2]);
+    if (app) return app[1];
+    pid = Number(m[1]);
+  }
+  return null;
+}
+const GRANTEE = "the app running perch", grantee = { p: null, fn: null };
+// Permission errors say "the app running perch"; this adds its name, so the
+// user grants the right app.
+async function withGrantee(out) {
+  const c = out?.content?.[0];
+  if (c?.type !== "text" || !c.text.includes(GRANTEE)) return out;
+  if (grantee.fn !== deps.grantee) grantee.p = null, grantee.fn = deps.grantee;
+  const app = await (grantee.p ||= Promise.resolve().then(() => deps.grantee()).catch(() => null));
+  if (app) c.text = c.text.split(GRANTEE).join(`${GRANTEE} (${JSON.stringify(String(app)).slice(1, -1)})`);
+  return out;
+}
 
 // The runtime's clipPixels, for a screencapture of W x H pixels.
 function clipPixels(m, W, H) {
@@ -12652,7 +12681,7 @@ export async function handleCall(name, args = {}, opts = {}) {
   loftIdleArm(1);
   try {
     const out = await handleCallCore(name, args, opts.signal);
-    return withOutdated(kind === "system" ? out : await withScreenWhy(loftIdleGone(out, args)));
+    return withOutdated(await withGrantee(kind === "system" ? out : await withScreenWhy(loftIdleGone(out, args))));
   }
   finally { holdAwake(kind); loftIdleArm(-1); }
 }
