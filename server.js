@@ -3297,12 +3297,19 @@ function jxaRuntime(BROWSERS, HANG) {
   // The user is away: the screen is locked, or no HID input for AWAY_SECS while
   // nothing of theirs keeps the display awake (displayHeld). A raise
   // then interrupts no one, so a loft window may use the browser that raises.
-  // perch's own posted input may count as input, which only errs toward present.
+  // Input is read per real type (keys, clicks, moves, drags, scrolls): the
+  // any-type counter also counts null events, which a process's first posted
+  // event and other background work reset every few seconds.
   const AWAY_SECS = 300;
+  const INPUT_TYPES = [1, 3, 25, 5, 6, 7, 27, 10, 12, 22, 23, 24];
   function userAway() {
     if (sessionLocked()) return true;
     if (displayHeld()) return false;
-    try { ObjC.import("CoreGraphics"); return Number($.CGEventSourceSecondsSinceLastEventType(1, 4294967295)) >= AWAY_SECS; } catch (e) { return false; }
+    try {
+      ObjC.import("CoreGraphics");
+      for (let i = 0; i < INPUT_TYPES.length; i++) if (Number($.CGEventSourceSecondsSinceLastEventType(1, INPUT_TYPES[i])) < AWAY_SECS) return false;
+      return true;
+    } catch (e) { return false; }
   }
   // Something keeps the display awake for the user: a playing video, a call, a
   // slideshow. A movie's viewer sends no input for hours, so a quiet HID alone
