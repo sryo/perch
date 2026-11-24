@@ -33,6 +33,7 @@ export async function freshServer(tag) {
   for (const lane of Object.keys(srv.DAEMONS)) srv.DAEMONS[lane] = { run: refuse(`DAEMONS.${lane}`) };
   srv.deps.exec = refuse("deps.exec");
   srv.deps.appearance = async () => null; // the Mac's own setting stays out of the goldens
+  srv.deps.grantee = async () => null; // so does the app running the tests
   srv.focus.granted = true;
   srv.roomsReset({ home: "/nonexistent/perch-test-rooms", fetch: refuse("rooms.fetch"), WebSocket: class { constructor() { throw new Error("lock harness: rooms.WebSocket reached the real system"); } } });
   return srv;
